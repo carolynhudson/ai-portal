@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Status · AI Portal{% endblock %}
+{% block body %}
+<script>window.PORTAL_SETTINGS = {router_poll_ms: {{ settings.router_poll_ms }}, metrics_poll_ms: {{ settings.metrics_poll_ms }}, router_metrics: {{ 'true' if settings.router_metrics else 'false' }}};</script>
+<style>
+.router-hero{border-color:var(--acc)}
+.hero-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.hero-head h3{margin:0}
+.hero-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
+@media(max-width:640px){.hero-cols{grid-template-columns:1fr}}
+.light-row{display:flex;align-items:center;gap:9px;padding:3px 0;font-size:14px}
+.light{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 6px}
+.light.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.light.off{background:var(--bad);box-shadow:0 0 6px var(--bad)}
+.light-label{min-width:70px}
+.tps-row{display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap}
+.tps-big{font-size:22px;font-weight:700;color:var(--acc)}
+.tps-chart{flex:1;min-width:220px}
+.tps-chart canvas{height:48px;width:100%}
+.feed-head{margin:16px 0 6px;font-size:13px;text-transform:none;letter-spacing:.02em}
+.feed{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+      margin:0;max-height:240px;overflow-y:auto;font-family:ui-monospace,Menlo,Consolas,monospace;
+      font-size:12px;line-height:1.6}
+.feed .ln{display:block;white-space:pre-wrap;word-break:break-word}
+.ln.error{color:var(--bad)}
+.ln.tps{color:var(--ok)}
+.ln.model{color:var(--acc)}
+.ln.request{color:var(--fg)}
+.ln.log,.ln.mut{color:var(--mut)}
+.bubble{padding:0;overflow:hidden}
+.bubble summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;padding:13px 16px;font-weight:600}
+.bubble summary::-webkit-details-marker{display:none}
+.bubble summary::before{content:"\25B8";color:var(--mut);transition:transform .12s;font-size:12px}
+.bubble[open] summary::before{transform:rotate(90deg)}
+.bubble-link{margin-left:auto;font-size:13px;font-weight:400}
+.bubble-body{padding:2px 16px 14px;border-top:1px solid var(--line)}
+.bubble-body .kv{padding:5px 0}
+.sysline{margin:0 0 14px;font-size:13px;color:var(--mut);display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.badge{padding:2px 9px;border-radius:6px;border:1px solid var(--warn);color:var(--warn);font-size:12px}
+.pill.bad{background:rgba(248,81,73,.15);color:var(--bad)}
+.totals-row{display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.totals-row .kv{margin:0}
+.totals-note{font-size:12px}
+.totals-note code{background:#0b0e13;padding:1px 5px;border-radius:4px}
+</style>
+
+{# ---- live router: the reason to open the portal ---- #}
+<div class="card router-hero">
+  <div class="hero-head">
+    <h3>llama.cpp router</h3>
+    <span class="pill {{ 'ok' if r.service.state == 'active' else 'bad' }}" id="router-state">{{ r.service.state }}</span>
+    <span class="mut" id="router-since">{% if r.service.since %}up since {{ r.service.since }}{% endif %}</span>
+  </div>
+
+  <div class="hero-cols">
+    <div>
+      <div class="light-row">
+        <span class="light {{ 'on' if r.web.ok else 'off' }}" id="light-web"></span>
+        <a class="light-label" href="http://127.0.0.1:8080/" target="_blank" rel="noopener">Web UI</a>
+        <span class="mut" id="web-state">{{ ('ok · ' ~ r.web.ms ~ 'ms') if r.web.ok else 'down' }}</span>
+      </div>
+      <div class="light-row">
+        <span class="light {{ 'on' if r.api.ok else 'off' }}" id="light-api"></span>
+        <a class="light-label" href="http://127.0.0.1:8080/v1/models" target="_blank" rel="noopener">REST API</a>
+        <span class="mut" id="api-state">{{ ('ok · ' ~ r.api.ms ~ 'ms · ' ~ r.api.count ~ ' models') if r.api.ok else 'down' }}</span>
+      </div>
+    </div>
+    <div>
+      <div class="kv"><span class="k">models available</span><span class="mono" id="model-count">{{ r.api.count if r.api.ok else '—' }}</span></div>
+      <div class="kv"><span class="k">loaded</span><span class="mono" id="model-loaded">{{ r.loaded or '—' }}</span></div>
+    </div>
+  </div>
+
+  <div class="tps-row">
+    <div class="kv" style="min-width:160px"><span class="k">throughput</span>
+      <span class="mono tps-big" id="tps-now">{{ '%.1f' % r.tps.latest if r.tps.latest else '—' }}</span>
+      <span class="mut">tokens/s</span></div>
+    <div class="tps-chart"><canvas id="tps" width="560" height="48"></canvas></div>
+  </div>
+
+  <div class="totals-row">
+    <div class="kv"><span class="k">prompt tokens (in)</span><span class="mono" id="tok-in">—</span></div>
+    <div class="kv"><span class="k">generated tokens (out)</span><span class="mono" id="tok-out">—</span></div>
+    {% if not r.totals.enabled %}<span class="mut totals-note">cumulative totals need <code>--metrics</code> on the router and a loaded model</span>{% endif %}
+  </div>
+
+  <h4 class="feed-head">Activity · live tail of <span class="mono">{{ r.service.name }}</span></h4>
+  <pre id="router-feed" class="feed">{% for ev in r.activity %}<span class="ln {{ ev.kind }}">{{ ev.text }}</span>{% else %}<span class="ln mut">no recent log lines captured</span>{% endfor %}</pre>
+</div>
+
+<div class="sysline">
+  {% if health.reboot_required %}<span class="badge">reboot required</span>{% endif %}
+  <span>vulkan sdk: <span class="mono">{{ health.vulkan_sdk or '—' }}</span></span>
+  <a href="/metrics">host metrics ↗</a>
+</div>
+
+{# ---- static service details, tucked behind collapsible bubbles ---- #}
+<h2>Services</h2>
+<div class="grid">
+  {% for key, s in providers.items() %}
+  <details class="bubble card">
+    <summary>
+      <span class="bname">{{ s.name }}</span>
+      <span class="pill {{ 'ok' if s.healthy else 'mut' }}">{{ 'ok' if s.healthy else s.pill }}</span>
+      {% if key == "llamacpp" %}<a class="bubble-link" href="/models">models ↗</a>{% endif %}
+    </summary>
+    <div class="bubble-body">
+      {% for k, v in s.rows %}
+      <div class="kv"><span class="k">{{ k }}</span><span class="mono">{{ v }}</span></div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+
+<script>
+// D1: no build step — the router hero is live by polling the /api/router JSON
+// endpoint and updating the DOM directly (same pattern as the metrics chart).
+const MAX = 90; const tpsHist = [];
+const tpsCv = document.getElementById('tps');
+const tpsCx = tpsCv ? tpsCv.getContext('2d') : null;
+function drawTps(){
+  if (!tpsCx) return;
+  const W = tpsCv.width, H = tpsCv.height;
+  tpsCx.clearRect(0,0,W,H);
+  if (!tpsHist.length) return;
+  const peak = Math.max(20, ...tpsHist);
+  tpsCx.beginPath(); tpsCx.strokeStyle = '#5aa9ff'; tpsCx.lineWidth = 2;
+  tpsHist.forEach((v,i)=>{
+    const x = (i/(MAX-1))*W;
+    const y = H - (v/peak)*(H-4) - 2;
+    i ? tpsCx.lineTo(x,y) : tpsCx.moveTo(x,y);
+  });
+  tpsCx.stroke();
+}
+function setLight(id, on){ const el = document.getElementById(id); if (el) el.className = 'light ' + (on ? 'on' : 'off'); }
+function setText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function tick(){
+  try{
+    const res = await fetch('/api/router', {credentials:'same-origin'});
+    if (res.status === 401) { location.href = '/login'; return; }
+    const d = await res.json();
+    const st = document.getElementById('router-state');
+    if (st){ st.textContent = d.service.state; st.className = 'pill ' + (d.service.state === 'active' ? 'ok' : 'bad'); }
+    setText('router-since', d.service.since ? ('up since ' + d.service.since) : '');
+    setLight('light-web', !!d.web.ok);
+    setText('web-state', d.web.ok ? ('ok · ' + d.web.ms + 'ms') : 'down');
+    setLight('light-api', !!d.api.ok);
+    setText('api-state', d.api.ok ? ('ok · ' + d.api.ms + 'ms · ' + d.api.count + ' models') : 'down');
+    setText('model-count', d.api.ok ? String(d.api.count) : '—');
+    setText('model-loaded', d.loaded || '—');
+    const latest = d.tps && d.tps.latest;
+    setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
+    const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
+    setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));
+    setText('tok-out', fmtTok(d.totals && d.totals.generated_tokens));
+    if (latest != null){ tpsHist.push(latest); if (tpsHist.length > MAX) tpsHist.shift(); drawTps(); }
+    const feed = document.getElementById('router-feed');
+    if (feed){
+      feed.innerHTML = (d.activity && d.activity.length)
+        ? d.activity.map(ev => '<span class="ln ' + esc(ev.kind) + '">' + esc(ev.text) + '</span>').join('')
+        : '<span class="ln mut">no recent log lines captured</span>';
+      feed.scrollTop = feed.scrollHeight;
+    }
+  }catch(e){ /* keep last good state on a transient error */ }
+}
+const _poll = (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.router_poll_ms) || 2500;
+tick();
+setInterval(tick, _poll);
+</script>
+{% endblock %}

@@ -1,0 +1,21 @@
+[Unit]
+Description=llama.cpp Server with ROCM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cortana
+WorkingDirectory=/home/cortana/.local/share/llama-cpp
+EnvironmentFile=/home/cortana/.config/llama-cpp/llamacpp-server.conf
+ExecStart=/home/cortana/.local/bin/llamacpp-server --port ${PORT} --host ${HOST} --ctx-size ${CONTEXT_SIZE} --batch-size ${BATCH_SIZE} --threads ${THREADS} --n-gpu-layers ${GPU_LAYERS} --verbose
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llamacpp
+LimitNOFILE=65536
+LimitNPROC=65536
+
+[Install]
+WantedBy=default.target

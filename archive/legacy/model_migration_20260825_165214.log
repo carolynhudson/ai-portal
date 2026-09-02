@@ -1,0 +1,57 @@
+[0;34m→ Migrating: unsloth/Qwen-Image-2512-GGUF/qwen-image-2512-Q8_0.gguf (21G)[0m
+'/home/cortana/models/unsloth/Qwen-Image-2512-GGUF/qwen-image-2512-Q8_0.gguf' -> '/home/cortana/.cache/llama.cpp/models/qwen-image-2512-Q8_0.gguf'
+[0;32m✓ Successfully migrated: qwen-image-2512-Q8_0.gguf[0m
+[0;34m→ Migrating: majentik/Qwen3-Embedding-8B-GGUF-Q8_0/qwen3-emb-8b-Q8_0.gguf (7.5G)[0m
+'/home/cortana/models/majentik/Qwen3-Embedding-8B-GGUF-Q8_0/qwen3-emb-8b-Q8_0.gguf' -> '/home/cortana/.cache/llama.cpp/models/qwen3-emb-8b-Q8_0.gguf'
+[0;32m✓ Successfully migrated: qwen3-emb-8b-Q8_0.gguf[0m
+[0;34m→ Migrating: bottlecapai/ThinkingCap-Qwen3.6-27B-GGUF/ThinkingCap-Qwen3.6-27B-Q8_0.gguf (28G)[0m
+'/home/cortana/models/bottlecapai/ThinkingCap-Qwen3.6-27B-GGUF/ThinkingCap-Qwen3.6-27B-Q8_0.gguf' -> '/home/cortana/.cache/llama.cpp/models/ThinkingCap-Qwen3.6-27B-Q8_0.gguf'
+[0;32m✓ Successfully migrated: ThinkingCap-Qwen3.6-27B-Q8_0.gguf[0m
+[0;34m→ Migrating: bottlecapai/ThinkingCap-Qwen3.6-27B-GGUF/mmproj-ThinkingCap-Qwen3.6-27B-f16.gguf (889M)[0m
+'/home/cortana/models/bottlecapai/ThinkingCap-Qwen3.6-27B-GGUF/mmproj-ThinkingCap-Qwen3.6-27B-f16.gguf' -> '/home/cortana/.cache/llama.cpp/models/mmproj-ThinkingCap-Qwen3.6-27B-f16.gguf'
+[0;32m✓ Successfully migrated: mmproj-ThinkingCap-Qwen3.6-27B-f16.gguf[0m
+[0;34m→ Migrating: empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf (5.3G)[0m
+'/home/cortana/models/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf' -> '/home/cortana/.cache/llama.cpp/models/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf'
+[0;32m✓ Successfully migrated: Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf[0m
+[0;34m→ Migrating: empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/mmproj-Qwythos-9B-Claude-Mythos-5-1M-f16.gguf (876M)[0m
+'/home/cortana/models/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/mmproj-Qwythos-9B-Claude-Mythos-5-1M-f16.gguf' -> '/home/cortana/.cache/llama.cpp/models/mmproj-Qwythos-9B-Claude-Mythos-5-1M-f16.gguf'
+[0;32m✓ Successfully migrated: mmproj-Qwythos-9B-Claude-Mythos-5-1M-f16.gguf[0m
+[0;34m→ Migrating: lmstudio-community/gemma-4-31B-it-QAT-GGUF/mmproj-gemma-4-31B-it-QAT-BF16.gguf (1.2G)[0m
+'/home/cortana/models/lmstudio-community/gemma-4-31B-it-QAT-GGUF/mmproj-gemma-4-31B-it-QAT-BF16.gguf' -> '/home/cortana/.cache/llama.cpp/models/mmproj-gemma-4-31B-it-QAT-BF16.gguf'
+[0;32m✓ Successfully migrated: mmproj-gemma-4-31B-it-QAT-BF16.gguf[0m
+[0;34m→ Migrating: lmstudio-community/gemma-4-31B-it-QAT-GGUF/gemma-4-31B-it-QAT-Q4_0.gguf (17G)[0m
+'/home/cortana/models/lmstudio-community/gemma-4-31B-it-QAT-GGUF/gemma-4-31B-it-QAT-Q4_0.gguf' -> '/home/cortana/.cache/llama.cpp/models/gemma-4-31B-it-QAT-Q4_0.gguf'
+[0;32m✓ Successfully migrated: gemma-4-31B-it-QAT-Q4_0.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Laguna-S-2.1-GGUF/Laguna-S-2.1-Q4_K_M-00001-of-00002.gguf (38G)[0m
+'/home/cortana/models/lmstudio-community/Laguna-S-2.1-GGUF/Laguna-S-2.1-Q4_K_M-00001-of-00002.gguf' -> '/home/cortana/.cache/llama.cpp/models/Laguna-S-2.1-Q4_K_M-00001-of-00002.gguf'
+[0;32m✓ Successfully migrated: Laguna-S-2.1-Q4_K_M-00001-of-00002.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Laguna-S-2.1-GGUF/Laguna-S-2.1-Q4_K_M-00002-of-00002.gguf (30G)[0m
+'/home/cortana/models/lmstudio-community/Laguna-S-2.1-GGUF/Laguna-S-2.1-Q4_K_M-00002-of-00002.gguf' -> '/home/cortana/.cache/llama.cpp/models/Laguna-S-2.1-Q4_K_M-00002-of-00002.gguf'
+[0;32m✓ Successfully migrated: Laguna-S-2.1-Q4_K_M-00002-of-00002.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Qwen3.6-35B-A3B-GGUF/mmproj-Qwen3.6-35B-A3B-BF16.gguf (862M)[0m
+'/home/cortana/models/lmstudio-community/Qwen3.6-35B-A3B-GGUF/mmproj-Qwen3.6-35B-A3B-BF16.gguf' -> '/home/cortana/.cache/llama.cpp/models/mmproj-Qwen3.6-35B-A3B-BF16.gguf'
+[0;32m✓ Successfully migrated: mmproj-Qwen3.6-35B-A3B-BF16.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q4_K_M.gguf (20G)[0m
+'/home/cortana/models/lmstudio-community/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q4_K_M.gguf' -> '/home/cortana/.cache/llama.cpp/models/Qwen3.6-35B-A3B-Q4_K_M.gguf'
+[0;32m✓ Successfully migrated: Qwen3.6-35B-A3B-Q4_K_M.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Muse-Glimmer-30B-GGUF/mmproj-kquant.gguf (1.4G)[0m
+'/home/cortana/models/lmstudio-community/Muse-Glimmer-30B-GGUF/mmproj-kquant.gguf' -> '/home/cortana/.cache/llama.cpp/models/mmproj-kquant.gguf'
+[0;32m✓ Successfully migrated: mmproj-kquant.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Muse-Glimmer-30B-GGUF/muse-glimmer-30B-kquant-17gb.gguf (16G)[0m
+'/home/cortana/models/lmstudio-community/Muse-Glimmer-30B-GGUF/muse-glimmer-30B-kquant-17gb.gguf' -> '/home/cortana/.cache/llama.cpp/models/muse-glimmer-30B-kquant-17gb.gguf'
+[0;32m✓ Successfully migrated: muse-glimmer-30B-kquant-17gb.gguf[0m
+[0;34m→ Migrating: lmstudio-community/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q4_K_M.gguf (46G)[0m
+'/home/cortana/models/lmstudio-community/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q4_K_M.gguf' -> '/home/cortana/.cache/llama.cpp/models/Qwen3-Coder-Next-Q4_K_M.gguf'
+[0;32m✓ Successfully migrated: Qwen3-Coder-Next-Q4_K_M.gguf[0m
+[0;34m→ Migrating: ds-vga/Qwen3.5-0.8B-coder-autocomplete/Qwen3.5-0.8B.Q4_K_M.gguf (517M)[0m
+'/home/cortana/models/ds-vga/Qwen3.5-0.8B-coder-autocomplete/Qwen3.5-0.8B.Q4_K_M.gguf' -> '/home/cortana/.cache/llama.cpp/models/Qwen3.5-0.8B.Q4_K_M.gguf'
+[0;32m✓ Successfully migrated: Qwen3.5-0.8B.Q4_K_M.gguf[0m
+[0;34m→ Migrating: Lautloserspieler/mistral-code-architect-7b/Mistral-Code-Architect-7b.gguf (4.1G)[0m
+'/home/cortana/models/Lautloserspieler/mistral-code-architect-7b/Mistral-Code-Architect-7b.gguf' -> '/home/cortana/.cache/llama.cpp/models/Mistral-Code-Architect-7b.gguf'
+[0;32m✓ Successfully migrated: Mistral-Code-Architect-7b.gguf[0m
+[0;34m→ Migrating: deepreinforce-ai/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q5_K_M.gguf (24G)[0m
+'/home/cortana/models/deepreinforce-ai/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q5_K_M.gguf' -> '/home/cortana/.cache/llama.cpp/models/ornith-1.0-35b-Q5_K_M.gguf'
+[0;32m✓ Successfully migrated: ornith-1.0-35b-Q5_K_M.gguf[0m
+[0;34m→ Migrating: mradermacher/stackexchange_literature-GGUF/stackexchange_literature.Q8_0.gguf (8.0G)[0m
+'/home/cortana/models/mradermacher/stackexchange_literature-GGUF/stackexchange_literature.Q8_0.gguf' -> '/home/cortana/.cache/llama.cpp/models/stackexchange_literature.Q8_0.gguf'
+[0;32m✓ Successfully migrated: stackexchange_literature.Q8_0.gguf[0m

@@ -1,0 +1,158 @@
+╔════════════════════════════════════════════════════════════════╗
+║  AI Development Environment Diagnostic Report                 ║
+║  Generated: Tue Aug 25 12:34:54 PM PDT 2026                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+═══════════ SYSTEM INFORMATION ═══════════
+OS: Ubuntu 26.04 LTS
+Kernel: 7.0.0-30-generic
+Hostname: Halo
+Uptime: up 1 hour, 37 minutes
+
+═══════════ CPU INFORMATION ═══════════
+Processor: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S
+CPU Cores: 32
+CPU Flags: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d amd_lbr_pmc_freeze
+
+═══════════ GPU/APU INFORMATION ═══════════
+GPUs detected:
+c3:00.0 Display controller: Advanced Micro Devices, Inc. [AMD/ATI] Strix Halo [Radeon Graphics / Radeon 8050S Graphics / Radeon 8060S Graphics] (rev c1)
+00:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Root Complex (rev 02)
+00:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo IOMMU (rev 02)
+00:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Dummy Host Bridge
+00:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo PCIe USB4 Bridge (rev 02)
+00:01.2 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo PCIe USB4 Bridge (rev 02)
+00:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Dummy Host Bridge
+00:02.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo GPP Bridge (rev 02)
+00:02.3 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo GPP Bridge (rev 02)
+00:02.5 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo GPP Bridge (rev 02)
+00:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Dummy Host Bridge
+00:03.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo GPP Bridge
+00:08.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Dummy Host Bridge
+00:08.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Internal GPP Bridge to Bus [C:A]
+00:08.2 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Internal GPP Bridge to Bus [C:A]
+00:08.3 PCI bridge: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo Internal GPP Bridge to Bus [C:A]
+00:14.0 SMBus: Advanced Micro Devices, Inc. [AMD] FCH SMBus Controller (rev 71)
+00:14.3 ISA bridge: Advanced Micro Devices, Inc. [AMD] FCH LPC Bridge (rev 51)
+00:18.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 0
+00:18.1 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 1
+00:18.2 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 2
+00:18.3 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 3
+00:18.4 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 4
+00:18.5 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 5
+00:18.6 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 6
+00:18.7 Host bridge: Advanced Micro Devices, Inc. [AMD] Strix Halo Data Fabric; Function 7
+c3:00.0 Display controller: Advanced Micro Devices, Inc. [AMD/ATI] Strix Halo [Radeon Graphics / Radeon 8050S Graphics / Radeon 8060S Graphics] (rev c1)
+c3:00.1 Audio device: Advanced Micro Devices, Inc. [AMD/ATI] Radeon High Definition Audio Controller
+c3:00.2 Encryption controller: Advanced Micro Devices, Inc. [AMD] Strix/Krackan/Strix Halo CCP/ASP
+c3:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB 3.1 xHCI
+c3:00.6 Audio device: Advanced Micro Devices, Inc. [AMD] Ryzen HD Audio Controller
+c4:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Strix/Strix Halo PCIe Dummy Function
+c4:00.1 Signal processing controller: Advanced Micro Devices, Inc. [AMD] Strix/Krackan/Strix Halo Neural Processing Unit (rev 11)
+c5:00.0 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB 3.1 xHCI
+c5:00.3 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB 3.1 xHCI
+c5:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB 3.1 xHCI
+c5:00.5 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB4 Host Router
+c5:00.6 USB controller: Advanced Micro Devices, Inc. [AMD] Strix Halo USB4 Host Router
+
+ROCm Detection:
+  ✓ ROCm installed
+
+
+======================================== ROCm System Management Interface ========================================
+================================================== Concise Info ==================================================
+Device  Node  IDs              Temp    Power     Partitions          SCLK  MCLK  Fan  Perf  PwrCap  VRAM%  GPU%  
+[3m              (DID,     GUID)  (Edge)  (Socket)  (Mem, Compute, ID)                                              [0m
+==================================================================================================================
+0       1     0x1586,   15537  49.0°C  11.039W   N/A, N/A, 0         N/A   N/A   0%   auto  N/A     97%    1%    
+==================================================================================================================
+============================================== End of ROCm SMI Log ===============================================
+
+═══════════ VULKAN INFORMATION ═══════════
+  ✓ Vulkan SDK installed
+==========
+VULKANINFO
+==========
+
+Vulkan Instance Version: 1.4.341
+
+
+Instance Extensions: count = 26
+-------------------------------
+VK_EXT_acquire_drm_display             : extension revision 1
+VK_EXT_acquire_xlib_display            : extension revision 1
+VK_EXT_debug_report                    : extension revision 10
+VK_EXT_debug_utils                     : extension revision 2
+VK_EXT_direct_mode_display             : extension revision 1
+VK_EXT_display_surface_counter         : extension revision 1
+VK_EXT_headless_surface                : extension revision 1
+VK_EXT_layer_settings                  : extension revision 2
+VK_EXT_surface_maintenance1            : extension revision 1
+VK_EXT_swapchain_colorspace            : extension revision 5
+VK_KHR_device_group_creation           : extension revision 1
+
+═══════════ MEMORY INFORMATION ═══════════
+               total        used        free      shared  buff/cache   available
+Mem:           122Gi       4.0Gi       117Gi       142Mi       2.6Gi       118Gi
+Swap:          8.0Gi          0B       8.0Gi
+
+Memory per core: 62890 MB (approx)
+
+═══════════ STORAGE INFORMATION ═══════════
+/dev/nvme0n1p2  1.8T  344G  1.4T  20% /
+
+Space available for models (in /home): 1.4T
+
+═══════════ PYTHON INFORMATION ═══════════
+Python 3.14.4
+Python location: /usr/bin/python3
+Pip version: pip 25.1.1 from /usr/lib/python3/dist-packages/pip (python 3.14)
+
+═══════════ INSTALLED AI TOOLS ═══════════
+  ✗ llama.cpp: NOT INSTALLED
+  ✗ ollama: NOT INSTALLED
+  ✗ comfyui: NOT INSTALLED
+  ✗ venv: NOT INSTALLED
+  ✓ git: git version 2.53.0
+  ✓ cmake: cmake version 4.2.3
+  ✓ gcc: gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+  ✓ g++: g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+  ✓ make: GNU Make 4.4.1
+  ✓ pkg-config: 2.5.1
+  ✗ libopenblas-dev: NOT INSTALLED
+  ✗ python3-dev: NOT INSTALLED
+
+═══════════ DEVELOPMENT TOOLS ═══════════
+  ✓ git: git version 2.53.0
+  ✓ cmake: cmake version 4.2.3
+  ✓ gcc: gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+  ✓ g++: g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+  ✓ make: GNU Make 4.4.1
+  ✓ pkg-config: 2.5.1
+
+═══════════ EXISTING MODEL DIRECTORIES ═══════════
+  ✓ ~/models/ exists
+    Contents:
+517M	/home/cortana/models/ds-vga
+4.1G	/home/cortana/models/Lautloserspieler
+6.1G	/home/cortana/models/empero-ai
+7.5G	/home/cortana/models/majentik
+8.0G	/home/cortana/models/mradermacher
+21G	/home/cortana/models/unsloth
+24G	/home/cortana/models/deepreinforce-ai
+28G	/home/cortana/models/bottlecapai
+167G	/home/cortana/models/lmstudio-community
+    Total size: 264G
+
+═══════════ DISK PERFORMANCE ═══════════
+Write speed test (1GB): 
+1073741824 bytes (1.1 GB, 1.0 GiB) copied, 0.126211 s, 8.5 GB/s
+
+═══════════ NETWORK INFORMATION ═══════════
+IP Addresses: 192.168.1.228 172.17.0.1 2601:602:57f:ee84:9ebf:dff:fe00:e6ca 
+
+═══════════ RECOMMENDED NEXT STEPS ═══════════
+✓ All critical build tools are installed
+
+═══════════ END OF REPORT ═══════════
+Report saved to: /home/cortana/ai_environment_report_20260825_123454.txt

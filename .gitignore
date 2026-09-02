@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+uv.lock
+
+# Secrets / runtime state must never be committed (lives under ~/ai/state, not the repo)
+*.secret
+portal.auth.json

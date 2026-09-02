@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Models · AI Portal{% endblock %}
+{% block body %}
+<h2>llama.cpp models</h2>
+
+<div class="card" style="margin-bottom:14px">
+  <h3>Router live list ({{ live|length }})</h3>
+  <table>
+    <tr><th>model id</th><th>object</th></tr>
+    {% for m in live %}
+    <tr><td class="mono">{{ m.get('id') }}</td><td class="mono">{{ m.get('object','') }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h3>Disk store — {{ diskroot }} ({{ disk|length }} dirs)</h3>
+  <table>
+    <tr><th>dir (model id)</th><th>.gguf files</th><th>size</th></tr>
+    {% for m in disk %}
+    <tr><td class="mono">{{ m.id }}</td><td>{{ m.files }}</td><td class="mono">{{ m.size_h }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}AI Portal{% endblock %}</title>
+<script src="/static/htmx.min.js"></script>
+<style>
+:root{--bg:#0e1116;--panel:#171c24;--fg:#e6e9ef;--mut:#8b95a7;--acc:#5aa9ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--line:#232a35}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+a{color:var(--acc);text-decoration:none}
+nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+nav .brand{font-weight:700;margin-right:auto}
+nav a{color:var(--fg)}
+nav a:hover{color:var(--acc)}
+main{padding:20px;max-width:1100px;margin:0 auto}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h3{margin:0 0 10px;font-size:15px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:14px}
+.kv .k{color:var(--mut)}
+.pill{padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.pill.ok{background:rgba(63,185,80,.15);color:var(--ok)}
+.pill.mut{background:var(--line);color:var(--mut)}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+h2{font-size:18px;margin:24px 0 12px}
+input[type=password]{width:100%;padding:10px;border-radius:8px;border:1px solid #2a3340;background:#0b0e13;color:var(--fg)}
+button{padding:10px 14px;border-radius:8px;border:0;background:var(--acc);color:#04121f;font-weight:600;cursor:pointer}
+button.ghost{background:#2a3340;color:var(--fg)}
+.err{color:var(--bad);margin-top:8px}
+canvas{width:100%;height:160px;background:#0b0e13;border-radius:8px}
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">AI Portal</span>
+  <a href="/">Status</a>
+  <a href="/models">Models</a>
+  <a href="/metrics">Metrics</a>
+  <form method="post" action="/logout" style="margin:0">
+    <button type="submit" class="ghost">Logout</button>
+  </form>
+</nav>
+<main>
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>
