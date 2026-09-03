@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
+
+from . import paths
 
 
 def _user(*args: str) -> str:
@@ -90,3 +93,53 @@ def service_memory(unit: str) -> dict | None:
     except (OSError, ValueError):
         peak = None
     return {"current": current, "peak": peak}
+
+
+# Units the portal may control (F9). The portal's own unit is deliberately
+# absent: the portal must never stop itself (PORTAL_PLAN §4.3).
+MANAGED_UNITS = {
+    "llamacpp": {
+        "unit": "ai-llama-router",
+        "name": "llama.cpp router",
+        "confirm": ("STOPPING THE ROUTER DROPS EVERY AGENT SESSION RIDING IT "
+                    "(including any AI agent in use right now). Continue?"),
+    },
+    "comfyui": {
+        "unit": "ai-comfyui",
+        "name": "ComfyUI",
+        "confirm": None,
+    },
+}
+
+
+def _service_rollback_note(unit: str, action: str) -> None:
+    """Pre-stop/restart snapshot under state/rollback/ (phase-4 pattern)."""
+    d = paths.ROLLBACK_DIR / f"service-{unit}-{time.strftime('%Y%m%d-%H%M%S')}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "state-before.txt").write_text(repr(unit_state(unit)) + "\n")
+    (d / "action.txt").write_text(f"{action} {unit} @ {time.ctime()}\n")
+
+
+def service_action(key: str, action: str) -> dict:
+    """start/stop/restart a managed user unit. Returns ok + new state.
+
+    stop/restart write a rollback note first (§6 safety model).
+    """
+    meta = MANAGED_UNITS.get(key)
+    if meta is None:
+        return {"ok": False, "error": "unknown service"}
+    if action not in ("start", "stop", "restart"):
+        return {"ok": False, "error": "unknown action"}
+    unit = meta["unit"]
+    if action in ("stop", "restart"):
+        _service_rollback_note(unit, action)
+    try:
+        p = subprocess.run(["systemctl", "--user", action, unit],
+                           capture_output=True, text=True, timeout=90)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"systemctl error: {e}"}
+    state = unit_state(unit)
+    if p.returncode != 0:
+        return {"ok": False, "state": state,
+                "error": (p.stderr or p.stdout).strip()[:400]}
+    return {"ok": True, "state": state}

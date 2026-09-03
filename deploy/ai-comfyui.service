@@ -1,0 +1,15 @@
+# ComfyUI as a systemd *user* service — the portal-managed pattern (F9).
+# Committed for review; Phase E installs/enables it after verifying the
+# venv + model store. Repo + venv + models are colocated in ~/ai/comfyui.
+[Unit]
+Description=ComfyUI (managed by ai-portal)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/ai/comfyui
+ExecStart=%h/ai/comfyui/venv/bin/python main.py --listen 127.0.0.1 --port 8188
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

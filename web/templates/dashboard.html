@@ -42,6 +42,9 @@
 .totals-row .kv{margin:0}
 .totals-note{font-size:12px}
 .totals-note code{background:#0b0e13;padding:1px 5px;border-radius:4px}
+.svc-row{display:flex;align-items:center;gap:10px}
+.svc-row button{background:#0b0e13;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 12px;font-size:12px;cursor:pointer}
+.svc-row button:hover{border-color:var(--acc)}
 </style>
 
 {# ---- live router: the reason to open the portal ---- #}
@@ -110,6 +113,15 @@
       {% for k, v in s.rows %}
       <div class="kv"><span class="k">{{ k }}</span><span class="mono">{{ v }}</span></div>
       {% endfor %}
+      {% if key in ("llamacpp", "comfyui") %}
+      <div class="kv svc-row"><span class="k">control</span>
+        <span>
+          <button onclick="svcAction('{{ key }}', 'start')">start</button>
+          <button onclick="svcAction('{{ key }}', 'stop')">stop</button>
+          <button onclick="svcAction('{{ key }}', 'restart')">restart</button>
+        </span>
+      </div>
+      {% endif %}
     </div>
   </details>
   {% endfor %}
@@ -188,5 +200,31 @@ async function tick(){
 const _poll = (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.router_poll_ms) || 2500;
 tick();
 setInterval(tick, _poll);
+</script>
+<script>
+// Phase B: service controls — start/stop/restart managed user units.
+const SVC = {};
+async function loadSvc(){
+  try{
+    const res = await fetch('/api/services', {credentials:'same-origin'});
+    if (res.ok) Object.assign(SVC, await res.json());
+  }catch(e){ /* controls stay inert until the API answers */ }
+}
+async function svcAction(key, action){
+  const meta = SVC[key] || {};
+  if (!meta.controllable){ alert('unit not installed yet'); return; }
+  if (action !== 'start' &&
+      !confirm(meta.confirm || ('Stop or restart ' + (meta.name || key) + '?'))) return;
+  try{
+    const res = await fetch('/api/services/' + key + '/' + action, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({confirm: true})});
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.ok){ alert('action failed: ' + (d.detail || d.error || res.status)); return; }
+    location.reload();
+  }catch(e){ alert('action failed: ' + e); }
+}
+loadSvc();
 </script>
 {% endblock %}

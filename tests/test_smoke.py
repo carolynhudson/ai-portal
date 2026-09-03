@@ -143,3 +143,25 @@ def test_service_memory_shape():
 
     m = systemd.service_memory("ai-llama-router")
     assert m is None or (isinstance(m["current"], int) and m["current"] > 0)
+
+
+def test_services_endpoint_shape():
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    r = c.get("/api/services")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"llamacpp", "comfyui"}
+    for v in body.values():
+        assert {"unit", "name", "state", "controllable"} <= set(v)
+
+
+def test_service_action_validation():
+    """Validation paths only — none of these may reach a real unit."""
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    # stop without confirm -> 400 (no systemctl call made)
+    assert c.post("/api/services/llamacpp/stop", json={}).status_code == 400
+    # unknown service / action -> 404
+    assert c.post("/api/services/nope/start", json={"confirm": True}).status_code == 404
+    assert c.post("/api/services/llamacpp/explode", json={"confirm": True}).status_code == 404

@@ -29,6 +29,10 @@ WEB = HERE.parent / "web"
 class LoginBody(BaseModel):
     password: str
 
+
+class ServiceActionBody(BaseModel):
+    confirm: bool = False
+
 _status_cache: tuple[float, dict] = (0.0, {})
 _STATUS_TTL = 10.0
 _behind_cache: tuple[float, dict] = (0.0, {})
@@ -254,6 +258,39 @@ def create_app() -> FastAPI:
     def api_settings(_=Depends(_require_auth)):
         """Tunable settings (poll rates, feature flags) for the dashboard."""
         return db.current_settings()
+
+    # ------------------------------------------------- service controls (B)
+    @app.get("/api/services")
+    def api_services(_=Depends(_require_auth)):
+        """Managed user units and their live state."""
+        out = {}
+        for key, meta in systemd.MANAGED_UNITS.items():
+            st = systemd.unit_state(meta["unit"])
+            out[key] = {
+                "unit": meta["unit"], "name": meta["name"],
+                "state": st.get("ActiveState", "unknown"),
+                "sub": st.get("SubState"),
+                "controllable": st.get("LoadState", "not-found") != "not-found",
+                "confirm": meta.get("confirm"),
+            }
+        return out
+
+    @app.post("/api/services/{key}/{action}")
+    def api_service_action(key: str, action: str, body: ServiceActionBody,
+                           _=Depends(_require_auth)):
+        if action not in ("start", "stop", "restart"):
+            raise HTTPException(status_code=404, detail="unknown action")
+        if key not in systemd.MANAGED_UNITS:
+            raise HTTPException(status_code=404, detail="unknown service")
+        if action in ("stop", "restart") and not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        res = systemd.service_action(key, action)
+        if not res.get("ok"):
+            raise HTTPException(status_code=500,
+                                detail=res.get("error") or "action failed")
+        db.event("portal", "service",
+                 f"{action} {key} ({systemd.MANAGED_UNITS[key]['unit']})")
+        return res
 
     return app
 

@@ -132,6 +132,11 @@ config()   → read/propose validated config (e.g. presets.ini)
 - **Self-awareness**: router restarts drop the agent session — such actions are
   explicit confirmations with a written rollback note (phase-4 pattern), and
   the portal itself must not be stopped by its own actions.
+- **ComfyUI (D4, decided):** user service `ai-comfyui`, same user-slice
+  pattern as the router. Unit file committed at `deploy/ai-comfyui.service`;
+  installed + verified in Phase E. Log following reuses the same journal feed
+  (raw for now — ComfyUI's log format differs; structured parsing later only
+  if it proves useful).
 
 ### 4.4 Update pipeline (productionizes phase-3/4)
 - **llama.cpp**: `git fetch` → build at a *pinned* ref in
@@ -178,6 +183,31 @@ setups (agentic + autocomplete + RAG loaded at once) — that needs
 memory math (Phase D) must land before personalities become switchable from
 the UI.
 
+### 4.8 RAG service + MCP interface (planned, later phase H)
+
+A document Q&A service exposed over MCP. Architecturally it is *just another
+provider* for the portal — that is the validation of the §4.1/§4.3
+abstraction. The three open concerns, and the working answers:
+
+- **Database**: do not grow the portal DB into a DBMS. The portal keeps
+  SQLite (ops state only — there is no MySQL in this stack to migrate from).
+  RAG gets its **own** store under `~/ai/rag/`; start embedded (sqlite-vec or
+  LanceDB — zero new servers, one index file per project) and treat
+  Postgres+pgvector as the scale-up path only if multi-user or very large
+  corpora appear (D10).
+- **Model lifecycle**: no separate inference process. The embedding model
+  (e.g. the already-installed `qwen3-emb-8b`) + a generator live in the
+  router store; a RAG deployment is a *personality* (§4.7) with its memory
+  budget planned up front, and Phase B start/stop is its lifecycle.
+- **Documents & isolation**: one directory + one index per project under
+  `~/ai/rag/<project>/`; ingestion is a portal job (`jobs` table) that
+  re-chunks + re-embeds on change; every search is filtered by project id,
+  so cross-project leakage is structurally impossible, not policy.
+- **MCP**: the RAG service speaks MCP (search / ingest tools, D11); the
+  portal manages it as a managed unit like any other.
+
+Sequencing: after B (service control) + D (gguf memory math).
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
@@ -206,12 +236,13 @@ the UI.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | A | Skeleton: uv project, `app/core/paths.py`, FastAPI, `portal.db`, read-only status page for all three providers | `systemctl --user start ai-portal`; status page shows router/models/releases |
-| B | Service manager: start/stop/restart/logs for router (streamed) | restart router from UI; rollback note written |
+| B | Service manager: start/stop/restart for router + ComfyUI with confirm dialog, rollback note, audit event, per-bubble controls | stop/restart router from UI with confirm; rollback note written; ComfyUI controllable once its unit is installed |
 | C | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (or no-op rebuild proves the path); old release restorable |
 | D | Model manager: inventory, gguf metadata, presets generator, HF-command downloads, dedup/GC | paste an `hf download` cmd → model appears in router with correct preset |
 | E | ComfyUI provider: status, venv sync, systemd service | start/stop from UI; update runbook verified |
 | F | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness | all UPDATES.md inputs visible |
 | G | Frontend polish per D1 | — |
+| H | RAG service: per-project stores, ingestion jobs, MCP interface (§4.8) | two demo projects searchable, zero cross-project hits; start/stop from UI |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.
@@ -245,8 +276,8 @@ never hard-code context maxes.** Only the validated `[*]` globals remain today.
 
 Remaining open (can proceed without them):
 
-- **D4 — ComfyUI service.** Add the `ai-comfyui` systemd user service in Phase
-  E, or keep ComfyUI manually started for now?
+- **D4 — ComfyUI service (DECIDED):** user service `ai-comfyui` like the
+  router (see §4.3). Unit file committed; install + verify in Phase E.
 - **D6 — gguf-indexer.** Port its working code into the portal (my
   recommendation — one codebase to maintain), or keep it as a sidecar tool the
   portal shells out to?
@@ -258,6 +289,11 @@ Remaining open (can proceed without them):
   allowed-model symlink dir + GGUF-derived memory budget (OOM-proof by
   construction). Sequencing: Phase B (router control) + Phase D (gguf
   metadata) first; `--models-max > 1` for the multi-model scenario.
+- **D10 — RAG vector store.** Embedded per-project files (sqlite-vec /
+  LanceDB) vs Postgres+pgvector from day one? Recommendation: embedded — no
+  new server on a single-user box; pgvector is the scale-up path (§4.8).
+- **D11 — RAG/MCP scope.** First MCP tools: search-only vs search + ingest +
+  project admin?
 
 ## 9. Immediate next steps
 
@@ -279,4 +315,7 @@ Remaining open (can proceed without them):
    time, MTP draft acceptance), and cgroup-v2 service RAM (user-slice
    `app.slice` path; aggregates router + spawned workers). All via
    `/api/router`, polled at the `router_poll_ms` setting.
-5. Phases B–G per §7, each behind the §6 safety model.
+5. **Phase B** (in progress): start/stop/restart for router + ComfyUI from
+   the UI (confirm + rollback note + audit event); ComfyUI unit committed
+   for Phase E install. Then C–G per §7, and H (RAG/MCP, §4.8) when planned.
+   Each behind the §6 safety model.
