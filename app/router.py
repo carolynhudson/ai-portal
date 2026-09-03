@@ -24,6 +24,16 @@ _MODEL_RE = re.compile(r"loading model\s+'?([^'\s]+)'?")
 # The router logs one "proxy_request" line per forwarded request, which
 # includes our own /metrics poll — drop those so they don't bury real events.
 _PROXY_RE = re.compile(r"proxying request to model")
+# Per-completion stats: b10641 prints a "print_timing" summary block per
+# finished request. Slots run concurrently (agentic + autocomplete + RAG can
+# be mid-task at once), so everything is keyed by slot id. Note the negative
+# lookbehind: the generation line is "eval time", the prompt line is
+# "prompt eval time" — both contain "eval time".
+_SLOT_RE = re.compile(r"\bid\s+(\d+)\s*\|\s*task\s+(\d+)")
+_COMP_PROMPT_RE = re.compile(r"prompt eval time\s*=\s*([\d.]+)\s*ms\s*/\s*(\d+)\s*tokens.*?([\d.]+)\s*tokens per second")
+_COMP_EVAL_RE = re.compile(r"(?<!prompt )eval time\s*=\s*([\d.]+)\s*ms\s*/\s*(\d+)\s*tokens.*?([\d.]+)\s*tokens per second")
+_COMP_TOTAL_RE = re.compile(r"total time\s*=\s*([\d.]+)\s*ms\s*/\s*(\d+)\s*tokens")
+_DRAFT_RE = re.compile(r"draft acceptance\s*=\s*([\d.]+)\s*\(\s*(\d+)\s*accepted\s*/\s*(\d+)\s*generated\s*\)\s*,\s*mean len\s*=\s*([\d.]+)")
 
 _cache: tuple[float, dict] = (0.0, {})
 
@@ -133,6 +143,8 @@ def _parse(lines: list[str]) -> dict:
     tps: list[float] = []
     loaded: str | None = None
     events: list[dict] = []
+    open_comps: dict[int, dict] = {}   # slot id -> in-progress completion
+    completions: list[dict] = []
     for ln in lines:
         if _PROXY_RE.search(ln):
             continue
@@ -142,12 +154,49 @@ def _parse(lines: list[str]) -> dict:
         mm = _MODEL_RE.search(ln)
         if mm:
             loaded = mm.group(1)
+        sm = _SLOT_RE.search(ln)
+        if sm:
+            slot = int(sm.group(1))
+            pm = _COMP_PROMPT_RE.search(ln)
+            if pm:
+                # a fresh prompt on a slot supersedes any unfinished record
+                open_comps[slot] = {"slot": slot, "task": int(sm.group(2)),
+                                    "prompt_ms": float(pm.group(1)),
+                                    "prompt_tokens": int(pm.group(2)),
+                                    "prompt_tps": float(pm.group(3))}
+            em = _COMP_EVAL_RE.search(ln)
+            if em:
+                prev = open_comps.pop(slot, None)  # supersede an unreleased record
+                comp = {"slot": slot, "task": int(sm.group(2)),
+                        "gen_ms": float(em.group(1)),
+                        "gen_tokens": int(em.group(2)),
+                        "gen_tps": float(em.group(3))}
+                if prev:
+                    # carry prompt stats over from this slot's prompt line
+                    for k in ("prompt_ms", "prompt_tokens", "prompt_tps"):
+                        if k in prev:
+                            comp[k] = prev[k]
+                open_comps[slot] = comp
+                completions.append(comp)
+            tm = _COMP_TOTAL_RE.search(ln)
+            if tm and slot in open_comps:
+                open_comps[slot].update({"total_ms": float(tm.group(1)),
+                                         "total_tokens": int(tm.group(2))})
+            dm = _DRAFT_RE.search(ln)
+            if dm and slot in open_comps:
+                open_comps[slot]["draft"] = {"rate": float(dm.group(1)),
+                                             "accepted": int(dm.group(2)),
+                                             "drafted": int(dm.group(3)),
+                                             "mean_len": float(dm.group(4))}
+            if "slot release" in ln:
+                open_comps.pop(slot, None)
         events.append({"kind": _classify(ln), "text": ln.rstrip()})
     return {
         "events": events[-80:],
         "tps_recent": tps[-90:],
         "tps_latest": tps[-1] if tps else None,
         "loaded": loaded,
+        "completions": completions[-10:],
     }
 
 
@@ -167,6 +216,8 @@ def _build() -> dict:
         "loaded": api.get("loaded") or parsed["loaded"],
         "tps": {"latest": parsed["tps_latest"], "recent": parsed["tps_recent"]},
         "totals": dict(_token_totals(prom), enabled=bool(prom)),
+        "completions": parsed["completions"],
+        "memory": systemd.service_memory(paths.ROUTER_UNIT),
         "activity": parsed["events"],
     }
 
@@ -184,5 +235,6 @@ def snapshot() -> dict:
                             "web": {"ok": False},
                             "api": {"ok": False, "count": 0, "ids": [], "loaded": None},
                             "loaded": None, "tps": {"latest": None, "recent": []},
+                            "completions": [], "memory": None,
                             "activity": [], "error": str(e)})
     return _cache[1]

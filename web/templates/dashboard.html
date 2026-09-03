@@ -81,6 +81,8 @@
   <div class="totals-row">
     <div class="kv"><span class="k">prompt tokens (in)</span><span class="mono" id="tok-in">—</span></div>
     <div class="kv"><span class="k">generated tokens (out)</span><span class="mono" id="tok-out">—</span></div>
+    <div class="kv"><span class="k">service RAM</span><span class="mono" id="svc-ram">{% if r.memory %}{{ (r.memory.current / 1073741824) | round(1) }} G{% if r.memory.peak %} · peak {{ (r.memory.peak / 1073741824) | round(1) }} G{% endif %}{% else %}—{% endif %}</span></div>
+    <div class="kv" style="flex:1;min-width:280px"><span class="k">last completion</span><span class="mono" id="last-completion">—</span></div>
     {% if not r.totals.enabled %}<span class="mut totals-note">cumulative totals need <code>--metrics</code> on the router and a loaded model</span>{% endif %}
   </div>
 
@@ -135,6 +137,18 @@ function drawTps(){
 }
 function setLight(id, on){ const el = document.getElementById(id); if (el) el.className = 'light ' + (on ? 'on' : 'off'); }
 function setText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
+function fmtDur(ms){ const s = ms / 1000; return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'; }
+function fmtCompletion(c){
+  if (!c) return '—';
+  let s = 'slot ' + c.slot;
+  if (c.prompt_tokens != null) s += ' · ' + Number(c.prompt_tokens).toLocaleString() + ' in';
+  if (c.gen_tokens != null) s += ' / ' + Number(c.gen_tokens).toLocaleString() + ' out';
+  if (c.gen_tps != null) s += ' @ ' + Number(c.gen_tps).toFixed(1) + ' t/s';
+  if (c.prompt_tps != null) s += ' · prompt ' + Number(c.prompt_tps).toFixed(0) + ' t/s';
+  if (c.total_ms != null) s += ' · ' + fmtDur(c.total_ms);
+  if (c.draft) s += ' · draft ' + Math.round(c.draft.rate * 100) + '% (×' + c.draft.mean_len.toFixed(2) + ')';
+  return s;
+}
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 async function tick(){
   try{
@@ -155,6 +169,12 @@ async function tick(){
     const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
     setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));
     setText('tok-out', fmtTok(d.totals && d.totals.generated_tokens));
+    if (d.memory && d.memory.current != null){
+      const gb = (x) => (x / 1073741824).toFixed(1) + ' G';
+      setText('svc-ram', gb(d.memory.current) + (d.memory.peak != null ? ' · peak ' + gb(d.memory.peak) : ''));
+    }
+    const last = (d.completions && d.completions.length) ? d.completions[d.completions.length - 1] : null;
+    setText('last-completion', fmtCompletion(last));
     if (latest != null){ tpsHist.push(latest); if (tpsHist.length > MAX) tpsHist.shift(); drawTps(); }
     const feed = document.getElementById('router-feed');
     if (feed){

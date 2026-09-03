@@ -166,6 +166,18 @@ rollback), model-index freshness, orphan files, broken hardlinks.
 `llama-releases.json` stays as the machine-readable release registry the
 phase-3 tooling already writes; the DB indexes it.
 
+### 4.7 Personalities (named router states) — user direction, 2026-08-31
+
+A *personality* is a named, pre-planned router state for an activity (e.g.
+"coding", "rag-qa"): a generated `presets.ini` plus a models dir (symlink
+farm) exposing **only** the models that state is allowed to load. The memory
+budget is computed from GGUF metadata (weights + ctx KV) up front, so a
+personality can never OOM the box. Target scenario: VSCode-style multi-model
+setups (agentic + autocomplete + RAG loaded at once) — that needs
+`--models-max > 1` planning, so router start/stop (Phase B) and the GGUF
+memory math (Phase D) must land before personalities become switchable from
+the UI.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
@@ -242,6 +254,10 @@ Remaining open (can proceed without them):
   or only shows proposed diffs for you to approve?
 - **D8 — Compat symlinks.** Keep `~/llama.cpp`, `~/ComfyUI`, `~/comfyui`,
   `~/vulkan` forever, or remove once the portal has been stable for a while?
+- **D9 — Personalities.** See §4.7: named states = generated presets +
+  allowed-model symlink dir + GGUF-derived memory budget (OOM-proof by
+  construction). Sequencing: Phase B (router control) + Phase D (gguf
+  metadata) first; `--models-max > 1` for the multi-model scenario.
 
 ## 9. Immediate next steps
 
@@ -250,6 +266,17 @@ Remaining open (can proceed without them):
 2. ~~You: free the 244 G rollback copy~~ → **done** (D5).
 3. **Phase A** (done 2026-08-31): uv project + FastAPI + LAN/password auth +
    `portal.db` + read-only status page for all three providers + metrics/health
-   probes. Verified: 5 smoke tests pass, and `tools/live_smoke.sh` drives the
+   probes. Verified: 11 smoke tests pass, and `tools/live_smoke.sh` drives the
    real app against the live router (14 live / 13 disk models). See README.
-4. Phases B–G per §7, each behind the §6 safety model.
+4. **Router hero / live observability** (done 2026-08-31, commit after A):
+   the dashboard hero is the live llama router — `/v1/models` registry
+   (loaded/loading state), `/metrics?model=<loaded>` cumulative counters
+   (router mode requires `?model=`; bare `/metrics` 400s), journal-derived
+   TPS sparkline (b10641 `tg = N t/s` format), classified activity feed
+   (`proxy_request` self-noise filtered), per-completion stats parsed from
+   `print_timing` blocks (**slot-keyed**, so concurrent agentic +
+   autocomplete + RAG slots don't interleave: prompt/gen counts + t/s, total
+   time, MTP draft acceptance), and cgroup-v2 service RAM (user-slice
+   `app.slice` path; aggregates router + spawned workers). All via
+   `/api/router`, polled at the `router_poll_ms` setting.
+5. Phases B–G per §7, each behind the §6 safety model.

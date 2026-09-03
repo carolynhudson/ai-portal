@@ -111,3 +111,35 @@ def test_parse_extracts_tps():
 
     out = rtr._parse(["slot print_timing: id 3 | task 0 | n_gen = 4419, tg =  14.57 t/s, tg_3s =  12.92 t/s"])
     assert out["tps_latest"] == 14.57
+
+
+def test_parse_extracts_completion():
+    """Per-completion stats from the b10641 print_timing block, keyed by slot
+    so interleaved slots don't corrupt each other (also proves the
+    'prompt eval time' line is not misread as the generation 'eval time')."""
+    from app import router as rtr
+
+    lines = [
+        "slot print_timing: id  3 | task 0 | prompt eval time =    1531.76 ms /   412 tokens (    3.72 ms per token,   268.97 tokens per second)",
+        "slot print_timing: id  3 | task 0 |        eval time =  522281.04 ms /  7890 tokens (   66.20 ms per token,    15.10 tokens per second)",
+        "slot print_timing: id  7 | task 1 | prompt eval time =      120.00 ms /    300 tokens (    0.40 ms per token,  2500.00 tokens per second)",
+        "slot print_timing: id  3 | task 0 |       total time =  523812.80 ms /  8302 tokens",
+        "slot print_timing: id  3 | task 0 | draft acceptance = 0.50945 ( 4770 accepted /  9363 generated), mean len =  2.53",
+        "slot      release: id  3 | task 0 | stop processing: n_tokens = 8303, truncated = 0",
+    ]
+    out = rtr._parse(lines)
+    assert len(out["completions"]) == 1
+    c = out["completions"][0]
+    assert (c["slot"], c["task"]) == (3, 0)
+    assert c["prompt_tokens"] == 412 and c["gen_tokens"] == 7890
+    assert c["prompt_tps"] == 268.97 and c["gen_tps"] == 15.1
+    assert c["total_ms"] == 523812.8
+    assert c["draft"]["rate"] == 0.50945 and c["draft"]["mean_len"] == 2.53
+
+
+def test_service_memory_shape():
+    """Best-effort cgroup read: None (router stopped) or positive ints."""
+    from app.core import systemd
+
+    m = systemd.service_memory("ai-llama-router")
+    assert m is None or (isinstance(m["current"], int) and m["current"] > 0)

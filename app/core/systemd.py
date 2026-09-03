@@ -6,6 +6,7 @@ cutover of it is a confirmed, user-visible operation (docs/PORTAL_PLAN.md §6).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -66,3 +67,26 @@ def reboot_pending() -> dict:
         "packages": pkgs.read_text().splitlines() if pkgs.exists() else [],
         "needs_restarting": _needs_restarting(),
     }
+
+
+def service_memory(unit: str) -> dict | None:
+    """RAM for a user service from cgroup v2, bytes: ``current`` + ``peak``.
+
+    A service's cgroup aggregates its child processes, so for the router this
+    is the whole llama stack (router + spawned workers) — the real footprint.
+    Best-effort: ``None`` if the cgroup files are absent (unit stopped,
+    cgroup v1, no permission).
+    """
+    uid = os.getuid()
+    # User-manager units land in app.slice under the user@uid.service cgroup.
+    base = (Path("/sys/fs/cgroup/user.slice") / f"user-{uid}.slice"
+            / f"user@{uid}.service" / "app.slice" / f"{unit}.service")
+    try:
+        current = int((base / "memory.current").read_text().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        peak = int((base / "memory.peak").read_text().strip())
+    except (OSError, ValueError):
+        peak = None
+    return {"current": current, "peak": peak}
