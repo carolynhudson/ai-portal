@@ -125,6 +125,24 @@
     </div>
   </details>
   {% endfor %}
+
+  {# ---- llama.cpp release update (Phase C) ----------------------------- #}
+  <details class="bubble card" open>
+    <summary>
+      <span class="bname">llama.cpp release</span>
+      <span class="pill mut" id="upd-pill">…</span>
+    </summary>
+    <div class="bubble-body">
+      <div class="kv"><span class="k">current</span><span class="mono" id="upd-current">—</span></div>
+      <div class="kv"><span class="k">repo head</span><span class="mono" id="upd-head">—</span></div>
+      <div class="kv"><span class="k">vulkan sdk</span><span class="mono" id="upd-sdk">—</span></div>
+      <div class="kv svc-row"><span class="k">update</span>
+        <button onclick="updStart()">build + deploy master</button>
+      </div>
+      <div id="upd-releases"></div>
+      <div id="upd-job"></div>
+    </div>
+  </details>
 </div>
 
 <script>
@@ -226,5 +244,89 @@ async function svcAction(key, action){
   }catch(e){ alert('action failed: ' + e); }
 }
 loadSvc();
+</script>
+<script>
+// Phase C: llama.cpp release update — one click fetches, builds (~10-20 min),
+// stages + verifies (version, ldd, smoke worker), swaps the ~/ai/bin symlinks
+// and restarts the router. Job progress tails live from /api/jobs/{id}.
+const UPD = {job: null, timer: null};
+async function loadUpd(){
+  try{
+    const r = await fetch('/api/updates/llamacpp', {credentials:'same-origin'});
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (!r.ok) return;
+    const d = await r.json();
+    const pill = document.getElementById('upd-pill');
+    const running = d.job && d.job.status === 'running';
+    pill.className = 'pill ' + (running ? 'mut' : (d.current ? 'ok' : 'mut'));
+    pill.textContent = running ? 'updating…' : (d.current || 'no release');
+    setText('upd-current', (d.current || '—') + (d.current_commit ? ' @ ' + d.current_commit.slice(0, 12) : ''));
+    setText('upd-head', d.repo_head ? d.repo_head.slice(0, 12) : '—');
+    setText('upd-sdk', (d.vulkan_sdk || '—').replace(/^\/home\/[^/]+/, '~'));
+    document.getElementById('upd-releases').innerHTML = (d.releases || []).map(e =>
+      '<div class="kv"><span class="k">' + esc(e.name) + '</span><span>' +
+      (e.commit || '').slice(0, 12) + ' · ' + (e.built_at || '').slice(0, 10) + ' ' +
+      (e.name === d.current ? '<span class="pill ok">current</span>'
+                            : '<button onclick="updRollback(\'' + esc(e.name) + '\')">rollback</button>') +
+      '</span></div>').join('');
+    renderUpdJob(d.job);
+    if (running) {
+      if (!UPD.timer) { UPD.job = d.job.id; UPD.timer = setInterval(pollUpd, 3000); }
+    } else if (UPD.timer && !d.job) {
+      clearInterval(UPD.timer); UPD.timer = null;
+    }
+  }catch(e){ /* keep last good state on a transient error */ }
+}
+function renderUpdJob(j){
+  const el = document.getElementById('upd-job');
+  if (!el) return;
+  if (!j) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
+    '</span><span class="mono">' + esc(j.target || '') + '</span></div>' +
+    '<pre class="feed" style="max-height:220px">' + esc(j.log || '') + '</pre>';
+  const pre = el.querySelector('pre');
+  if (pre) pre.scrollTop = pre.scrollHeight;
+}
+async function pollUpd(){
+  if (!UPD.job) return;
+  try{
+    const r = await fetch('/api/jobs/' + UPD.job, {credentials:'same-origin'});
+    if (!r.ok) return;
+    const j = await r.json();
+    renderUpdJob(j);
+    if (j.status !== 'running') {
+      clearInterval(UPD.timer); UPD.timer = null;
+      loadUpd();
+      if (j.status === 'success') location.reload();
+    }
+  }catch(e){ /* transient */ }
+}
+async function updStart(){
+  if (!confirm('Update llama.cpp to latest master?\n\nThis fetches, builds (~10–20 min), verifies and swaps the release, then RESTARTS THE ROUTER — every agent session riding it will drop.')) return;
+  try{
+    const r = await fetch('/api/updates/llamacpp', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({target: 'HEAD', restart: true, smoke: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('update refused: ' + (d.detail || r.status)); return; }
+    UPD.job = d.job; UPD.timer = setInterval(pollUpd, 3000);
+    loadUpd();
+  }catch(e){ alert('update failed to start: ' + e); }
+}
+async function updRollback(name){
+  if (!confirm('Roll back to ' + name + '?\n\nThis repoints the binaries and RESTARTS THE ROUTER — agent sessions will drop.')) return;
+  try{
+    const r = await fetch('/api/updates/llamacpp/rollback', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({release: name, confirm: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('rollback failed: ' + (d.detail || r.status)); return; }
+    alert('rolled back to ' + name);
+    location.reload();
+  }catch(e){ alert('rollback failed: ' + e); }
+}
+loadUpd();
 </script>
 {% endblock %}

@@ -146,9 +146,26 @@ config()   → read/propose validated config (e.g. presets.ini)
   worker load) → swap `~/ai/bin` symlinks → restart router → record in
   `~/ai/state/llama-releases.json` + portal DB. Previous release kept for one
   click rollback.
-- **ComfyUI**: `git fetch` → checkout tag/commit → `pip install -r
+- **llama.cpp — implemented (Phase C):** `app/core/updater.py` runs each update
+  as a background job (`jobs` table, log at `~/ai/logs/update-<kind>-<id>.log`),
+  so a 10-20 min build never blocks a request; the UI tails `/api/jobs/{id}`.
+  Pipeline (`LlamaCpp.update`): fetch (offline-tolerant) -> resolve ref
+  (`HEAD` = remote default branch, else local) -> refuse if repo dirty ->
+  **no-op** if target == deployed commit -> checkout ->
+  `cmake -B ~/ai/build/llama.cpp-<sha12>` (`paths.LLAMA_CMAKE_ARGS`, newest
+  SDK) -> build -> stage flat self-contained release -> verify (`--version`,
+  clean `ldd`, smoke worker loading the smallest model) -> rollback note ->
+  repoint `~/ai/bin` symlink farm -> `llama-releases.json` + DB (`releases`
+  table) -> `systemctl --user restart ai-llama-router` + health poll;
+  **auto-rollback** if the router doesn't come up. `dry=True` stops after
+  staging+verify (production untouched). Rollback is a fast synchronous
+  repoint+restart (`LlamaCpp.rollback`). Endpoints: `GET /api/updates/llamacpp`,
+  `POST /api/updates/llamacpp` (`target`/`restart`/`smoke`/`dry`),
+  `POST /api/updates/llamacpp/rollback` (confirm required), `GET /api/jobs/{id}`.
+  The ComfyUI updater (Phase E) reuses `updater.start_job` with its own pipeline.
+- **ComfyUI**: `git fetch` -> checkout tag/commit -> `pip install -r
   requirements.txt` in the venv (torch pinned, not re-downloaded unless
-  required) → restart service.
+  required) -> restart service.
 - **Hugging Face**: downloads per 4.2; cache pruning as a managed job.
 - **Advisory only (never auto)**: apt deltas touching `amdrocm*|amdgpu*|
   mesa-amdgpu*` + kernel (reboot-pending flag), Vulkan SDK newer-version check
@@ -237,7 +254,7 @@ Sequencing: after B (service control) + D (gguf memory math).
 |---|---|---|
 | A | Skeleton: uv project, `app/core/paths.py`, FastAPI, `portal.db`, read-only status page for all three providers | `systemctl --user start ai-portal`; status page shows router/models/releases |
 | B | Service manager: start/stop/restart for router + ComfyUI with confirm dialog, rollback note, audit event, per-bubble controls | stop/restart router from UI with confirm; rollback note written; ComfyUI controllable once its unit is installed |
-| C | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (or no-op rebuild proves the path); old release restorable |
+| C (done, 2026-09-03) | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (no-op path proven by `tools/live_smoke.sh`); old release restorable |
 | D | Model manager: inventory, gguf metadata, presets generator, HF-command downloads, dedup/GC | paste an `hf download` cmd → model appears in router with correct preset |
 | E | ComfyUI provider: status, venv sync, systemd service | start/stop from UI; update runbook verified |
 | F | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness | all UPDATES.md inputs visible |

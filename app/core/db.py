@@ -131,3 +131,35 @@ def current_settings() -> dict:
         if v is not None:
             out[k] = v
     return out
+
+
+# ------------------------------------------------------------ generic access
+# Thin helpers so background threads (updater jobs) can touch the DB without
+# reaching into the connection internals.
+
+def execute(sql: str, params: tuple = ()) -> None:
+    c = _conn()
+    c.execute(sql, params)
+    c.commit()
+
+
+def query(sql: str, params: tuple = ()) -> list:
+    return _conn().execute(sql, params).fetchall()
+
+
+# ------------------------------------------------------------------ releases
+
+def record_release(tool: str, rid: str, path: str, commit: str, sdk: str,
+                   active: bool = False) -> None:
+    execute(
+        '''INSERT INTO releases (tool, id, path, "commit", sdk, created, active)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(tool,id) DO UPDATE SET
+             path=excluded.path, "commit"=excluded."commit", sdk=excluded.sdk,
+             active=excluded.active''',
+        (tool, rid, path, commit, sdk, time.time(), 1 if active else 0))
+
+
+def set_release_active(tool: str, rid: str, active: bool = True) -> None:
+    execute('UPDATE releases SET active=? WHERE tool=? AND id=?',
+            (1 if active else 0, tool, rid))

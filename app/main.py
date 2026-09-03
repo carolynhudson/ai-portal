@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import metrics, router
 from .core import config as cfg
-from .core import db, paths, systemd
+from .core import db, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
 HERE = Path(__file__).resolve().parent
@@ -31,6 +31,18 @@ class LoginBody(BaseModel):
 
 
 class ServiceActionBody(BaseModel):
+    confirm: bool = False
+
+
+class UpdateBody(BaseModel):
+    target: str = "HEAD"    # "HEAD" (remote default branch) | tag | commit sha
+    restart: bool = True    # restart the router once the new release is deployed
+    smoke: bool = True      # boot a throwaway worker from the staged release
+    dry: bool = False       # stop after staging+verify (deploy nothing)
+
+
+class RollbackBody(BaseModel):
+    release: str            # a name from /api/updates/llamacpp releases
     confirm: bool = False
 
 _status_cache: tuple[float, dict] = (0.0, {})
@@ -291,6 +303,56 @@ def create_app() -> FastAPI:
         db.event("portal", "service",
                  f"{action} {key} ({systemd.MANAGED_UNITS[key]['unit']})")
         return res
+
+    # ------------------------------------------------ updates (C: llama.cpp)
+    @app.get("/api/updates/llamacpp")
+    def api_updates(_=Depends(_require_auth)):
+        """Current release, repo head, known releases, and the last job."""
+        p = get_provider("llamacpp")
+        return p.update_status()
+
+    @app.post("/api/updates/llamacpp")
+    def api_update(body: UpdateBody, _=Depends(_require_auth)):
+        """Start the build→stage→verify→swap→restart pipeline in the
+        background; poll /api/jobs/{id} for progress. The click IS the
+        confirmation (PORTAL_PLAN §6)."""
+        p = get_provider("llamacpp")
+        try:
+            plan = p.preflight()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        job_id = updater.start_job("llamacpp", body.target,
+                                   lambda log: p.update(
+                                       body.target, restart=body.restart,
+                                       smoke=body.smoke, dry=body.dry, log=log))
+        if job_id is None:
+            raise HTTPException(status_code=409, detail="an update is already running")
+        db.event("portal", "update",
+                 f"llamacpp: job {job_id} started (target={body.target}, "
+                 f"restart={body.restart}, dry={body.dry})")
+        return {"job": job_id, "head": plan["head"]}
+
+    @app.post("/api/updates/llamacpp/rollback")
+    def api_rollback(body: RollbackBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        p = get_provider("llamacpp")
+        try:
+            res = p.rollback(body.release, log=lambda m: print("[ai-portal]", m))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        db.event("portal", "update", f"llamacpp: rollback -> {body.release}")
+        return res
+
+    @app.get("/api/jobs/{job_id}")
+    def api_job(job_id: int, _=Depends(_require_auth)):
+        """Live progress for a background update job (status + log tail)."""
+        j = updater.job(job_id)
+        if j is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return j
 
     return app
 
