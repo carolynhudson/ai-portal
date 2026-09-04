@@ -215,6 +215,19 @@ def test_remote_state_ttl_cache_and_force():
     assert st4["checked_at"] == st3["checked_at"]
 
 
+def test_resolve_head_uses_remote_default_branch():
+    """The deploy button posts target='HEAD'; with a working origin that
+    must mean origin/<default-branch>, not local HEAD (regression: the
+    symref line's trailing tab used to leak into the ref name)."""
+    _, _, A, B, C = _upstream_fixture()
+    out = LlamaCpp()._resolve("HEAD", log=lambda m: None)
+    assert out == C
+    assert out != A
+    # explicit shas still resolve verbatim
+    assert LlamaCpp()._resolve(A, log=lambda m: None) == A
+    assert LlamaCpp()._resolve("v0.1.0", log=lambda m: None) == B
+
+
 def test_release_url_from_remote():
     clone, _, _, _, _ = _upstream_fixture()
     subprocess.run(["git", "-C", str(clone), "remote", "set-url", "origin",

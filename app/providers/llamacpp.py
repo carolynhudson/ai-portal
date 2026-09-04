@@ -431,8 +431,11 @@ class LlamaCpp(Provider):
                 out = _git(paths.LLAMA_REPO, "ls-remote", "--symref",
                            "origin", "HEAD", log=lambda m: None, timeout=60)
                 for ln in out.splitlines():
-                    if ln.startswith("ref:") and "refs/heads/" in ln:
-                        t = "origin/" + ln.split("refs/heads/", 1)[1].strip()
+                    # symref line: "ref: refs/heads/<branch><TAB>HEAD"
+                    parts = ln.split()
+                    if (len(parts) >= 2 and parts[0] == "ref:"
+                            and parts[1].startswith("refs/heads/")):
+                        t = "origin/" + parts[1][len("refs/heads/"):]
                         break
             except RuntimeError:
                 log("no remote info — 'HEAD' means local HEAD")
