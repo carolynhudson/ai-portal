@@ -44,7 +44,8 @@ HF_CACHE = HOME / ".cache" / "huggingface"
 
 # --- systemd *user* unit names (owned by the portal) ------------------------
 ROUTER_UNIT = "ai-llama-router"
-COMFY_UNIT = "ai-comfyui"
+COMFY_UNIT = "ai-comfyui"          # systemd user unit name
+COMFY_UNIT_NAME = "comfyui"          # service name for env file + wrapper
 PORTAL_UNIT = "ai-portal"
 
 # --- Router network defaults (the router this session may ride on) ----------

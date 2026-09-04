@@ -45,6 +45,18 @@ class RollbackBody(BaseModel):
     release: str            # a name from /api/updates/llamacpp releases
     confirm: bool = False
 
+
+class ComfyConfigBody(BaseModel):
+    listen: str | None = None
+    port: int | str | None = None   # str tolerated so we can 400 with a message
+    extra_args: str | None = None
+
+
+class ComfyDownloadBody(BaseModel):
+    url: str
+    category: str
+    filename: str | None = None
+
 _status_cache: tuple[float, dict] = (0.0, {})
 _STATUS_TTL = 10.0
 _behind_cache: tuple[float, dict] = (0.0, {})
@@ -186,9 +198,18 @@ def create_app() -> FastAPI:
         disk = p.models_scan() if p else []
         for m in disk:
             m["size_h"] = _human(m.get("size"))
+        cp = get_provider("comfyui")
+        comfy = cp.inventory() if cp else []
+        for c in comfy:
+            c["size_h"] = _human(c["size"])
+            for f in c["files"]:
+                f["size_h"] = _human(f["size"])
         return templates.TemplateResponse(request, "models.html",
                                           {"live": live, "disk": disk,
-                                           "diskroot": str(paths.LLAMA_MODELS)})
+                                           "diskroot": str(paths.LLAMA_MODELS),
+                                           "comfy": comfy,
+                                           "comfyroot": str(paths.COMFY_MODELS),
+                                           "home": str(paths.HOME)})
 
     @app.get("/metrics")
     def metrics_page(request: Request, _=Depends(_require_auth)):
@@ -286,6 +307,62 @@ def create_app() -> FastAPI:
                 "confirm": meta.get("confirm"),
             }
         return out
+
+    # ------------------------------------------- comfyui (E: service + models)
+    @app.post("/api/services/comfyui/ensure")
+    def api_comfy_ensure(_=Depends(_require_auth)):
+        """Generate the ComfyUI unit + env file + wrapper (idempotent)."""
+        res = get_provider("comfyui").ensure_service(
+            log=lambda m: print("[ai-portal]", m))
+        db.event("portal", "service", "comfyui service files generated")
+        return res
+
+    @app.get("/api/services/comfyui/config")
+    def api_comfy_config(_=Depends(_require_auth)):
+        return get_provider("comfyui").config()
+
+    @app.post("/api/services/comfyui/config")
+    def api_comfy_set_config(body: ComfyConfigBody, _=Depends(_require_auth)):
+        """Validate + persist config, regenerate the env file; restart if the
+        service is running so the new args take effect."""
+        p = get_provider("comfyui")
+        merged = {**p.config(), **body.model_dump(exclude_none=True)}
+        try:
+            cfg = p.validate_config(merged)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        p.set_config(cfg)
+        st = systemd.unit_state(paths.COMFY_UNIT)
+        restarted = False
+        if st.get("ActiveState") == "active":
+            systemd.service_action("comfyui", "restart")
+            restarted = True
+        db.event("portal", "service", f"comfyui config updated: {cfg}")
+        return {"config": cfg, "restarted": restarted}
+
+    @app.get("/api/models/comfyui")
+    def api_comfy_models(_=Depends(_require_auth)):
+        p = get_provider("comfyui")
+        return {"root": str(paths.COMFY_MODELS),
+                "categories": p.inventory()}
+
+    @app.post("/api/models/comfyui/download")
+    def api_comfy_download(body: ComfyDownloadBody, _=Depends(_require_auth)):
+        """Portal-side download into the right models/<category>/ folder —
+        the file never touches the browser."""
+        p = get_provider("comfyui")
+        try:
+            dest_dir, dest = p.download_target(body.url, body.category,
+                                               body.filename)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        jid = updater.start_job(
+            "comfyui-download", body.url,
+            lambda log: p.download_file(body.url, dest_dir, dest, log))
+        if jid is None:
+            raise HTTPException(409, "a download is already running")
+        db.event("portal", "download", f"comfyui {body.url} -> {dest}")
+        return {"job": jid, "dest": str(dest)}
 
     @app.post("/api/services/{key}/{action}")
     def api_service_action(key: str, action: str, body: ServiceActionBody,

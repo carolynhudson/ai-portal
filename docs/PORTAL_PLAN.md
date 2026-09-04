@@ -132,11 +132,33 @@ config()   → read/propose validated config (e.g. presets.ini)
 - **Self-awareness**: router restarts drop the agent session — such actions are
   explicit confirmations with a written rollback note (phase-4 pattern), and
   the portal itself must not be stopped by its own actions.
-- **ComfyUI (D4, decided):** user service `ai-comfyui`, same user-slice
-  pattern as the router. Unit file committed at `deploy/ai-comfyui.service`;
-  installed + verified in Phase E. Log following reuses the same journal feed
-  (raw for now — ComfyUI's log format differs; structured parsing later only
-  if it proves useful).
+- **ComfyUI (D4, done 2026-09-04):** user service `ai-comfyui`, same
+  user-slice pattern as the router. Installed, verified serving on
+  `127.0.0.1:8188`, start/stop/restart from the UI via the generic
+  service controls. Log following reuses the same journal feed (raw for now —
+  ComfyUI's log format differs; structured parsing later only if it proves
+  useful).
+
+#### 4.3.1 Launch config via generated env file (pattern, proven on ComfyUI)
+
+The unit stays **static**; every launch parameter lives in a generated env
+file the portal owns:
+
+- `~/ai/config/comfyui.env` — `KEY=VALUE` (values quoted so systemd keeps
+  spaces; written from `~/ai/config/comfyui.json`)
+- `~/ai/bin/ai-comfyui.sh` — thin `sh` wrapper; the wrapper's shell re-splits
+  the intentionally-unquoted `$COMFY_ARGS` into real argv words
+- `~/.config/systemd/user/ai-comfyui.service` — `EnvironmentFile=` +
+  `ExecStart=<wrapper>` only
+
+Re-parameterizing = rewrite env file + `systemctl --user restart` — no unit
+edits, no daemon-reload, every knob visible in one small file. Proven first
+on ComfyUI (no live traffic) **before** porting to `ai-llama-router`.
+Division once the router adopts it: the env file governs *launch* parameters
+(host, port, `--models-max`, …); `presets.ini` keeps governing *model slots*.
+Implementation: `app/core/serviceenv.py` + `ComfyUI.ensure_service()` /
+`set_config()` (API: `POST /api/services/comfyui/ensure`,
+`GET|POST /api/services/comfyui/config`).
 
 ### 4.4 Update pipeline (productionizes phase-3/4)
 - **llama.cpp**: `git fetch` → build at a *pinned* ref in
@@ -332,7 +354,14 @@ Remaining open (can proceed without them):
    time, MTP draft acceptance), and cgroup-v2 service RAM (user-slice
    `app.slice` path; aggregates router + spawned workers). All via
    `/api/router`, polled at the `router_poll_ms` setting.
-5. **Phase B** (in progress): start/stop/restart for router + ComfyUI from
-   the UI (confirm + rollback note + audit event); ComfyUI unit committed
-   for Phase E install. Then C–G per §7, and H (RAG/MCP, §4.8) when planned.
+5. **Phase B** (done): start/stop/restart for router + ComfyUI from the UI
+   (confirm + rollback note + audit event).
+6. **Phase E (ComfyUI)** (done 2026-09-04): `ai-comfyui` user service via the
+   generated env-file pattern (§4.3.1); ComfyUI model inventory on the models
+   page (26 categories); portal-side model downloads placed directly into
+   `models/<category>/` (`POST /api/models/comfyui/download`, job-tracked,
+   `.part`-then-rename) — replacing the browser-download-then-manual-copy
+   workflow. Remaining E scope: git/venv update pipeline for ComfyUI (reuses
+   the Phase C job runner; no build step) and Hugging Face CLI parsing for
+   download URLs. Then C–G per §7, and H (RAG/MCP, §4.8) when planned.
    Each behind the §6 safety model.

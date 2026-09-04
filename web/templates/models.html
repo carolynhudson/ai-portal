@@ -22,4 +22,84 @@
     {% endfor %}
   </table>
 </div>
+
+<h2 style="margin-top:22px">ComfyUI models</h2>
+
+<div class="card" style="margin-bottom:14px">
+  <h3>Download into the model store</h3>
+  <p class="mut" style="margin-top:0">Paste any direct file URL (e.g. a Hugging Face
+  <span class="mono">resolve/main/…</span> link). The portal downloads it itself and
+  places it in the right <span class="mono">{{ comfyroot | replace(home, '~') }}/&lt;category&gt;</span>
+  folder — nothing goes through the browser, no manual copying.</p>
+  <form onsubmit="comfyDownload(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="url" id="dl-url" placeholder="https://…/resolve/main/model.safetensors"
+           required style="min-width:380px">
+    <select id="dl-cat" required>
+      {% for c in comfy %}<option value="{{ c.category }}">{{ c.category }}</option>{% endfor %}
+    </select>
+    <input type="text" id="dl-name" placeholder="filename (optional — from URL)" style="min-width:200px">
+    <button>download</button>
+  </form>
+  <div id="dl-job" style="margin-top:8px"></div>
+</div>
+
+{% if comfy %}
+{% for cat in comfy %}
+<div class="card" style="margin-bottom:10px">
+  <details>
+    <summary>
+      <span class="bname mono">{{ cat.category }}</span>
+      <span class="pill mut">{{ cat.count }} file{{ 's' if cat.count != 1 else '' }} · {{ cat.size_h }}</span>
+    </summary>
+    <table>
+      <tr><th>file</th><th>size</th></tr>
+      {% for f in cat.files %}
+      <tr><td class="mono">{{ f.name }}</td><td class="mono">{{ f.size_h }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><span class="mut">no ComfyUI models found under {{ comfyroot }}</span></div>
+{% endif %}
+
+<script>
+// Phase E: portal-side ComfyUI model download (never via the browser).
+async function comfyDownload(ev){
+  ev.preventDefault();
+  const body = {url: document.getElementById('dl-url').value.trim(),
+                category: document.getElementById('dl-cat').value,
+                filename: document.getElementById('dl-name').value.trim() || null};
+  try{
+    const r = await fetch('/api/models/comfyui/download',
+                          {method: 'POST', credentials: 'same-origin',
+                           headers: {'content-type': 'application/json'},
+                           body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('download refused: ' + (d.detail || r.status)); return; }
+    pollComfyJob(d.job, d.dest);
+  }catch(e){ alert('download failed to start: ' + e); }
+}
+function pollComfyJob(jid, dest){
+  const el = document.getElementById('dl-job');
+  el.innerHTML = '<pre class="feed" style="max-height:160px"></pre>' +
+                 '<span class="mut">downloading…</span>';
+  const pre = el.querySelector('pre');
+  const note = el.lastElementChild;
+  let j = null;
+  (function tick(){
+    fetch('/api/jobs/' + jid, {credentials: 'same-origin'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) { j = d; pre.textContent = d.log || ''; pre.scrollTop = pre.scrollHeight; }
+        if (!j || j.status === 'running') return setTimeout(tick, 2000);
+        note.textContent = j.status === 'success' ? 'done → ' + dest.replace(/^\/home\/[^/]+/, '~')
+                                                  : 'failed — see log';
+        if (j.status === 'success') setTimeout(() => location.reload(), 800);
+      })
+      .catch(() => setTimeout(tick, 4000));
+  })();
+}
+</script>
 {% endblock %}
