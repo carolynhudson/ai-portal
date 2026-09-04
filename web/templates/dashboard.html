@@ -135,9 +135,14 @@
     <div class="bubble-body">
       <div class="kv"><span class="k">current</span><span class="mono" id="upd-current">—</span></div>
       <div class="kv"><span class="k">repo head</span><span class="mono" id="upd-head">—</span></div>
+      <div class="kv"><span class="k">upstream</span><span class="mono" id="upd-remote">—</span></div>
+      <div class="kv"><span class="k">release notes</span><span id="upd-notes" style="display:none"><a id="upd-notes-link" href="#" target="_blank" rel="noopener">latest release ↗</a></span></div>
       <div class="kv"><span class="k">vulkan sdk</span><span class="mono" id="upd-sdk">—</span></div>
       <div class="kv svc-row"><span class="k">update</span>
-        <button onclick="updStart()">build + deploy master</button>
+        <span>
+          <button onclick="updCheck()">check now</button>
+          <button id="upd-btn" disabled onclick="updDeploy(document.getElementById('upd-btn').dataset.tag)">…</button>
+        </span>
       </div>
       <div id="upd-releases"></div>
       <div id="upd-job"></div>
@@ -263,6 +268,7 @@ async function loadUpd(){
     setText('upd-current', (d.current || '—') + (d.current_commit ? ' @ ' + d.current_commit.slice(0, 12) : ''));
     setText('upd-head', d.repo_head ? d.repo_head.slice(0, 12) : '—');
     setText('upd-sdk', (d.vulkan_sdk || '—').replace(/^\/home\/[^/]+/, '~'));
+    renderUpdRemote(d.remote || {});
     document.getElementById('upd-releases').innerHTML = (d.releases || []).map(e =>
       '<div class="kv"><span class="k">' + esc(e.name) + '</span><span>' +
       (e.commit || '').slice(0, 12) + ' · ' + (e.built_at || '').slice(0, 10) + ' ' +
@@ -301,13 +307,61 @@ async function pollUpd(){
     }
   }catch(e){ /* transient */ }
 }
-async function updStart(){
-  if (!confirm('Update llama.cpp to latest master?\n\nThis fetches, builds (~10–20 min), verifies and swaps the release, then RESTARTS THE ROUTER — every agent session riding it will drop.')) return;
+function renderUpdRemote(rem){
+  const el = document.getElementById('upd-remote');
+  const btn = document.getElementById('upd-btn');
+  const notes = document.getElementById('upd-notes');
+  if (!el || !btn) return;
+  if (rem.error) {
+    el.textContent = rem.error;
+    btn.textContent = 'update unavailable'; btn.disabled = true; btn.dataset.tag = '';
+    if (notes) notes.style.display = 'none';
+    return;
+  }
+  let s = '';
+  if (rem.master_head) s += 'master ' + rem.master_head.slice(0, 12);
+  if (rem.latest_release) s += (s ? ' · ' : '') + 'release ' + rem.latest_release;
+  s += ' · behind master ' + (rem.behind_master != null ? rem.behind_master : '?');
+  if (rem.behind_release != null) s += ' · behind release ' + rem.behind_release;
+  if (rem.stale) s += ' · (stale — offline)';
+  el.textContent = s || '—';
+  if (rem.release_url && notes) {
+    document.getElementById('upd-notes-link').href = rem.release_url;
+    notes.style.display = '';
+  } else if (notes) { notes.style.display = 'none'; }
+  if (rem.update_available) {
+    // a newer tagged release wins over raw master (stable first)
+    btn.dataset.tag = (rem.behind_release > 0) ? rem.latest_release : 'HEAD';
+    btn.textContent = (rem.behind_release > 0)
+      ? ('build + deploy ' + rem.latest_release) : 'build + deploy master';
+    btn.disabled = false;
+  } else {
+    btn.dataset.tag = ''; btn.textContent = 'up to date'; btn.disabled = true;
+  }
+}
+async function updCheck(){
+  const el = document.getElementById('upd-remote');
+  if (el) el.textContent = 'checking upstream…';
+  try{
+    const r = await fetch('/api/updates/llamacpp/check',
+                          {method: 'POST', credentials: 'same-origin'});
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert('check failed: ' + (d.detail || r.status));
+    }
+    loadUpd();  // the probe just refreshed the TTL cache
+  }catch(e){ if (el) el.textContent = 'check failed: ' + e; }
+}
+async function updDeploy(tag){
+  if (!tag) return;
+  const what = tag === 'HEAD' ? 'latest master' : 'release ' + tag;
+  if (!confirm('Update llama.cpp to ' + what + '?\n\nThis fetches, builds (~10–20 min), verifies and swaps the release, then RESTARTS THE ROUTER — every agent session riding it will drop.')) return;
   try{
     const r = await fetch('/api/updates/llamacpp', {
       method: 'POST', credentials: 'same-origin',
       headers: {'content-type': 'application/json'},
-      body: JSON.stringify({target: 'HEAD', restart: true, smoke: true})});
+      body: JSON.stringify({target: tag, restart: true, smoke: true})});
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { alert('update refused: ' + (d.detail || r.status)); return; }
     UPD.job = d.job; UPD.timer = setInterval(pollUpd, 3000);

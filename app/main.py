@@ -311,6 +311,18 @@ def create_app() -> FastAPI:
         p = get_provider("llamacpp")
         return p.update_status()
 
+    @app.post("/api/updates/llamacpp/check")
+    def api_update_check(_=Depends(_require_auth)):
+        """Force a fresh upstream probe: one git fetch, then local counts of
+        how far the deployed release is behind master and the latest tag."""
+        p = get_provider("llamacpp")
+        st = p.remote_state(force=True)
+        db.event("portal", "update",
+                 f"llamacpp: manual upstream check "
+                 f"(behind master {st.get('behind_master')}, "
+                 f"release {st.get('latest_release')})")
+        return st
+
     @app.post("/api/updates/llamacpp")
     def api_update(body: UpdateBody, _=Depends(_require_auth)):
         """Start the build→stage→verify→swap→restart pipeline in the

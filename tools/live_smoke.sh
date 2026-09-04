@@ -38,6 +38,15 @@ import sys,json
 d=json.load(sys.stdin)
 print('  current', d['current'], '| head', (d['repo_head'] or '—')[:12],
       '| releases', len(d['releases']), '| vulkan', (d['vulkan_sdk'] or '').rsplit('/',1)[-1])
+r=d.get('remote') or {}
+if r.get('error'):
+    print('  upstream', r['error'])
+else:
+    print('  upstream master', (r.get('master_head') or '?')[:12],
+          '| behind master', r.get('behind_master'),
+          '| release', r.get('latest_release'),
+          '| behind release', r.get('behind_release'),
+          '| notes', r.get('release_url'))
 "
 echo "=== no-op update (target == deployed release => job succeeds, no build/swap) ==="
 CUR=$(curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/updates/llamacpp" | python3 -c "import sys,json;print(json.load(sys.stdin)['current_commit'] or '')")

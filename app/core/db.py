@@ -100,6 +100,7 @@ SETTINGS_DEFAULTS = {
     "router_poll_ms": 2500,    # dashboard hero (llama router) refresh interval
     "metrics_poll_ms": 2000,   # host metrics chart refresh interval
     "router_metrics": True,    # llama router runs with --metrics (exposes /metrics)
+    "remote_check_ttl_hours": 6.0,  # upstream probe cache (a few checks a day)
 }
 
 

@@ -36,8 +36,7 @@ def _origin_main(repo: str) -> str | None:
         out = subprocess.run(["git", "-C", str(repo), "ls-remote", "--symref", "origin", "HEAD"],
                              capture_output=True, text=True, timeout=25)
         lines = [l for l in out.stdout.splitlines() if l.strip()]
-        if len(lines) >= 2:
-            return lines[1].split()[0] if origin else None
+        return lines[1].split()[0] if len(lines) >= 2 else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -83,26 +82,117 @@ def _binary_version() -> str | None:
 _BEHIND_CACHE = (0.0, None)
 
 
-def behind_by() -> dict:
-    """Local repo HEAD vs origin/main. Cached 5 min (git ls-remote needs network)."""
-    global _BEHIND_CACHE
-    now = time.time()
-    if now - _BEHIND_CACHE[0] < 300:
-        return _BEHIND_CACHE[1]
-    local = _git_head(paths.LLAMA_REPO)
-    origin = _origin_main(paths.LLAMA_REPO)
-    n = None
-    if local and origin:
+def _release_url(tag: str) -> str | None:
+    """GitHub release-notes URL for a tag, derived from the remote URL."""
+    try:
+        url = _git(paths.LLAMA_REPO, "remote", "get-url", "origin",
+                   log=lambda m: None).strip()
+    except RuntimeError:
+        return None
+    url = re.sub(r"\.git$", "", url)
+    m = re.match(r"^(?:https?://|git@)?([^/:]+)[:/](.+)$", url)
+    if not m:
+        return None
+    host, repo_path = m.groups()
+    return f"https://{host}/{repo_path}/releases/tag/{tag}"
+
+
+_REMOTE_CACHE_KEY = "llamacpp_remote_state"
+
+
+def _cache_read() -> dict:
+    v = db.get_setting(_REMOTE_CACHE_KEY)
+    return v if isinstance(v, dict) else {}
+
+
+def _cache_write(state: dict) -> None:
+    # direct upsert: routine cache writes shouldn't spam the audit log
+    db.execute("INSERT INTO settings (key,value) VALUES (?,?) "
+               "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+               (_REMOTE_CACHE_KEY, json.dumps(state)))
+
+
+def _remote_state_probe(force: bool = False) -> dict:
+    """Upstream probe: how far is the *deployed* release behind origin's
+    default branch and the latest v-tag (the GitHub release)?
+
+    Cached for ``remote_check_ttl_hours`` (default 6h, a few checks a day);
+    the check-now button forces a fresh probe. Offline -> last good state,
+    flagged ``stale``.
+    """
+    cached = _cache_read()
+    ttl = float(db.get_setting("remote_check_ttl_hours", 6.0) or 6.0)
+    if not force and cached and time.time() - cached.get("checked_at", 0) < ttl * 3600:
+        return cached
+    repo = paths.LLAMA_REPO
+    if not (repo / ".git").exists():
+        return {"error": "llama.cpp repo missing"}
+    try:
+        _run(lambda m: None, ["git", "-C", str(repo), "fetch", "--tags",
+                              "--quiet", "origin"], timeout=300)
+    except RuntimeError:
+        st = dict(cached)
+        st.update({"stale": True, "error": "fetch failed (offline?)"})
+        return st
+    try:
+        head = _git(repo, "rev-parse", "--verify", "origin/HEAD^{commit}",
+                    log=lambda m: None).strip()
+    except RuntimeError:
+        head = _git(repo, "rev-parse", "--verify", "origin/master^{commit}",
+                    log=lambda m: None).strip()
+    reg = releases()
+    cur = next((r for r in reg.get("releases", [])
+                if r.get("name") == reg.get("current")), None)
+    deployed = (cur or {}).get("commit")
+
+    def _count(ref: str) -> int | None:
+        if not deployed:
+            return None
         try:
-            out = subprocess.run(["git", "-C", str(paths.LLAMA_REPO), "rev-list",
-                                  "--count", f"{local}..{origin}"],
-                                 capture_output=True, text=True, timeout=25)
-            n = int(out.stdout.strip()) if out.stdout.strip().isdigit() else None
-        except Exception:  # noqa: BLE001
-            n = None
-    data = {"local": local, "origin": origin, "behind": n}
-    _BEHIND_CACHE = (now, data)
-    return data
+            out = _git(repo, "rev-list", "--count", f"{deployed}..{ref}",
+                       log=lambda m: None)
+            return int(out.strip())
+        except RuntimeError:
+            return None
+
+    tags = _git(repo, "tag", "-l", "v[0-9]*", "--sort=-v:refname",
+                log=lambda m: None).split()
+    latest = tags[0] if tags else None
+    release_commit = None
+    behind_release = None
+    if latest:
+        try:
+            release_commit = _git(repo, "rev-parse", "--verify",
+                                  f"{latest}^{{commit}}",
+                                  log=lambda m: None).strip()
+            behind_release = _count(f"{latest}^{{commit}}")
+        except RuntimeError:
+            release_commit = None
+    state = {
+        "checked_at": time.time(),
+        "master_head": head,
+        "behind_master": _count(head),
+        "latest_release": latest,
+        "release_commit": release_commit,
+        "behind_release": behind_release,
+        "release_url": _release_url(latest) if latest else None,
+        "update_available": bool(behind_release and behind_release > 0)
+                            or bool(_count(head)),
+    }
+    _cache_write(state)
+    return state
+
+
+def behind_by() -> dict:
+    """Local repo HEAD vs the remote default branch.
+
+    Delegates to :func:`remote_state` (TTL-cached fetch + count) so the
+    dashboard's health line and the release bubble share one probe.
+    """
+    st = _remote_state_probe()
+    return {"local": _git_head(paths.LLAMA_REPO),
+            "origin": st.get("master_head"),
+            "behind": st.get("behind_master")}
 
 
 class LlamaCpp(Provider):
@@ -165,8 +255,13 @@ class LlamaCpp(Provider):
             "repo_head": _git_head(paths.LLAMA_REPO),
             "releases": reg.get("releases", []),
             "vulkan_sdk": str(paths.VULKAN_SDK),
+            "remote": _remote_state_probe(),
             "job": updater.latest_job(self.key),
         }
+
+    def remote_state(self, force: bool = False) -> dict:
+        """Upstream probe (master + latest release) for the release bubble."""
+        return _remote_state_probe(force=force)
 
     def preflight(self) -> dict:
         """Fast local checks done *before* a job is started, so the API can
