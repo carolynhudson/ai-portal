@@ -7,7 +7,9 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -514,8 +516,20 @@ class LlamaCpp(Provider):
         log(f"smoke worker: {model.name} on 127.0.0.1:{port}")
         proc = subprocess.Popen(
             [str(rel_dir / "llama-server"), "--model", str(model),
-             "--host", "127.0.0.1", "--port", str(port), "-c", "128", "-v", "0"],
+             "--host", "127.0.0.1", "--port", str(port), "-c", "128"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # drain the pipe in a thread: a chatty startup can fill the 64 KB
+        # buffer and deadlock the server before it ever binds the port
+        tail = deque(maxlen=60)
+
+        def _drain() -> None:
+            assert proc.stdout is not None
+            for ln in proc.stdout:
+                tail.append(ln)
+            proc.stdout.close()
+
+        drainer = threading.Thread(target=_drain, daemon=True)
+        drainer.start()
         ok = False
         try:
             for _ in range(180):
@@ -528,6 +542,8 @@ class LlamaCpp(Provider):
                         break
                 except Exception:  # noqa: BLE001 — not up yet
                     time.sleep(1)
+                else:
+                    time.sleep(1)  # server up but /health not 200 yet
         finally:
             proc.terminate()
             try:
@@ -535,9 +551,12 @@ class LlamaCpp(Provider):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+            drainer.join(timeout=5)
         if not ok:
-            raise RuntimeError("smoke worker did not become healthy:\n"
-                               + (proc.stdout or "")[-1500:])
+            log("smoke worker output (tail):")
+            log("".join(tail)[-1500:] or "(no output)")
+            raise RuntimeError("smoke worker did not become healthy "
+                               "(output tail in job log)")
         log("smoke worker OK")
 
 
