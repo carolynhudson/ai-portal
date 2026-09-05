@@ -93,6 +93,30 @@
   <pre id="router-feed" class="feed">{% for ev in r.activity %}<span class="ln {{ ev.kind }}">{{ ev.text }}</span>{% else %}<span class="ln mut">no recent log lines captured</span>{% endfor %}</pre>
 </div>
 
+{# ---- live ComfyUI: the other running thing on this box ---- #}
+<div class="card router-hero">
+  <div class="hero-head">
+    <h3>ComfyUI</h3>
+    <span class="pill {{ 'ok' if comfy.service.state == 'active' else 'bad' }}" id="comfy-state">{{ comfy.service.state }}</span>
+    <span class="mut" id="comfy-since">{% if comfy.service.since %}up since {{ comfy.service.since }}{% endif %}</span>
+  </div>
+  <div class="hero-cols">
+    <div>
+      <div class="light-row">
+        <span class="light {{ 'on' if comfy.web.ok else 'off' }}" id="comfy-light"></span>
+        <a class="light-label" href="{{ comfy.host }}" target="_blank" rel="noopener">Web UI</a>
+        <span class="mut" id="comfy-web">{{ ('ok · ' ~ comfy.web.ms ~ 'ms') if comfy.web.ok else 'down' }}</span>
+      </div>
+    </div>
+    <div>
+      <div class="kv"><span class="k">version</span><span class="mono" id="comfy-version">{{ comfy.version or '—' }}</span></div>
+      <div class="kv"><span class="k">RAM</span><span class="mono" id="comfy-ram">—</span></div>
+    </div>
+  </div>
+  <h4 class="feed-head">Activity · live tail of <span class="mono">ai-comfyui</span></h4>
+  <pre id="comfy-feed" class="feed">{% for ln in comfy.activity %}<span class="ln">{{ ln }}</span>{% else %}<span class="ln mut">no recent log lines captured</span>{% endfor %}</pre>
+</div>
+
 <div class="sysline">
   {% if health.reboot_required %}<span class="badge">reboot required</span>{% endif %}
   <span>vulkan sdk: <span class="mono">{{ health.vulkan_sdk or '—' }}</span></span>
@@ -223,6 +247,40 @@ async function tick(){
 const _poll = (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.router_poll_ms) || 2500;
 tick();
 setInterval(tick, _poll);
+</script>
+<script>
+// ComfyUI hero — mirrors the router hero's polling (5s; ComfyUI is
+// quieter than the router, no need to hammer it).
+async function comfyTick(){
+  try{
+    const r = await fetch('/api/comfyui', {credentials: 'same-origin'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const pill = document.getElementById('comfy-state');
+    if (pill){ pill.textContent = d.service.state;
+               pill.className = 'pill ' + (d.service.state === 'active' ? 'ok' : 'bad'); }
+    set('comfy-since', d.service.since ? 'up since ' + d.service.since : '');
+    const light = document.getElementById('comfy-light');
+    if (light) light.className = 'light ' + (d.web.ok ? 'on' : 'off');
+    set('comfy-web', d.web.ok ? ('ok · ' + d.web.ms + 'ms') : 'down');
+    set('comfy-version', d.version || '—');
+    if (d.memory && d.memory.current != null){
+      const gb = (x) => (x / 1073741824).toFixed(1) + ' G';
+      set('comfy-ram', gb(d.memory.current) + (d.memory.peak != null ? ' · peak ' + gb(d.memory.peak) : ''));
+    }
+    const feed = document.getElementById('comfy-feed');
+    if (feed){
+      const lines = (d.activity || []).map(l => typeof l === 'string' ? l : (l && l.text) || '');
+      feed.innerHTML = lines.length
+        ? lines.map(l => '<span class="ln">' + esc(l) + '</span>').join('')
+        : '<span class="ln mut">no recent log lines captured</span>';
+      feed.scrollTop = feed.scrollHeight;
+    }
+  }catch(e){ /* keep last good state on a transient error */ }
+}
+comfyTick();
+setInterval(comfyTick, 5000);
 </script>
 <script>
 // Phase B: service controls — start/stop/restart managed user units.

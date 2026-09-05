@@ -38,7 +38,7 @@ _DRAFT_RE = re.compile(r"draft acceptance\s*=\s*([\d.]+)\s*\(\s*(\d+)\s*accepted
 _cache: tuple[float, dict] = (0.0, {})
 
 
-def _probe(url: str) -> dict:
+def probe(url: str) -> dict:
     """Plain HTTP probe of the router web UI (status + latency only)."""
     import httpx
 
@@ -211,7 +211,7 @@ def _build() -> dict:
         "loopback_only": paths.ROUTER_HOST in ("127.0.0.1", "localhost"),
         "service": {"name": paths.ROUTER_UNIT, "state": svc.get("ActiveState", "unknown"),
                     "sub": svc.get("SubState"), "since": svc.get("Since")},
-        "web": _probe(base + "/"),
+        "web": probe(base + "/"),
         "api": api,
         "loaded": api.get("loaded") or parsed["loaded"],
         "tps": {"latest": parsed["tps_latest"], "recent": parsed["tps_recent"]},
@@ -235,6 +235,9 @@ def snapshot() -> dict:
                             "web": {"ok": False},
                             "api": {"ok": False, "count": 0, "ids": [], "loaded": None},
                             "loaded": None, "tps": {"latest": None, "recent": []},
+                            "totals": {"prompt_tokens": None,
+                                       "generated_tokens": None,
+                                       "enabled": False},
                             "completions": [], "memory": None,
                             "activity": [], "error": str(e)})
     return _cache[1]

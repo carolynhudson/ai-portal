@@ -121,6 +121,19 @@ config()   → read/propose validated config (e.g. presets.ini)
   `dspark-*` / `dflash-*`) into the right model subdir, skips identical
   size+hash files, refreshes inventory + presets, then offers router
   restart/hot-reload.
+  - *v1 (done 2026-09-04, `app/core/modeladd.py`)*: one paste box on the
+    models page accepts an `huggingface-cli`/`hf download` command, an
+    `org/repo` name, a direct file URL, or a local path; the portal fetches
+    (hf_hub / streaming / copy), sniffs the header (`modelmeta`: GGUF KV
+    walk + safetensors JSON header — no full-file parse), and files it in
+    the canonical store: GGUF → `~/ai/models/llama/<dir>/` (dir = filename
+    stem, the tree's convention; `mmproj-*`/`mtp-*`/`draft-*` nest under
+    their parent model's dir when unambiguous, else explicit `model_dir`),
+    safetensors/ckpt/bin → `~/ai/comfyui/models/<category>/` (auto-
+    classified from tensor keys, overridable). Placement is indexed into
+    `portal.db` (`models` + `model_files` with sha256) as a background job
+    (`POST /api/models/add` → `/api/jobs/{id}` progress). Remaining:
+    `--include` globs, size+hash skip, preset refresh, router restart offer.
 - **GC/dedup**: delete-or-link operations only with dry-run + confirm +
   rollback snapshot in `~/ai/state/rollback/`.
 
@@ -361,7 +374,23 @@ Remaining open (can proceed without them):
    page (26 categories); portal-side model downloads placed directly into
    `models/<category>/` (`POST /api/models/comfyui/download`, job-tracked,
    `.part`-then-rename) — replacing the browser-download-then-manual-copy
-   workflow. Remaining E scope: git/venv update pipeline for ComfyUI (reuses
-   the Phase C job runner; no build step) and Hugging Face CLI parsing for
-   download URLs. Then C–G per §7, and H (RAG/MCP, §4.8) when planned.
-   Each behind the §6 safety model.
+   workflow.
+   - **Phase E part 2 (done 2026-09-04)**: ComfyUI update pipeline —
+     `git fetch` → behind-count → `git pull --ff-only` (dirty tree aborts
+     with the file list) → venv `requirements.txt` sync → service restart +
+     health wait; one-click rollback (`git reset --hard <commit>`).
+     ComfyUI **hero pane** on the dashboard (service state pill, Web UI
+     light + link, version from `/system_stats`, cgroup RAM, journal tail;
+     polls `/api/comfyui` at 5 s — the same shape as the router hero).
+     Smart **add-model** panel (models page) implementing the §4.2 Downloads
+     v1: paste HF CLI command / `org/repo` / URL / local path → portal
+     fetches, sniffs, places (GGUF → `~/ai/models/llama/<dir>/`,
+     safetensors → `~/ai/comfyui/models/<category>/`), indexes portal.db;
+     `app/core/modeladd.py` + `modelmeta` sniffing. Also fixed: stale
+     `router.snapshot()`/`_probe` refs from the router.py rename, and a
+     real `_gguf_parse_kv` offset bug (any GGUF with >1 KV field failed to
+     parse — caught by the new `tests/test_modelmeta.py`, which also covers
+     the mmap-refusal fallback for sandboxed tmpfs). 64 tests pass;
+     `tools/live_smoke.sh` green. Remaining: C–G per §7 (D's presets +
+     GC/dedup are the rest of the model manager), and H (RAG/MCP, §4.8)
+     when planned. Each behind the §6 safety model.

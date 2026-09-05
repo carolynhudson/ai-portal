@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import paths, serviceenv, systemd
+from ..core import db, paths, serviceenv, systemd, modelmeta
 
 # Launch parameters, stored at ~/ai/config/comfyui.json. The env file the
 # service reads is *generated* from this; changing the json (via the API or by
@@ -151,21 +152,27 @@ class ComfyUI(Provider):
     # --------------------------------------------------- model inventory
     @staticmethod
     def categories() -> list[str]:
-        """The model subfolders ComfyUI searches (the real, on-disk ones)."""
+        """Model subfolders ComfyUI searches — excluding configs/ (per-arch
+        config jsons, not models) and hidden dirs."""
         if not paths.COMFY_MODELS.is_dir():
             return []
         return sorted(d.name for d in paths.COMFY_MODELS.iterdir()
-                      if d.is_dir() and not d.name.startswith((".", "_")))
+                      if d.is_dir() and not d.name.startswith((".", "_"))
+                      and d.name not in modelmeta.NON_MODEL_CATEGORIES)
 
     def inventory(self) -> list[dict]:
-        """models/<category>/<file> — per-category count, size, and files."""
+        """models/<category>/<weight file> — per-category count, size, files.
+
+        Only real weight files count (safetensors/ckpt/bin): the folders also
+        hold placeholder flags (put_*_here, .gitkeep) which are not models.
+        """
         out = []
         for cat in self.categories():
             d = paths.COMFY_MODELS / cat
             files = [{"name": f.name, "size": f.stat().st_size,
                       "mtime": f.stat().st_mtime}
                      for f in sorted(d.iterdir())
-                     if f.is_file() and not f.name.startswith(".")]
+                     if f.is_file() and f.suffix.lower() in modelmeta.WEIGHT_EXTS]
             if not files:
                 continue
             out.append({"category": cat, "count": len(files),
@@ -194,6 +201,149 @@ class ComfyUI(Provider):
         if dest.exists():
             raise ValueError(f"{dest.name} already exists in {cat}/")
         return dest_dir, dest
+
+    # ------------------------------------------- update pipeline (no build)
+    def remote_state(self, force: bool = False) -> dict:
+        """How far the checkout is behind origin/master (TTL-cached, same
+        pattern as the llama.cpp probe; stale-on-offline by design)."""
+        cached = db.get_setting("comfyui_remote_state")
+        ttl = float(db.get_setting("remote_check_ttl_hours", 6.0) or 6.0)
+        if (not force and isinstance(cached, dict)
+                and time.time() - cached.get("checked_at", 0) < ttl * 3600):
+            return cached
+        repo = paths.COMFY_REPO
+        if not (repo / ".git").exists():
+            return {"error": "comfyui repo missing"}
+        try:
+            subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin"],
+                           capture_output=True, text=True, timeout=120)
+        except Exception:  # noqa: BLE001
+            st = dict(cached) if isinstance(cached, dict) else {}
+            st.update({"stale": True, "error": "fetch failed (offline?)"})
+            return st
+
+        def head(ref: str) -> str | None:
+            out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify",
+                                  f"{ref}^{{commit}}"],
+                                 capture_output=True, text=True,
+                                 timeout=10).stdout.strip()
+            return out or None
+
+        local, remote = head("HEAD"), head("origin/master")
+        behind = None
+        if local and remote:
+            out = subprocess.run(["git", "-C", str(repo), "rev-list", "--count",
+                                  f"{local}..{remote}"],
+                                 capture_output=True, text=True,
+                                 timeout=10).stdout.strip()
+            behind = int(out) if out.isdigit() else None
+        st = {"checked_at": time.time(), "local_head": local,
+              "remote_head": remote, "behind": behind,
+              "update_available": bool(behind and behind > 0)}
+        db.execute("INSERT INTO settings (key,value) VALUES (?,?) "
+                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   ("comfyui_remote_state", json.dumps(st)))
+        return st
+
+    def update(self, restart: bool = True, log=print) -> dict:
+        """git pull --ff-only + venv requirements sync (+ optional manager
+        requirements), then restart the service if it is running.
+
+        Rollback caveat (recorded in the job log): git can be reset back, but
+        pip packages installed by the update are not uninstalled by a rollback.
+        """
+        repo = paths.COMFY_REPO
+        if not (repo / ".git").exists():
+            raise RuntimeError("comfyui repo missing")
+        dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                               capture_output=True, text=True,
+                               timeout=15).stdout.strip()
+        if dirty:
+            raise RuntimeError("comfyui repo has local changes — not updating:\n"
+                               + "\n".join(diry.splitlines()[:10]))
+        prev = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True,
+                              timeout=10).stdout.strip()
+        log(f"current commit {prev[:12]}")
+        subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin"],
+                       capture_output=True, text=True, timeout=120)
+        behind = subprocess.run(["git", "-C", str(repo), "rev-list", "--count",
+                                 f"{prev}..origin/master"],
+                                capture_output=True, text=True,
+                                timeout=10).stdout.strip()
+        if behind == "0":
+            log("no upstream changes — nothing to do")
+            return {"status": "noop", "commit": prev}
+        log(f"updating: {behind} commit(s) behind origin/master")
+        r = subprocess.run(["git", "-C", str(repo), "pull", "--ff-only",
+                            "--quiet", "origin", "master"],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"git pull failed:\n{r.stderr.strip()[:500]}")
+        new = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                             capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        log(f"pulled {prev[:12]} -> {new[:12]}")
+        venv_pip = [str(paths.COMFY_VENV / "bin" / "python"), "-m", "pip"]
+        log("syncing venv: pip install -r requirements.txt")
+        r = subprocess.run(venv_pip + ["install", "-q", "-r",
+                                       str(repo / "requirements.txt")],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0:
+            raise RuntimeError("requirements sync failed:\n"
+                               + (r.stderr or r.stdout)[-800:])
+        if (repo / "manager_requirements.txt").exists():
+            log("syncing venv: pip install -r manager_requirements.txt")
+            r = subprocess.run(venv_pip + ["install", "-q", "-r",
+                                           str(repo / "manager_requirements.txt")],
+                               capture_output=True, text=True, timeout=600)
+            if r.returncode != 0:
+                raise RuntimeError("manager requirements sync failed:\n"
+                                   + (r.stderr or r.stdout)[-800:])
+        restarted = False
+        st = systemd.unit_state(paths.COMFY_UNIT)
+        if restart and st.get("ActiveState") == "active":
+            log("restarting ai-comfyui")
+            systemd.service_action("comfyui", "restart")
+            ok = self._wait_healthy(log, wait=120)
+            if not ok:
+                raise RuntimeError("service did not become healthy after update"
+                                   " — consider rollback")
+            restarted = True
+        log(f"rollback note: git reset --hard {prev[:12]} restores this "
+            f"version (pip packages are NOT uninstalled by a rollback)")
+        return {"status": "success", "prev": prev, "commit": new,
+                "restarted": restarted}
+
+    def _wait_healthy(self, log, wait: int = 120) -> bool:
+        port = self.config()["port"]
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            try:
+                r = httpx.get(f"http://127.0.0.1:{port}/system_stats", timeout=3)
+                if r.status_code == 200:
+                    return True
+            except Exception:  # noqa: BLE001 — still starting
+                pass
+            time.sleep(3)
+        return False
+
+    def rollback(self, commit: str, restart: bool = True, log=print) -> dict:
+        """git reset --hard to a known commit + restart (pip is not rolled
+        back — see update())."""
+        repo = paths.COMFY_REPO
+        r = subprocess.run(["git", "-C", str(repo), "reset", "--hard", commit],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(f"git reset failed:\n{r.stderr.strip()[:400]}")
+        log(f"reset to {commit[:12]}")
+        restarted = False
+        st = systemd.unit_state(paths.COMFY_UNIT)
+        if restart and st.get("ActiveState") == "active":
+            systemd.service_action("comfyui", "restart")
+            self._wait_healthy(log, wait=120)
+            restarted = True
+        return {"status": "success", "commit": commit, "restarted": restarted}
 
     @staticmethod
     def download_file(url: str, dest_dir, dest, log) -> dict:

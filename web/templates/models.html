@@ -1,6 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Models · AI Portal{% endblock %}
 {% block body %}
+<h2>Add a model</h2>
+<div class="card" style="margin-bottom:16px">
+  <p class="mut">Paste a <code>huggingface-cli download …</code> command, an HF repo
+  name (<code>org/name</code>), a direct file URL, or a local path. The portal fetches
+  it, checks the format, and files it in the right store —
+  <code>~/ai/models/llama/&lt;model&gt;/</code> for GGUF,
+  <code>~/ai/comfyui/models/&lt;category&gt;/</code> for safetensors
+  (category auto-detected when the tensor names make it obvious).</p>
+  <form onsubmit="addModel(event)">
+    <div class="kv"><span class="k">source</span>
+      <input id="add-src" type="text" style="min-width:420px" required
+             placeholder="huggingface-cli download org/repo file.gguf | org/repo | https://… | ~/downloads/model.safetensors"></div>
+    <div class="kv"><span class="k">filename</span>
+      <input id="add-name" type="text" placeholder="optional — which file (url / hf repo)"></div>
+    <div class="kv"><span class="k">model dir</span>
+      <input id="add-dir" type="text" placeholder="optional — llama dir, e.g. for mmproj/draft files"></div>
+    <div class="kv"><span class="k">category</span>
+      <select id="add-cat">
+        <option value="">auto (safetensors)</option>
+        {% for c in comfy_categories %}<option>{{ c }}</option>{% endfor %}
+      </select>
+      <span class="mut">safetensors only</span></div>
+    <button type="submit">add model</button>
+    <div id="add-job"></div>
+  </form>
+</div>
+
 <h2>llama.cpp models</h2>
 
 <div class="card" style="margin-bottom:14px">
@@ -65,6 +92,58 @@
 {% endif %}
 
 <script>
+function esc(s){ return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Smart add-model: the pasted source can be an HF CLI command, an HF repo
+// name, a direct URL, or a local path — sniff which, then let the backend do
+// the fetching, format check and placement (one background job).
+function classifySrc(v){
+  if (/^(huggingface-?cli|hf)\s+download\b/i.test(v)) return 'hf_cli';
+  if (/^https?:\/\//i.test(v)) return 'url';
+  if (/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-/]+$/.test(v)) return 'hf_repo';
+  return 'path';
+}
+async function addModel(ev){
+  ev.preventDefault();
+  const raw = document.getElementById('add-src').value.trim();
+  if (!raw) return;
+  const body = {};
+  body[classifySrc(raw)] = raw;
+  body.filename = document.getElementById('add-name').value.trim() || null;
+  body.model_dir = document.getElementById('add-dir').value.trim() || null;
+  body.category = document.getElementById('add-cat').value || null;
+  const box = document.getElementById('add-job');
+  box.innerHTML = '<span class="mut">starting…</span>';
+  try{
+    const r = await fetch('/api/models/add', {method: 'POST',
+      credentials: 'same-origin', headers: {'content-type': 'application/json'},
+      body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ box.innerHTML = '<span class="mut">' + esc(d.detail || r.status) + '</span>'; return; }
+    pollAddJob(d.job);
+  }catch(e){ box.innerHTML = '<span class="mut">' + esc(e) + '</span>'; }
+}
+function pollAddJob(jid){
+  const box = document.getElementById('add-job');
+  box.innerHTML = '<pre class="feed" style="max-height:180px"></pre><span class="mut">working…</span>';
+  const pre = box.querySelector('pre');
+  const note = box.lastElementChild;
+  let j = null;
+  (function tick(){
+    fetch('/api/jobs/' + jid, {credentials: 'same-origin'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d){ j = d; pre.textContent = d.log || ''; pre.scrollTop = pre.scrollHeight; }
+        if (!j || j.status === 'running') return setTimeout(tick, 2000);
+        note.textContent = j.status === 'success' ? 'done — refreshing…'
+                                                  : 'failed — see log above';
+        if (j.status === 'success') setTimeout(() => location.reload(), 800);
+      })
+      .catch(() => setTimeout(tick, 4000));
+  })();
+}
+
 // Phase E: portal-side ComfyUI model download (never via the browser).
 async function comfyDownload(ev){
   ev.preventDefault();

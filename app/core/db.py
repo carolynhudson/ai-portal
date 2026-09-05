@@ -164,3 +164,33 @@ def record_release(tool: str, rid: str, path: str, commit: str, sdk: str,
 def set_release_active(tool: str, rid: str, active: bool = True) -> None:
     execute('UPDATE releases SET active=? WHERE tool=? AND id=?',
             (1 if active else 0, tool, rid))
+
+
+# -------------------------------------------------------------------- models
+
+def index_model(model_id: str, dir_path, role: str, files: list) -> None:
+    """Upsert a model into the portal index (``models`` + ``model_files``).
+
+    ``files`` is a list of {"name" (relative to dir_path), "size", "sha256",
+    "role"}; sha256 may be None for big pre-existing files not hashed yet.
+    """
+    from pathlib import Path as _Path
+
+    c = _conn()
+    c.execute(
+        "INSERT INTO models (id, dir, role_files, size_bytes, updated_at) "
+        "VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        "dir=excluded.dir, role_files=excluded.role_files, "
+        "size_bytes=excluded.size_bytes, updated_at=excluded.updated_at",
+        (model_id, str(dir_path),
+         json.dumps({"role": role, "files": [f["name"] for f in files]}),
+         sum(f["size"] for f in files), time.time()))
+    for f in files:
+        c.execute(
+            "INSERT INTO model_files (path, model, size, sha256, role) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET "
+            "model=excluded.model, size=excluded.size, "
+            "sha256=excluded.sha256, role=excluded.role",
+            (str(_Path(dir_path) / f["name"]), model_id, f["size"],
+             f.get("sha256"), f.get("role", role)))
+    c.commit()

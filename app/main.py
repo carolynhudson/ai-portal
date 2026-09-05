@@ -17,9 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import metrics, router
+import httpx
+
+from . import metrics, router as router_mod
 from .core import config as cfg
-from .core import db, paths, systemd, updater
+from .core import db, modeladd, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
 HERE = Path(__file__).resolve().parent
@@ -56,6 +58,27 @@ class ComfyDownloadBody(BaseModel):
     url: str
     category: str
     filename: str | None = None
+
+
+class ComfyUpdateBody(BaseModel):
+    restart: bool = True
+
+
+class ComfyRollbackBody(BaseModel):
+    commit: str
+    confirm: bool = False
+
+
+class AddModelBody(BaseModel):
+    """One of: url (direct file), path (local file), hf_cli (pasted
+    huggingface-cli/hf download command), or hf_repo (org/name)."""
+    url: str | None = None
+    path: str | None = None
+    hf_cli: str | None = None
+    hf_repo: str | None = None
+    filename: str | None = None
+    category: str | None = None   # safetensors override; else auto-classified
+    model_dir: str | None = None  # llama model dir (for mmproj/draft files)
 
 _status_cache: tuple[float, dict] = (0.0, {})
 _STATUS_TTL = 10.0
@@ -104,6 +127,32 @@ def _llama_behind() -> dict:
     res = p.behind() if p else {}
     _behind_cache = (now, res)
     return res
+
+
+def comfy_snapshot() -> dict:
+    """Live ComfyUI state for the dashboard hero (mirrors router_mod.snapshot())."""
+    p = get_provider("comfyui")
+    cfg = p.config()
+    st = systemd.unit_state(paths.COMFY_UNIT)
+    web = router_mod.probe(f"http://127.0.0.1:{cfg['port']}/system_stats")
+    version = None
+    if web["ok"]:
+        try:
+            version = httpx.get(f"http://127.0.0.1:{cfg['port']}/system_stats",
+                                timeout=3).json()["system"]["comfyui_version"]
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "host": f"http://{cfg['listen']}:{cfg['port']}",
+        "port": cfg["port"],
+        "service": {"state": st.get("ActiveState", "unknown"),
+                    "sub": st.get("SubState"),
+                    "since": st.get("ActiveEnterTimestamp", "").split(" ")[0] or None},
+        "web": web,
+        "version": version,
+        "memory": systemd.service_memory(paths.COMFY_UNIT),
+        "activity": systemd.journal_tail(paths.COMFY_UNIT, 200)[-80:],
+    }
 
 
 def create_app() -> FastAPI:
@@ -186,10 +235,11 @@ def create_app() -> FastAPI:
         s = _settings()
         providers = {p.key: _provider_card(p.status()) for p in PROVIDERS}
         health = _health_bundle()
-        snap = router.snapshot()
+        snap = router_mod.snapshot()
         return templates.TemplateResponse(request, "dashboard.html",
                                           {"providers": providers, "health": health,
-                                           "r": snap, "settings": db.current_settings()})
+                                           "r": snap, "comfy": comfy_snapshot(),
+                                           "settings": db.current_settings()})
 
     @app.get("/models")
     def models(request: Request, _=Depends(_require_auth)):
@@ -208,6 +258,7 @@ def create_app() -> FastAPI:
                                           {"live": live, "disk": disk,
                                            "diskroot": str(paths.LLAMA_MODELS),
                                            "comfy": comfy,
+                                           "comfy_categories": cp.categories() if cp else [],
                                            "comfyroot": str(paths.COMFY_MODELS),
                                            "home": str(paths.HOME)})
 
@@ -285,7 +336,7 @@ def create_app() -> FastAPI:
     @app.get("/api/router")
     def api_router(_=Depends(_require_auth)):
         """Live router state (web UI, REST API, models, loaded, tokens/s, log tail)."""
-        return router.snapshot()
+        return router_mod.snapshot()
 
     @app.get("/api/settings")
     def api_settings(_=Depends(_require_auth)):
@@ -307,6 +358,12 @@ def create_app() -> FastAPI:
                 "confirm": meta.get("confirm"),
             }
         return out
+
+    # ------------------------------------------------- comfyui live hero
+    @app.get("/api/comfyui")
+    def api_comfyui_live(_=Depends(_require_auth)):
+        """Live ComfyUI snapshot for the dashboard hero (mirrors /api/router)."""
+        return comfy_snapshot()
 
     # ------------------------------------------- comfyui (E: service + models)
     @app.post("/api/services/comfyui/ensure")
@@ -363,6 +420,28 @@ def create_app() -> FastAPI:
             raise HTTPException(409, "a download is already running")
         db.event("portal", "download", f"comfyui {body.url} -> {dest}")
         return {"job": jid, "dest": str(dest)}
+
+    @app.post("/api/models/add")
+    def api_add_model(body: AddModelBody, _=Depends(_require_auth)):
+        """Portal-side model acquisition: parse the pasted source (HF CLI
+        command, repo name, direct URL, local path), fetch it, sniff the
+        format and file it in the right store — the file never touches the
+        browser. Progress via /api/jobs/{id}."""
+        try:
+            src = modeladd.parse_source(url=body.url, path=body.path,
+                                        hf_cli=body.hf_cli,
+                                        hf_repo=body.hf_repo)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        jid = updater.start_job("model-add", src["label"],
+                                lambda log: modeladd.add_model(
+                                    src, filename=body.filename,
+                                    category=body.category,
+                                    model_dir=body.model_dir, log=log))
+        if jid is None:
+            raise HTTPException(409, "a model add is already running")
+        db.event("portal", "model-add", src["label"])
+        return {"job": jid, "source": src}
 
     @app.post("/api/services/{key}/{action}")
     def api_service_action(key: str, action: str, body: ServiceActionBody,
