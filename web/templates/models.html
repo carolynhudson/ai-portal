@@ -13,6 +13,9 @@
 .search-result-item h4{margin:0 0 6px;font-size:14px}
 .search-result-item .meta{font-size:12px;color:var(--mut);display:flex;gap:12px;flex-wrap:wrap}
 .search-result-item .tags{font-size:11px;color:var(--acc);margin-top:6px}
+.service-radio{display:flex;gap:16px;margin-bottom:12px;align-items:center}
+.service-radio label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px}
+.service-radio input[type="radio"]{cursor:pointer}
 </style>
 
 <h2>Models</h2>
@@ -24,21 +27,17 @@
 <div id="tab-search" class="model-tab-content active">
   <div class="card">
     <h3>Search Hugging Face Models</h3>
-    <p class="mut">Search for AI models on Hugging Face. GGUF models go to llama.cpp, safetensors go to ComfyUI.</p>
+    <p class="mut">Search for AI models on Hugging Face. Select the service you want to run the model on, then search by name or description.</p>
+    
+    <div class="service-radio">
+      <label><input type="radio" name="search-service" value="llamacpp" checked onchange="updateSearchTypes()"> 🦙 llama.cpp (GGUF models)</label>
+      <label><input type="radio" name="search-service" value="comfyui" onchange="updateSearchTypes()"> 🎨 ComfyUI (Safetensors models)</label>
+    </div>
+
     <form onsubmit="searchModels(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <input type="text" id="search-query" placeholder="search models (e.g., 'qwen', 'llama', 'mistral')" required style="min-width:300px">
-      <select id="search-pipeline">
-        <option value="">All pipelines</option>
-        <option value="text-generation">Text Generation</option>
-        <option value="feature-extraction">Feature Extraction</option>
-        <option value="sentence-similarity">Sentence Similarity</option>
-        <option value="text-to-image">Text to Image</option>
-      </select>
-      <select id="search-library">
-        <option value="">All libraries</option>
-        <option value="transformers">Transformers</option>
-        <option value="llama.cpp">llama.cpp</option>
-        <option value="diffusers">Diffusers</option>
+      <input type="text" id="search-query" placeholder="search models (e.g., 'qwen', 'llama', 'mistral', 'stable-diffusion')" required style="min-width:300px">
+      <select id="search-model-type">
+        <option value="">All model types</option>
       </select>
       <button type="submit">search</button>
     </form>
@@ -131,13 +130,46 @@ function switchModelTab(tab){
   document.getElementById('tab-' + tab).classList.add('active');
 }
 
+// Model type options for each service
+const MODEL_TYPES = {
+  llamacpp: [
+    {value: '', text: 'All model types'},
+    {value: 'text-generation', text: 'Chat/Conversational Models'},
+    {value: 'feature-extraction', text: 'Embedding/RAG Models'},
+    {value: 'audio-to-text', text: 'Audio to Text (Speech Recognition)'},
+    {value: 'image-to-text', text: 'Image to Text (Vision Models)'},
+  ],
+  comfyui: [
+    {value: '', text: 'All model types'},
+    {value: 'text-to-image', text: 'Text to Image (Diffusion Models)'},
+    {value: 'image-to-image', text: 'Image to Image'},
+    {value: 'text-generation', text: 'Checkpoints/Text Encoders'},
+    {value: 'feature-extraction', text: 'CLIP/Text Embeddings'},
+  ]
+};
+
+function updateSearchTypes(){
+  const service = document.querySelector('input[name="search-service"]:checked').value;
+  const select = document.getElementById('search-model-type');
+  select.innerHTML = '';
+  MODEL_TYPES[service].forEach(opt => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.text;
+    select.appendChild(option);
+  });
+}
+
+// Initialize search types on page load
+updateSearchTypes();
+
 // Model search
 async function searchModels(ev){
   ev.preventDefault();
   const query = document.getElementById('search-query').value.trim();
   if (!query) return;
-  const pipeline = document.getElementById('search-pipeline').value || null;
-  const library = document.getElementById('search-library').value || null;
+  const service = document.querySelector('input[name="search-service"]:checked').value;
+  const modelType = document.getElementById('search-model-type').value || null;
   const box = document.getElementById('search-job');
   const results = document.getElementById('search-results');
   box.innerHTML = '<span class="mut">searching Hugging Face...</span>';
@@ -145,15 +177,15 @@ async function searchModels(ev){
   try{
     const r = await fetch('/api/models/search', {method: 'POST',
       credentials: 'same-origin', headers: {'content-type': 'application/json'},
-      body: JSON.stringify({query, pipeline_tag: pipeline, library, limit: 20})});
+      body: JSON.stringify({query, service, model_type: modelType, limit: 20})});
     const d = await r.json().catch(() => ({}));
     if (!r.ok){ box.innerHTML = '<span class="mut">' + esc(d.message || d.detail || r.status) + '</span>'; return; }
     box.innerHTML = '<span class="mut">found ' + d.count + ' models</span>';
-    renderSearchResults(d.results);
+    renderSearchResults(d.results, service);
   }catch(e){ box.innerHTML = '<span class="mut">' + esc(e) + '</span>'; }
 }
 
-function renderSearchResults(results){
+function renderSearchResults(results, service){
   const container = document.getElementById('search-results');
   if (!results || results.length === 0){
     container.innerHTML = '<p class="mut">no models found</p>';
@@ -162,7 +194,8 @@ function renderSearchResults(results){
   let html = '';
   for (const m of results){
     const tags = (m.tags || []).slice(0, 5).join(', ');
-    const type = m.has_gguf ? 'GGUF (llama.cpp)' : (m.has_safetensors ? 'Safetensors (ComfyUI)' : 'Unknown');
+    const type = service === 'llamacpp' ? (m.has_gguf ? 'GGUF (llama.cpp)' : 'Not GGUF') 
+             : (m.has_safetensors ? 'Safetensors (ComfyUI)' : 'Not Safetensors');
     html += `<div class="search-result-item" onclick="selectModel('${esc(m.id)}')">
       <h4>${esc(m.id)}</h4>
       <div class="meta">

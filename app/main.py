@@ -87,8 +87,8 @@ class AddModelBody(BaseModel):
 class SearchModelsBody(BaseModel):
     """Search parameters for Hugging Face models."""
     query: str
-    pipeline_tag: str | None = None
-    library: str | None = None
+    service: str = "llamacpp"  # "llamacpp" or "comfyui"
+    model_type: str | None = None  # pipeline_tag or specific category
     limit: int = 20
 
 _status_cache: tuple[float, dict] = (0.0, {})
@@ -478,21 +478,34 @@ def create_app() -> FastAPI:
 
     @app.post("/api/models/search")
     def api_search_models(body: SearchModelsBody, _=Depends(_require_auth)):
-        """Search Hugging Face models by query, pipeline tag, and library.
+        """Search Hugging Face models by query, service type, and model type.
         Returns a list of ModelInfo summaries (id, tags, pipeline_tag, downloads, likes)."""
         try:
             import huggingface_hub
 
-            # Build filter parameters
+            # Build filter parameters based on service type
             filters = []
-            if body.pipeline_tag:
-                filters.append(body.pipeline_tag)
+            if body.service == "llamacpp":
+                # GGUF models for llama.cpp
+                filters.extend(["gguf", "llama.cpp"])
+            elif body.service == "comfyui":
+                # safetensors models for ComfyUI
+                if body.model_type in ["text-to-image", "image-to-image", "text-to-video"]:
+                    filters.extend(["diffusers", "safetensors"])
+                else:
+                    filters.extend(["transformers", "safetensors"])
+            else:
+                # Default: both GGUF and safetensors
+                pass
 
             # Search models
             models = huggingface_hub.list_models(
                 search=body.query,
-                pipeline_tag=body.pipeline_tag,
-                library=body.library,
+                pipeline_tag=body.model_type if body.model_type in [
+                    "text-generation", "feature-extraction", "image-to-text",
+                    "text-to-image", "image-to-image", "audio-to-text"
+                ] else None,
+                filter=filters if filters else None,
                 limit=body.limit,
                 full=True,
             )
