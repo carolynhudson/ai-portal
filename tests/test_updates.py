@@ -35,7 +35,8 @@ def test_updates_endpoint_shape():
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"current", "current_commit", "repo_head",
-                         "releases", "vulkan_sdk", "job", "remote"}
+                         "releases", "vulkan_sdk", "job", "remote",
+                         "binary", "source"}
     # throwaway home: probe either reports a missing repo or a failed
     # fetch — either way a well-formed dict
     assert isinstance(body["remote"], dict)

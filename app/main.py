@@ -8,10 +8,13 @@ no front-end re-engineering.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import (Depends, FastAPI, File, Form, HTTPException, Request,
+                     UploadFile)
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -421,6 +424,28 @@ def create_app() -> FastAPI:
         db.event("portal", "download", f"comfyui {body.url} -> {dest}")
         return {"job": jid, "dest": str(dest)}
 
+    @app.post("/api/models/upload")
+    async def api_upload_model(file: UploadFile = File(...),
+                               _=Depends(_require_auth)):
+        """Upload a model file to staging, then run it through the same
+        sniff → place → index pipeline as any other source."""
+        dest = (paths.STATE / "downloads" /
+                f"upload-{os.getpid()}-{int(time.time() * 1000)}")
+        dest.mkdir(parents=True, exist_ok=True)
+        p = dest / (file.filename or "upload.bin")
+        with open(p, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        job_id = updater.start_job(
+            "model-add", p.name,
+            lambda log: modeladd.add_model(
+                modeladd.parse_source(path=str(p)), log=log))
+        if job_id is None:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise HTTPException(status_code=409,
+                                detail="a model add is already running")
+        db.event("portal", "model-add", f"upload {p.name}")
+        return {"job": job_id, "path": str(p)}
+
     @app.post("/api/models/add")
     def api_add_model(body: AddModelBody, _=Depends(_require_auth)):
         """Portal-side model acquisition: parse the pasted source (HF CLI
@@ -512,6 +537,54 @@ def create_app() -> FastAPI:
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
         db.event("portal", "update", f"llamacpp: rollback -> {body.release}")
+        return res
+
+    # --------------------------------------------- updates (E: ComfyUI)
+    @app.get("/api/updates/comfyui")
+    def api_comfy_updates(_=Depends(_require_auth)):
+        """Installed commit, upstream distance, recent commits, last job."""
+        p = get_provider("comfyui")
+        return p.update_status()
+
+    @app.post("/api/updates/comfyui/check")
+    def api_comfy_update_check(_=Depends(_require_auth)):
+        """Force a fresh ``git fetch`` and re-count commits behind master."""
+        p = get_provider("comfyui")
+        st = p.remote_state(force=True)
+        db.event("portal", "update",
+                 f"comfyui: manual upstream check "
+                 f"(behind master {st.get('behind')})")
+        return st
+
+    @app.post("/api/updates/comfyui")
+    def api_comfy_update(body: ComfyUpdateBody, _=Depends(_require_auth)):
+        """git pull --ff-only + venv requirements sync + restart, in the
+        background; poll /api/jobs/{id} for progress."""
+        p = get_provider("comfyui")
+        if not (paths.COMFY_REPO / ".git").exists():
+            raise HTTPException(status_code=400,
+                                detail="ComfyUI repo not found")
+        job_id = updater.start_job("comfyui", "master",
+                                   lambda log: p.update(
+                                       restart=body.restart, log=log))
+        if job_id is None:
+            raise HTTPException(status_code=409,
+                                detail="an update is already running")
+        db.event("portal", "update",
+                 f"comfyui: job {job_id} started (restart={body.restart})")
+        return {"job": job_id}
+
+    @app.post("/api/updates/comfyui/rollback")
+    def api_comfy_rollback(body: ComfyRollbackBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        p = get_provider("comfyui")
+        try:
+            res = p.rollback(body.commit,
+                             log=lambda m: print("[ai-portal]", m))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        db.event("portal", "update", f"comfyui: rollback -> {body.commit[:12]}")
         return res
 
     @app.get("/api/jobs/{job_id}")

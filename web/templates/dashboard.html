@@ -6,6 +6,7 @@
 .router-hero{border-color:var(--acc)}
 .hero-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .hero-head h3{margin:0}
+.hero-controls{margin-left:auto;display:flex;gap:6px;align-items:center}
 .hero-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
 @media(max-width:640px){.hero-cols{grid-template-columns:1fr}}
 .light-row{display:flex;align-items:center;gap:9px;padding:3px 0;font-size:14px}
@@ -53,6 +54,12 @@
     <h3>llama.cpp router</h3>
     <span class="pill {{ 'ok' if r.service.state == 'active' else 'bad' }}" id="router-state">{{ r.service.state }}</span>
     <span class="mut" id="router-since">{% if r.service.since %}up since {{ r.service.since }}{% endif %}</span>
+    <span class="mut mono" style="margin-left:8px">svc: {{ r.service.name }}</span>
+    <div class="hero-controls">
+      <button onclick="svcAction('llamacpp', 'start')">start</button>
+      <button onclick="svcAction('llamacpp', 'stop')">stop</button>
+      <button onclick="svcAction('llamacpp', 'restart')">restart</button>
+    </div>
   </div>
 
   <div class="hero-cols">
@@ -99,6 +106,12 @@
     <h3>ComfyUI</h3>
     <span class="pill {{ 'ok' if comfy.service.state == 'active' else 'bad' }}" id="comfy-state">{{ comfy.service.state }}</span>
     <span class="mut" id="comfy-since">{% if comfy.service.since %}up since {{ comfy.service.since }}{% endif %}</span>
+    <span class="mut mono" style="margin-left:8px">svc: ai-comfyui</span>
+    <div class="hero-controls">
+      <button onclick="svcAction('comfyui', 'start')">start</button>
+      <button onclick="svcAction('comfyui', 'stop')">stop</button>
+      <button onclick="svcAction('comfyui', 'restart')">restart</button>
+    </div>
   </div>
   <div class="hero-cols">
     <div>
@@ -137,15 +150,6 @@
       {% for k, v in s.rows %}
       <div class="kv"><span class="k">{{ k }}</span><span class="mono">{{ v }}</span></div>
       {% endfor %}
-      {% if key in ("llamacpp", "comfyui") %}
-      <div class="kv svc-row"><span class="k">control</span>
-        <span>
-          <button onclick="svcAction('{{ key }}', 'start')">start</button>
-          <button onclick="svcAction('{{ key }}', 'stop')">stop</button>
-          <button onclick="svcAction('{{ key }}', 'restart')">restart</button>
-        </span>
-      </div>
-      {% endif %}
     </div>
   </details>
   {% endfor %}

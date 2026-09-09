@@ -259,22 +259,33 @@ def _place_weight(local: Path, meta: dict, category: str | None, log
 
 # ------------------------------------------------------------------- indexing
 
-def _index_llama_dir(d: Path, touched: Path, touched_sha: str) -> None:
+def _meta_for_db(meta: dict) -> dict:
+    """Shrink a sniffed header for storage (safetensors keys can be long)."""
+    m = {k: v for k, v in meta.items() if k != "keys"}
+    keys = meta.get("keys") or []
+    m["tensor_count"] = meta.get("num_tensors") or len(keys)
+    m["sample_keys"] = keys[:25]
+    return m
+
+
+def _index_llama_dir(d: Path, touched: Path, touched_sha: str,
+                    touched_meta: dict | None = None) -> None:
     """(Re)index a whole llama model dir; pre-existing files keep whatever
-    hash they already had (a 270 GB gguf is not re-hashed on a re-index)."""
+    hash/meta they already had (a 270 GB gguf is not re-hashed on a re-index)."""
     files = []
     for f in sorted(d.rglob("*")):
         if not f.is_file() or f.suffix.lower() != ".gguf":
             continue
         if f == touched:
-            sha = touched_sha
+            sha, meta = touched_sha, touched_meta
         else:
-            prev = db.query("SELECT sha256 FROM model_files WHERE path=?",
+            prev = db.query("SELECT sha256, meta FROM model_files WHERE path=?",
                             (str(f),))
             sha = prev[0][0] if prev and prev[0][0] else None
+            meta = json.loads(prev[0][1]) if prev and prev[0][1] else None
         files.append({"name": str(f.relative_to(d)),
                       "size": f.stat().st_size, "sha256": sha,
-                      "role": _gguf_file_role(f.name)})
+                      "role": _gguf_file_role(f.name), "meta": meta})
     db.index_model(d.name, d, "llama", files)
 
 
@@ -303,7 +314,7 @@ def add_model(src: dict, filename: str | None = None,
             d, dest = _place_gguf(local, model_dir, log)
             log("hashing new file…")
             sha = _sha256(dest, log)
-            _index_llama_dir(d, dest, sha)
+            _index_llama_dir(d, dest, sha, _meta_for_db(meta))
             model_id = d.name
         else:
             d, dest, cat = _place_weight(local, meta, category, log)
@@ -312,7 +323,8 @@ def add_model(src: dict, filename: str | None = None,
             db.index_model(model_id, d, "comfyui",
                            [{"name": dest.name, "size": dest.stat().st_size,
                              "sha256": sha,
-                             "role": dest.suffix.lstrip(".").lower()}])
+                             "role": dest.suffix.lstrip(".").lower(),
+                             "meta": _meta_for_db(meta)}])
         log(f"indexed {model_id} in portal.db")
         return {"path": str(dest), "model": model_id,
                 "bytes": dest.stat().st_size, "sha256": sha}

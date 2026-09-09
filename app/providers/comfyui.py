@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, paths, serviceenv, systemd, modelmeta
+from ..core import db, paths, serviceenv, systemd, updater, modelmeta
 
 # Launch parameters, stored at ~/ai/config/comfyui.json. The env file the
 # service reads is *generated* from this; changing the json (via the API or by
@@ -161,10 +161,10 @@ class ComfyUI(Provider):
                       and d.name not in modelmeta.NON_MODEL_CATEGORIES)
 
     def inventory(self) -> list[dict]:
-        """models/<category>/<weight file> — per-category count, size, files.
+        """models/<category>/<file> — per-category count, size, and files.
 
-        Only real weight files count (safetensors/ckpt/bin): the folders also
-        hold placeholder flags (put_*_here, .gitkeep) which are not models.
+        Only .safetensors are listed: this library is safetensors-based, and
+        the folders also hold ComfyUI's put_*_here flag files (no extension).
         """
         out = []
         for cat in self.categories():
@@ -172,7 +172,7 @@ class ComfyUI(Provider):
             files = [{"name": f.name, "size": f.stat().st_size,
                       "mtime": f.stat().st_mtime}
                      for f in sorted(d.iterdir())
-                     if f.is_file() and f.suffix.lower() in modelmeta.WEIGHT_EXTS]
+                     if f.is_file() and f.suffix == ".safetensors"]
             if not files:
                 continue
             out.append({"category": cat, "count": len(files),
@@ -244,6 +244,31 @@ class ComfyUI(Provider):
                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                    ("comfyui_remote_state", json.dumps(st)))
         return st
+
+    def update_status(self) -> dict:
+        """Everything the dashboard's ComfyUI update panel needs."""
+        return {
+            "commit": _git(paths.COMFY_REPO, "rev-parse", "HEAD"),
+            "repo": str(paths.COMFY_REPO),
+            "remote": self.remote_state(),
+            "recent": self._recent_commits(8),
+            "job": updater.latest_job("comfyui"),
+        }
+
+    @staticmethod
+    def _recent_commits(n: int = 8) -> list[dict]:
+        r = subprocess.run(["git", "-C", str(paths.COMFY_REPO), "log",
+                            f"--max-count={n}", "--format=%h|%s|%ci"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return []
+        out = []
+        for ln in r.stdout.splitlines():
+            parts = ln.split("|", 2)
+            if len(parts) == 3:
+                out.append({"sha": parts[0], "subject": parts[1],
+                            "date": parts[2][:10]})
+        return out
 
     def update(self, restart: bool = True, log=print) -> dict:
         """git pull --ff-only + venv requirements sync (+ optional manager

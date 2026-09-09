@@ -257,6 +257,8 @@ class LlamaCpp(Provider):
             "repo_head": _git_head(paths.LLAMA_REPO),
             "releases": reg.get("releases", []),
             "vulkan_sdk": str(paths.VULKAN_SDK),
+            "binary": _binary_version(),
+            "source": str(paths.LLAMA_REPO),
             "remote": _remote_state_probe(),
             "job": updater.latest_job(self.key),
         }

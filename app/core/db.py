@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS models (
   id TEXT PRIMARY KEY, dir TEXT, role_files TEXT, size_bytes INTEGER, updated_at REAL
 );
 CREATE TABLE IF NOT EXISTS model_files (
-  path TEXT PRIMARY KEY, model TEXT, size INTEGER, sha256 TEXT, role TEXT
+  path TEXT PRIMARY KEY, model TEXT, size INTEGER, sha256 TEXT, role TEXT,
+  meta TEXT
 );
 CREATE TABLE IF NOT EXISTS presets_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, note TEXT, before TEXT, after TEXT
@@ -66,6 +67,10 @@ def _conn() -> sqlite3.Connection:
 def init() -> None:
     c = _conn()
     c.executescript(SCHEMA)
+    try:  # pre-existing DBs: add the metadata column once
+        c.execute("ALTER TABLE model_files ADD COLUMN meta TEXT")
+    except sqlite3.OperationalError:  # column already there
+        pass
     c.commit()
 
 
@@ -172,7 +177,8 @@ def index_model(model_id: str, dir_path, role: str, files: list) -> None:
     """Upsert a model into the portal index (``models`` + ``model_files``).
 
     ``files`` is a list of {"name" (relative to dir_path), "size", "sha256",
-    "role"}; sha256 may be None for big pre-existing files not hashed yet.
+    "role", "meta"}; sha256 may be None for big pre-existing files not
+    hashed yet, meta is the sniffed header dict (JSON) or None.
     """
     from pathlib import Path as _Path
 
@@ -187,10 +193,11 @@ def index_model(model_id: str, dir_path, role: str, files: list) -> None:
          sum(f["size"] for f in files), time.time()))
     for f in files:
         c.execute(
-            "INSERT INTO model_files (path, model, size, sha256, role) "
-            "VALUES (?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET "
+            "INSERT INTO model_files (path, model, size, sha256, role, meta) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET "
             "model=excluded.model, size=excluded.size, "
-            "sha256=excluded.sha256, role=excluded.role",
+            "sha256=excluded.sha256, role=excluded.role, meta=excluded.meta",
             (str(_Path(dir_path) / f["name"]), model_id, f["size"],
-             f.get("sha256"), f.get("role", role)))
+             f.get("sha256"), f.get("role", role),
+             json.dumps(f["meta"]) if f.get("meta") else None))
     c.commit()
