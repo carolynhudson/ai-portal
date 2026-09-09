@@ -83,6 +83,14 @@ class AddModelBody(BaseModel):
     category: str | None = None   # safetensors override; else auto-classified
     model_dir: str | None = None  # llama model dir (for mmproj/draft files)
 
+
+class SearchModelsBody(BaseModel):
+    """Search parameters for Hugging Face models."""
+    query: str
+    pipeline_tag: str | None = None
+    library: str | None = None
+    limit: int = 20
+
 _status_cache: tuple[float, dict] = (0.0, {})
 _STATUS_TTL = 10.0
 _behind_cache: tuple[float, dict] = (0.0, {})
@@ -467,6 +475,47 @@ def create_app() -> FastAPI:
             raise HTTPException(409, "a model add is already running")
         db.event("portal", "model-add", src["label"])
         return {"job": jid, "source": src}
+
+    @app.post("/api/models/search")
+    def api_search_models(body: SearchModelsBody, _=Depends(_require_auth)):
+        """Search Hugging Face models by query, pipeline tag, and library.
+        Returns a list of ModelInfo summaries (id, tags, pipeline_tag, downloads, likes)."""
+        try:
+            import huggingface_hub
+
+            # Build filter parameters
+            filters = []
+            if body.pipeline_tag:
+                filters.append(body.pipeline_tag)
+
+            # Search models
+            models = huggingface_hub.list_models(
+                search=body.query,
+                pipeline_tag=body.pipeline_tag,
+                library=body.library,
+                limit=body.limit,
+                full=True,
+            )
+
+            results = []
+            for m in models:
+                # Check if model has GGUF or safetensors files
+                has_gguf = getattr(m, 'gguf', None) is not None
+                has_safetensors = getattr(m, 'safetensors', None) is not None
+
+                results.append({
+                    "id": m.id,
+                    "tags": getattr(m, 'tags', []),
+                    "pipeline_tag": getattr(m, 'pipeline_tag', None),
+                    "downloads": getattr(m, 'downloads', 0),
+                    "likes": getattr(m, 'likes', 0),
+                    "has_gguf": has_gguf,
+                    "has_safetensors": has_safetensors,
+                })
+
+            return {"results": results, "count": len(results)}
+        except Exception as e:
+            raise HTTPException(500, f"search failed: {str(e)}")
 
     @app.post("/api/services/{key}/{action}")
     def api_service_action(key: str, action: str, body: ServiceActionBody,

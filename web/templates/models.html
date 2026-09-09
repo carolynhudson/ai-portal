@@ -1,31 +1,79 @@
 {% extends "base.html" %}
 {% block title %}Models · AI Portal{% endblock %}
 {% block body %}
-<h2>Add a model</h2>
-<div class="card" style="margin-bottom:16px">
-  <p class="mut">Paste a <code>huggingface-cli download …</code> command, an HF repo
-  name (<code>org/name</code>), a direct file URL, or a local path. The portal fetches
-  it, checks the format, and files it in the right store —
-  <code>~/ai/models/llama/&lt;model&gt;/</code> for GGUF,
-  <code>~/ai/comfyui/models/&lt;category&gt;/</code> for safetensors
-  (category auto-detected when the tensor names make it obvious).</p>
-  <form onsubmit="addModel(event)">
-    <div class="kv"><span class="k">source</span>
-      <input id="add-src" type="text" style="min-width:420px" required
-             placeholder="huggingface-cli download org/repo file.gguf | org/repo | https://… | ~/downloads/model.safetensors"></div>
-    <div class="kv"><span class="k">filename</span>
-      <input id="add-name" type="text" placeholder="optional — which file (url / hf repo)"></div>
-    <div class="kv"><span class="k">model dir</span>
-      <input id="add-dir" type="text" placeholder="optional — llama dir, e.g. for mmproj/draft files"></div>
-    <div class="kv"><span class="k">category</span>
-      <select id="add-cat">
-        <option value="">auto (safetensors)</option>
-        {% for c in comfy_categories %}<option>{{ c }}</option>{% endfor %}
+<style>
+.model-tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.model-tab{padding:10px 16px;cursor:pointer;border:1px solid var(--line);border-bottom:none;background:var(--panel);color:var(--mut)}
+.model-tab.active{background:var(--bg);color:var(--fg);border-bottom:1px solid var(--bg)}
+.model-tab-content{display:none}
+.model-tab-content.active{display:block}
+.search-results{max-height:400px;overflow-y:auto;margin-top:12px}
+.search-result-item{padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;transition:background .15s}
+.search-result-item:hover{background:#1a2028}
+.search-result-item h4{margin:0 0 6px;font-size:14px}
+.search-result-item .meta{font-size:12px;color:var(--mut);display:flex;gap:12px;flex-wrap:wrap}
+.search-result-item .tags{font-size:11px;color:var(--acc);margin-top:6px}
+</style>
+
+<h2>Models</h2>
+<div class="model-tabs">
+  <div class="model-tab active" onclick="switchModelTab('search')">Search Hugging Face</div>
+  <div class="model-tab" onclick="switchModelTab('download')">Download / Add Model</div>
+</div>
+
+<div id="tab-search" class="model-tab-content active">
+  <div class="card">
+    <h3>Search Hugging Face Models</h3>
+    <p class="mut">Search for AI models on Hugging Face. GGUF models go to llama.cpp, safetensors go to ComfyUI.</p>
+    <form onsubmit="searchModels(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input type="text" id="search-query" placeholder="search models (e.g., 'qwen', 'llama', 'mistral')" required style="min-width:300px">
+      <select id="search-pipeline">
+        <option value="">All pipelines</option>
+        <option value="text-generation">Text Generation</option>
+        <option value="feature-extraction">Feature Extraction</option>
+        <option value="sentence-similarity">Sentence Similarity</option>
+        <option value="text-to-image">Text to Image</option>
       </select>
-      <span class="mut">safetensors only</span></div>
-    <button type="submit">add model</button>
-    <div id="add-job"></div>
-  </form>
+      <select id="search-library">
+        <option value="">All libraries</option>
+        <option value="transformers">Transformers</option>
+        <option value="llama.cpp">llama.cpp</option>
+        <option value="diffusers">Diffusers</option>
+      </select>
+      <button type="submit">search</button>
+    </form>
+    <div id="search-job" style="margin-top:12px"></div>
+    <div id="search-results" class="search-results"></div>
+  </div>
+</div>
+
+<div id="tab-download" class="model-tab-content">
+  <div class="card" style="margin-bottom:16px">
+    <h3>Download / Add Model</h3>
+    <p class="mut">Paste a <code>huggingface-cli download …</code> command, an HF repo
+    name (<code>org/name</code>), a direct file URL, or a local path. The portal fetches
+    it, checks the format, and files it in the right store —
+    <code>~/ai/models/llama/&lt;model&gt;/</code> for GGUF,
+    <code>~/ai/comfyui/models/&lt;category&gt;/</code> for safetensors
+    (category auto-detected when the tensor names make it obvious).</p>
+    <form onsubmit="addModel(event)">
+      <div class="kv"><span class="k">source</span>
+        <input id="add-src" type="text" style="min-width:420px" required
+               placeholder="huggingface-cli download org/repo file.gguf | org/repo | https://… | ~/downloads/model.safetensors"></div>
+      <div class="kv"><span class="k">filename</span>
+        <input id="add-name" type="text" placeholder="optional — which file (url / hf repo)"></div>
+      <div class="kv"><span class="k">model dir</span>
+        <input id="add-dir" type="text" placeholder="optional — llama dir, e.g. for mmproj/draft files"></div>
+      <div class="kv"><span class="k">category</span>
+        <select id="add-cat">
+          <option value="">auto (safetensors)</option>
+          {% for c in comfy_categories %}<option>{{ c }}</option>{% endfor %}
+        </select>
+        <span class="mut">safetensors only</span></div>
+      <button type="submit">add model</button>
+      <div id="add-job"></div>
+    </form>
+  </div>
 </div>
 
 <h2>llama.cpp models</h2>
@@ -50,26 +98,6 @@
   </table>
 </div>
 
-<h2 style="margin-top:22px">ComfyUI models</h2>
-
-<div class="card" style="margin-bottom:14px">
-  <h3>Download into the model store</h3>
-  <p class="mut" style="margin-top:0">Paste any direct file URL (e.g. a Hugging Face
-  <span class="mono">resolve/main/…</span> link). The portal downloads it itself and
-  places it in the right <span class="mono">{{ comfyroot | replace(home, '~') }}/&lt;category&gt;</span>
-  folder — nothing goes through the browser, no manual copying.</p>
-  <form onsubmit="comfyDownload(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <input type="url" id="dl-url" placeholder="https://…/resolve/main/model.safetensors"
-           required style="min-width:380px">
-    <select id="dl-cat" required>
-      {% for c in comfy %}<option value="{{ c.category }}">{{ c.category }}</option>{% endfor %}
-    </select>
-    <input type="text" id="dl-name" placeholder="filename (optional — from URL)" style="min-width:200px">
-    <button>download</button>
-  </form>
-  <div id="dl-job" style="margin-top:8px"></div>
-</div>
-
 {% if comfy %}
 {% for cat in comfy %}
 <div class="card" style="margin-bottom:10px">
@@ -92,8 +120,71 @@
 {% endif %}
 
 <script>
-function esc(s){ return String(s).replace(/[&<>"']/g, c =>
+function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Tab switching
+function switchModelTab(tab){
+  document.querySelectorAll('.model-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.model-tab-content').forEach(c => c.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// Model search
+async function searchModels(ev){
+  ev.preventDefault();
+  const query = document.getElementById('search-query').value.trim();
+  if (!query) return;
+  const pipeline = document.getElementById('search-pipeline').value || null;
+  const library = document.getElementById('search-library').value || null;
+  const box = document.getElementById('search-job');
+  const results = document.getElementById('search-results');
+  box.innerHTML = '<span class="mut">searching Hugging Face...</span>';
+  results.innerHTML = '';
+  try{
+    const r = await fetch('/api/models/search', {method: 'POST',
+      credentials: 'same-origin', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({query, pipeline_tag: pipeline, library, limit: 20})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ box.innerHTML = '<span class="mut">' + esc(d.message || d.detail || r.status) + '</span>'; return; }
+    box.innerHTML = '<span class="mut">found ' + d.count + ' models</span>';
+    renderSearchResults(d.results);
+  }catch(e){ box.innerHTML = '<span class="mut">' + esc(e) + '</span>'; }
+}
+
+function renderSearchResults(results){
+  const container = document.getElementById('search-results');
+  if (!results || results.length === 0){
+    container.innerHTML = '<p class="mut">no models found</p>';
+    return;
+  }
+  let html = '';
+  for (const m of results){
+    const tags = (m.tags || []).slice(0, 5).join(', ');
+    const type = m.has_gguf ? 'GGUF (llama.cpp)' : (m.has_safetensors ? 'Safetensors (ComfyUI)' : 'Unknown');
+    html += `<div class="search-result-item" onclick="selectModel('${esc(m.id)}')">
+      <h4>${esc(m.id)}</h4>
+      <div class="meta">
+        <span>📥 ${m.downloads || 0} downloads</span>
+        <span>❤️ ${m.likes || 0} likes</span>
+        <span>${type}</span>
+        ${m.pipeline_tag ? `<span>🎯 ${esc(m.pipeline_tag)}</span>` : ''}
+      </div>
+      ${tags ? `<div class="tags">${tags}</div>` : ''}
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function selectModel(repoId){
+  // Switch to download tab and pre-fill the source field
+  document.querySelectorAll('.model-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.model-tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.model-tab')[1].classList.add('active');
+  document.getElementById('tab-download').classList.add('active');
+  document.getElementById('add-src').value = 'huggingface-cli download ' + repoId;
+}
 
 // Smart add-model: the pasted source can be an HF CLI command, an HF repo
 // name, a direct URL, or a local path — sniff which, then let the backend do
@@ -101,7 +192,7 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c =>
 function classifySrc(v){
   if (/^(huggingface-?cli|hf)\s+download\b/i.test(v)) return 'hf_cli';
   if (/^https?:\/\//i.test(v)) return 'url';
-  if (/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-/]+$/.test(v)) return 'hf_repo';
+  if (/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-\/]+$/.test(v)) return 'hf_repo';
   return 'path';
 }
 async function addModel(ev){
@@ -138,43 +229,6 @@ function pollAddJob(jid){
         if (!j || j.status === 'running') return setTimeout(tick, 2000);
         note.textContent = j.status === 'success' ? 'done — refreshing…'
                                                   : 'failed — see log above';
-        if (j.status === 'success') setTimeout(() => location.reload(), 800);
-      })
-      .catch(() => setTimeout(tick, 4000));
-  })();
-}
-
-// Phase E: portal-side ComfyUI model download (never via the browser).
-async function comfyDownload(ev){
-  ev.preventDefault();
-  const body = {url: document.getElementById('dl-url').value.trim(),
-                category: document.getElementById('dl-cat').value,
-                filename: document.getElementById('dl-name').value.trim() || null};
-  try{
-    const r = await fetch('/api/models/comfyui/download',
-                          {method: 'POST', credentials: 'same-origin',
-                           headers: {'content-type': 'application/json'},
-                           body: JSON.stringify(body)});
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { alert('download refused: ' + (d.detail || r.status)); return; }
-    pollComfyJob(d.job, d.dest);
-  }catch(e){ alert('download failed to start: ' + e); }
-}
-function pollComfyJob(jid, dest){
-  const el = document.getElementById('dl-job');
-  el.innerHTML = '<pre class="feed" style="max-height:160px"></pre>' +
-                 '<span class="mut">downloading…</span>';
-  const pre = el.querySelector('pre');
-  const note = el.lastElementChild;
-  let j = null;
-  (function tick(){
-    fetch('/api/jobs/' + jid, {credentials: 'same-origin'})
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d) { j = d; pre.textContent = d.log || ''; pre.scrollTop = pre.scrollHeight; }
-        if (!j || j.status === 'running') return setTimeout(tick, 2000);
-        note.textContent = j.status === 'success' ? 'done → ' + dest.replace(/^\/home\/[^/]+/, '~')
-                                                  : 'failed — see log';
         if (j.status === 'success') setTimeout(() => location.reload(), 800);
       })
       .catch(() => setTimeout(tick, 4000));
