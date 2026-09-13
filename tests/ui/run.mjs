@@ -291,7 +291,9 @@ async function sweep(phase, answerDialogs, visited, context, budget) {
       const exempt = Object.entries(requireConfirmUnless).find(
         ([p, needle]) => new RegExp(p).test(req.path) && (req.body || "").includes(needle));
       if (exempt) continue;
-      if (r.newDialogs.length === 0)
+      // confirm() must have happened before the request — an alert() afterwards
+      // ("rolled back") is not a confirmation
+      if (req.confirmsBefore - r.confirmsAtMark <= 0)
         fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first (${phase} pass)`);
     }
 

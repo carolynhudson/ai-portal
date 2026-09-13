@@ -276,6 +276,10 @@ export async function openPage({
           status: null,
           blocked: false,
           fixture: false,
+          // how many confirm() dialogs had been shown when this went out —
+          // "was this destructive call gated?" is about order, not about
+          // whether a dialog happened somewhere in the same click
+          confirmsBefore: trace.dialogs.filter((d) => d.kind === "confirm").length,
         };
         trace.requests.push(rec);
 
@@ -534,6 +538,9 @@ export async function interact(ctx, el, { answerDialogs = false, noopCheck = nul
 
   await ctx.idle({ quietMs: 60, maxMs: 8000 });
 
+  const confirmsAtMark = trace.dialogs
+    .slice(0, mark.dialogs)
+    .filter((d) => d.kind === "confirm").length;
   const newRequests = trace.requests.slice(mark.requests);
   const newDialogs = trace.dialogs.slice(mark.dialogs);
   const newNavigations = trace.navigations.slice(mark.navigations);
@@ -547,6 +554,7 @@ export async function interact(ctx, el, { answerDialogs = false, noopCheck = nul
     attempted,
     defaultPrevented,
     expectedNoop,
+    confirmsAtMark,
     newRequests,
     newDialogs,
     newNavigations,
