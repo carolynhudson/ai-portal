@@ -15,41 +15,78 @@ Companions:
 
 ---
 
-## 0. Current status — 2026-09-11 (resumption point)
+## 0. Current status — 2026-09-13 (resumption point)
 
-**Committed & verified:** Phases A–E + router hero + **Phase I (Settings)**.
-Green: 64 tests (`uv run --with pytest python -m pytest tests/ -q`).
+**Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
+**network exposure** + **Phase J steps 1, 4, 5, 6, 7**.
+Green: 116 tests (`uv run --with pytest python -m pytest tests/ -q`).
 
-**Running right now:**
-- `ai-llama-router` user service — active, 127.0.0.1:8080 (**this agent session rides on it**)
-- `ai-comfyui` user service — active, 127.0.0.1:8188
-- Portal — **manual uvicorn from the repo** on 127.0.0.1:8090 (NOT yet a
-  service; Phase J installs `ai-portal.service` and cuts over)
+**Running right now — none of them loopback-only any more:**
 
-**Next up — Phase J (reorg + deployment + logging/debug), one commit per step:**
-1. `app/core/logsetup.py` — rotating file log → `~/ai/ai-portal/logs/portal.log`,
-   level via `AI_PORTAL_LOG_LEVEL` env / launch arg, per-module loggers; wire
-   into `create_app()`.
-2. Split the ~40 endpoints out of `app/main.py` (844 lines) into `app/api/`
-   route modules (`pages`, `status`, `services`, `updates`, `models`,
-   `settings`); shared helpers → `app/api/common.py`. Tests are the net.
-3. File moves: `tools/phase[1-5]_*.py` → `tools/migrations/`; root
-   `02-install-llama-cpp.sh` → `archive/legacy/`; add
-   `deploy/ai-llama-router.service` as source of truth (copy from
-   `~/.config/systemd/user/`, which currently holds the only copy).
-4. `deploy/install.sh` — idempotent first-time deploy AND update: rsync
-   `app/ web/` → `~/ai/ai-portal/`, uv-managed venv there, write unit with real
-   paths + `EnvironmentFile`s, daemon-reload, enable; record deployed git SHA
-   in `~/ai/state/portal/deployment.json` (rebuild/rollback path).
-5. `scripts/dev-run.sh` — run from the source tree on port **8091** with debug
-   logging alongside the service. MUST set `AI_PORTAL_HOME=$HOME` explicitly —
-   agent shells can have HOME overridden to a sandbox dir, which silently
-   re-points every path (this actually happened 2026-09-11; dev instance then
-   used `$SANDBOX/ai` instead of the real tree).
-6. `docs/DEBUGGING.md` — endpoints, dry-run flags, pytest, journalctl,
-   log locations, how to raise logging on the live service.
-7. Cutover: stop manual uvicorn :8090 → start `ai-portal` from the new
-   deployment; verify pages + API against it.
+| Service | Unit | Bind | Verified |
+|---|---|---|---|
+| Portal | `ai-portal` (installed + enabled, runs from `~/ai/ai-portal`) | `0.0.0.0:8090` | `curl http://192.168.1.228:8090/healthz` → 200 |
+| ComfyUI | `ai-comfyui` | `0.0.0.0:8188` | `curl http://192.168.1.228:8188/system_stats` → 200 |
+| llama.cpp router | `ai-llama-router` | wants `0.0.0.0:8080`, still on `127.0.0.1` **until restarted** | `pending_restart: true` in `/api/exposure` |
+
+**⚠ One action remains for the router: restart it.** Everything else is prepared
+and verified (below). The restart is deliberately not taken by the tooling that
+made the change: it drops every agent session riding on the router, including
+the one that made these changes. Settings → Network access → *restart to apply*,
+or `systemctl --user restart ai-llama-router` (model reload ≈ 30–60 s).
+
+**Network exposure (2026-09-13).** `app/core/network.py` (interfaces + default
+route, bind-mode classification, `ss` bound-address checks where a wildcard bind
+satisfies any target, TCP reachability probe, ufw state read without root,
+scoped `ufw allow from <net> to any port N` hints — the portal has no root and
+never changes the firewall) + `serviceconf.set_bind/validate_bind/exposure` +
+Settings → Network access, which shows the *wanted* bind next to what actually
+answers on the LAN address (that probe is what distinguishes "open" from
+"loopback-only"; `pending_restart` is the difference between written and live).
+`external=True` stays as a shorthand for `all`. Security stance is stated, not
+hidden: ComfyUI has **no** auth and runs arbitrary Python via `/prompt`; the
+router can take a shared `--api-key-file` key from Settings
+(`app/core/llamakey.py`: secret in a 0600 file, only the path in the env file,
+`live_state()` probes `/props` anonymously and with the key to report
+configured-vs-enforced, and every portal probe sends the key so enabling auth
+cannot lock out the dashboard). Login attempts are throttled per source
+(`app/core/ratelimit.py`) because the app password is now the only gate.
+All three services now launch through one generated pattern (env file → wrapper
+→ static unit, `app/core/units.py`), which is what makes bind / port / API key /
+extra args configurable with no unit edits; `install_unit` backs up any unit it
+replaces into `state/rollback/units/`.
+
+**Phase J status:**
+1. ✅ `app/core/logsetup.py` — rotating `~/ai/logs/portal.log` (5 MB × 3), level
+   via `AI_PORTAL_LOG_LEVEL` (`trace` allowed), `db.event()` mirrored into it.
+2. ⏸ *not done* — split `app/main.py` (~950 lines, 50 routes) into `app/api/`
+   modules. Still worth doing; now the top code-quality item.
+3. ⏸ *not done* — `tools/phase[1-5]_*.py` → `tools/migrations/`, root
+   `02-install-llama-cpp.sh` → `archive/legacy/`. The "units need a source of
+   truth" half is resolved differently: units are **generated**, rendered by
+   `python -m app.deploy --print-units`, with `deploy/GENERATED_UNITS.txt` as
+   the committed reference; the hand-written `deploy/*.service` files are gone.
+4. ✅ `app/deploy.py` + thin `deploy/install.sh` — deploys a **git ref** (never
+   the working tree, so what runs is reproducible from a sha) into
+   `~/ai/ai-portal` via scratch-dir + rename, uv-syncs the venv there, writes
+   `portal.env` + `ai-portal.sh` + the unit, enables and **restarts**, stamps
+   `BUILD.json`, then verifies `/healthz` reports the sha it just deployed.
+   `--dry-run` / `--status` / `--ref` / `--rollback` (history in
+   `state/portal/deployment.json`). `uv.lock` had to be committed: `--frozen`
+   needs it and the first real deploy hit exactly that.
+5. ✅ `scripts/dev-run.sh` — `:8091`, debug logging, pins `AI_PORTAL_HOME` to the
+   real home and shouts if that is not the case (the sandbox-HOME footgun).
+6. ✅ `docs/DEBUGGING.md` — what runs where, log locations, verbosity without
+   code edits, curl recipes, dry-run table, network diagnosis order, rollbacks.
+7. ✅ Cutover — the manual uvicorn on :8090 is gone; the service answers `/`,
+   `/models`, `/metrics`, `/settings` and `/api/*` from `~/ai/ai-portal`.
+
+Two bugs the live cutover caught, both now regression-tested: `POST
+/api/services/llamacpp/ensure` was **shadowed** by the generic
+`/api/services/{key}/{action}` route (FastAPI first-match + required body = a
+misleading 422; the ComfyUI ensure endpoint only worked by accident of ordering),
+and `systemctl --user enable --now` on an already-active unit is a no-op, so a
+deploy did not restart the service it had just replaced.
 
 **Env-file layout (all under `~/ai/config/`, managed by the Settings page):**
 - `ai-env.env` — read by **all three** units (ROCm `LD_LIBRARY_PATH` etc.) —
@@ -341,7 +378,8 @@ Sequencing: after B (service control) + D (gguf memory math).
 | G | Frontend polish per D1 | — |
 | H | RAG service: per-project stores, ingestion jobs, MCP interface (§4.8) | two demo projects searchable, zero cross-project hits; start/stop from UI |
 | I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
-| J | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0) | redeploy-from-git-SHA works; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
+| **K (done, 2026-09-13)** — network | Bind **modes** (loopback / lan / all) per service, live reachability probes, firewall state + scoped `ufw` hints without root, exposure warnings, optional router `--api-key-file`, login throttle; all three services on the generated env→wrapper→unit launch pattern | portal + ComfyUI answering on `192.168.1.228` (verified by LAN-address HTTP from this box), router env/unit prepared with argv verified against the live process, `pending_restart` reported until it is restarted |
+| J (mostly done, 2026-09-13) | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0). Remaining: `app/main.py` route split, `tools/` migrations move | redeploy-from-git-SHA works and **verifies the running sha**; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.

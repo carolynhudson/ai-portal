@@ -57,9 +57,14 @@
     <span class="pill {{ 'ok' if r.service.state == 'active' else 'bad' }}" id="router-state">{{ r.service.state }}</span>
     <span class="mut" id="router-since">{% if r.service.since %}up since {{ r.service.since }}{% endif %}</span>
     <span class="mut mono" style="margin-left:8px">svc: {{ r.service.name }}</span>
+    {% set b = r.bind or {} %}
+    <a href="/settings" class="pill {{ 'ok' if b.mode == 'loopback' else '' }}"
+       title="{{ b.auth or '' }} — who can connect is set on the Settings page"
+       style="{{ '' if b.mode == 'loopback' else 'background:rgba(210,153,34,.15);color:var(--warn)' }}">
+      {% if b.mode == 'loopback' %}loopback only{% elif b.mode == 'all' %}open to LAN :{{ b.port }}{% else %}{{ b.host }}:{{ b.port }}{% endif %}</a>
     <div class="hero-controls">
-      <a class="btn btn-sm" href="http://127.0.0.1:8080/" target="_blank" rel="noopener">Web UI ↗</a>
-      <a class="btn btn-sm" href="http://127.0.0.1:8080/v1/models" target="_blank" rel="noopener">API ↗</a>
+      <a class="btn btn-sm" href="{{ r.web_ui or (r.host ~ '/') }}" target="_blank" rel="noopener">Web UI ↗</a>
+      <a class="btn btn-sm" href="{{ r.host }}/v1/models" target="_blank" rel="noopener">API ↗</a>
       <button onclick="svcAction('llamacpp', 'start')">start</button>
       <button onclick="svcAction('llamacpp', 'stop')">stop</button>
       <button onclick="svcAction('llamacpp', 'restart')">restart</button>
@@ -111,6 +116,11 @@
     <span class="pill {{ 'ok' if comfy.service.state == 'active' else 'bad' }}" id="comfy-state">{{ comfy.service.state }}</span>
     <span class="mut" id="comfy-since">{% if comfy.service.since %}up since {{ comfy.service.since }}{% endif %}</span>
     <span class="mut mono" style="margin-left:8px">svc: ai-comfyui</span>
+    {% set cb = comfy.bind or {} %}
+    <a href="/settings" class="pill {{ 'ok' if cb.mode == 'loopback' else '' }}"
+       title="{{ cb.auth or '' }} — ComfyUI has no authentication at all"
+       style="{{ '' if cb.mode == 'loopback' else 'background:rgba(210,153,34,.15);color:var(--warn)' }}">
+      {% if cb.mode == 'loopback' %}loopback only{% elif cb.mode == 'all' %}open to LAN :{{ cb.port }}{% else %}{{ cb.host }}:{{ cb.port }}{% endif %}</a>
     <div class="hero-controls">
       <a class="btn btn-sm" href="{{ comfy.host }}" target="_blank" rel="noopener">Web UI ↗</a>
       <button onclick="svcAction('comfyui', 'start')">start</button>

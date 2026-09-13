@@ -227,6 +227,9 @@ def _build() -> dict:
         # what "is the router reachable from elsewhere?" actually depends on
         "loopback_only": bind["mode"] == "loopback",
         "bind": bind,
+        # the built-in Web UI has no login form, so when a key is required the
+        # only usable link is the one carrying ?api_key=
+        "web_ui": llamakey.web_ui_url(url_base),
         "service": {"name": paths.ROUTER_UNIT, "state": svc.get("ActiveState", "unknown"),
                     "sub": svc.get("SubState"), "since": svc.get("Since")},
         "web": probe(url_base + "/"),

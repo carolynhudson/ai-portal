@@ -271,6 +271,20 @@ def test_router_restart_via_bind_requires_confirm(client):
     assert "confirm" in str(r.json())
 
 
+def test_dashboard_shows_who_can_reach_each_service(client):
+    """The heroes must state the bind: 'can other systems reach this?' is the
+    question an operator looks at first, and it must not be guessed."""
+    from app import router as router_mod
+    serviceconf.set_bind("llamacpp", "all")
+    serviceconf.set_bind("comfyui", "loopback")
+    router_mod._cache = (0.0, {})      # the hero caches for 2 s
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "open to LAN" in r.text, "router hero must show it is listening on the LAN"
+    assert "loopback only" in r.text, "ComfyUI hero must show it is local-only"
+    assert "/settings" in r.text
+
+
 # -------------------------------------------------------------- login throttle
 def test_login_throttles_repeated_failures():
     ratelimit.reset()
