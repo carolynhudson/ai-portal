@@ -81,30 +81,48 @@ assert 'no-op' in (d['log'] or ''), 'expected a no-op result in the log'
 print('  OK: no-op update proved the pipeline path (fetch -> resolve -> no build/swap)')
 "
 fi
+# NOTE: python blocks below write to a file and read it back — a quoted heredoc
+# occupies stdin (so the JSON cannot be piped in), and an unquoted `python3 -c "…"`
+# lets bash expand ${…} inside f-strings.
 echo "=== /api/network (who can reach what) ==="
-curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/network" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-p=d.get('primary_lan') or {}
-print('  lan:', p.get('name'), p.get('address'), d.get('lan_network'),
-      '| firewall:', (d.get('firewall') or {}).get('detail'))
-for k,v in d['services'].items():
-    print(f"  {k:9s} {v['host']}:{v['port']:<6} mode={v['mode']:<8} "
-          f"lan_reachable={v['listening_lan']} pending_restart={v['pending_restart']}")
-ra=d.get('router_auth') or {}
-print('  router auth: configured', ra.get('configured'), '| enforced', (ra.get('live') or {}).get('enforced'))
-"
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/network" -o /tmp/aipp-net.json
+python3 - <<'PY'
+import json
+d = json.load(open("/tmp/aipp-net.json"))
+p = d.get("primary_lan") or {}
+print("  lan:", p.get("name"), p.get("address"), d.get("lan_network"),
+      "| firewall:", (d.get("firewall") or {}).get("detail"))
+for k, v in d["services"].items():
+    print(f"  {k:9} {v['host']}:{v['port']:<6} mode={v['mode']:<8} "
+          f"lan_answering={str(v['listening_lan']):<5} pending_restart={v['pending_restart']}")
+ra = d.get("router_auth") or {}
+print("  router auth: configured", ra.get("configured"),
+      "| enforced", (ra.get("live") or {}).get("enforced"))
+PY
 echo "=== /api/exposure (single service) ==="
-curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/exposure?service=llamacpp" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)['llamacpp']
-print('  ', d['bind_description'])
-for u in d['urls']:
-    print('   ', u['url'], '->', u['listening'])
-print('   restart needed:', d['pending_restart'])
-"
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/exposure?service=llamacpp" -o /tmp/aipp-exp.json
+python3 - <<'PY'
+import json
+d = json.load(open("/tmp/aipp-exp.json"))["llamacpp"]
+print("  ", d["bind_description"])
+for u in d["urls"]:
+    print("   ", u["url"], "->", u["listening"])
+print("    restart needed:", d["pending_restart"])
+if d.get("allow_command"):
+    print("    firewall:", d["allow_command"])
+PY
 echo "=== settings page renders the network panel ==="
-curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/settings" | grep -c "Network access\|live reachability\|router authentication"
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/settings" -o /tmp/aipp-settings.html
+for needle in "Network access" "live reachability" "router authentication" "ufw"; do
+  n=$(grep -c "$needle" /tmp/aipp-settings.html)
+  echo "  '$needle': $n hit(s)$([ "$n" = "0" ] && echo '  <-- MISSING')"
+done
+echo "=== dashboard hero states its bind ==="
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/" -o /tmp/aipp-dash2.html
+for needle in "loopback only" "open to LAN"; do
+  n=$(grep -c "$needle" /tmp/aipp-dash2.html)
+  echo "  '$needle': $n hit(s)"
+done
 
 echo "=== wrapper argv verification (no model load, production untouched) ==="
 AI_PORTAL_PRINT_ARGV=1 "$HOME/ai/bin/ai-llamacpp.sh" 2>&1 | sed 's/^/  /' || echo "  (router wrapper not installed yet)"
