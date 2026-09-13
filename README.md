@@ -72,38 +72,63 @@ single app password** (decision D2, no cloud auth). Updates are **advisory** for
 now (decision D3) — the health pane surfaces apt/reboot/version drift and offers
 actions; one-click execution is a later phase.
 
-Layout (repo holds code; runtime data stays in `~/ai`):
+Layout — the repo is where code is *written*; `~/ai/ai-portal` is where it
+*runs* (deployed, own venv, systemd user service):
 
 ```
 app/
   main.py            # FastAPI app: auth, HTML pages, JSON API
-  core/              # paths.py (~/ai constants) · config.py (auth) · db.py (sqlite) · systemd.py
+  deploy.py          # python -m app.deploy — deploy / update / rollback the service
+  core/              # paths · config(auth) · db(sqlite) · systemd · units (env file +
+                     # wrapper + unit generation) · serviceenv · serviceconf · network ·
+                     # llamakey · ratelimit · logsetup · updater · modeladd · modelmeta
   providers/         # llamacpp.py · comfyui.py · huggingface.py  (one class per tool)
   metrics.py         # /proc + rocm-smi host metrics (stdlib)
+  router.py          # live llama.cpp router state (dashboard hero)
 web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
-deploy/              # ai-portal.service + install-service.sh
-tests/test_smoke.py  # auth + endpoint smoke tests (pytest)
+deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
+scripts/dev-run.sh   # source tree on :8091, next to the service
+tests/               # 109 pytest tests, all on a throwaway AI_PORTAL_HOME
 ```
 
 Runtime state (gitignored, outside the repo): `~/ai/state/portal/portal.db`
 (SQLite, WAL), `portal.auth.json` (0600, password hash), `PORTAL_PASSWORD.txt`
-(0600, printed once on first run).
+(0600, printed once on first run), `deployment.json` (deployed sha + history).
 
 ### Run it
 
 ```bash
-cd ~/ai-projects/ai-portal
-uv sync                          # create .venv + install deps (already done)
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8090   # dev
-# or install as a systemd *user* service (binds 0.0.0.0:8090, LAN):
-./deploy/install-service.sh
+./deploy/install.sh --dry-run    # exactly what a deploy would do
+./deploy/install.sh              # deploy HEAD -> ~/ai/ai-portal, enable + start
+./deploy/install.sh --status     # recorded sha + live unit state
+./deploy/install.sh --rollback   # redeploy the previously recorded sha
+./scripts/dev-run.sh             # source tree on :8091 with debug logging
+uv run --with pytest pytest tests/ -q    # 109 tests, no live system needed
+bash tools/live_smoke.sh         # end-to-end against the live router
 ```
 
 First run generates a password and writes it to
 `~/ai/state/portal/PORTAL_PASSWORD.txt` (delete after reading). To set your own,
-put `AI_PORTAL_PASSWORD=...` in the unit's `Environment=`. Then open
-`http://<host>:8090`. Routes: `/` (status), `/models`, `/metrics`, plus the JSON
-API under `/api/*` (`/api/status`, `/api/models`, `/api/metrics`, `/api/health`).
+put `AI_PORTAL_PASSWORD=...` in `~/ai/config/portal.env`. Pages: `/` (status),
+`/models`, `/metrics`, `/settings`; JSON API under `/api/*` — full endpoint and
+curl list in [docs/DEBUGGING.md](docs/DEBUGGING.md).
+
+### Network access (who can reach these services)
+
+Each managed service binds one of three ways, chosen per service on
+**Settings → Network access** and stored in `~/ai/config/<service>.env`:
+`loopback` (127.0.0.1 — this machine), `lan` (one interface address), `all`
+(0.0.0.0 — the local network). The page shows the machine's real LAN address,
+whether the port is *actually* answering on it right now (a TCP probe of the LAN
+address is what distinguishes "open" from "loopback-only"), whether a restart is
+still pending, and the `ufw allow …` command the firewall would need — the
+portal has no root, so it never changes the firewall itself.
+
+**Exposure is stated, not hidden:** the router and ComfyUI serve unauthenticated
+HTTP, and ComfyUI can execute code (`/prompt` plus custom nodes). Opening them
+is an explicit operator decision, warned about in the UI. The router can be
+given an `--api-key-file` from Settings (shared `Authorization: Bearer <key>`,
+stored 0600 under `~/ai/state/portal/`, never in an env file).
 
 ### Tests
 

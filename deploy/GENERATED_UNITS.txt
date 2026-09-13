@@ -1,0 +1,127 @@
+# GENERATED — do not edit by hand
+
+# source: app/core/units.py + the providers' ensure_service()
+
+# refresh: python -m app.deploy --print-units > deploy/GENERATED_UNITS.txt
+
+# note: paths reflect THIS machine (HOME / ~/ai); the units are written
+
+#       with the real absolute paths when a service is installed.
+
+
+
+===== ai-comfyui.service =====
+[Unit]
+Description=ComfyUI (AI Portal)
+After=network.target
+
+[Service]
+EnvironmentFile=/home/cortana/ai/config/ai-env.env
+EnvironmentFile=/home/cortana/ai/config/comfyui.env
+ExecStart=/home/cortana/ai/bin/ai-comfyui.sh
+WorkingDirectory=/home/cortana/ai/comfyui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+
+===== ai-comfyui wrapper (/home/cortana/ai/bin/ai-comfyui.sh) =====
+#!/bin/sh
+# AI portal - ComfyUI launch wrapper (GENERATED, do not hand-edit).
+# All parameters come from ~/ai/config/comfyui.env; change them via the
+# portal's Settings page, then restart ai-comfyui.
+set -eu
+if [ ! -x "${COMFY_PYTHON:-}" ]; then
+  echo "ai-comfyui: no python at ${COMFY_PYTHON:-<unset>}" >&2
+  exit 1
+fi
+exec "$COMFY_PYTHON" "$COMFY_MAIN" --listen "$COMFY_HOST" --port "$COMFY_PORT" $COMFY_ARGS
+
+===== ai-llama-router.service =====
+[Unit]
+Description=llama.cpp model router (AI Portal)
+After=network.target
+
+[Service]
+EnvironmentFile=/home/cortana/ai/config/ai-env.env
+EnvironmentFile=/home/cortana/ai/config/llamacpp.env
+ExecStart=/home/cortana/ai/bin/ai-llamacpp.sh
+WorkingDirectory=/home/cortana/ai
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+
+===== ai-llama-router wrapper (/home/cortana/ai/bin/ai-llamacpp.sh) =====
+#!/bin/sh
+# AI portal - llama.cpp router launch wrapper (GENERATED, do not hand-edit).
+# Every parameter comes from ~/ai/config/llamacpp.env; edit it via the portal's
+# Settings page, then restart ai-llama-router to apply. The defaults below are
+# only a safety net — the env file is what the portal writes and owns.
+set -eu
+
+LLAMA_BIN="${LLAMA_BIN:-/home/cortana/ai/bin/llama-server}"
+if [ ! -x "$LLAMA_BIN" ]; then
+  echo "ai-llama-router: no executable at $LLAMA_BIN (deploy a release first)" >&2
+  exit 1
+fi
+
+set -- --host "${LLAMA_HOST:-127.0.0.1}" --port "${LLAMA_PORT:-8080}"
+if [ "${LLAMA_METRICS:-1}" = "1" ]; then set -- "$@" --metrics; fi
+if [ -n "${LLAMA_API_KEY_FILE:-}" ] && [ -f "${LLAMA_API_KEY_FILE}" ]; then
+  set -- "$@" --api-key-file "${LLAMA_API_KEY_FILE}"
+fi
+set -- "$@" --models-max "${LLAMA_MODELS_MAX:-1}" \
+           --models-dir "${LLAMA_MODELS_DIR:-/home/cortana/ai/models/llama}" \
+           --models-preset "${LLAMA_PRESETS:-/home/cortana/ai/config/llama/presets.ini}"
+# free-form extra args: intentionally word-split (no quoting supported)
+for a in ${LLAMA_ARGS:-}; do set -- "$@" "$a"; done
+
+# AI_PORTAL_PRINT_ARGV=1 prints the argv instead of exec'ing llama-server: the
+# portal uses it to verify a launch config without loading a model.
+if [ "${AI_PORTAL_PRINT_ARGV:-0}" = "1" ]; then
+  printf '%s\n' "$LLAMA_BIN" "$@"
+  exit 0
+fi
+exec "$LLAMA_BIN" "$@"
+
+===== ai-portal.service =====
+[Unit]
+Description=AI Tool Management Portal (web console)
+After=network.target
+
+[Service]
+EnvironmentFile=/home/cortana/ai/config/ai-env.env
+EnvironmentFile=/home/cortana/ai/config/portal.env
+ExecStart=/home/cortana/ai/bin/ai-portal.sh
+WorkingDirectory=/home/cortana/ai/ai-portal
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+
+===== ai-portal wrapper (/home/cortana/ai/bin/ai-portal.sh) =====
+#!/bin/sh
+# AI portal - portal launch wrapper (GENERATED, do not hand-edit).
+# Parameters come from ~/ai/config/portal.env; edit via the Settings page or
+# `python -m app.deploy`, then restart ai-portal.
+set -eu
+DIR="${AI_PORTAL_DIR:-/home/cortana/ai/ai-portal}"
+PY="${AI_PORTAL_PYTHON:-/usr/bin/python3}"
+if [ ! -x "$PY" ]; then
+  echo "ai-portal: no python at $PY (run: python -m app.deploy)" >&2
+  exit 1
+fi
+if [ ! -f "$DIR/app/main.py" ]; then
+  echo "ai-portal: no app tree at $DIR" >&2
+  exit 1
+fi
+cd "$DIR"
+exec "$PY" -m uvicorn app.main:app \
+  --host "${AI_PORTAL_HOST:-0.0.0.0}" \
+  --port "${AI_PORTAL_PORT:-8090}" \
+  --log-level "${AI_PORTAL_UVICORN_LOG_LEVEL:-warning}"
+

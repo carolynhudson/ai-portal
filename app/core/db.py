@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import time
 
-from . import paths
+from . import logsetup, paths
 
 DB = paths.PORTAL_STATE / "portal.db"
 _local = threading.local()
@@ -92,6 +92,14 @@ def upsert_tool(row: dict) -> None:
 
 
 def event(actor: str, kind: str, detail: str = "") -> None:
+    """Audit-log one mutation.
+
+    Every state-changing action goes through here, so the same line also lands
+    in the rotating file log (``~/ai/logs/portal.log``): the DB answers "what
+    happened, queryable", the file answers "what happened around the time the
+    router fell over", including whatever the code logged in between.
+    """
+    logsetup.get("audit").info("%s %s: %s", actor, kind, detail)
     c = _conn()
     c.execute("INSERT INTO events (ts, actor, kind, detail) VALUES (?,?,?,?)",
               (time.time(), actor, kind, detail))

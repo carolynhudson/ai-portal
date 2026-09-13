@@ -27,6 +27,18 @@ from ..core import db, paths, serviceconf, units, systemd, updater, modelmeta
 DEFAULT_CONFIG = {"listen": "127.0.0.1", "port": 8188, "extra_args": ""}
 CONFIG_FILE = paths.CONFIG / "comfyui.json"
 
+COMFY_WRAPPER = """#!/bin/sh
+# AI portal - ComfyUI launch wrapper (GENERATED, do not hand-edit).
+# All parameters come from ~/ai/config/comfyui.env; change them via the
+# portal's Settings page, then restart ai-comfyui.
+set -eu
+if [ ! -x "${COMFY_PYTHON:-}" ]; then
+  echo "ai-comfyui: no python at ${COMFY_PYTHON:-<unset>}" >&2
+  exit 1
+fi
+exec "$COMFY_PYTHON" "$COMFY_MAIN" --listen "$COMFY_HOST" --port "$COMFY_PORT" $COMFY_ARGS
+"""
+
 
 def _venv_info() -> dict:
     py = paths.COMFY_VENV / "bin" / "python"
@@ -124,6 +136,16 @@ class ComfyUI(Provider):
                              log=lambda m: None)
         return cfg
 
+    @staticmethod
+    def wrapper_text() -> str:
+        """The generated ComfyUI wrapper.
+
+        ``$COMFY_ARGS`` is deliberately unquoted: the wrapper's shell splits it
+        into real argv words, which is the whole reason a wrapper exists here
+        instead of an ExecStart line.
+        """
+        return COMFY_WRAPPER
+
     def ensure_service(self, log=print) -> dict:
         """Generate env file + wrapper + static unit (all idempotent).
 
@@ -131,14 +153,7 @@ class ComfyUI(Provider):
         """
         cfg = self.validate_config(self.config())
         units.write_env(paths.COMFY_UNIT_NAME, self.env_mapping(cfg), log)
-        units.write_wrapper(
-            paths.COMFY_UNIT_NAME,
-            "#!/bin/sh\n"
-            "# AI portal — ComfyUI launch wrapper (generated).\n"
-            "# All args come from the env file; change them via the portal,\n"
-            "# not here.\n"
-            'exec "$COMFY_PYTHON" "$COMFY_MAIN" --listen "$COMFY_HOST" '
-            '--port "$COMFY_PORT" $COMFY_ARGS\n', log)
+        units.write_wrapper(paths.COMFY_UNIT_NAME, self.wrapper_text(), log)
         units.install_unit(paths.COMFY_UNIT, paths.COMFY_UNIT_NAME,
                                 "ComfyUI (AI Portal)", str(paths.COMFY_REPO), log)
         return {

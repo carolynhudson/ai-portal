@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import paths
+from . import logsetup, paths
 
 
 def _user(*args: str) -> str:
@@ -95,8 +95,10 @@ def service_memory(unit: str) -> dict | None:
     return {"current": current, "peak": peak}
 
 
-# Units the portal may control (F9). The portal's own unit is deliberately
-# absent: the portal must never stop itself (PORTAL_PLAN §4.3).
+# Units the portal may control (F9). ``portal`` is included so the Settings
+# page can restart itself after a bind/port change (Phase I) — restart only,
+# never stop, and the UI fires the request without waiting for the response,
+# since this process is what answers it (PORTAL_PLAN §4.3).
 MANAGED_UNITS = {
     "llamacpp": {
         "unit": "ai-llama-router",
@@ -137,15 +139,21 @@ def service_action(key: str, action: str) -> dict:
     if action not in ("start", "stop", "restart"):
         return {"ok": False, "error": "unknown action"}
     unit = meta["unit"]
+    log = logsetup.get("systemd")
     if action in ("stop", "restart"):
         _service_rollback_note(unit, action)
+    log.info("%s %s …", action, unit)
     try:
         p = subprocess.run(["systemctl", "--user", action, unit],
                            capture_output=True, text=True, timeout=90)
     except Exception as e:  # noqa: BLE001
+        log.error("%s %s failed: %s", action, unit, e)
         return {"ok": False, "error": f"systemctl error: {e}"}
     state = unit_state(unit)
     if p.returncode != 0:
-        return {"ok": False, "state": state,
-                "error": (p.stderr or p.stdout).strip()[:400]}
+        err = (p.stderr or p.stdout).strip()[:400]
+        log.error("%s %s failed (%s): %s", action, unit, p.returncode, err)
+        return {"ok": False, "state": state, "error": err}
+    log.info("%s %s -> %s/%s", action, unit, state.get("ActiveState"),
+             state.get("SubState"))
     return {"ok": True, "state": state}

@@ -58,6 +58,32 @@ def write_wrapper(name: str, body: str, log=print) -> Path:
     return p
 
 
+UNIT_TEMPLATE = """[Unit]
+Description={description}
+After=network.target
+
+[Service]
+EnvironmentFile={shared}
+EnvironmentFile={env}
+ExecStart={wrapper}
+WorkingDirectory={workdir}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def render_unit(unit: str, service: str, description: str,
+                working_dir: str) -> str:
+    """The unit text install_unit would write (one source of truth, also used
+    by ``python -m app.deploy --print-units``)."""
+    return UNIT_TEMPLATE.format(description=description, shared=paths.AI_ENV_FILE,
+                               env=env_path(service), wrapper=wrapper_path(service),
+                               workdir=working_dir)
+
+
 def install_unit(unit: str, service: str, description: str,
                  working_dir: str, log=print) -> dict:
     """Write the static unit (shared ai-env.env + per-service env file) and
@@ -72,21 +98,7 @@ def install_unit(unit: str, service: str, description: str,
     p = unit_path(unit)
     p.parent.mkdir(parents=True, exist_ok=True)
     backup = None
-    new_text = (
-        "[Unit]\n"
-        f"Description={description}\n"
-        "After=network.target\n"
-        "\n"
-        "[Service]\n"
-        f"EnvironmentFile={paths.AI_ENV_FILE}\n"
-        f"EnvironmentFile={env_path(service)}\n"
-        f"ExecStart={wrapper_path(service)}\n"
-        f"WorkingDirectory={working_dir}\n"
-        "Restart=on-failure\n"
-        "RestartSec=5\n"
-        "\n"
-        "[Install]\n"
-        "WantedBy=default.target\n")
+    new_text = render_unit(unit, service, description, working_dir)
     if p.exists() and p.read_text() != new_text:
         backup = paths.ROLLBACK_DIR / "units" / (
             f"{unit}.service.{time.strftime('%Y%m%d-%H%M%S')}")

@@ -26,7 +26,8 @@ from pydantic import BaseModel
 import httpx
 
 from . import metrics, router as router_mod
-from .core import config as cfg, llamakey, network, ratelimit, serviceconf, serviceenv
+from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
+from .core import serviceenv
 from .core import db, modeladd, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
@@ -197,9 +198,26 @@ def comfy_snapshot() -> dict:
 
 
 def create_app() -> FastAPI:
+    log = logsetup.setup()          # level: AI_PORTAL_LOG_LEVEL (env/unit)
     app = FastAPI(title="AI Portal", version="0.1.0")
     templates = Jinja2Templates(directory=str(WEB / "templates"))
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
+    log.info("AI Portal %s: home=%s ai_root=%s state=%s",
+             app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        """Log the traceback with the request context, then hand back a 500.
+
+        Without this an endpoint failure is a bare 500 in the browser and a
+        truncated line in the journal; the file log needs the path + stack to
+        be diagnosable after the fact.
+        """
+        log.exception("unhandled error on %s %s", request.method,
+                      request.url.path)
+        return JSONResponse(status_code=500,
+                            content={"ok": False,
+                                     "error": f"{type(exc).__name__}: {exc}"})
 
     # ------------------------------------------------------------------ open
     @app.get("/healthz")

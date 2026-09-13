@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
+# End-to-end smoke test against the REAL ~/ai tree and the live router: boots
+# the app on :18090, logs in, walks the read APIs, and proves the update
+# pipeline's no-op path (target == deployed release => no build, no swap).
+#
+# Safe to run any time; it does not restart or redeploy anything.
 set -uo pipefail
+# Pin the runtime root to the real home: agent/sandbox shells can export HOME
+# to a scratch dir, and every path derives from it (see scripts/dev-run.sh).
+REAL_HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+export AI_PORTAL_HOME="${REAL_HOME:-$HOME}"
 cd ~/ai-projects/ai-portal
 export AI_PORTAL_PASSWORD=livetestpw
 PORT=18090
@@ -72,5 +81,33 @@ assert 'no-op' in (d['log'] or ''), 'expected a no-op result in the log'
 print('  OK: no-op update proved the pipeline path (fetch -> resolve -> no build/swap)')
 "
 fi
+echo "=== /api/network (who can reach what) ==="
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/network" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+p=d.get('primary_lan') or {}
+print('  lan:', p.get('name'), p.get('address'), d.get('lan_network'),
+      '| firewall:', (d.get('firewall') or {}).get('detail'))
+for k,v in d['services'].items():
+    print(f"  {k:9s} {v['host']}:{v['port']:<6} mode={v['mode']:<8} "
+          f"lan_reachable={v['listening_lan']} pending_restart={v['pending_restart']}")
+ra=d.get('router_auth') or {}
+print('  router auth: configured', ra.get('configured'), '| enforced', (ra.get('live') or {}).get('enforced'))
+"
+echo "=== /api/exposure (single service) ==="
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/api/exposure?service=llamacpp" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)['llamacpp']
+print('  ', d['bind_description'])
+for u in d['urls']:
+    print('   ', u['url'], '->', u['listening'])
+print('   restart needed:', d['pending_restart'])
+"
+echo "=== settings page renders the network panel ==="
+curl -s -b /tmp/aipp-cookies.txt "http://127.0.0.1:$PORT/settings" | grep -c "Network access\|live reachability\|router authentication"
+
+echo "=== wrapper argv verification (no model load, production untouched) ==="
+AI_PORTAL_PRINT_ARGV=1 "$HOME/ai/bin/ai-llamacpp.sh" 2>&1 | sed 's/^/  /' || echo "  (router wrapper not installed yet)"
+
 kill $SRV 2>/dev/null
 echo "=== server log (tail) ==="; tail -5 /tmp/aipp-live.log
