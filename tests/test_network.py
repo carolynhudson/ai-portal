@@ -54,8 +54,18 @@ def test_resolve_bind_roundtrip():
     assert network.resolve_bind("lan", "10.1.2.3") == "10.1.2.3"
     with pytest.raises(ValueError):
         network.resolve_bind("public")
-    for mode in network.MODES:
+    modes = list(network.MODES)
+    if not network.primary_lan():
+        modes.remove("lan")        # nothing to bind to; see the next test
+    for mode in modes:
         assert network.bind_mode(network.resolve_bind(mode)) == mode
+
+
+@pytest.mark.skipif(bool(network.interfaces()), reason="a LAN interface exists here")
+def test_lan_mode_without_an_interface_is_an_error_not_a_wide_open_fallback():
+    """'lan' must never quietly become 0.0.0.0."""
+    with pytest.raises(ValueError):
+        network.resolve_bind("lan")
 
 
 def test_interfaces_shape_and_primary():

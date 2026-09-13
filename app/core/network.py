@@ -194,14 +194,25 @@ def bind_mode(host: str | None) -> str:
 
 def resolve_bind(mode: str, address: str | None = None) -> str:
     """Host string for a bind mode. ``lan`` without an address uses the
-    default-route interface."""
+    default-route interface.
+
+    ``lan`` with no interface available is an error rather than a quiet fall
+    back to ``0.0.0.0``: the caller asked to expose one network, and opening
+    every interface is strictly more than that.
+    """
     mode = (mode or "").strip().lower()
     if mode == "loopback":
         return LOOPBACK
     if mode == "all":
         return ALL
     if mode == "lan":
-        return (address or "").strip() or (primary_lan() or {}).get("address") or ALL
+        host = (address or "").strip() or (primary_lan() or {}).get("address")
+        if not host:
+            raise ValueError(
+                "no usable LAN interface found (need an up, scope-global, "
+                "non-virtual interface with an IPv4 address) — use 'all' "
+                "explicitly if that is what you want")
+        return host
     raise ValueError(f"unknown bind mode {mode!r} (expected one of {', '.join(MODES)})")
 
 

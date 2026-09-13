@@ -94,12 +94,22 @@ Symptom → check, in order:
    worked and this fails, it is the firewall or routing, not the service:
    `sudo ufw status`, then the exact rule is printed per service by
    `/api/exposure` (`allow_command`).
-5. **Router returns 401 after you enabled a key?** expected — clients need
+5. **IPv6 client?** `0.0.0.0` is IPv4-only; a v6-only peer needs the daemon on
+   `::`. This box has a global v6 address, so a client that prefers AAAA can be
+   pointed at it, but the services themselves listen for IPv4 unless configured.
+6. **Router returns 401 after you enabled a key?** expected — clients need
    `Authorization: Bearer <key>` (`/api/settings/llamacpp/apikey` prints it, and
    the Web UI link carries `?api_key=`). The portal's own probes send the key;
    if the dashboard went red right after enabling, the router has not restarted
    with the key yet, or the wrapper has no `--api-key-file` (check with
    `AI_PORTAL_PRINT_ARGV=1`).
+
+**Trust boundary.** All three are plain HTTP with, at best, a shared password
+(portal) or a shared key (router); ComfyUI has no authentication at all and can
+run arbitrary Python through `/prompt` plus custom nodes. They are for a trusted
+LAN. Do not port-forward any of them, and if the network stops being trusted,
+bind back to `loopback` and reach them over an SSH tunnel instead
+(`ssh -L 8090:localhost:8090 host`).
 
 ## 6. Rollback paths
 

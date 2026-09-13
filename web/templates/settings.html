@@ -52,6 +52,11 @@
     service, not already bound here). The right-hand column probes the LAN
     address, which is what proves a daemon is <em>not</em> loopback-only.
   </p>
+  <p class="mut" style="font-size:12px;margin-top:-6px">
+    <span class="mono">all</span> means every <strong>IPv4</strong> interface
+    (<span class="mono">0.0.0.0</span>): an IPv6-only client would not reach it,
+    and these daemons would need <span class="mono">::</span> for that.
+  </p>
   <table id="svc-ports">
     <thead><tr>
       <th>service</th><th>current</th><th>bind</th><th>port</th>
