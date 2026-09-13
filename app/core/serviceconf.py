@@ -1,12 +1,21 @@
-"""Per-service launch settings (host/port) — read, validate, and update.
+"""Per-service launch settings (bind address / port) — read, validate, update.
 
 Each managed service gets a small env file under ~/ai/config/ that its
-systemd unit references; host/port live there so the Settings page can
-change them without touching unit files:
+systemd unit references; bind address and port live there so the Settings page
+can change them without touching unit files:
 
     llamacpp.env  -> ai-llama-router.service   (LLAMA_HOST / LLAMA_PORT)
     comfyui.env   -> ai-comfyui.service        (COMFY_HOST / COMFY_PORT)
     portal.env    -> ai-portal.service         (AI_PORTAL_HOST / AI_PORTAL_PORT)
+
+Bind address is a *mode*, not just a boolean (see :mod:`app.core.network`):
+
+    loopback  127.0.0.1      this machine only
+    lan       <iface addr>   one interface (survives ``ss`` audits cleanly)
+    all       0.0.0.0        every interface — the "open it to the network" case
+
+``external=True`` is kept as a shorthand for ``all`` because the older
+endpoint contract and tests use it.
 
 Port validation rules (enforced by :func:`validate_port`):
   1. integer in the valid TCP range 1..65535
@@ -17,8 +26,10 @@ Port validation rules (enforced by :func:`validate_port`):
   4. <1024 -> warning only (privileged range; user services cannot bind
      these without extra capability — flagged, not refused)
 
-External access toggle: host "127.0.0.1" = loopback-only (disabled),
-host "0.0.0.0" = all interfaces (enabled).
+Exposure is validated, never blocked: :func:`exposure` states what each bind
+means in security terms (the llama.cpp router and ComfyUI serve *unauthenticated*
+HTTP and can execute code — that warning is the point of the field, and the
+router can be given an API key via :mod:`app.core.llamakey`).
 
 Writes do NOT restart anything — the caller (Settings page) shows a
 "restart required" notice and triggers systemd.service_action() per unit.
@@ -29,9 +40,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import paths
+from . import network, paths, systemd
 
-# service key -> env file + variable names used by its unit's ExecStart
+# service key -> env file + variable names used by its unit's wrapper.
+#   auth: what protects the endpoint once it leaves loopback ("" = nothing)
+#   code_exec: the endpoint can run code, so exposure needs a real warning
 SERVICE_CONF: dict[str, dict] = {
     "llamacpp": {
         "label": "llama.cpp router",
@@ -39,6 +52,11 @@ SERVICE_CONF: dict[str, dict] = {
         "host_key": "LLAMA_HOST",
         "port_key": "LLAMA_PORT",
         "unit": paths.ROUTER_UNIT,
+        "scheme": "http",
+        "auth": "no auth by default (optional --api-key-file)",
+        "auth_kind": "optional",
+        "code_exec": True,
+        "defaults": {"host": "127.0.0.1", "port": 8080},
     },
     "comfyui": {
         "label": "ComfyUI",
@@ -46,6 +64,13 @@ SERVICE_CONF: dict[str, dict] = {
         "host_key": "COMFY_HOST",
         "port_key": "COMFY_PORT",
         "unit": paths.COMFY_UNIT,
+        "scheme": "http",
+        # ComfyUI has no auth at all: /prompt runs arbitrary Python via custom
+        # nodes. Its own docs say do not expose it to an untrusted network.
+        "auth": "no auth (ComfyUI runs arbitrary Python via /prompt)",
+        "auth_kind": "none",
+        "code_exec": True,
+        "defaults": {"host": "127.0.0.1", "port": 8188},
     },
     "portal": {
         "label": "AI Portal",
@@ -53,11 +78,16 @@ SERVICE_CONF: dict[str, dict] = {
         "host_key": "AI_PORTAL_HOST",
         "port_key": "AI_PORTAL_PORT",
         "unit": paths.PORTAL_UNIT,
+        "scheme": "http",
+        "auth": "app password (scrypt) + signed session cookie",
+        "auth_kind": "password",
+        "code_exec": True,
+        "defaults": {"host": "0.0.0.0", "port": 8090},
     },
 }
 
-LOOPBACK = "127.0.0.1"
-EXTERNAL = "0.0.0.0"
+LOOPBACK = network.LOOPBACK
+EXTERNAL = network.ALL
 
 
 def _read_env_file(f: Path) -> dict[str, str]:
@@ -87,8 +117,48 @@ def _write_env_file(f: Path, env: dict[str, str]) -> None:
     f.write_text("\n".join(lines) + "\n")
 
 
+def ensure_defaults(service: str) -> dict[str, str]:
+    """Seed a managed service's env file with its host/port if missing.
+
+    Without this a first-ever ``set_bind`` on a fresh machine writes only the
+    host and leaves the service with no port at all (env file → port 0).
+    Existing values are never touched.
+    """
+    conf = SERVICE_CONF[service]
+    env = _read_env_file(conf["env_file"])
+    changed = False
+    if conf["host_key"] not in env:
+        env[conf["host_key"]] = conf["defaults"]["host"]
+        changed = True
+    if conf["port_key"] not in env:
+        env[conf["port_key"]] = str(conf["defaults"]["port"])
+        changed = True
+    if changed:
+        _write_env_file(conf["env_file"], env)
+    return env
+
+
+def read_service_env(service: str) -> dict[str, str]:
+    """Parsed launch env file of a managed service (public accessor — other
+    modules must not reach for ``_read_env_file``)."""
+    return _read_env_file(SERVICE_CONF[service]["env_file"])
+
+
+def write_service_env(service: str, env: dict[str, str]) -> Path:
+    """Write a managed service's launch env file. Keys are the caller's
+    responsibility; the quoting/systemd formatting is handled here."""
+    f = SERVICE_CONF[service]["env_file"]
+    _write_env_file(f, env)
+    return f
+
+
 def service_ports() -> dict[str, dict]:
-    """Current host/port per managed service (from the env files)."""
+    """Current host/port per managed service (from the env files).
+
+    Includes the derived bind ``mode`` and the legacy ``external`` flag; the
+    heavy live probes (per-URL reachability) are added by :func:`exposure`,
+    not here, because :func:`validate_port` calls this in a loop.
+    """
     out: dict[str, dict] = {}
     for key, conf in SERVICE_CONF.items():
         env = _read_env_file(conf["env_file"])
@@ -103,9 +173,39 @@ def service_ports() -> dict[str, dict]:
             "env_file": str(conf["env_file"]),
             "host": host,
             "port": port,
-            "external": host == EXTERNAL,
+            "mode": network.bind_mode(host),
+            "external": network.bind_mode(host) == "all",
+            "auth": conf.get("auth", ""),
+            "code_exec": bool(conf.get("code_exec")),
         }
     return out
+
+
+def port_of(service: str, default: int = 0) -> int:
+    """The port a service is configured to use (env file, not the compiled-in
+    constant) — so a port change in Settings follows the health probes."""
+    try:
+        return int(service_ports()[service]["port"]) or default
+    except (KeyError, TypeError, ValueError):
+        return default
+
+
+def probe_host(service: str) -> str:
+    """Host the *portal* should dial to reach its own service.
+
+    Loopback whenever the daemon accepts it (``loopback`` or ``all`` binds).
+    With a single-interface (``lan``) bind the daemon does NOT answer on
+    127.0.0.1, so probe the bound address itself — otherwise the dashboard
+    would report a healthy service as down.
+    """
+    st = service_ports()[service]
+    return st["host"] if st["mode"] == "lan" else LOOPBACK
+
+
+def base_url(service: str, default_port: int = 0, scheme: str | None = None) -> str:
+    conf = SERVICE_CONF[service]
+    return (f"{scheme or conf.get('scheme', 'http')}://"
+            f"{probe_host(service)}:{port_of(service, default_port)}")
 
 
 def listening_ports() -> set[int]:
@@ -162,6 +262,156 @@ def validate_port(port, service: str) -> dict:
     return {"ok": not errors, "errors": errors, "warnings": warnings}
 
 
+def validate_bind(service: str, host: str) -> dict:
+    """Validate a candidate bind address without writing it."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    h = str(host or "").strip()
+    if h not in (network.LOOPBACK, network.ALL, network.ALL_V6) and \
+            not network.is_local_address(h):
+        errors.append(
+            f"{h!r} is not an address of this machine — cannot bind to it "
+            f"(LAN addresses: {', '.join(network.lan_addresses()) or 'none found'})")
+    if network.bind_mode(h) == "lan" and any(
+            it["address"] == h and it["dynamic"] for it in network.interfaces()):
+        warnings.append("that interface address is DHCP-assigned: if the lease "
+                        "changes, binding to the old address fails at service "
+                        "start — 'all interfaces' is the resilient choice")
+    if network.bind_mode(h) != "loopback":
+        conf = SERVICE_CONF[service]
+        if conf.get("auth_kind") == "none":
+            warnings.append(
+                f"{conf['label']} has no authentication: {conf['auth']}. Only "
+                "open it to a trusted network, and prefer the 'lan' bind over "
+                "'all' so it is not also reachable on bridge/VPN interfaces.")
+        elif conf.get("auth_kind") == "optional":
+            warnings.append(
+                f"{conf['label']} is exposed without a key unless an API key "
+                "is set — clients then need Authorization: Bearer <key>.")
+        fw = network.firewall_status()
+        if fw.get("enabled"):
+            warnings.append("ufw is active: this port needs an explicit allow "
+                            "rule or peers get connection-refused")
+    if errors:
+        warnings = []
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+def set_bind(service: str, mode: str | None = None,
+             address: str | None = None) -> dict:
+    """Persist the bind mode (``loopback`` | ``lan`` | ``all``) for a service.
+
+    ``lan`` with no explicit address uses the default-route interface. The
+    ComfyUI provider keeps its own ``comfyui.json`` as the launch-config
+    source of truth, so its host is written there too — otherwise the next
+    ``ensure_service()``/``set_config()`` would regenerate the env file from
+    the stale json and silently revert this change.
+    """
+    if service not in SERVICE_CONF:
+        raise ValueError(f"unknown service {service!r} "
+                         f"(known: {', '.join(SERVICE_CONF)})")
+    if mode is None:
+        return {"ok": True, **service_ports()[service], "changed": False}
+    if mode not in network.MODES:
+        raise ValueError(f"unknown bind mode {mode!r} "
+                         f"(expected: {', '.join(network.MODES)})")
+    conf = SERVICE_CONF[service]
+    if address and not network.is_local_address(address):
+        raise ValueError(f"{address!r} is not an address of this machine")
+    new_host = network.resolve_bind(mode, address)
+    vres = validate_bind(service, new_host)
+    if not vres["ok"]:
+        return {"ok": False, "errors": vres["errors"], "warnings": vres["warnings"]}
+
+    env = ensure_defaults(service)
+    old_host = env.get(conf["host_key"], LOOPBACK)
+    env[conf["host_key"]] = new_host
+    _write_env_file(conf["env_file"], env)
+    _sync_provider_config(service, host=new_host)
+    try:
+        cur_port = int(env.get(conf["port_key"], "0"))
+    except ValueError:
+        cur_port = int(conf["defaults"]["port"])
+    return {"ok": True, "service": service, "host": new_host, "port": cur_port,
+            "mode": network.bind_mode(new_host),
+            "external": network.bind_mode(new_host) == "all",
+            "previous": old_host, "changed": old_host != new_host,
+            "bind_description": network.describe_bind(new_host),
+            "errors": [], "warnings": vres["warnings"],
+            "needs_restart": True, "unit": conf["unit"]}
+
+
+def _sync_provider_config(service: str, host: str | None = None,
+                          port: int | None = None) -> None:
+    """Keep a provider's own config file in step with its env file.
+
+    ComfyUI is the only service with a second store (~/ai/config/comfyui.json,
+    the source :meth:`ComfyUI.set_config` regenerates the env file from).
+    Imported lazily: app.providers imports app.core, not the reverse.
+    """
+    if service != "comfyui":
+        return
+    try:  # pragma: no cover - exercised through the API in the live system
+        from ..providers.comfyui import ComfyUI
+        p = ComfyUI()
+        cur = p.config()
+        p.set_config({**cur,
+                      **({"listen": host} if host else {}),
+                      **({"port": port} if port else {})})
+    except Exception:  # noqa: BLE001 - env file is authoritative if json is broken
+        pass
+
+
+def exposure(service: str | None = None) -> dict:
+    """Live exposure report per service: bind mode, the URLs peers would use,
+    whether the daemon is *actually* reachable that way right now, and the
+    firewall command that would be needed.
+
+    Deliberately explicit about a *pending* change: a host written to the env
+    file has no effect until the unit restarts, so the report compares the
+    wanted bind with what a LAN-address TCP probe actually finds. A
+    loopback-only bind refuses that probe, which is exactly the difference
+    "responds to other systems on our network" comes down to.
+    """
+    keys = [service] if service else list(SERVICE_CONF)
+    fw = network.firewall_status()
+    lan = network.primary_lan()
+    out: dict[str, dict] = {}
+    for key in keys:
+        conf = SERVICE_CONF[key]
+        st = service_ports()[key]
+        host, port, mode = st["host"], st["port"], st["mode"]
+
+        urls = []
+        for u in network.endpoint_urls(host, port or 0, conf["scheme"]):
+            target = u["url"].split("://", 1)[-1].rsplit(":", 1)[0]
+            urls.append(dict(u, listening=(network.listening_on(target, port)
+                                           if port else None)))
+
+        lan_probe = (network.check_reachable(lan["address"], port, timeout=1.0)
+                     if lan and port else None)
+        listening_lan = bool(lan_probe and lan_probe["ok"])
+        unit = systemd.unit_state(conf["unit"])
+        active = unit.get("ActiveState") == "active"
+        out[key] = {
+            **st,
+            "bind_description": network.describe_bind(host),
+            "urls": urls,
+            "lan_probe": lan_probe,
+            "lan_address": lan["address"] if lan else None,
+            "listening_lan": listening_lan,
+            "unit_active": active,
+            # wanted open, but the live socket says otherwise -> the unit has
+            # not picked up the env file yet
+            "pending_restart": bool(mode != "loopback" and active
+                                    and not listening_lan),
+            "firewall": {"enabled": fw.get("enabled"), "detail": fw.get("detail")},
+            "allow_command": (network.allow_command(port, comment=conf["label"])
+                              if port and mode != "loopback" else None),
+        }
+    return out
+
+
 def set_service_port(service: str, port: int | None = None,
                      external: bool | None = None) -> dict:
     """Validate + persist a host/port change for one service. No restart."""
@@ -169,7 +419,7 @@ def set_service_port(service: str, port: int | None = None,
         raise ValueError(f"unknown service {service!r} "
                          f"(known: {', '.join(SERVICE_CONF)})")
     conf = SERVICE_CONF[service]
-    env = _read_env_file(conf["env_file"])
+    env = ensure_defaults(service)
     cur_host = env.get(conf["host_key"], LOOPBACK)
 
     new_port = port
@@ -178,7 +428,16 @@ def set_service_port(service: str, port: int | None = None,
             new_port = int(env.get(conf["port_key"], "0"))
         except ValueError:
             new_port = 0
-    new_host = (EXTERNAL if external else LOOPBACK) if external is not None else cur_host
+    bind_warnings: list[str] = []
+    if external is not None:
+        new_host = EXTERNAL if external else LOOPBACK
+        bres = validate_bind(service, new_host)
+        if not bres["ok"]:
+            return {"ok": False, "errors": bres["errors"],
+                    "warnings": bres["warnings"]}
+        bind_warnings = bres["warnings"]
+    else:
+        new_host = cur_host
 
     if port is not None or external is not None:
         vres = validate_port(new_port, service)
@@ -189,8 +448,12 @@ def set_service_port(service: str, port: int | None = None,
     env[conf["port_key"]] = str(new_port)
     env[conf["host_key"]] = new_host
     _write_env_file(conf["env_file"], env)
+    if new_host != cur_host or (port is not None):
+        _sync_provider_config(service, host=new_host,
+                              port=new_port if port is not None else None)
     return {"ok": True, "service": service, "host": new_host,
-            "port": new_port, "external": new_host == EXTERNAL,
-            "warnings": (validate_port(new_port, service)["warnings"]
-                         if port is not None or external is not None else []),
+            "port": new_port, "mode": network.bind_mode(new_host),
+            "external": network.bind_mode(new_host) == "all",
+            "warnings": list(dict.fromkeys(
+                bind_warnings + validate_port(new_port, service)["warnings"])),
             "needs_restart": True, "unit": conf["unit"]}

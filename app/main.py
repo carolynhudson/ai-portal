@@ -26,7 +26,7 @@ from pydantic import BaseModel
 import httpx
 
 from . import metrics, router as router_mod
-from .core import config as cfg, serviceconf, serviceenv
+from .core import config as cfg, llamakey, network, ratelimit, serviceconf, serviceenv
 from .core import db, modeladd, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
@@ -58,6 +58,26 @@ class ComfyConfigBody(BaseModel):
     listen: str | None = None
     port: int | str | None = None   # str tolerated so we can 400 with a message
     extra_args: str | None = None
+
+
+class BindBody(BaseModel):
+    """Bind request for one managed service.
+
+    ``bind`` is the mode: ``loopback`` (this machine), ``lan`` (one interface
+    address — ``address`` optional, defaults to the default-route nic), or
+    ``all`` (0.0.0.0 — every interface). ``external`` is the legacy boolean
+    shorthand for ``all``/``loopback`` and still works.
+    """
+    bind: str | None = None
+    address: str | None = None
+    external: bool | None = None
+    restart: bool = False       # restart the unit now (router: confirm first)
+    confirm: bool = False
+
+
+class ApiKeyBody(BaseModel):
+    action: str = "generate"    # generate | revoke | rotate
+    force: bool = False
 
 
 class ComfyDownloadBody(BaseModel):
@@ -144,21 +164,28 @@ def _llama_behind() -> dict:
 
 
 def comfy_snapshot() -> dict:
-    """Live ComfyUI state for the dashboard hero (mirrors router_mod.snapshot())."""
+    """Live ComfyUI state for the dashboard hero (mirrors router_mod.snapshot()).
+
+    Probes the endpoint as configured (see :meth:`ComfyUI.endpoint`) and shows
+    the bind, so the hero says the same thing the Settings page does about who
+    can reach it.
+    """
     p = get_provider("comfyui")
     cfg = p.config()
     st = systemd.unit_state(paths.COMFY_UNIT)
-    web = router_mod.probe(f"http://127.0.0.1:{cfg['port']}/system_stats")
+    base = p.endpoint()
+    web = router_mod.probe(f"{base}/system_stats")
     version = None
     if web["ok"]:
         try:
-            version = httpx.get(f"http://127.0.0.1:{cfg['port']}/system_stats",
+            version = httpx.get(f"{base}/system_stats",
                                 timeout=3).json()["system"]["comfyui_version"]
         except Exception:  # noqa: BLE001
             pass
     return {
-        "host": f"http://{cfg['listen']}:{cfg['port']}",
+        "host": base,
         "port": cfg["port"],
+        "bind": serviceconf.service_ports()["comfyui"],
         "service": {"state": st.get("ActiveState", "unknown"),
                     "sub": st.get("SubState"),
                     "since": st.get("ActiveEnterTimestamp", "").split(" ")[0] or None},
@@ -186,29 +213,59 @@ def create_app() -> FastAPI:
         return templates.TemplateResponse(request, "login.html",
                                           {"error": error})
 
+    def _login_blocked(request: Request):
+        """Throttle key + 429 payload when a source is out of attempts.
+
+        Needed because the portal listens on the LAN (decision D2): the app
+        password is the only gate, so failed attempts are counted per source.
+        """
+        key = ratelimit.client_key(request)
+        ok, retry = ratelimit.allow(key)
+        return key, (None if ok else retry)
+
     @app.post("/login")
     def login_post(request: Request, password: str = Form(...)):
         s = _settings()
+        key, retry = _login_blocked(request)
+        if retry:
+            db.event("portal", "auth", f"login throttled for {key} "
+                                       f"(retry in {retry}s)")
+            return templates.TemplateResponse(
+                request, "login.html",
+                {"error": f"too many failed attempts — try again in {retry}s"},
+                status_code=429,
+                headers={"Retry-After": str(retry)})
         if s.password_hash and cfg.verify_password(password, s.password_hash):
+            ratelimit.success(key)
             db.event("portal", "auth", "password login ok")
             resp = RedirectResponse(url="/", status_code=302)
             resp.set_cookie(cfg.COOKIE_NAME, cfg.make_token(s), httponly=True,
                             samesite="lax", path="/", max_age=cfg.SESSION_TTL)
             return resp
+        left = ratelimit.failure(key)
+        db.event("portal", "auth", f"failed login from {key} ({left} left)")
         return templates.TemplateResponse(
             request, "login.html",
-            {"error": "wrong password"},
+            {"error": "wrong password" if left else
+             "wrong password — locked out after too many attempts"},
             status_code=401)
 
     @app.post("/api/login")
-    def api_login(body: LoginBody):
+    def api_login(request: Request, body: LoginBody):
         s = _settings()
+        key, retry = _login_blocked(request)
+        if retry:
+            raise HTTPException(status_code=429,
+                                detail=f"too many attempts; retry in {retry}s")
         if s.password_hash and cfg.verify_password(body.password, s.password_hash):
+            ratelimit.success(key)
             db.event("portal", "auth", "api login ok")
             resp = JSONResponse({"ok": True})
             resp.set_cookie(cfg.COOKIE_NAME, cfg.make_token(s), httponly=True,
                             samesite="lax", path="/", max_age=cfg.SESSION_TTL)
             return resp
+        left = ratelimit.failure(key)
+        db.event("portal", "auth", f"failed api login from {key} ({left} left)")
         raise HTTPException(status_code=401, detail="wrong password")
 
     @app.post("/logout")
@@ -721,6 +778,121 @@ def create_app() -> FastAPI:
         db.event("portal", "config",
                  f"service {service}: host={res['host']} port={res['port']} "
                  f"external={res['external']}")
+        return res
+
+    # ------------------------------------------- network exposure (LAN access)
+    @app.get("/api/network")
+    def api_network(_=Depends(_require_auth)):
+        """Everything the Settings page needs to answer "can other machines
+        reach this service?": interfaces, firewall state, per-service bind +
+        live reachability probes, and the router's auth status."""
+        return {
+            "interfaces": network.interfaces(),
+            "primary_lan": network.primary_lan(),
+            "lan_network": network.lan_network(),
+            "firewall": network.firewall_status(),
+            "services": serviceconf.exposure(),
+            "router_auth": llamakey.status(),
+            "modes": list(network.MODES),
+        }
+
+    @app.get("/api/exposure")
+    def api_exposure(service: str | None = None, _=Depends(_require_auth)):
+        """Bind + reachability report (one service or all three)."""
+        if service and service not in serviceconf.SERVICE_CONF:
+            raise HTTPException(404, f"unknown service {service!r}")
+        return serviceconf.exposure(service)
+
+    @app.post("/api/settings/services/{service}/bind")
+    def api_settings_bind(service: str, body: BindBody,
+                          _=Depends(_require_auth)):
+        """Persist how a service binds to the network — loopback, one LAN
+        interface, or all interfaces — and optionally restart the unit.
+
+        Restarting is opt-in and, for the router, needs ``confirm``: restarting
+        it drops every agent session riding it (PORTAL_PLAN §4.3).
+        """
+        if service not in serviceconf.SERVICE_CONF:
+            raise HTTPException(404, f"unknown service {service!r}")
+        mode = body.bind
+        if mode is None and body.external is not None:
+            mode = "all" if body.external else "loopback"
+        if mode is None:
+            raise HTTPException(400, {"ok": False,
+                                      "errors": ["bind is required "
+                                                 f"({'|'.join(network.MODES)})"]})
+        try:
+            res = serviceconf.set_bind(service, mode, body.address)
+        except ValueError as e:
+            raise HTTPException(400, {"ok": False, "errors": [str(e)]})
+        if not res.get("ok"):
+            raise HTTPException(422, res)
+        db.event("portal", "network",
+                 f"service {service}: bind {res['previous']} -> {res['host']} "
+                 f"({res['mode']})")
+        if body.restart:
+            if service == "llamacpp" and not body.confirm:
+                raise HTTPException(400, {"ok": False,
+                                          "errors": ["restarting the llama.cpp "
+                                                     "router drops every agent "
+                                                     "session riding it — send "
+                                                     "confirm=true"]})
+            act = systemd.service_action(service, "restart")
+            res["restart"] = act
+            db.event("portal", "network",
+                     f"restart {service} to apply bind {res['host']}: "
+                     f"{'ok' if act.get('ok') else act.get('error')}")
+        return res
+
+    # ------------------------------------------- llama.cpp router API key
+    @app.get("/api/settings/llamacpp/apikey")
+    def api_router_key_status(_=Depends(_require_auth)):
+        """Router auth state: configured (launch env), enforced (live probe),
+        and the key itself — this console is single-operator, so the value is
+        returned rather than masked; the endpoint is behind the app password."""
+        st = llamakey.status()
+        st["key"] = llamakey.reveal() if st["configured"] else None
+        if st["configured"]:
+            base = serviceconf.base_url("llamacpp", 8080)
+            st["web_ui_url"] = llamakey.web_ui_url(base)
+        return st
+
+    @app.post("/api/settings/llamacpp/apikey")
+    def api_router_key(body: ApiKeyBody, _=Depends(_require_auth)):
+        """generate | rotate | revoke the shared router key (launch env only —
+        applying it means restarting the router, which needs a confirm)."""
+        action = (body.action or "generate").lower()
+        if action == "generate":
+            res = llamakey.generate(force=False)
+        elif action == "rotate":
+            res = llamakey.generate(force=True)
+        elif action == "revoke":
+            res = llamakey.revoke()
+        else:
+            raise HTTPException(400, f"unknown action {action!r} "
+                                     "(generate|rotate|revoke)")
+        db.event("portal", "config",
+                 f"llamacpp api-key: {action} "
+                 f"({'created' if res.get('created') else 'unchanged'})")
+        return res
+
+    # ---------------------------------- regenerate the router launch config
+    @app.post("/api/services/llamacpp/ensure")
+    def api_llama_ensure(_=Depends(_require_auth)):
+        """Generate the router's env file + wrapper + unit (idempotent, no
+        restart) and verify the wrapper argv without loading a model.
+
+        This is how a hand-written unit is migrated onto the generated pattern:
+        install (backup kept in state/rollback/units), then restart the router
+        when convenient — the running process keeps its current config until
+        then, so this call is always safe.
+        """
+        res = get_provider("llamacpp").ensure_service(
+            log=lambda m: print("[ai-portal]", m))
+        db.event("portal", "service",
+                 f"llamacpp service files generated (argv ok: {res['verify']['ok']})")
+        if not res["verify"]["ok"]:
+            raise HTTPException(500, res)
         return res
 
     # ---------------------------------------- huggingface CLI + library

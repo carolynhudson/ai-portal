@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, paths, systemd, updater
+from ..core import db, llamakey, paths, serviceconf, systemd, units, updater
 
 
 def _git_head(repo: str) -> str | None:
@@ -44,9 +44,12 @@ def _origin_main(repo: str) -> str | None:
 
 
 def _router_models() -> list[dict]:
+    """Live model registry from the router as it is *configured* (env file),
+    sending the API key when one is set."""
     try:
         import httpx
-        r = httpx.get(f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}/v1/models", timeout=8)
+        r = httpx.get(f"{serviceconf.base_url('llamacpp', 8080)}/v1/models",
+                      timeout=8, headers=llamakey.request_headers())
         r.raise_for_status()
         return r.json().get("data", [])
     except Exception as e:  # noqa: BLE001
@@ -197,8 +200,128 @@ def behind_by() -> dict:
             "behind": st.get("behind_master")}
 
 
+# --------------------------------------------------------------- launch config
+# The router is launched the same way ComfyUI is: static unit -> env file ->
+# generated wrapper. Everything the Settings page owns lives in the env file:
+#
+#   LLAMA_HOST / LLAMA_PORT        bind + port (serviceconf writes these)
+#   LLAMA_MODELS_MAX               router slots (default 1)
+#   LLAMA_MODELS_DIR / LLAMA_PRESETS  model store + per-model tuning
+#   LLAMA_METRICS                  "1" adds --metrics
+#   LLAMA_API_KEY_FILE             optional --api-key-file (see core.llamakey)
+#   LLAMA_ARGS                     free-form extra args (word-split, no quoting)
+#   HF_HOME                        kept per-service (finding F11)
+ROUTER_ENV_DEFAULTS: dict[str, str] = {
+    "LLAMA_BIN": str(paths.AI_BIN / "llama-server"),
+    "LLAMA_HOST": paths.ROUTER_HOST,
+    "LLAMA_PORT": str(paths.ROUTER_PORT),
+    "LLAMA_METRICS": "1",
+    "LLAMA_MODELS_MAX": "1",
+    "LLAMA_MODELS_DIR": str(paths.LLAMA_MODELS),
+    "LLAMA_PRESETS": str(paths.PRESETS_INI),
+    "LLAMA_ARGS": "",
+    "HF_HOME": str(paths.HF_CACHE),
+}
+
+# NOTE: `set --` builds argv positionally so every value keeps its quoting;
+# only $LLAMA_ARGS is deliberately word-split (same contract as COMFY_ARGS).
+# AI_PORTAL_PRINT_ARGV=1 prints the argv instead of exec'ing, which is how the
+# portal verifies a launch config without loading a 30 GB model.
+# Substitution uses @@TOKEN@@ rather than %- or {}-formatting: the shell body is
+# full of ${VARS} and printf '%s', which those formatters would eat.
+ROUTER_WRAPPER = """#!/bin/sh
+# AI portal - llama.cpp router launch wrapper (GENERATED, do not hand-edit).
+# Every parameter comes from ~/ai/config/llamacpp.env; edit it via the portal's
+# Settings page, then restart ai-llama-router to apply. The defaults below are
+# only a safety net — the env file is what the portal writes and owns.
+set -eu
+
+LLAMA_BIN="${LLAMA_BIN:-@@bin@@}"
+if [ ! -x "$LLAMA_BIN" ]; then
+  echo "ai-llama-router: no executable at $LLAMA_BIN (deploy a release first)" >&2
+  exit 1
+fi
+
+set -- --host "${LLAMA_HOST:-@@host@@}" --port "${LLAMA_PORT:-@@port@@}"
+if [ "${LLAMA_METRICS:-1}" = "1" ]; then set -- "$@" --metrics; fi
+if [ -n "${LLAMA_API_KEY_FILE:-}" ] && [ -f "${LLAMA_API_KEY_FILE}" ]; then
+  set -- "$@" --api-key-file "${LLAMA_API_KEY_FILE}"
+fi
+set -- "$@" --models-max "${LLAMA_MODELS_MAX:-@@models_max@@}" \\
+           --models-dir "${LLAMA_MODELS_DIR:-@@models_dir@@}" \\
+           --models-preset "${LLAMA_PRESETS:-@@presets@@}"
+# free-form extra args: intentionally word-split (no quoting supported)
+for a in ${LLAMA_ARGS:-}; do set -- "$@" "$a"; done
+
+# AI_PORTAL_PRINT_ARGV=1 prints the argv instead of exec'ing llama-server: the
+# portal uses it to verify a launch config without loading a model.
+if [ "${AI_PORTAL_PRINT_ARGV:-0}" = "1" ]; then
+  printf '%s\\n' "$LLAMA_BIN" "$@"
+  exit 0
+fi
+exec "$LLAMA_BIN" "$@"
+"""
+
+
+def render_router_wrapper(env: dict[str, str]) -> str:
+    """The wrapper text with this machine's current values as shell defaults."""
+    return (ROUTER_WRAPPER
+            .replace("@@bin@@", env["LLAMA_BIN"])
+            .replace("@@host@@", env["LLAMA_HOST"])
+            .replace("@@port@@", str(env["LLAMA_PORT"]))
+            .replace("@@models_max@@", str(env["LLAMA_MODELS_MAX"]))
+            .replace("@@models_dir@@", env["LLAMA_MODELS_DIR"])
+            .replace("@@presets@@", env["LLAMA_PRESETS"]))
+
+
+def router_env() -> dict[str, str]:
+    """Effective launch env (file values over defaults), defaults first."""
+    return {**ROUTER_ENV_DEFAULTS, **serviceconf.read_service_env("llamacpp")}
+
+
+def router_argv(env: dict[str, str] | None = None) -> list[str]:
+    """The argv the wrapper would exec, computed in Python (used to preview
+    and to assert the wrapper and the portal agree)."""
+    e = env or router_env()
+    argv = [e["LLAMA_BIN"], "--host", e["LLAMA_HOST"], "--port", str(e["LLAMA_PORT"])]
+    if e.get("LLAMA_METRICS", "1") == "1":
+        argv.append("--metrics")
+    key_file = e.get(llamakey.ENV_KEY, "")
+    if key_file and Path(key_file).is_file():
+        argv += ["--api-key-file", key_file]
+    argv += ["--models-max", str(e["LLAMA_MODELS_MAX"]),
+             "--models-dir", e["LLAMA_MODELS_DIR"],
+             "--models-preset", e["LLAMA_PRESETS"]]
+    argv += [a for a in (e.get("LLAMA_ARGS") or "").split() if a]
+    return argv
+
+
 class LlamaCpp(Provider):
     key, name, kind = "llamacpp", "llama.cpp", "llamacpp"
+
+    # -------------------------------------------------------- service launch
+    def ensure_service(self, log=print) -> dict:
+        """Generate env file + wrapper + static unit for the router (idempotent).
+
+        Mirrors :meth:`ComfyUI.ensure_service`. Does NOT start or restart
+        anything: swapping the router is a confirmed operation (the agent
+        session may be riding it). The previous unit file is kept under
+        ``state/rollback/units/`` by :func:`units.install_unit`.
+        """
+        env = router_env()
+        units.write_env("llamacpp", env, log)
+        units.write_wrapper("llamacpp", render_router_wrapper(env), log)
+        unit_info = units.install_unit(paths.ROUTER_UNIT, "llamacpp",
+                                       "llama.cpp model router (AI Portal)",
+                                       str(paths.AI_ROOT), log) or {}
+        verify = verify_wrapper_argv()
+        return {"unit": paths.ROUTER_UNIT,
+                "env": str(units.env_path("llamacpp")),
+                "wrapper": str(units.wrapper_path("llamacpp")),
+                "unit_file": unit_info.get("unit_file"),
+                "unit_backup": unit_info.get("backup"),
+                "argv": verify.get("argv"), "verify": verify, "config": env}
+
 
     def status(self) -> ToolStatus:
         detail: dict = {}
@@ -592,19 +715,47 @@ def _git(repo: Path, *args: str, log=print, **kw) -> str:
 
 
 def _router_healthy(log, wait: int = 90) -> bool:
-    """Wait until the router unit is active AND answering on :8080."""
+    """Wait until the router unit is active AND answering on its configured
+    endpoint (``/v1/models``, with the API key when one is configured)."""
     deadline = time.time() + wait
+    url = f"{serviceconf.base_url('llamacpp', 8080)}/v1/models"
     while time.time() < deadline:
         st = systemd.unit_state(paths.ROUTER_UNIT)
         if st.get("ActiveState") == "active":
             try:
-                r = httpx.get(
-                    f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}/v1/models",
-                    timeout=5)
+                r = httpx.get(url, timeout=5, headers=llamakey.request_headers())
                 if r.status_code == 200:
                     return True
             except Exception:  # noqa: BLE001 — still coming up
                 pass
         time.sleep(3)
-    log("router did not become healthy in time")
+    log(f"router did not become healthy in time ({url})")
     return False
+
+
+def verify_wrapper_argv(log=print) -> dict:
+    """Run the generated wrapper with ``AI_PORTAL_PRINT_ARGV=1``.
+
+    This is the safety net for the launch-config change: it proves the wrapper
+    is syntactically valid, the binary is executable, and the argv matches what
+    the portal computes — without loading a model or touching the running
+    router. ``ok`` is False when the wrapper is missing or disagrees.
+    """
+    wrapper = units.wrapper_path("llamacpp")
+    if not wrapper.is_file():
+        return {"ok": False, "error": f"wrapper not installed: {wrapper}"}
+    want = router_argv()
+    try:
+        p = subprocess.run([str(wrapper)], capture_output=True, text=True,
+                           timeout=20,
+                           env={**os.environ, "AI_PORTAL_PRINT_ARGV": "1"})
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "wrapper": str(wrapper)}
+    if p.returncode != 0:
+        return {"ok": False, "error": ((p.stderr or p.stdout).strip()[:400]
+                                        or f"exit {p.returncode}"),
+                "wrapper": str(wrapper)}
+    got = [ln for ln in p.stdout.splitlines() if ln.strip()]
+    return {"ok": got == want, "wrapper": str(wrapper), "argv": got,
+            "expected": want,
+            "mismatch": None if got == want else "wrapper argv != computed argv"}

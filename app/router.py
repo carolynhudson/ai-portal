@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 
-from .core import db, paths, systemd
+from .core import db, llamakey, paths, serviceconf, systemd
 
 _PROBE_TIMEOUT = 3.0
 _TTL = 2.0
@@ -44,7 +44,7 @@ def probe(url: str) -> dict:
 
     t0 = time.time()
     try:
-        r = httpx.get(url, timeout=_PROBE_TIMEOUT)
+        r = httpx.get(url, timeout=_PROBE_TIMEOUT, headers=_headers())
         return {"ok": r.status_code < 500, "status": r.status_code,
                 "ms": int((time.time() - t0) * 1000), "url": url}
     except Exception as e:  # noqa: BLE001
@@ -52,13 +52,26 @@ def probe(url: str) -> dict:
                 "url": url, "error": str(e)}
 
 
+def base() -> str:
+    """Router base URL *as configured* — read from the launch env file, so a
+    port or bind change made in Settings is followed by the dashboard instead
+    of the dashboard probing a stale hard-coded :8080."""
+    return serviceconf.base_url("llamacpp", default_port=8080)
+
+
+def _headers() -> dict:
+    """Auth header when the router is configured with an API key (otherwise
+    every probe here would come back 401)."""
+    return llamakey.request_headers()
+
+
 def _api() -> dict:
     import httpx
 
-    url = f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}/v1/models"
+    url = f"{base()}/v1/models"
     t0 = time.time()
     try:
-        r = httpx.get(url, timeout=_PROBE_TIMEOUT)
+        r = httpx.get(url, timeout=_PROBE_TIMEOUT, headers=_headers())
         ms = int((time.time() - t0) * 1000)
         data = r.json().get("data", [])
         ids = [m.get("id") for m in data if m.get("id")]
@@ -84,9 +97,10 @@ def _fetch_metrics(model_id: str | None) -> dict:
 
     if not model_id:
         return {}
-    url = f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}/metrics"
+    url = f"{base()}/metrics"
     try:
-        r = httpx.get(url, params={"model": model_id}, timeout=3.0)
+        r = httpx.get(url, params={"model": model_id}, timeout=3.0,
+                      headers=_headers())
         r.raise_for_status()
     except Exception:  # noqa: BLE001
         return {}
@@ -201,17 +215,21 @@ def _parse(lines: list[str]) -> dict:
 
 
 def _build() -> dict:
-    base = f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}"
+    url_base = base()
     svc = systemd.unit_state(paths.ROUTER_UNIT)
     parsed = _parse(systemd.journal_tail(paths.ROUTER_UNIT, _JOURNAL_LINES))
     api = _api()
     prom = _fetch_metrics(api.get("loaded")) if db.get_setting("router_metrics", True) else {}
+    bind = serviceconf.service_ports()["llamacpp"]
     return {
-        "host": base,
-        "loopback_only": paths.ROUTER_HOST in ("127.0.0.1", "localhost"),
+        "host": url_base,
+        # reported from the launch env, not a compile-time constant: this is
+        # what "is the router reachable from elsewhere?" actually depends on
+        "loopback_only": bind["mode"] == "loopback",
+        "bind": bind,
         "service": {"name": paths.ROUTER_UNIT, "state": svc.get("ActiveState", "unknown"),
                     "sub": svc.get("SubState"), "since": svc.get("Since")},
-        "web": probe(base + "/"),
+        "web": probe(url_base + "/"),
         "api": api,
         "loaded": api.get("loaded") or parsed["loaded"],
         "tps": {"latest": parsed["tps_latest"], "recent": parsed["tps_recent"]},
@@ -230,7 +248,7 @@ def snapshot() -> dict:
         try:
             _cache = (now, _build())
         except Exception as e:  # noqa: BLE001
-            _cache = (now, {"host": f"http://{paths.ROUTER_HOST}:{paths.ROUTER_PORT}",
+            _cache = (now, {"host": base(),
                             "loopback_only": True, "service": {"state": "unknown"},
                             "web": {"ok": False},
                             "api": {"ok": False, "count": 0, "ids": [], "loaded": None},

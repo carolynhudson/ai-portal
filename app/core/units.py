@@ -14,6 +14,7 @@ happens when the unit file itself is (re)installed).
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 from . import paths
@@ -58,12 +59,20 @@ def write_wrapper(name: str, body: str, log=print) -> Path:
 
 
 def install_unit(unit: str, service: str, description: str,
-                 working_dir: str, log=print) -> None:
+                 working_dir: str, log=print) -> dict:
     """Write the static unit (shared ai-env.env + per-service env file) and
-    daemon-reload so systemd sees it."""
+    daemon-reload so systemd sees it.
+
+    An existing *different* unit file is copied to ``state/rollback/units/``
+    first (safety model, PORTAL_PLAN §6): this is how a hand-written unit gets
+    replaced by the generated one without losing the only copy — the running
+    service is untouched until it is next restarted, so the operator can
+    restore the backup and ``daemon-reload`` to undo.
+    """
     p = unit_path(unit)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
+    backup = None
+    new_text = (
         "[Unit]\n"
         f"Description={description}\n"
         "After=network.target\n"
@@ -78,6 +87,16 @@ def install_unit(unit: str, service: str, description: str,
         "\n"
         "[Install]\n"
         "WantedBy=default.target\n")
+    if p.exists() and p.read_text() != new_text:
+        backup = paths.ROLLBACK_DIR / "units" / (
+            f"{unit}.service.{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text(p.read_text())
+        log(f"backed up previous unit file -> {backup}")
+    p.write_text(new_text)
     subprocess.run(["systemctl", "--user", "daemon-reload"],
                    capture_output=True, text=True, timeout=15)
     log(f"installed unit {unit} (daemon-reloaded)")
+    return {"unit_file": str(p), "backup": str(backup) if backup else None,
+            "env_file": str(env_path(service)),
+            "wrapper": str(wrapper_path(service))}

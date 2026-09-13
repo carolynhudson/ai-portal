@@ -34,26 +34,56 @@
   </div>
 </div>
 
-{# ------------------------------ service ports ---------------------------- #}
-<h2>Service ports</h2>
+{# ------------------------------ network access --------------------------- #}
+<h2>Network access</h2>
+<div class="card">
+  <div id="net-summary" class="mut" style="font-size:13px;margin-top:-2px">reading interfaces…</div>
+  <div id="net-firewall" style="font-size:13px;margin-top:6px"></div>
+</div>
+
 <div class="card">
   <p class="mut" style="font-size:13px;margin-top:-2px">
-    Each service listens on the host/port from its env file in
-    <span class="mono">~/ai/config/</span>. <em>External access</em> means
-    listen on all interfaces (<span class="mono">0.0.0.0</span>) instead of
-    loopback only (<span class="mono">127.0.0.1</span>). Candidate ports are
-    validated live: numeric TCP range, not assigned to another managed
-    service, not already bound by anything else on this system.
+    <em>Bind</em> decides who can connect. <span class="mono">loopback</span>
+    (<span class="mono">127.0.0.1</span>) is this machine only;
+    <span class="mono">lan</span> binds one interface address;
+    <span class="mono">all</span> (<span class="mono">0.0.0.0</span>) answers on
+    every interface — the "other systems on our network can reach it" setting.
+    Ports are validated live (numeric range, not assigned to another managed
+    service, not already bound here). The right-hand column probes the LAN
+    address, which is what proves a daemon is <em>not</em> loopback-only.
   </p>
   <table id="svc-ports">
-    <thead><tr><th>service</th><th>current</th><th>new port</th><th>external access</th><th></th><th style="width:34%"></th></tr></thead>
+    <thead><tr>
+      <th>service</th><th>current</th><th>bind</th><th>port</th>
+      <th style="width:26%">change</th><th></th><th style="width:26%">live reachability</th>
+    </tr></thead>
     <tbody></tbody>
   </table>
+  <div class="mut" style="font-size:12px;margin-top:10px">
+    Nothing here is firewall-managed: the portal has no root, so if
+    <span class="mono">ufw</span> is enabled it prints the
+    <span class="mono">ufw allow</span> command you would run instead.
+  </div>
+</div>
+
+{# ------------------------ llama.cpp router authentication ---------------- #}
+<div class="card">
+  <h3>llama.cpp router authentication <span class="pill mut" id="key-state">…</span></h3>
+  <p class="mut" style="font-size:13px;margin-top:-2px">
+    An open router is an unauthenticated inference endpoint (plus its Web UI)
+    for everything on the network. llama.cpp supports
+    <span class="mono">--api-key-file</span>, so the portal can require
+    <span class="mono">Authorization: Bearer &lt;key&gt;</span>. Applying it
+    means restarting the router — which drops any agent session riding on it.
+  </p>
+  <div id="key-body" class="mut">loading…</div>
 </div>
 
 <script>
 const ORDER = ['llamacpp', 'comfyui', 'portal'];
-let DATA = null;
+const MODE_LABEL = {loopback: 'loopback only', lan: 'this LAN address', all: 'all interfaces (LAN)'};
+let DATA = null;      // /api/settings/services
+let NET = null;       // /api/network
 const timers = {};
 
 async function j(url, opts){
@@ -61,22 +91,80 @@ async function j(url, opts){
   let d = null; try{ d = await r.json(); }catch(e){}
   return {ok: r.ok, status: r.status, d};
 }
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function sh(p){ return String(p).replace(/^\/home\/[^/]+/, '~'); }
 
 async function load(){
-  const {ok, d} = await j('/api/settings/services');
-  if(!ok || !d) return;
-  DATA = d;
+  const [a, b] = await Promise.all([j('/api/settings/services'), j('/api/network')]);
+  if(a.ok && a.d) DATA = a.d;
+  if(b.ok && b.d) NET = b.d;
+  if(!DATA) return;
   document.getElementById('ld-lib-path').value =
-    (d.shared_env && d.shared_env.LD_LIBRARY_PATH) || '';
-  const other = Object.entries(d.shared_env || {})
+    (DATA.shared_env && DATA.shared_env.LD_LIBRARY_PATH) || '';
+  const other = Object.entries(DATA.shared_env || {})
     .filter(([k]) => k !== 'LD_LIBRARY_PATH')
     .map(([k, v]) => `${k}=${v}`);
   document.getElementById('shared-other').textContent =
     other.length ? 'other variables: ' + other.join('   ') : '';
+  renderNet();
   renderRows();
+  renderKey();
 }
 
-function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+/* ---------------------------------------------------------- network summary */
+function renderNet(){
+  const sum = document.getElementById('net-summary');
+  const fw = document.getElementById('net-firewall');
+  if(!NET){ sum.textContent = 'network probe unavailable'; return; }
+  const p = NET.primary_lan;
+  sum.innerHTML = p
+    ? `This machine: <span class="mono">${esc(p.address)}${p.prefix!=null?'/'+p.prefix:''}</span> on`
+      + ` <span class="mono">${esc(p.name)}</span>${p.dynamic ? ' (DHCP)' : ''}, network`
+      + ` <span class="mono">${esc(NET.lan_network || '?')}</span>.`
+      + ` Other systems reach these services at <span class="mono">${esc(p.address)}</span>.`
+    : 'No usable LAN interface found — services can only be opened on loopback.';
+  const ifs = (NET.interfaces || []).map(i =>
+    `<span class="mono">${esc(i.name)}</span> ${esc(i.address)}${i.lan ? '' : ' <span class="mut">(not LAN)</span>'}`).join(' · ');
+  const f = NET.firewall || {};
+  let fhtml = f.enabled
+    ? `<span style="color:var(--warn)">⚠ ufw is active</span> — each opened port needs an allow rule; the exact command is shown per service.`
+    : `<span style="color:var(--ok)">✓ ${esc(f.detail || 'no firewall detected')}</span> — an opened port is reachable from the LAN without further changes.`;
+  if(f.root_only && f.enabled === false) fhtml += ' <span class="mut">(read from /etc/ufw/ufw.conf; <span class="mono">sudo ufw status</span> not run)</span>';
+  fw.innerHTML = fhtml + `<div class="mut mono" style="font-size:12px;margin-top:6px">${ifs}</div>`;
+}
+
+/* ------------------------------------------------------------ service rows */
+function bindSelectHtml(key, s){
+  const ifaces = (NET && NET.interfaces || []).filter(i => i.lan);
+  let addr = `<select id="addr-${key}" style="display:none;width:150px;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)">`;
+  for(const i of ifaces)
+    addr += `<option value="${esc(i.address)}" ${s.host === i.address ? 'selected' : ''}>${esc(i.address)} (${esc(i.name)})</option>`;
+  addr += `</select>`;
+  let sel = `<select id="bind-${key}" onchange="onBindChange('${key}')" style="width:170px;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)">`;
+  for(const m of ['loopback', 'lan', 'all'])
+    sel += `<option value="${m}" ${s.mode === m ? 'selected' : ''}>${m} — ${MODE_LABEL[m]}</option>`;
+  sel += `</select>`;
+  return sel + addr;
+}
+
+function liveHtml(key){
+  const e = NET && NET.services && NET.services[key];
+  if(!e) return '<span class="mut">—</span>';
+  let out = '';
+  for(const u of (e.urls || [])){
+    const dot = u.listening === true ? '<span style="color:var(--ok)">●</span>'
+              : u.listening === false ? '<span style="color:var(--bad)">○</span>'
+              : '<span class="mut">◌</span>';
+    out += `<div style="font-size:12px">${dot} <a class="mono" href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> <span class="mut">${esc(u.label)}</span></div>`;
+  }
+  if(e.pending_restart)
+    out += `<div style="font-size:12px;color:var(--warn)">⚠ configured open, still not reachable — restart required</div>`;
+  if(e.allow_command)
+    out += `<div class="mut mono" style="font-size:11px;margin-top:4px">${esc(e.allow_command)}</div>`;
+  if(key === 'llamacpp' && NET.router_auth && NET.router_auth.configured)
+    out += `<div style="font-size:12px;margin-top:4px">key: ${NET.router_auth.live && NET.router_auth.live.enforced ? '<span style="color:var(--ok)">enforced</span>' : '<span style="color:var(--warn)">configured, not enforced (restart)</span>'}</div>`;
+  return out || '<span class="mut">no endpoint</span>';
+}
 
 function renderRows(){
   const tb = document.querySelector('#svc-ports tbody');
@@ -84,19 +172,30 @@ function renderRows(){
   for(const key of ORDER){
     const s = DATA.services[key]; if(!s) continue;
     const tr = document.createElement('tr');
+    const openStyle = s.mode !== 'loopback' ? 'background:rgba(210,153,34,.15);color:var(--warn)' : '';
     tr.innerHTML = `
       <td><strong>${esc(s.label)}</strong>
-          <div class="mut mono" style="font-size:11px">${esc(s.unit)} · ${esc(s.env_file.replace(/^\/home\/[^/]+/, '~'))}</div></td>
+          <div class="mut mono" style="font-size:11px">${esc(s.unit)} · ${esc(sh(s.env_file))}</div>
+          <div class="mut" style="font-size:11px">${esc(s.auth || '')}</div></td>
       <td class="mono">${esc(s.host)}:${s.port}
-        <span class="pill ${s.external ? '' : 'mut'}" style="${s.external ? 'background:rgba(210,153,34,.15);color:var(--warn)' : ''}">${s.external ? 'external' : 'loopback'}</span></td>
+        <span class="pill" style="${openStyle}">${esc(s.mode)}</span></td>
+      <td>${bindSelectHtml(key, s)}</td>
       <td><input id="port-${key}" type="number" min="1" max="65535" value="${s.port}"
-            style="width:110px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)"
+            style="width:100px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)"
             oninput="onPortInput('${key}')"></td>
-      <td><label style="font-size:13px;white-space:nowrap"><input type="checkbox" id="ext-${key}" ${s.external ? 'checked' : ''}> external</label></td>
-      <td><button id="save-${key}" onclick="saveRow('${key}')" style="padding:6px 14px">Save</button></td>
-      <td><div id="msg-${key}" style="font-size:12px"></div></td>`;
+      <td><div id="msg-${key}" style="font-size:12px"></div></td>
+      <td style="white-space:nowrap"><button id="save-${key}" onclick="saveRow('${key}')" style="padding:6px 14px">Save</button></td>
+      <td>${liveHtml(key)}</td>`;
     tb.appendChild(tr);
+    onBindChange(key);
   }
+}
+
+function onBindChange(key){
+  const m = document.getElementById('bind-' + key);
+  const a = document.getElementById('addr-' + key);
+  if(!m || !a) return;
+  a.style.display = m.value === 'lan' ? 'inline-block' : 'none';
 }
 
 function onPortInput(key){
@@ -113,41 +212,61 @@ async function validateRow(key){
     msg.innerHTML = '<span style="color:var(--bad)">validation unavailable</span>';
     document.getElementById('save-' + key).disabled = true; return;
   }
+  msg.innerHTML = warnErrHtml(d);
+  document.getElementById('save-' + key).disabled = !d.ok;
+}
+
+function warnErrHtml(d){
   let html = '';
   for(const e of (d.errors || [])) html += `<div style="color:var(--bad)">✗ ${esc(e)}</div>`;
   for(const w of (d.warnings || [])) html += `<div style="color:var(--warn)">⚠ ${esc(w)}</div>`;
-  msg.innerHTML = html;
-  document.getElementById('save-' + key).disabled = !d.ok;
+  return html;
 }
 
 async function saveRow(key){
   const port = parseInt(document.getElementById('port-' + key).value, 10);
-  const external = document.getElementById('ext-' + key).checked;
+  const bind = document.getElementById('bind-' + key).value;
+  const addrEl = document.getElementById('addr-' + key);
+  const address = bind === 'lan' ? addrEl.value : null;
   const msg = document.getElementById('msg-' + key);
-  const {ok, status, d} = await j(`/api/settings/services/${key}`, {
+  const {ok, status, d} = await j(`/api/settings/services/${key}/bind`, {
     method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({port, external})});
-  if(ok && d && d.ok){
-    await load(); // refresh current values (re-renders rows, clears msg)
-    document.getElementById('msg-' + key).innerHTML =
-      `<span style="color:var(--ok)">saved — restart to apply</span>
-       <button class="ghost" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="restartSvc('${key}')">restart ${esc(DATA.services[key].label)}</button>`;
+    body: JSON.stringify({bind, address})});
+  // port changes still go through the port endpoint
+  if(ok && d && d.ok && !isNaN(port)){
+    const cur = DATA.services[key];
+    if(port !== cur.port){
+      const r = await j(`/api/settings/services/${key}`, {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({port, external: bind === 'all'})});
+      if(!r.ok || !r.d || !r.d.ok){
+        msg.innerHTML = warnErrHtml((r.d && r.d.detail) || {errors: ['HTTP ' + r.status]});
+        return;
+      }
+    }
+    await load();
+    const el = document.getElementById('msg-' + key);
+    el.innerHTML = `<span style="color:var(--ok)">saved</span>
+      <button class="ghost" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="restartSvc('${key}')">restart to apply</button>`;
+    if(d.warnings && d.warnings.length)
+      el.innerHTML += d.warnings.map(w => `<div style="color:var(--warn)">⚠ ${esc(w)}</div>`).join('');
   } else {
-    const errs = (d && d.detail && d.detail.errors)
-      ? d.detail.errors : [String((d && d.detail) || ('HTTP ' + status))];
+    const detail = d && d.detail;
+    const errs = detail && detail.errors ? detail.errors : [String(detail || ('HTTP ' + status))];
     msg.innerHTML = errs.map(e => `<div style="color:var(--bad)">✗ ${esc(e)}</div>`).join('');
   }
 }
 
 async function restartSvc(key){
   const s = DATA && DATA.services ? DATA.services[key] : {label: key};
-  if(!confirm(`Restart ${s.label}? Its new settings take effect now.`)) return;
+  const extra = key === 'llamacpp'
+    ? '\n\nWARNING: restarting the router drops every agent session riding on it — including any AI agent working right now.' : '';
+  if(!confirm(`Restart ${s.label}? Its new settings take effect now.${extra}`)) return;
   const note = key === 'portal'
     ? document.getElementById('shared-env-msg')
     : document.getElementById('msg-' + key);
   if(key === 'portal'){
     if(note) note.innerHTML = '<span class="mut">restarting the portal — this page will come back in a moment…</span>';
-    // fire and forget: our own process is about to go away
     j(`/api/services/${key}/restart`, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({confirm:true})});
     return;
   }
@@ -158,6 +277,7 @@ async function restartSvc(key){
   if(note) note.innerHTML = (ok && d && d.ok)
     ? '<span style="color:var(--ok)">restarted</span>'
     : `<span style="color:var(--bad)">restart failed: ${esc((d && (d.error || d.detail)) || 'unknown error')}</span>`;
+  load();
 }
 
 async function saveSharedEnv(){
@@ -172,6 +292,52 @@ async function saveSharedEnv(){
     document.getElementById('shared-restart-row').style.display = 'flex';
   } else {
     msg.innerHTML = `<span style="color:var(--bad)">save failed: ${esc((d && d.detail) || ('HTTP ' + status))}</span>`;
+  }
+}
+
+/* ----------------------------------------------------------- router API key */
+function renderKey(){
+  const box = document.getElementById('key-body');
+  const pill = document.getElementById('key-state');
+  if(!NET || !NET.router_auth){ box.textContent = 'router auth probe unavailable'; return; }
+  const a = NET.router_auth, live = a.live || {};
+  pill.textContent = a.configured ? 'key configured' : 'no key';
+  pill.style.cssText = a.configured ? 'background:rgba(210,153,34,.15);color:var(--warn)' : '';
+  let html = '';
+  if(a.configured){
+    html += `<div class="kv"><span class="k">key</span><span class="mono">${esc(a.key || '(hidden)')}</span></div>`;
+    html += `<div class="kv"><span class="k">file</span><span class="mono">${esc(sh(a.key_file))}</span> <span class="mut">(0600; the key itself never goes in an env file)</span></div>`;
+    html += `<div class="kv"><span class="k">live</span>${live.enforced
+      ? '<span style="color:var(--ok)">enforced — anonymous calls are refused</span>'
+      : `<span style="color:var(--warn)">not enforced yet</span> <span class="mut">(restart the router)</span>`}</div>`;
+    if(a.web_ui_url) html += `<div class="kv"><span class="k">web UI</span><a class="mono" href="${esc(a.web_ui_url)}" target="_blank" rel="noopener">${esc(a.web_ui_url)}</a></div>`;
+    html += `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="keyAction('rotate')">rotate key</button>
+      <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="keyAction('revoke')">remove key</button>
+      <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('llamacpp')">restart router to apply</button></div>`;
+  } else {
+    html += `<div class="mut">Anonymous for now — fine on loopback, worth changing once the router listens on the LAN.</div>
+      <div style="margin-top:8px"><button style="padding:5px 12px;font-size:13px" onclick="keyAction('generate')">create shared key</button></div>`;
+  }
+  html += `<div id="key-msg" style="font-size:13px;margin-top:8px"></div>`;
+  html += `<div class="mut" style="font-size:12px;margin-top:6px">${esc(a.note || '')}</div>`;
+  box.innerHTML = html;
+}
+
+async function keyAction(action){
+  const msg = document.getElementById('key-msg');
+  if(action !== 'generate' &&
+     !confirm(`${action} the router API key? Clients using the old key stop working immediately after the next router restart.`)) return;
+  const {ok, d} = await j('/api/settings/llamacpp/apikey', {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({action})});
+  if(ok && d && d.ok){
+    await load();
+    const el = document.getElementById('key-msg');
+    if(el) el.innerHTML = `<span style="color:var(--ok)}">${esc(action)} done — restart the router to apply.</span>`;
+  } else {
+    const el = document.getElementById('key-msg');
+    if(el) el.innerHTML = `<span style="color:var(--bad)">failed: ${esc((d && d.detail) || 'error')}</span>`;
   }
 }
 

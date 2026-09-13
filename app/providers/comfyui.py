@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, paths, units, systemd, updater, modelmeta
+from ..core import db, paths, serviceconf, units, systemd, updater, modelmeta
 
 # Launch parameters, stored at ~/ai/config/comfyui.json. The env file the
 # service reads is *generated* from this; changing the json (via the API or by
@@ -340,12 +340,19 @@ class ComfyUI(Provider):
         return {"status": "success", "prev": prev, "commit": new,
                 "restarted": restarted}
 
+    def endpoint(self) -> str:
+        """Base URL the portal uses to reach ComfyUI — honours the bind from
+        the launch env, so a LAN-only bind stays probeable (a daemon bound to
+        192.168.x.x does not answer on 127.0.0.1)."""
+        return serviceconf.base_url("comfyui",
+                                   default_port=self.config()["port"])
+
     def _wait_healthy(self, log, wait: int = 120) -> bool:
-        port = self.config()["port"]
+        url = self.endpoint() + "/system_stats"
         deadline = time.time() + wait
         while time.time() < deadline:
             try:
-                r = httpx.get(f"http://127.0.0.1:{port}/system_stats", timeout=3)
+                r = httpx.get(url, timeout=3)
                 if r.status_code == 200:
                     return True
             except Exception:  # noqa: BLE001 — still starting
