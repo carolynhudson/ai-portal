@@ -8,7 +8,6 @@ __pycache__/
 .ruff_cache/
 
 # uv
-uv.lock
 
 # Secrets / runtime state must never be committed (lives under ~/ai/state, not the repo)
 *.secret
