@@ -11,3 +11,7 @@ __pycache__/
 *.secret
 portal.auth.json
 .env
+
+# UI test harness dependencies (installed by scripts/check-ui.sh)
+tests/ui/node_modules/
+tests/ui/package-lock.json

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# journalctl stand-in for the UI test sandbox: a fixed, realistic tail so the
+# dashboard activity feeds render content (and the log-classification code in
+# app/router.py runs) without depending on this machine's journal.
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+cat <<'EOF'
+llama_server: server listening on http://0.0.0.0:8080
+llama_server: model loaded: Qwen3-8B-Q4_K_M.gguf (5.2 GiB)
+llama_server: POST /v1/chat/completions 200 - in 4317, out 512, 31.42 t/s
+llama_server: POST /v1/completions 500 - upstream error: context limit
+EOF
+exit 0

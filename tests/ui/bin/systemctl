@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# systemctl stand-in for the UI test sandbox.
+#
+# The sandboxed portal runs with this directory first on PATH so that no UI
+# test — however a future code path is written — can reach the real user
+# units. Every invocation is appended to $AI_PORTAL_TEST_SYSCALL_LOG so a test
+# can assert what the portal actually tried to do.
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+
+for a in "$@"; do
+  case "$a" in
+    is-active)  echo active; exit 0 ;;
+    is-enabled) echo enabled; exit 0 ;;
+    show)
+      # Enough for systemd.unit_state(): loaded+active keeps the dashboard on
+      # its realistic code path (and the service buttons on the "controllable"
+      # path); MainPID=0 keeps it out of /proc.
+      printf 'LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=0\nSince=Sat 2026-09-12 09:00:00 -0700\nUnitFileState=enabled\n'
+      exit 0 ;;
+  esac
+done
+exit 0

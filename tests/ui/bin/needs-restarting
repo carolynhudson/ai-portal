@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# needs-restarting stand-in for the UI test sandbox: report "no reboot
+# needed" deterministically (the real one needs root and reads rpm db).
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+exit 0

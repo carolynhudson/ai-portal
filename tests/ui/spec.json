@@ -1,0 +1,239 @@
+{
+  "_comment": [
+    "Declarative part of the UI contract. Everything that can be derived by",
+    "driving the page (no JS errors, no missing ids, no dead controls, tab",
+    "bijection, confirm-gating, no endpoint errors) is asserted by run.mjs",
+    "for every page automatically; this file only adds what cannot be derived:",
+    "which endpoints a page must have called, which tabs form a group, which",
+    "controls must not be stuck disabled, and what a destructive request must",
+    "look like. Add a page here when you add one to the app — test_ui_integration",
+    "fails if the app serves an HTML page with no spec."
+  ],
+  "blockMutations": [".*"],
+  "allowHttpErrors": [],
+  "expectInert": [],
+  "fixtures": [
+    {
+      "path": "^/api/jobs/",
+      "status": 200,
+      "body": {
+        "id": 4242,
+        "kind": "harness",
+        "status": "success",
+        "target": "harness-job",
+        "log": "[harness] job finished",
+        "started": 1,
+        "finished": 2
+      }
+    }
+  ],
+  "pages": [
+    {
+      "name": "dashboard",
+      "path": "/",
+      "expectTitle": "Status",
+      "expectRequests": [
+        "/api/router",
+        "/api/comfyui",
+        "/api/services",
+        "/api/updates/llamacpp",
+        "/api/updates/comfyui",
+        "/api/hf/status",
+        "/api/gpu"
+      ],
+      "expectVisible": [
+        "#router-state",
+        "#tps",
+        "#router-feed",
+        "#comfy-state",
+        "#comfy-feed",
+        "#update-llamacpp",
+        "#update-comfyui",
+        "#update-huggingface",
+        "#update-python",
+        "#update-gpu",
+        "#rollback-select",
+        "#upd-btn"
+      ],
+      "expectEnabled": [
+        "#update-llamacpp button.btn-primary-sm",
+        "#upd-btn",
+        "#comfy-upd-btn",
+        "#hf-upd-btn",
+        ".update-tab"
+      ],
+      "_fixtures_comment": [
+        "GET fixtures for the update tabs: they make the deploy/rollback buttons",
+        "live so their requests can be asserted, and make the dashboard render",
+        "the same way on any machine. The real endpoints are covered by",
+        "tests/test_updates.py."
+      ],
+      "fixtures": [
+        {
+          "path": "^/api/updates/llamacpp$",
+          "body": {
+            "current": "llama.cpp-b10913",
+            "current_commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
+            "repo_head": "4a899373541900000000000000000000000000",
+            "vulkan_sdk": "/home/tester/ai/sdk/vulkan/1.4.341.0",
+            "remote": {
+              "master_head": "4a899373541900000000000000000000000000",
+              "latest_release": "llama.cpp-b11000",
+              "behind_master": 28,
+              "behind_release": 1,
+              "update_available": true,
+              "release_url": "https://github.com/ggml-org/llama.cpp/releases/tag/v0.4.0",
+              "stale": false
+            },
+            "releases": [
+              { "name": "llama.cpp-b10913", "commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5", "built_at": "2026-09-01T10:00:00" },
+              { "name": "llama.cpp-b10900", "commit": "1111111111111111111111111111111111111111", "built_at": "2026-08-01T10:00:00" },
+              { "name": "llama.cpp-b10888", "commit": "2222222222222222222222222222222222222222", "built_at": "2026-07-01T10:00:00" }
+            ],
+            "job": null
+          }
+        },
+        {
+          "path": "^/api/updates/comfyui$",
+          "body": {
+            "commit": "abc1234567890abcdef1234567890abcdef123456",
+            "remote": { "remote_head": "9999999fffffff000000000000000000000000", "behind": 3, "update_available": true },
+            "recent": [
+              { "sha": "abc1234", "subject": "fix something", "date": "2026-09-01" },
+              { "sha": "def5678", "subject": "another commit", "date": "2026-08-20" }
+            ],
+            "venv": { "python": "3.12.6", "torch": "2.8.0" },
+            "job": null
+          }
+        },
+        {
+          "path": "^/api/hf/status$",
+          "body": {
+            "cli_path": "/home/tester/.local/bin/hf",
+            "cli_venv": "/home/tester/.hf-cli/venv",
+            "cli_version": "0.34.0",
+            "hub_portal": "0.34.0",
+            "hub_os": "0.30.0",
+            "python_portal": "3.12.6",
+            "cache": "/home/tester/.cache/huggingface",
+            "cache_size": 1234567890,
+            "repos": [{ "name": "models--x--y" }],
+            "pypi_latest": "1.0.0",
+            "stale": false,
+            "update_available": true
+          }
+        }
+      ],
+      "tabGroups": [
+        { "tabs": ".update-tab", "panels": ".update-tab-content", "expectTabs": 5, "expectPanels": 5 }
+      ],
+      "requireConfirmFor": [
+        "^/api/services/llamacpp/(stop|restart)$",
+        "^/api/services/comfyui/(stop|restart)$",
+        "^/api/updates/llamacpp$",
+        "^/api/updates/llamacpp/rollback$",
+        "^/api/updates/comfyui$",
+        "^/api/updates/hf$"
+      ]
+    },
+    {
+      "name": "models",
+      "path": "/models",
+      "expectTitle": "Models",
+      "expectRequests": [],
+      "expectVisible": [
+        "#tab-search",
+        "#tab-download",
+        "#model-tab-download",
+        "#search-query",
+        "#search-model-type",
+        "#add-src",
+        "#add-name",
+        "#add-dir",
+        "#add-cat"
+      ],
+      "tabGroups": [
+        { "tabs": ".model-tab", "panels": ".model-tab-content", "expectTabs": 2, "expectPanels": 2 }
+      ],
+      "fixtures": [
+        {
+          "path": "^/api/models/search$",
+          "status": 200,
+          "body": {
+            "count": 2,
+            "results": [
+              {
+                "id": "TheBloke/UiT-Huge-GGUF",
+                "downloads": 1234,
+                "likes": 56,
+                "pipeline_tag": "text-generation",
+                "tags": ["gguf", "llama"],
+                "has_gguf": true
+              },
+              {
+                "id": "stabilityai/stable-diffusion-xl",
+                "downloads": 99,
+                "likes": 4,
+                "pipeline_tag": "text-to-image",
+                "tags": ["safetensors"],
+                "has_safetensors": true
+              }
+            ]
+          }
+        }
+      ],
+      "requireConfirmFor": []
+    },
+    {
+      "name": "metrics",
+      "path": "/metrics",
+      "expectTitle": "Metrics",
+      "expectRequests": ["/api/metrics"],
+      "expectVisible": ["#chart", "#cpu", "#mem", "#load", "#gpu", "#mstate"],
+      "tabGroups": []
+    },
+    {
+      "name": "settings",
+      "path": "/settings",
+      "expectTitle": "Settings",
+      "expectRequests": ["/api/settings/services", "/api/network"],
+      "expectVisible": [
+        "#ld-lib-path",
+        "#svc-ports",
+        "#net-summary",
+        "#net-firewall",
+        "#bind-llamacpp",
+        "#bind-comfyui",
+        "#bind-portal",
+        "#port-llamacpp",
+        "#port-comfyui",
+        "#port-portal",
+        "#save-llamacpp",
+        "#save-comfyui",
+        "#save-portal",
+        "#key-state",
+        "#key-body"
+      ],
+      "expectEnabled": ["#save-llamacpp", "#ld-lib-path", "#bind-llamacpp"],
+      "blockMutations": [
+        "^/api/services/",
+        "^/api/updates/",
+        "^/api/models/",
+        "^/api/portal/"
+      ],
+      "requireConfirmFor": [
+        "^/api/services/",
+        "^/api/settings/llamacpp/apikey$"
+      ]
+    },
+    {
+      "name": "login",
+      "path": "/login",
+      "auth": false,
+      "expectTitle": "Sign in",
+      "expectRequests": [],
+      "expectVisible": ["form[action='/login']", "input[name=password]", "button[type=submit]"],
+      "tabGroups": []
+    }
+  ]
+}

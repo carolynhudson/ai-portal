@@ -20,8 +20,10 @@
 
 <h2>Models</h2>
 <div class="model-tabs">
-  <div class="model-tab active" onclick="switchModelTab('search')">Search Hugging Face</div>
-  <div class="model-tab" onclick="switchModelTab('download')">Download / Add Model</div>
+  <div class="model-tab active" onclick="switchModelTab('search', this)">Search Hugging Face</div>
+  {# id: selectModel() has to light this tab up from the other one, and an
+     id is sturdier than "the second .model-tab" #}
+  <div id="model-tab-download" class="model-tab" onclick="switchModelTab('download', this)">Download / Add Model</div>
 </div>
 
 <div id="tab-search" class="model-tab-content active">
@@ -122,12 +124,16 @@
 function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// Tab switching
-function switchModelTab(tab){
+// Tab switching. Pass the clicked tab in: reading the global `event` breaks
+// the moment a tab contains an icon or a count badge (event.target becomes
+// that child, and the tab never lights up).
+function switchModelTab(tab, el){
   document.querySelectorAll('.model-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.model-tab-content').forEach(c => c.classList.remove('active'));
-  event.target.classList.add('active');
-  document.getElementById('tab-' + tab).classList.add('active');
+  (el || (typeof event !== 'undefined' && event.target) || null)?.classList.add('active');
+  const panel = document.getElementById('tab-' + tab);
+  if (!panel) { console.error('switchModelTab: no panel #tab-' + tab); return; }
+  panel.classList.add('active');
 }
 
 // Model type options for each service
@@ -211,11 +217,8 @@ function renderSearchResults(results, service){
 }
 
 function selectModel(repoId){
-  // Switch to download tab and pre-fill the source field
-  document.querySelectorAll('.model-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.model-tab-content').forEach(c => c.classList.remove('active'));
-  document.querySelectorAll('.model-tab')[1].classList.add('active');
-  document.getElementById('tab-download').classList.add('active');
+  // Jump to the download tab with this repo pre-filled
+  switchModelTab('download', document.getElementById('model-tab-download'));
   document.getElementById('add-src').value = 'huggingface-cli download ' + repoId;
 }
 

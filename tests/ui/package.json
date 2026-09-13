@@ -1,0 +1,13 @@
+{
+  "name": "ai-portal-ui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DOM-level integration tests for the AI Portal UI: every interactable element, driven by real handlers in jsdom against a sandboxed portal",
+  "scripts": {
+    "ui": "node run.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

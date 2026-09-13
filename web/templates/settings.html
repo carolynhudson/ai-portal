@@ -339,7 +339,7 @@ async function keyAction(action){
   if(ok && d && d.ok){
     await load();
     const el = document.getElementById('key-msg');
-    if(el) el.innerHTML = `<span style="color:var(--ok)}">${esc(action)} done — restart the router to apply.</span>`;
+    if(el) el.innerHTML = `<span style="color:var(--ok)">${esc(action)} done — restart the router to apply.</span>`;
   } else {
     const el = document.getElementById('key-msg');
     if(el) el.innerHTML = `<span style="color:var(--bad)">failed: ${esc((d && d.detail) || 'error')}</span>`;

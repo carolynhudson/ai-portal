@@ -154,11 +154,11 @@
 {# ---- Tool Repository Update Status ---- #}
 <h2>Tool Repository Update Status</h2>
 <div class="update-tabs">
-  <div class="update-tab active" onclick="switchUpdateTab('llamacpp')">llama.cpp</div>
-  <div class="update-tab" onclick="switchUpdateTab('comfyui')">ComfyUI</div>
-  <div class="update-tab" onclick="switchUpdateTab('huggingface')">huggingface-cli</div>
-  <div class="update-tab" onclick="switchUpdateTab('python')">Python / venv</div>
-  <div class="update-tab" onclick="switchUpdateTab('gpu')">GPU Drivers / SDKs</div>
+  <div class="update-tab active" onclick="switchUpdateTab('llamacpp', this)">llama.cpp</div>
+  <div class="update-tab" onclick="switchUpdateTab('comfyui', this)">ComfyUI</div>
+  <div class="update-tab" onclick="switchUpdateTab('huggingface', this)">huggingface-cli</div>
+  <div class="update-tab" onclick="switchUpdateTab('python', this)">Python / venv</div>
+  <div class="update-tab" onclick="switchUpdateTab('gpu', this)">GPU Drivers / SDKs</div>
 </div>
 
 <div id="update-llamacpp" class="update-tab-content active">
@@ -603,7 +603,11 @@ async function updDeploy(tag){
       body: JSON.stringify({target: tag, restart: true, smoke: true})});
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { alert('update refused: ' + (d.detail || r.status)); return; }
-    COMFY_UPD.job = d.job; COMFY_UPD.timer = setInterval(pollComfyUpd, 3000);
+    // the llama.cpp job belongs to UPD — pollComfyUpd would render it into the
+    // ComfyUI tab and leave this one showing nothing for 20 minutes
+    UPD.job = d.job;
+    if (UPD.timer) clearInterval(UPD.timer);
+    UPD.timer = setInterval(pollUpd, 3000);
     loadUpd();
   }catch(e){ alert('update failed to start: ' + e); }
 }
@@ -650,12 +654,16 @@ if (rollbackSelectEl) {
 loadUpd();
 </script>
 <script>
-// Tab switching for update status
-function switchUpdateTab(tab){
+// Tab switching for update status. The clicked element is passed in rather
+// than read from the global `event`, so a tab that grows an icon or a badge
+// (event.target would then be the child) keeps working.
+function switchUpdateTab(tab, el){
   document.querySelectorAll('.update-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.update-tab-content').forEach(c => c.classList.remove('active'));
-  event.target.classList.add('active');
-  document.getElementById('update-' + tab).classList.add('active');
+  (el || (typeof event !== 'undefined' && event.target) || null)?.classList.add('active');
+  const panel = document.getElementById('update-' + tab);
+  if (!panel) { console.error('switchUpdateTab: no panel #update-' + tab); return; }
+  panel.classList.add('active');
 }
 
 // ComfyUI update functions
@@ -798,7 +806,9 @@ async function hfCheckUpdates(){
   await loadHfUpd(true);
 }
 async function hfDeployUpdate(){
-  if (!confirm('Update huggingface-cli?\n\nThis runs pip install --upgrade huggingface-cli in the CLI's dedicated venv (~/.hf-cli/venv). The running portal and router are not touched.')) return;
+  // backticks, not quotes: an apostrophe in here once broke this whole script
+  // block, silently killing every button it defined
+  if (!confirm(`Update huggingface-cli?\n\nThis runs pip install --upgrade huggingface-cli in the CLI's dedicated venv (~/.hf-cli/venv). The running portal and router are not touched.`)) return;
   try{
     const r = await fetch('/api/updates/hf', {method: 'POST', credentials: 'same-origin'});
     const d = await r.json().catch(() => ({}));
@@ -822,19 +832,25 @@ async function loadPythonInfo(){
   }catch(e){ /* keep last good state */ }
 }
 async function checkPythonUpdates(){
+  // The button says "check", so this must not start an upgrade. It forces a
+  // fresh probe (the endpoint caches) and reports; upgrading huggingface-cli is
+  // the huggingface-cli tab's button, which asks first.
   const box = document.getElementById('python-job');
-  if (box) box.innerHTML = '<span class="mut">checking portal venv packages…</span>';
+  if (box) box.innerHTML = '<span class="mut">re-reading the portal venv…</span>';
   try{
-    // The portal venv is uv-managed; a refresh of the lockfile is the update path.
-    const r = await fetch('/api/updates/hf', {method: 'POST', credentials: 'same-origin'});
-    if (r.ok) {
-      const d = await r.json();
-      HF_UPD.job = d.job; HF_UPD.timer = setInterval(pollHfJob, 3000);
-      renderHfJob({id: d.job, status: 'running', target: 'upgrade-hf-cli', log: ''});
-    } else {
-      const d = await r.json().catch(() => ({}));
+    const r = await fetch('/api/hf/status?force=true', {credentials:'same-origin'});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){
       if (box) box.innerHTML = '<span class="mut">' + esc(d.detail || ('HTTP ' + r.status)) + '</span>';
+      return;
     }
+    setText('py-hf-version', d.hub_portal || '—');
+    setText('py-hf-os-version', d.hub_os || '—');
+    setText('py-venv-python', d.python_portal || '—');
+    if (box) box.innerHTML = '<span class="mut">portal venv: python ' + esc(d.python_portal || '?') +
+      ', huggingface-hub ' + esc(d.hub_portal || '?') +
+      (d.update_available ? ' — huggingface-cli ' + esc(d.pypi_latest || '?') + ' is available (update it on the huggingface-cli tab)'
+                          : ' — nothing pending') + '</span>';
   }catch(e){ if (box) box.innerHTML = '<span class="mut">check failed: ' + esc(String(e)) + '</span>'; }
 }
 loadPythonInfo();
