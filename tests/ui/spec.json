@@ -224,7 +224,10 @@
       "requireConfirmFor": [
         "^/api/services/",
         "^/api/settings/llamacpp/apikey$"
-      ]
+      ],
+      "requireConfirmUnlessBodyContains": {
+        "^/api/settings/llamacpp/apikey$": "generate"
+      }
     },
     {
       "name": "login",

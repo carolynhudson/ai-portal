@@ -32,7 +32,7 @@ MUTATIONS = [
         'id="rollback-select"',
         'id="rollback-chooser"',
         "dashboard",
-        "rollback-chooser",
+        "rollback-select",   # the page still looks for the old id
     ),
     (
         "tab handler deleted",
@@ -43,10 +43,12 @@ MUTATIONS = [
         "switchUpdateTab is not defined",
     ),
     (
-        "a whole script block made unparseable",
+        # the bug that actually shipped: an apostrophe inside a single-quoted
+        # JS string. Jinja-safe, so it is a pure JavaScript syntax error
+        "a string literal broken, killing its script block",
         "dashboard.html",
-        "function renderUpdRemote(rem){",
-        "function renderUpdRemote(rem){{",
+        "alert('update refused: '",
+        "alert('update refused don't: '",
         "dashboard",
         "uncaught error while loading",
     ),
@@ -75,12 +77,20 @@ MUTATIONS = [
         "without asking for confirmation",
     ),
     (
+        "service stop button skips its confirm",
+        "dashboard.html",
+        "  if (action !== 'start' &&\n      !confirm(meta.confirm",
+        "  if (false &&\n      !confirm(meta.confirm",
+        "dashboard",
+        "without asking for confirmation",
+    ),
+    (
         "settings save posts the wrong field",
         "settings.html",
         "body: JSON.stringify({bind, address})});",
         "body: JSON.stringify({bindMode: bind, address})});",
         "settings",
-        "missing",
+        "/api/settings/services/llamacpp/bind",   # the endpoint refuses it
     ),
     (
         "dead button: handler emptied",

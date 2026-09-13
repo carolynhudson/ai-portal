@@ -161,6 +161,7 @@ await ctx.idle({ quietMs: 80, maxMs: 2000 });
 
 // ------------------------------------------------------------- control sweep
 const requireConfirm = spec.requireConfirmFor || [];
+const requireConfirmUnless = spec.requireConfirmUnlessBodyContains || {};
 const expectInert = (allSpec.expectInert || []).concat(spec.expectInert || []);
 
 // Clicking the tab that is already showing changes nothing — in a browser
@@ -278,14 +279,20 @@ async function sweep(phase, answerDialogs, visited, context, budget) {
     for (const m of r.newMissedIds) fail(`${info.selector} looked up missing id #${m}`);
     for (const m of r.newHttpErrors) fail(`${info.selector} hit an endpoint error: ${m}`);
 
-    if (phase === "dialogs-accepted") {
-      // any destructive request, however it was answered (blocked, fixture or
-      // forwarded), must have been preceded by a confirm() in this interaction
-      const MUTATION = ["POST", "PUT", "PATCH", "DELETE"];
-      for (const req of r.newRequests.filter((x) => MUTATION.includes(x.method))) {
-        if (requireConfirm.some((p) => new RegExp(p).test(req.path)) && r.newDialogs.length === 0)
-          fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first`);
-      }
+    // Destructive requests must be confirm-gated. Checked in both passes: in
+    // the denied pass an ungated request is the bug itself (the app acted
+    // without asking), and in the accepted pass it catches a handler that asks
+    // but then sends something the endpoint needs anyway without it.
+    const MUTATING = ["POST", "PUT", "PATCH", "DELETE"];
+    for (const req of r.newRequests.filter((x) => MUTATING.includes(x.method))) {
+      if (!requireConfirm.some((p) => new RegExp(p).test(req.path))) continue;
+      // same endpoint, different verb: creating a router key is additive and
+      // does not need a confirmation, rotating or revoking one does
+      const exempt = Object.entries(requireConfirmUnless).find(
+        ([p, needle]) => new RegExp(p).test(req.path) && (req.body || "").includes(needle));
+      if (exempt) continue;
+      if (r.newDialogs.length === 0)
+        fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first (${phase} pass)`);
     }
 
     const toleratedNoop = samePage || r.expectedNoop;
