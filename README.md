@@ -88,7 +88,8 @@ app/
 web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
 deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
 scripts/dev-run.sh   # source tree on :8091, next to the service
-tests/               # 109 pytest tests, all on a throwaway AI_PORTAL_HOME
+tests/               # 136 pytest tests, all on a throwaway AI_PORTAL_HOME
+  ui/                # DOM harness (jsdom): drives every control on every page
 ```
 
 Runtime state (gitignored, outside the repo): `~/ai/state/portal/portal.db`
@@ -103,7 +104,7 @@ Runtime state (gitignored, outside the repo): `~/ai/state/portal/portal.db`
 ./deploy/install.sh --status     # recorded sha + live unit state
 ./deploy/install.sh --rollback   # redeploy the previously recorded sha
 ./scripts/dev-run.sh             # source tree on :8091 with debug logging
-uv run --with pytest pytest tests/ -q    # 109 tests, no live system needed
+./scripts/check-ui.sh            # the whole suite, UI included — run after every change
 bash tools/live_smoke.sh         # end-to-end against the live router
 ```
 
@@ -133,9 +134,36 @@ stored 0600 under `~/ai/state/portal/`, never in an env file).
 ### Tests
 
 ```bash
-uv run --with pytest pytest tests/ -q
-bash tools/live_smoke.sh        # boots the real app on :18090 and exercises the live router
+./scripts/check-ui.sh              # everything, UI included (~1.5 min). After every change.
+./scripts/check-ui.sh --ui-only    # the UI suites alone
+./scripts/check-ui.sh --mutations  # inject known UI bugs: prove the suite can fail
+uv run --with pytest pytest tests/ -q    # same as check-ui.sh, without the jsdom setup
+bash tools/live_smoke.sh           # boots the app on :18090 against the live router
 ```
+
+The portal has **no build step**, so nothing type-checks the wiring between a
+template and the code behind it: a page can render perfectly and still have
+buttons that do nothing. `tests/test_ui_integration.py` loads each page in a
+real DOM (jsdom) from a sandboxed portal and drives **every interactable
+element** — clicks, typing, changes, submits, all tabs — requiring per control
+that nothing threw, no id lookup missed, no endpoint 4xx'd, and that the control
+actually *did* something. Tab groups must be a bijection; destructive requests
+must be confirm-gated **before** the request (an `alert()` afterwards is not a
+confirmation); a final coverage pass fails if any visible control was never
+driven. `tests/test_ui_contract.py` is the fast static half (every inline
+`<script>` must parse, every `onclick` must name a function that exists, every
+`fetch` target must be a registered route).
+
+Running them cannot disturb the machine: the portal under test gets a temp
+`AI_PORTAL_HOME`, `tests/ui/bin` on `PATH` (`systemctl`/`journalctl` are shims
+that log instead of acting), a dead outbound proxy, and a harness that
+intercepts service/update mutations and answers them synthetically. A test
+asserts no `start|stop|restart` ever reached systemd. Debug a page by hand with
+`uv run python -m tests.ui_sandbox dashboard` (or `--serve` to leave it up).
+
+`./scripts/install-hooks.sh` installs a pre-commit hook that runs the UI suites
+covering what you staged, so a template edit that breaks a `<script>` block
+cannot be committed.
 
 ### What's next (see PORTAL_PLAN.md §7)
 

@@ -2,7 +2,8 @@
 # Run the portal's test suite, UI integration tests included.
 #
 #   ./scripts/check-ui.sh              # everything (use this after every change)
-#   ./scripts/check-ui.sh --ui-only    # UI suites only (fastest feedback)
+#   ./scripts/check-ui.sh --ui-only    # UI suites only (~1.5 min)
+#   ./scripts/check-ui.sh --mutations  # prove the UI tests can still fail (~5 min)
 #   ./scripts/check-ui.sh -k dashboard # pass through to pytest
 #
 # Why this exists as a single command: the portal's UI has no build step, so a
@@ -36,6 +37,11 @@ if [ ! -d "$UI_DIR/node_modules/jsdom" ]; then
 fi
 
 # --- pytest ----------------------------------------------------------------
+if [ "${1:-}" = "--mutations" ]; then
+  shift
+  exec uv run python -m tests.ui.mutation_check "$@"
+fi
+
 PYTEST=(uv run --with pytest python -m pytest)
 if [ "${1:-}" = "--ui-only" ]; then
   shift

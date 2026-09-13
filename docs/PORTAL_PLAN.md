@@ -18,8 +18,20 @@ Companions:
 ## 0. Current status — 2026-09-13 (resumption point)
 
 **Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
-**network exposure** + **Phase J steps 1, 4, 5, 6, 7**.
-Green: 116 tests (`uv run --with pytest python -m pytest tests/ -q`).
+**network exposure** + **Phase J steps 1, 4, 5, 6, 7** + **Phase L (UI
+integration tests)**.
+Green: 136 tests (`./scripts/check-ui.sh`), of which 19 drive the real pages in a
+DOM (see §6.6).
+
+**Phase L — UI integration tests (2026-09-13).** `tests/ui/` drives every
+interactable element of every page in jsdom against a sandboxed portal: 96
+controls across 5 pages, ~57 intercepted mutations, every tab in every group.
+The point is that a no-build-step UI fails *silently* — a browser skips a
+`<script>` block that does not parse and every button in it becomes inert — and
+nothing in the old suite could see that. It found three real bugs, one of which
+was live and breaking four of the dashboard's five update tabs (§6.6).
+`./scripts/check-ui.sh --mutations` injects nine known regressions and requires
+all nine to be caught, so the suite cannot quietly stop testing.
 
 **Running right now — none of them loopback-only any more:**
 
@@ -365,6 +377,56 @@ Sequencing: after B (service control) + D (gguf memory math).
 - HF token lives in the standard HF location; portal never copies secrets into
   its own state.
 
+### 6.6 UI regression protection (Phase L, 2026-09-13)
+
+A portal whose whole front end is Jinja templates plus inline JS has no
+compile step to notice that a page's wiring is gone: the browser skips a broken
+`<script>` block and the buttons stay on the page, doing nothing. Text-level
+tests cannot see this, so the suite drives the pages.
+
+- `tests/ui/lib.mjs` — jsdom page driver: real page from a real HTTP server,
+  scripts executed, `fetch` recorded (and mutating requests intercepted per
+  `spec.json`, answered with a synthetic success so pages take their success
+  paths), `confirm/alert` captured and answered on demand, element-id misses
+  recorded, canvas and `document.evaluate` stubbed where jsdom differs from a
+  browser, pollers stopped before the sweep so every effect belongs to the
+  control that caused it.
+- `tests/ui/run.mjs` — per-page invariants: no uncaught errors / console.error /
+  endpoint 4xx-5xx / missing ids; expected requests happened; expected elements
+  present and not stuck disabled; tab bijection; sweep of every visible control
+  twice (confirmations refused, then accepted) with a dead-control check; a
+  confirm-gate must be a `confirm()` **before** the request; and a final
+  coverage pass that fails if any visible control was never driven.
+- `tests/ui/spec.json` — the declarative half: pages, expected fetches,
+  tab groups, fixtures that make the deploy/rollback buttons live so their
+  requests can be asserted, `requireConfirmFor`.
+- `tests/ui_sandbox.py` — the sandbox (temp `AI_PORTAL_HOME`, `tests/ui/bin`
+  shims, dead outbound proxy) and a `__main__` for driving one page by hand.
+- `tests/ui/mutation_check.py` — injects nine realistic regressions (renamed id,
+  deleted function, unparseable block, renamed endpoint, removed panel, missing
+  confirmation ×2, wrong request field, emptied handler) and requires all nine
+  to fail the suite. This is what keeps the harness honest: two of the nine were
+  missed the first time it ran, and both were holes in the tests.
+
+Three real bugs found, all live before this change:
+
+1. **Four of the five dashboard update tabs were dead.** An apostrophe in
+   `CLI's` inside a single-quoted `confirm()` string ended the literal, so the
+   `<script>` block defining `switchUpdateTab`, `loadComfyUpd`, `loadHfUpd`,
+   `loadGpuInfo` and friends never ran: tabs did not switch, no data loaded,
+   every button in them threw `ReferenceError`.
+2. **llama.cpp build progress rendered into the ComfyUI tab**: `updDeploy()`
+   parked the job in `COMFY_UPD` instead of `UPD`, so the tab that started a
+   10–20 minute build showed nothing.
+3. **A button labelled "check for updates" started an upgrade.** The
+   Python/venv tab POSTed `/api/updates/hf`, which upgrades huggingface-cli in a
+   shared venv, with no confirmation. It now re-probes and reports; the upgrade
+   stays on its own tab, behind a confirm.
+Also hardened: tabs receive the clicked element instead of reading the global
+`event` (an icon inside a tab would silently break the active state),
+`selectModel()` finds its tab by id rather than by index, and a stray brace in a
+`settings.html` style attribute.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -380,6 +442,7 @@ Sequencing: after B (service control) + D (gguf memory math).
 | I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
 | **K (done, 2026-09-13)** — network | Bind **modes** (loopback / lan / all) per service, live reachability probes, firewall state + scoped `ufw` hints without root, exposure warnings, optional router `--api-key-file`, login throttle; all three services on the generated env→wrapper→unit launch pattern | portal + ComfyUI answering on `192.168.1.228` (verified by LAN-address HTTP from this box), router env/unit prepared with argv verified against the live process, `pending_restart` reported until it is restarted |
 | J (mostly done, 2026-09-13) | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0). Remaining: `app/main.py` route split, `tools/` migrations move | redeploy-from-git-SHA works and **verifies the running sha**; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
+| **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 9/9 injected regressions caught; found 3 real UI bugs (§6.6) |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.

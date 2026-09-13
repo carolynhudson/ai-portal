@@ -139,3 +139,47 @@ bind back to `loopback` and reach them over an SSH tunnel instead
   `validate_bind` warns about exactly that.
 * **The router is also this box's inference backend.** Never debug with
   `systemctl --user restart ai-llama-router` on a hunch.
+
+---
+
+## 6. UI tests: when a page renders but its buttons do nothing
+
+The UI has no build step, so a template edit can leave a page that looks fine
+and is inert. The failure mode is silent: a browser skips a `<script>` block
+that does not parse, every function in it becomes undefined, and each button in
+it is a dead rectangle.
+
+```bash
+./scripts/check-ui.sh                  # everything (run after every change)
+./scripts/check-ui.sh --ui-only        # UI suites alone
+uv run python -m tests.ui_sandbox dashboard   # one page: full JSON report + timings
+uv run python -m tests.ui_sandbox --serve     # leave the sandbox up and curl it yourself
+./scripts/check-ui.sh --mutations      # prove the suite can still fail (edits templates!)
+```
+
+What each failure means:
+
+| Failure | What actually happened |
+|---|---|
+| `uncaught error while loading` | an inline `<script>` threw; everything after the error in that block is undefined. `test_ui_contract` names the template file, the line and the functions lost |
+| `dead control: …` | the control was clicked/type-in/changed and nothing happened: no request, no dialog, no navigation, no DOM change |
+| `looked up missing id #foo` | JS asks for an element that is not in the page — one side of a rename |
+| `sent POST … without asking for confirmation first` | a destructive endpoint was called with no `confirm()` before it (`alert()` afterwards does not count) |
+| `N panels active, expected 1` / `panel #x is reachable from no tab` | the tab group is no longer a bijection |
+| `controls never driven` | something is interactable that the sweep never reached — the suite's own coverage hole |
+
+Reading a failure: the report lists the failures first, then the load errors,
+every request the page made, the controls exercised and which were dead. The
+harness (`tests/ui/lib.mjs`) explains its own rules in comments — notably that
+mutating requests are **intercepted** (answered with a synthetic success so the
+page takes its success path) and that no `systemctl` action can reach the real
+machine, which `test_ui_never_asks_systemd_to_start_or_stop_a_unit` asserts.
+
+When you add UI:
+
+- new page → add it to `tests/ui/spec.json`; `test_every_served_page_has_a_ui_spec`
+  fails until you do
+- new control → nothing to do; the sweep finds it. It must *do* something
+- new tab → add it to `tabGroups` with its expected count
+- new mutating endpoint → put it in `requireConfirmFor` (and, if it is the same
+  path as an additive call, `requireConfirmUnlessBodyContains`)

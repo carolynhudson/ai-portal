@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# pre-commit: the portal's UI has no build step, so the tests that catch a
+# broken page have to run before the commit exists, not after.
+#
+# installed by scripts/install-hooks.sh; bypass with `git commit --no-verify`
+# (and say why in the commit message).
+set -uo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+ui_surface=$(printf '%s\n' "$staged" | grep -E '^(web/|app/|tests/ui|tests/test_ui)' || true)
+[ -z "$ui_surface" ] && exit 0
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node is missing, so the UI tests cannot run." >&2
+  echo "            install node, or commit with --no-verify and run" >&2
+  echo "            ./scripts/check-ui.sh afterwards." >&2
+  exit 1
+fi
+
+if [ ! -d tests/ui/node_modules/jsdom ]; then
+  echo "pre-commit: installing jsdom (one time)…"
+  (cd tests/ui && npm install --silent --no-fund --no-audit) || {
+    echo "pre-commit: npm install failed; run ./scripts/check-ui.sh to see why" >&2
+    exit 1
+  }
+fi
+
+run() {
+  echo "pre-commit: $*"
+  if ! uv run --with pytest python -m pytest -q -x "$@"; then
+    echo "" >&2
+    echo "COMMIT REJECTED — the tests above failed." >&2
+    echo "  full suite:  ./scripts/check-ui.sh" >&2
+    echo "  one page:    uv run python -m tests.ui_sandbox dashboard" >&2
+    return 1
+  fi
+}
+
+# templates or the harness changed: drive every page in a real DOM
+if printf '%s\n' "$staged" | grep -qE '^(web/templates/|tests/ui/|tests/test_ui_integration)'; then
+  run tests/test_ui_contract.py tests/test_ui_integration.py || exit 1
+else
+  # app code changed: static contract only (~2s); full suite is ./scripts/check-ui.sh
+  run tests/test_ui_contract.py || exit 1
+fi
+
+exit 0
