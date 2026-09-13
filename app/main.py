@@ -467,6 +467,29 @@ def create_app() -> FastAPI:
         db.event("portal", "service", "comfyui service files generated")
         return res
 
+    # NOTE on route order: /api/services/{key}/{action} (further down) matches
+    # ANY two-segment path under /api/services/, so every specific route here
+    # must be registered before it — FastAPI takes the first match, and the
+    # generic route's required body turns a shadowed endpoint into a confusing
+    # 422. tests/test_routing.py asserts this holds.
+    @app.post("/api/services/llamacpp/ensure")
+    def api_llama_ensure(_=Depends(_require_auth)):
+        """Generate the router's env file + wrapper + unit (idempotent, no
+        restart) and verify the wrapper argv without loading a model.
+
+        This is how a hand-written unit is migrated onto the generated pattern:
+        install (previous unit file kept in state/rollback/units), then restart
+        the router when convenient — the running process keeps its current
+        config until then, so this call is always safe.
+        """
+        res = get_provider("llamacpp").ensure_service(
+            log=lambda m: print("[ai-portal]", m))
+        db.event("portal", "service",
+                 f"llamacpp service files generated (argv ok: {res['verify']['ok']})")
+        if not res["verify"]["ok"]:
+            raise HTTPException(500, res)
+        return res
+
     @app.get("/api/services/comfyui/config")
     def api_comfy_config(_=Depends(_require_auth)):
         return get_provider("comfyui").config()
@@ -892,25 +915,6 @@ def create_app() -> FastAPI:
         db.event("portal", "config",
                  f"llamacpp api-key: {action} "
                  f"({'created' if res.get('created') else 'unchanged'})")
-        return res
-
-    # ---------------------------------- regenerate the router launch config
-    @app.post("/api/services/llamacpp/ensure")
-    def api_llama_ensure(_=Depends(_require_auth)):
-        """Generate the router's env file + wrapper + unit (idempotent, no
-        restart) and verify the wrapper argv without loading a model.
-
-        This is how a hand-written unit is migrated onto the generated pattern:
-        install (backup kept in state/rollback/units), then restart the router
-        when convenient — the running process keeps its current config until
-        then, so this call is always safe.
-        """
-        res = get_provider("llamacpp").ensure_service(
-            log=lambda m: print("[ai-portal]", m))
-        db.event("portal", "service",
-                 f"llamacpp service files generated (argv ok: {res['verify']['ok']})")
-        if not res["verify"]["ok"]:
-            raise HTTPException(500, res)
         return res
 
     # ---------------------------------------- huggingface CLI + library
