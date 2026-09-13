@@ -59,7 +59,6 @@ try {
 }
 
 const { win, trace } = ctx;
-const seenErrors = () => {};
 
 // ---------------------------------------------------------------- initial load
 await ctx.idle({ quietMs: 200, maxMs: spec.idleTimeoutMs || 15000 });
