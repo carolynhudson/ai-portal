@@ -8,6 +8,7 @@ no front-end re-engineering.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -25,7 +26,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import metrics, router as router_mod
+from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
 from .core import db, modeladd, paths, systemd, updater
@@ -33,6 +34,29 @@ from .providers import PROVIDERS, get as get_provider
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE.parent / "web"
+STARTED_AT = time.time()
+
+
+def _build_info() -> dict:
+    """Which commit this process is running.
+
+    ``app.deploy`` stamps ``BUILD.json`` into the deployed tree; comparing that
+    with ``/healthz`` is how "deployed" and "actually serving" become one
+    checkable fact (an ``enable --now`` on an active unit does not restart it,
+    which once made a deploy look successful while the old code kept running).
+    A source checkout has no BUILD.json — which is itself the answer.
+    """
+    for p in (HERE.parent / "BUILD.json", HERE / "BUILD.json"):
+        try:
+            info = json.loads(p.read_text())
+            if isinstance(info, dict):
+                return info
+        except (OSError, ValueError):
+            continue
+    return {"sha": None, "source": str(HERE.parent), "kind": "checkout"}
+
+
+BUILD = _build_info()
 
 
 class LoginBody(BaseModel):
@@ -222,8 +246,15 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------ open
     @app.get("/healthz")
     def healthz():
+        """Liveness + identity: version, deployed sha, pid, uptime.
+
+        Identity matters operationally — without the sha there is no cheap way
+        to tell whether the code answering is the code you just deployed.
+        """
         _settings()
-        return {"ok": True, "portal": "up", "ts": time.time()}
+        return {"ok": True, "portal": "up", "ts": time.time(),
+                "app_version": __version__, "build": BUILD,
+                "pid": os.getpid(), "uptime_s": round(time.time() - STARTED_AT, 1)}
 
     # ------------------------------------------------------------------ auth
     @app.get("/login")

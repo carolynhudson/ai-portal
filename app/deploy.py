@@ -41,6 +41,7 @@ from .core import paths, serviceconf, units
 
 TARGET_DEFAULT = paths.AI_ROOT / "ai-portal"
 DEPLOYMENT_JSON = paths.PORTAL_STATE / "deployment.json"
+UNIT_NAME = "ai-portal.service"     # systemd unit file name
 PORTAL_SERVICE_NAME = "portal"        # env file + wrapper name
 # Required in whatever the ref exports (git archive exports the whole tree —
 # simpler and more honest than cherry-picking directories, and the deployed
@@ -187,6 +188,26 @@ def make_venv(target: Path, dry: bool = False) -> str:
     return str(target / ".venv/bin/python")
 
 
+def write_build_file(target: Path, sha: str) -> Path | None:
+    """Stamp the deployed tree with the commit it was built from.
+
+    ``/healthz`` reports it, so "I deployed X" and "X is running" are the same
+    checkable fact rather than two claims — the gap that let a deploy look
+    successful while the previous process kept serving. Nothing is written in
+    dry-run mode (the target may not exist yet).
+    """
+    if not target.is_dir():
+        return None
+    p = target / "BUILD.json"
+    p.write_text(json.dumps({
+        "sha": sha,
+        "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "source_repo": str(repo_root()),
+    }, indent=2) + "\n")
+    print(f"  stamped {p} ({sha[:12]})")
+    return p
+
+
 def write_launch_files(target: Path, python: str, dry: bool = False) -> dict:
     """portal.env + wrapper + unit, all generated (see app.core.units)."""
     conf = serviceconf.SERVICE_CONF["portal"]
@@ -305,6 +326,7 @@ def deploy(target: Path = TARGET_DEFAULT, ref: str = "HEAD", dry: bool = False,
 
     export_ref(p["sha"], target, dry=dry)
     python = make_venv(target, dry=dry)
+    write_build_file(target, p["sha"])
     launch = write_launch_files(target, python, dry=dry)
 
     if dry:
@@ -318,16 +340,76 @@ def deploy(target: Path = TARGET_DEFAULT, ref: str = "HEAD", dry: bool = False,
     })
 
     if start:
-        # enable --now: survives logout/reboot (user service + lingering)
-        subprocess.run(["systemctl", "--user", "enable", "--now",
-                        f"{paths.PORTAL_UNIT}.service"],
+        started = start_service(p["sha"], dry=False)
+    else:
+        subprocess.run(["systemctl", "--user", "enable", UNIT_NAME],
                        capture_output=True, text=True)
+        started = {"action": "enable-only"}
     st = unit_status(paths.PORTAL_UNIT)
     result = {**p, "python": python, "launch": launch, "state": st,
-              "record": str(DEPLOYMENT_JSON)}
+              "start": started, "record": str(DEPLOYMENT_JSON)}
     print(f"  unit {paths.PORTAL_UNIT}: {st.get('ActiveState')}/{st.get('SubState')}")
     print(f"  recorded in {DEPLOYMENT_JSON}")
     return result
+
+
+def start_service(sha: str | None = None, dry: bool = False) -> dict:
+    """Enable + (re)start the portal unit, then verify what is serving.
+
+    ``enable --now`` on an *already active* unit is a no-op — which silently
+    meant "deployed" while the old code kept serving. So: enable, then restart
+    if active, start if not, and finally ask the running process (``/healthz``)
+    which build it is, so the claim is checked instead of assumed.
+    """
+    if dry:
+        print(f"# dry-run: systemctl --user enable {UNIT_NAME}; "
+              f"restart-or-start; verify /healthz sha")
+        return {"action": "dry-run"}
+    subprocess.run(["systemctl", "--user", "enable", UNIT_NAME],
+                   capture_output=True, text=True)
+    was_active = unit_status(paths.PORTAL_UNIT).get("ActiveState") == "active"
+    action = "restart" if was_active else "start"
+    p = subprocess.run(["systemctl", "--user", action, UNIT_NAME],
+                       capture_output=True, text=True, timeout=120)
+    print(f"  systemctl --user {action} {paths.PORTAL_UNIT}"
+          + ("" if p.returncode == 0 else f" FAILED: {(p.stderr or p.stdout).strip()[:200]}"))
+    health = wait_for_health(sha)
+    print(f"  healthz: {health}")
+    return {"action": action, "health": health}
+
+
+def wait_for_health(expected_sha: str | None = None, timeout: float = 30.0) -> dict:
+    """Poll /healthz until it answers (and, if given, reports the build sha).
+
+    Uses urllib: this module must stay stdlib-only so it runs from a fresh
+    clone with no venv."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    base = serviceconf.base_url("portal", default_port=8090)
+    deadline = time.time() + timeout
+    last: dict = {"ok": False, "error": "no response"}
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{base}/healthz", timeout=3) as r:
+                body = _json.loads(r.read().decode() or "{}")
+            served = body.get("build") or {}
+            last = {"ok": True, "url": f"{base}/healthz",
+                    "sha": (served.get("sha") or "?")[:12],
+                    "app_version": body.get("app_version")}
+            if expected_sha:
+                last["matches_deployed"] = (served.get("sha") == expected_sha)
+                if last["matches_deployed"]:
+                    return last
+            else:
+                return last
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            last = {"ok": False, "error": str(e)[:120]}
+        time.sleep(1.5)
+    if expected_sha:
+        last.setdefault("matches_deployed", False)
+    return last
 
 
 def rollback(dry: bool = False) -> dict:

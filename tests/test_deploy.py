@@ -148,6 +148,28 @@ def test_rollback_without_history_explains_itself(tmp_path, monkeypatch, capsys)
         raise AssertionError("rollback with no record must exit with a message")
 
 
+def test_write_build_file_stamps_the_tree(tmp_path):
+    target = tmp_path / "ai-portal"
+    assert deploy.write_build_file(target, "a" * 40) is None, "no dir, no write"
+    target.mkdir()
+    p = deploy.write_build_file(target, "b" * 40)
+    info = json.loads(p.read_text())
+    assert info["sha"] == "b" * 40 and info["built_at"] and info["source_repo"]
+
+
+def test_wait_for_health_reports_the_stamped_sha(tmp_path, monkeypatch):
+    """The health check must distinguish 'not up' from 'up, wrong build'."""
+    monkeypatch.setattr(deploy.serviceconf, "base_url",
+                        lambda *a, **k: "http://127.0.0.1:1")   # nothing there
+    res = deploy.wait_for_health("c" * 40, timeout=2)
+    assert res["ok"] is False and res["matches_deployed"] is False
+
+
+def test_start_service_is_dry_run_safe():
+    res = deploy.start_service("d" * 40, dry=True)
+    assert res["action"] == "dry-run"
+
+
 # ------------------------------------------------------------------- logging
 def test_resolve_level():
     assert logsetup.resolve_level("debug") == 10

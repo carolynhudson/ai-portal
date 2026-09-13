@@ -19,7 +19,12 @@ def test_healthz_is_open():
     c = TestClient(app)
     r = c.get("/healthz")
     assert r.status_code == 200
-    assert r.json()["ok"] is True
+    body = r.json()
+    assert body["ok"] is True
+    # identity: "deployed" and "serving" must be comparable in one response
+    assert body["app_version"]
+    assert "build" in body and "sha" in body["build"]
+    assert body["pid"] > 0 and body["uptime_s"] >= 0
 
 
 def test_pages_require_auth():
