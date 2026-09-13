@@ -15,6 +15,51 @@ Companions:
 
 ---
 
+## 0. Current status — 2026-09-11 (resumption point)
+
+**Committed & verified:** Phases A–E + router hero + **Phase I (Settings)**.
+Green: 64 tests (`uv run --with pytest python -m pytest tests/ -q`).
+
+**Running right now:**
+- `ai-llama-router` user service — active, 127.0.0.1:8080 (**this agent session rides on it**)
+- `ai-comfyui` user service — active, 127.0.0.1:8188
+- Portal — **manual uvicorn from the repo** on 127.0.0.1:8090 (NOT yet a
+  service; Phase J installs `ai-portal.service` and cuts over)
+
+**Next up — Phase J (reorg + deployment + logging/debug), one commit per step:**
+1. `app/core/logsetup.py` — rotating file log → `~/ai/ai-portal/logs/portal.log`,
+   level via `AI_PORTAL_LOG_LEVEL` env / launch arg, per-module loggers; wire
+   into `create_app()`.
+2. Split the ~40 endpoints out of `app/main.py` (844 lines) into `app/api/`
+   route modules (`pages`, `status`, `services`, `updates`, `models`,
+   `settings`); shared helpers → `app/api/common.py`. Tests are the net.
+3. File moves: `tools/phase[1-5]_*.py` → `tools/migrations/`; root
+   `02-install-llama-cpp.sh` → `archive/legacy/`; add
+   `deploy/ai-llama-router.service` as source of truth (copy from
+   `~/.config/systemd/user/`, which currently holds the only copy).
+4. `deploy/install.sh` — idempotent first-time deploy AND update: rsync
+   `app/ web/` → `~/ai/ai-portal/`, uv-managed venv there, write unit with real
+   paths + `EnvironmentFile`s, daemon-reload, enable; record deployed git SHA
+   in `~/ai/state/portal/deployment.json` (rebuild/rollback path).
+5. `scripts/dev-run.sh` — run from the source tree on port **8091** with debug
+   logging alongside the service. MUST set `AI_PORTAL_HOME=$HOME` explicitly —
+   agent shells can have HOME overridden to a sandbox dir, which silently
+   re-points every path (this actually happened 2026-09-11; dev instance then
+   used `$SANDBOX/ai` instead of the real tree).
+6. `docs/DEBUGGING.md` — endpoints, dry-run flags, pytest, journalctl,
+   log locations, how to raise logging on the live service.
+7. Cutover: stop manual uvicorn :8090 → start `ai-portal` from the new
+   deployment; verify pages + API against it.
+
+**Env-file layout (all under `~/ai/config/`, managed by the Settings page):**
+- `ai-env.env` — read by **all three** units (ROCm `LD_LIBRARY_PATH` etc.) —
+  `app/core/serviceenv.py`
+- `llamacpp.env` / `comfyui.env` / `portal.env` — per-service host/port
+  (+ extra args for ComfyUI) — `app/core/serviceconf.py` (validate + persist)
+  and `app/core/units.py` (per-service env/wrapper/unit generation)
+- ComfyUI uses **discrete** `COMFY_HOST`/`COMFY_PORT` vars; the wrapper passes
+  `--listen "$COMFY_HOST" --port "$COMFY_PORT" $COMFY_ARGS` (word-split).
+
 ## 1. Verified current state (post-cleanup)
 
 | Component | Location | State |
@@ -295,6 +340,8 @@ Sequencing: after B (service control) + D (gguf memory math).
 | F | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness | all UPDATES.md inputs visible |
 | G | Frontend polish per D1 | — |
 | H | RAG service: per-project stores, ingestion jobs, MCP interface (§4.8) | two demo projects searchable, zero cross-project hits; start/stop from UI |
+| I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
+| J | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0) | redeploy-from-git-SHA works; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.
@@ -394,3 +441,32 @@ Remaining open (can proceed without them):
      `tools/live_smoke.sh` green. Remaining: C–G per §7 (D's presets +
      GC/dedup are the rest of the model manager), and H (RAG/MCP, §4.8)
      when planned. Each behind the §6 safety model.
+7. **Phase I (Settings, done 2026-09-11):** `/settings` page + backend.
+   - `app/core/serviceenv.py` — rewritten to own the **shared**
+     `~/ai/config/ai-env.env` (read by all three units); `read_env/write_env/
+     set_var/get_var`; values quoted for systemd. API: `GET|PUT
+     /api/service-env`. Home of the global ROCm
+     `LD_LIBRARY_PATH=/opt/rocm/core-10.0/lib` setting.
+   - `app/core/units.py` — NEW (split out of serviceenv during Phase I):
+     per-service env file + shell wrapper + static unit generation
+     (`write_env/write_wrapper/install_unit/env_path/wrapper_path/unit_path`).
+     `install_unit` emits BOTH `EnvironmentFile=` lines (shared + per-service).
+   - `app/core/serviceconf.py` — NEW: per-service host/port registry
+     (`SERVICE_CONF`: llamacpp/comfyui/portal → env file + keys + unit),
+     `service_ports()`, `validate_port()` (range 1–65535, cross-service
+     collision, live `ss -tlnH` binding probe with own-current-binding
+     tolerated, <1024 warning), `set_service_port()` (persist, no restart),
+     external access = host 0.0.0.0 vs 127.0.0.1.
+   - `app/main.py` — `GET /settings`, `GET /api/settings/services`,
+     `GET /api/settings/services/{svc}/validate?port=N`,
+     `POST /api/settings/services/{svc}` (422 + structured errors on
+     validation failure).
+   - `app/core/systemd.py` — `MANAGED_UNITS` gains `portal` (ai-portal), so
+     the Settings page can restart the portal itself.
+   - ComfyUI env mapping switched to **discrete** `COMFY_HOST`/`COMFY_PORT`
+     (+ `COMFY_ARGS` = extra args only) with wrapper
+     `--listen "$COMFY_HOST" --port "$COMFY_PORT" $COMFY_ARGS` — matching what
+     `serviceconf` reads. Tests updated accordingly (64 green).
+   - `.env` (repo root, held an HF token; nothing in code reads it) is now
+     gitignored.
+8. **Phase J** — see §0 for the step list and target layout.

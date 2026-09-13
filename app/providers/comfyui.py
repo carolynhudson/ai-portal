@@ -4,7 +4,7 @@ ComfyUI is a git repo + a Python venv together at ~/ai/comfyui (finding F8).
 Updates are git + venv sync — there is NO compile step (F8).
 
 Phase E adds the service layer: a static ``ai-comfyui`` user unit whose launch
-parameters come from a portal-generated env file (see core.serviceenv), plus
+parameters come from a portal-generated env file (see core.units), plus
 the model inventory and portal-side downloads that place files into the right
 ``models/<category>/`` folder — no browser downloads, no manual copying.
 """
@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, paths, serviceenv, systemd, updater, modelmeta
+from ..core import db, paths, units, systemd, updater, modelmeta
 
 # Launch parameters, stored at ~/ai/config/comfyui.json. The env file the
 # service reads is *generated* from this; changing the json (via the API or by
@@ -103,18 +103,16 @@ class ComfyUI(Provider):
         return {"listen": listen, "port": port, "extra_args": extra}
 
     @staticmethod
-    def launch_args(cfg: dict) -> str:
-        parts = [f"--listen {cfg['listen']}", f"--port {cfg['port']}"]
-        if cfg.get("extra_args"):
-            parts.append(cfg["extra_args"])
-        return " ".join(parts)
-
-    @staticmethod
     def env_mapping(cfg: dict) -> dict[str, str]:
+        """Launch parameters as discrete env vars — host/port are separate so
+        the Settings page can manage them via serviceconf; only the free-form
+        extra args stay in COMFY_ARGS (word-split by the wrapper)."""
         return {
             "COMFY_PYTHON": str(paths.COMFY_VENV / "bin" / "python"),
             "COMFY_MAIN": str(paths.COMFY_REPO / "main.py"),
-            "COMFY_ARGS": ComfyUI.launch_args(cfg),
+            "COMFY_HOST": cfg["listen"],
+            "COMFY_PORT": str(cfg["port"]),
+            "COMFY_ARGS": cfg.get("extra_args", ""),
         }
 
     def set_config(self, cfg: dict) -> dict:
@@ -122,7 +120,7 @@ class ComfyUI(Provider):
         cfg = self.validate_config(cfg)
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(cfg, indent=2) + "\n")
-        serviceenv.write_env(paths.COMFY_UNIT_NAME, self.env_mapping(cfg),
+        units.write_env(paths.COMFY_UNIT_NAME, self.env_mapping(cfg),
                              log=lambda m: None)
         return cfg
 
@@ -132,20 +130,21 @@ class ComfyUI(Provider):
         Does NOT start the service — the portal's service controls do that.
         """
         cfg = self.validate_config(self.config())
-        serviceenv.write_env(paths.COMFY_UNIT_NAME, self.env_mapping(cfg), log)
-        serviceenv.write_wrapper(
+        units.write_env(paths.COMFY_UNIT_NAME, self.env_mapping(cfg), log)
+        units.write_wrapper(
             paths.COMFY_UNIT_NAME,
             "#!/bin/sh\n"
             "# AI portal — ComfyUI launch wrapper (generated).\n"
             "# All args come from the env file; change them via the portal,\n"
             "# not here.\n"
-            'exec "$COMFY_PYTHON" "$COMFY_MAIN" $COMFY_ARGS\n', log)
-        serviceenv.install_unit(paths.COMFY_UNIT, paths.COMFY_UNIT_NAME,
+            'exec "$COMFY_PYTHON" "$COMFY_MAIN" --listen "$COMFY_HOST" '
+            '--port "$COMFY_PORT" $COMFY_ARGS\n', log)
+        units.install_unit(paths.COMFY_UNIT, paths.COMFY_UNIT_NAME,
                                 "ComfyUI (AI Portal)", str(paths.COMFY_REPO), log)
         return {
             "unit": paths.COMFY_UNIT,
-            "env": str(serviceenv.env_path(paths.COMFY_UNIT_NAME)),
-            "wrapper": str(serviceenv.wrapper_path(paths.COMFY_UNIT_NAME)),
+            "env": str(units.env_path(paths.COMFY_UNIT_NAME)),
+            "wrapper": str(units.wrapper_path(paths.COMFY_UNIT_NAME)),
             "config": cfg,
         }
 
@@ -252,6 +251,7 @@ class ComfyUI(Provider):
             "repo": str(paths.COMFY_REPO),
             "remote": self.remote_state(),
             "recent": self._recent_commits(8),
+            "venv": _venv_info(),
             "job": updater.latest_job("comfyui"),
         }
 

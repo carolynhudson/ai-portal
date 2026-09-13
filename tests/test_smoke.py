@@ -151,7 +151,7 @@ def test_services_endpoint_shape():
     r = c.get("/api/services")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"llamacpp", "comfyui"}
+    assert set(body) == {"llamacpp", "comfyui", "portal"}
     for v in body.values():
         assert {"unit", "name", "state", "controllable"} <= set(v)
 

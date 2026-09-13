@@ -109,6 +109,12 @@ MANAGED_UNITS = {
         "name": "ComfyUI",
         "confirm": None,
     },
+    "portal": {
+        "unit": "ai-portal",
+        "name": "AI Portal",
+        "confirm": ("Restart the portal itself? The page will reconnect in a "
+                    "moment."),
+    },
 }
 
 

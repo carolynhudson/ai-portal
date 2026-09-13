@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=/home/cortana/ai-projects/ai-portal
-Environment=AI_PORTAL_HOST=0.0.0.0
-Environment=AI_PORTAL_PORT=8090
-ExecStart=/home/cortana/ai-projects/ai-portal/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8090 --log-level info
+EnvironmentFile=/home/cortana/ai/config/ai-env.env
+EnvironmentFile=/home/cortana/ai/config/portal.env
+ExecStart=/home/cortana/ai-projects/ai-portal/.venv/bin/python -m uvicorn app.main:app --host ${AI_PORTAL_HOST} --port ${AI_PORTAL_PORT} --log-level info
 Restart=on-failure
 RestartSec=5
 

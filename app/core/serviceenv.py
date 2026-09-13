@@ -1,90 +1,63 @@
-"""Portal-managed launch config for user services (env file + wrapper).
+"""Manage the shared runtime environment file (~/ai/config/ai-env.env).
 
-The systemd unit stays *static*. All launch parameters live in a generated
-env file (``~/ai/config/<name>.env``) which a thin shell wrapper
-(``~/ai/bin/ai-<name>.sh``) consumes. Re-parameterizing a service is then:
+All three portal-managed user units (ai-llama-router, ai-comfyui, ai-portal)
+reference this single env file so a change in one place propagates to every
+service after a restart. The Settings page will expose read/write for the
+key variables (LD_LIBRARY_PATH today; more later).
 
-    rewrite env file  ->  systemctl --user restart <unit>
-
-No unit edits, no daemon-reload, and every knob is visible in one small file
-the portal owns. We are proving this pattern on ComfyUI (no live traffic)
-before porting it to the llama router.
-
-Division of config, once the router adopts this too:
-
-- the **env file** governs launch parameters (host, port, slots, extra flags)
-- ``presets.ini`` keeps governing *model slots* (paths, ctx, draft models)
-
-systemd does not word-split env values, so multi-word args (``COMFY_ARGS``)
-are written as one quoted value and the wrapper's shell re-splits them when
-the variable is left unquoted in the ``exec`` line.
+Changing the file does NOT auto-restart services — the caller must explicitly
+restart each unit via systemd.service_action() for the new values to take effect.
 """
 from __future__ import annotations
 
-import subprocess
+import re
 from pathlib import Path
 
 from . import paths
 
-
-def env_path(name: str) -> Path:
-    """The env file systemd reads for service ``name``."""
-    return paths.CONFIG / f"{name}.env"
+_ENV_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 
-def wrapper_path(name: str) -> Path:
-    """The shell wrapper systemd actually execs for service ``name``."""
-    return paths.AI_BIN / f"ai-{name}.sh"
+def read_env() -> dict[str, str]:
+    """Parse ai-env.env into {KEY: VALUE}. Missing file → {}."""
+    f = paths.AI_ENV_FILE
+    if not f.exists():
+        return {}
+    out: dict[str, str] = {}
+    for line in f.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _ENV_RE.match(line)
+        if m:
+            key, val = m.group(1), m.group(2).strip().strip('"').strip("'")
+            out[key] = val
+    return out
 
 
-def unit_path(unit: str) -> Path:
-    return paths.HOME / ".config" / "systemd" / "user" / f"{unit}.service"
+def write_env(env: dict[str, str]) -> None:
+    """Write {KEY: VALUE} back to ai-env.env with a header comment."""
+    f = paths.AI_ENV_FILE
+    f.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Shared runtime environment for all AI portal-managed user services.",
+        "# Referenced by ai-llama-router, ai-comfyui, and ai-portal systemd units.",
+        "# Managed by the AI Portal Settings page. Edits require a service restart.",
+        "",
+    ]
+    for key, val in env.items():
+        q = '"' + val.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        lines.append(f"{key}={q}")
+    f.write_text("\n".join(lines) + "\n")
 
 
-def _quote(v: str) -> str:
-    """Double-quote for systemd's EnvironmentFile (escapes \\ and ")."""
-    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+def set_var(key: str, value: str) -> dict[str, str]:
+    """Set a single variable; returns the full updated env dict."""
+    env = read_env()
+    env[key] = value
+    write_env(env)
+    return env
 
 
-def write_env(name: str, mapping: dict[str, str], log=print) -> Path:
-    """Write ``KEY=VALUE`` lines. Values are quoted so systemd keeps spaces
-    intact; the wrapper decides which variables to re-split."""
-    p = env_path(name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("".join(f"{k}={_quote(v)}\n" for k, v in mapping.items()))
-    log(f"wrote {p} ({len(mapping)} keys)")
-    return p
-
-
-def write_wrapper(name: str, body: str, log=print) -> Path:
-    p = wrapper_path(name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body)
-    p.chmod(0o755)
-    log(f"wrote {p}")
-    return p
-
-
-def install_unit(unit: str, service: str, description: str,
-                 working_dir: str, log=print) -> None:
-    """Write the static unit (env file + wrapper are the only moving parts)
-    and daemon-reload so systemd sees it."""
-    p = unit_path(unit)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
-        "[Unit]\n"
-        f"Description={description}\n"
-        "After=network.target\n"
-        "\n"
-        "[Service]\n"
-        f"EnvironmentFile={env_path(service)}\n"
-        f"ExecStart={wrapper_path(service)}\n"
-        f"WorkingDirectory={working_dir}\n"
-        "Restart=on-failure\n"
-        "RestartSec=5\n"
-        "\n"
-        "[Install]\n"
-        "WantedBy=default.target\n")
-    subprocess.run(["systemctl", "--user", "daemon-reload"],
-                   capture_output=True, text=True, timeout=15)
-    log(f"installed unit {unit} (daemon-reloaded)")
+def get_var(key: str) -> str | None:
+    return read_env().get(key)

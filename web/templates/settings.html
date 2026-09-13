@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Settings · AI Portal{% endblock %}
+{% block body %}
+<h2>Settings</h2>
+<p class="mut" style="font-size:13px;margin-top:-4px">
+  Launch settings for the portal-managed services. Values are persisted to
+  <span class="mono">~/ai/config/</span> and take effect when the affected
+  service is restarted — nothing restarts itself automatically.
+</p>
+
+{# ---------------------------- shared runtime env ------------------------- #}
+<div class="card">
+  <h3>Shared runtime environment <span class="pill mut">all services</span></h3>
+  <p class="mut" style="font-size:13px;margin-top:-2px">
+    Variables in <span class="mono">~/ai/config/ai-env.env</span> are read by
+    every portal-managed service (llama.cpp router, ComfyUI, AI Portal) at
+    start. Use this to point all services at a specific driver/library set —
+    e.g. a particular ROCm core version — even when the system default differs.
+  </p>
+  <div class="kv"><span class="k">LD_LIBRARY_PATH <span class="mut">(ROCm driver libraries)</span></span>
+    <span style="display:flex;gap:8px;align-items:center">
+      <input id="ld-lib-path" class="mono" placeholder="/opt/rocm/core-10.0/lib"
+             style="width:340px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)">
+      <button onclick="saveSharedEnv()">Save</button>
+    </span>
+  </div>
+  <div id="shared-other" class="mut mono" style="font-size:12px;margin-top:6px"></div>
+  <div id="shared-env-msg" style="font-size:13px;margin-top:8px"></div>
+  <div id="shared-restart-row" style="display:none;margin-top:8px;gap:8px;align-items:center">
+    <span class="pill mut">restart required to apply</span>
+    <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('llamacpp')">restart router</button>
+    <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('comfyui')">restart ComfyUI</button>
+    <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('portal')">restart portal</button>
+  </div>
+</div>
+
+{# ------------------------------ service ports ---------------------------- #}
+<h2>Service ports</h2>
+<div class="card">
+  <p class="mut" style="font-size:13px;margin-top:-2px">
+    Each service listens on the host/port from its env file in
+    <span class="mono">~/ai/config/</span>. <em>External access</em> means
+    listen on all interfaces (<span class="mono">0.0.0.0</span>) instead of
+    loopback only (<span class="mono">127.0.0.1</span>). Candidate ports are
+    validated live: numeric TCP range, not assigned to another managed
+    service, not already bound by anything else on this system.
+  </p>
+  <table id="svc-ports">
+    <thead><tr><th>service</th><th>current</th><th>new port</th><th>external access</th><th></th><th style="width:34%"></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const ORDER = ['llamacpp', 'comfyui', 'portal'];
+let DATA = null;
+const timers = {};
+
+async function j(url, opts){
+  const r = await fetch(url, Object.assign({credentials:'same-origin'}, opts || {}));
+  let d = null; try{ d = await r.json(); }catch(e){}
+  return {ok: r.ok, status: r.status, d};
+}
+
+async function load(){
+  const {ok, d} = await j('/api/settings/services');
+  if(!ok || !d) return;
+  DATA = d;
+  document.getElementById('ld-lib-path').value =
+    (d.shared_env && d.shared_env.LD_LIBRARY_PATH) || '';
+  const other = Object.entries(d.shared_env || {})
+    .filter(([k]) => k !== 'LD_LIBRARY_PATH')
+    .map(([k, v]) => `${k}=${v}`);
+  document.getElementById('shared-other').textContent =
+    other.length ? 'other variables: ' + other.join('   ') : '';
+  renderRows();
+}
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderRows(){
+  const tb = document.querySelector('#svc-ports tbody');
+  tb.innerHTML = '';
+  for(const key of ORDER){
+    const s = DATA.services[key]; if(!s) continue;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${esc(s.label)}</strong>
+          <div class="mut mono" style="font-size:11px">${esc(s.unit)} · ${esc(s.env_file.replace(/^\/home\/[^/]+/, '~'))}</div></td>
+      <td class="mono">${esc(s.host)}:${s.port}
+        <span class="pill ${s.external ? '' : 'mut'}" style="${s.external ? 'background:rgba(210,153,34,.15);color:var(--warn)' : ''}">${s.external ? 'external' : 'loopback'}</span></td>
+      <td><input id="port-${key}" type="number" min="1" max="65535" value="${s.port}"
+            style="width:110px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)"
+            oninput="onPortInput('${key}')"></td>
+      <td><label style="font-size:13px;white-space:nowrap"><input type="checkbox" id="ext-${key}" ${s.external ? 'checked' : ''}> external</label></td>
+      <td><button id="save-${key}" onclick="saveRow('${key}')" style="padding:6px 14px">Save</button></td>
+      <td><div id="msg-${key}" style="font-size:12px"></div></td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function onPortInput(key){
+  clearTimeout(timers[key]);
+  timers[key] = setTimeout(() => validateRow(key), 350);
+}
+
+async function validateRow(key){
+  const port = document.getElementById('port-' + key).value;
+  const msg = document.getElementById('msg-' + key);
+  if(port === '' || isNaN(parseInt(port))){ msg.innerHTML = ''; return; }
+  const {ok, d} = await j(`/api/settings/services/${key}/validate?port=${encodeURIComponent(port)}`);
+  if(!ok || !d){
+    msg.innerHTML = '<span style="color:var(--bad)">validation unavailable</span>';
+    document.getElementById('save-' + key).disabled = true; return;
+  }
+  let html = '';
+  for(const e of (d.errors || [])) html += `<div style="color:var(--bad)">✗ ${esc(e)}</div>`;
+  for(const w of (d.warnings || [])) html += `<div style="color:var(--warn)">⚠ ${esc(w)}</div>`;
+  msg.innerHTML = html;
+  document.getElementById('save-' + key).disabled = !d.ok;
+}
+
+async function saveRow(key){
+  const port = parseInt(document.getElementById('port-' + key).value, 10);
+  const external = document.getElementById('ext-' + key).checked;
+  const msg = document.getElementById('msg-' + key);
+  const {ok, status, d} = await j(`/api/settings/services/${key}`, {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({port, external})});
+  if(ok && d && d.ok){
+    await load(); // refresh current values (re-renders rows, clears msg)
+    document.getElementById('msg-' + key).innerHTML =
+      `<span style="color:var(--ok)">saved — restart to apply</span>
+       <button class="ghost" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="restartSvc('${key}')">restart ${esc(DATA.services[key].label)}</button>`;
+  } else {
+    const errs = (d && d.detail && d.detail.errors)
+      ? d.detail.errors : [String((d && d.detail) || ('HTTP ' + status))];
+    msg.innerHTML = errs.map(e => `<div style="color:var(--bad)">✗ ${esc(e)}</div>`).join('');
+  }
+}
+
+async function restartSvc(key){
+  const s = DATA && DATA.services ? DATA.services[key] : {label: key};
+  if(!confirm(`Restart ${s.label}? Its new settings take effect now.`)) return;
+  const note = key === 'portal'
+    ? document.getElementById('shared-env-msg')
+    : document.getElementById('msg-' + key);
+  if(key === 'portal'){
+    if(note) note.innerHTML = '<span class="mut">restarting the portal — this page will come back in a moment…</span>';
+    // fire and forget: our own process is about to go away
+    j(`/api/services/${key}/restart`, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({confirm:true})});
+    return;
+  }
+  if(note) note.innerHTML = '<span class="mut">restarting…</span>';
+  const {ok, d} = await j(`/api/services/${key}/restart`, {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({confirm:true})});
+  if(note) note.innerHTML = (ok && d && d.ok)
+    ? '<span style="color:var(--ok)">restarted</span>'
+    : `<span style="color:var(--bad)">restart failed: ${esc((d && (d.error || d.detail)) || 'unknown error')}</span>`;
+}
+
+async function saveSharedEnv(){
+  const val = document.getElementById('ld-lib-path').value.trim();
+  const msg = document.getElementById('shared-env-msg');
+  if(!val){ msg.innerHTML = '<span style="color:var(--warn)">enter a path to set (clearing is not supported yet)</span>'; return; }
+  const {ok, status, d} = await j('/api/service-env', {
+    method: 'PUT', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({LD_LIBRARY_PATH: val})});
+  if(ok && d && d.ok){
+    msg.innerHTML = '<span style="color:var(--ok)">saved to ai-env.env</span>';
+    document.getElementById('shared-restart-row').style.display = 'flex';
+  } else {
+    msg.innerHTML = `<span style="color:var(--bad)">save failed: ${esc((d && d.detail) || ('HTTP ' + status))}</span>`;
+  }
+}
+
+load();
+</script>
+{% endblock %}

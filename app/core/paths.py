@@ -81,3 +81,10 @@ LLAMA_CMAKE_ARGS = [
     f"-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE={VULKAN_SDK}/x86_64/bin/glslangValidator",
     f"-DVulkan_INCLUDE_DIR={VULKAN_SDK}/x86_64/include",
 ]
+
+
+# --- Shared service environment --------------------------------------------
+# Single env file referenced by all three user units (router, comfyui, portal).
+# The Settings page will read/write this file; changing it requires a
+# `systemctl --user restart` of each unit to take effect.
+AI_ENV_FILE = CONFIG / "ai-env.env"

@@ -9,7 +9,10 @@ no front-end re-engineering.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -23,7 +26,7 @@ from pydantic import BaseModel
 import httpx
 
 from . import metrics, router as router_mod
-from .core import config as cfg
+from .core import config as cfg, serviceconf, serviceenv
 from .core import db, modeladd, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
@@ -284,6 +287,10 @@ def create_app() -> FastAPI:
         return templates.TemplateResponse(request, "metrics.html",
                                           {"disk": disk, "gpu": gpu_txt,
                                            "settings": db.current_settings()})
+
+    @app.get("/settings")
+    def settings_page(request: Request, _=Depends(_require_auth)):
+        return templates.TemplateResponse(request, "settings.html", {})
 
     # ----------------------------------------------------------------- JSON
     def _health_bundle() -> dict:
@@ -656,6 +663,206 @@ def create_app() -> FastAPI:
         if j is None:
             raise HTTPException(status_code=404, detail="no such job")
         return j
+
+    # ---------------------------------------- shared service environment
+    @app.get("/api/service-env")
+    def api_service_env(_=Depends(_require_auth)):
+        """Read the shared runtime env file (~/ai/config/ai-env.env)."""
+        return {"env": serviceenv.read_env(), "path": str(paths.AI_ENV_FILE)}
+
+    @app.put("/api/service-env")
+    def api_service_env_set(body: dict, _=Depends(_require_auth)):
+        """Update one or more variables in the shared env file.
+
+        Body: {"LD_LIBRARY_PATH": "/opt/rocm/core-10.0/lib", ...}
+        Does NOT auto-restart services — caller must restart each unit.
+        """
+        if not body:
+            raise HTTPException(status_code=400, detail="empty body")
+        env = serviceenv.read_env()
+        for k, v in body.items():
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
+                raise HTTPException(status_code=400, detail=f"invalid key: {k}")
+            env[k] = str(v)
+        serviceenv.write_env(env)
+        db.event("portal", "config", f"service-env updated: {list(body.keys())}")
+        return {"ok": True, "env": env}
+
+    @app.get("/api/settings/services")
+    def api_settings_services(_=Depends(_require_auth)):
+        """Per-service host/port (current values from the env files) plus the
+        shared runtime environment — data for the Settings page."""
+        return {"services": serviceconf.service_ports(),
+                "shared_env": serviceenv.read_env()}
+
+    @app.get("/api/settings/services/{service}/validate")
+    def api_settings_validate(service: str, port: int, _=Depends(_require_auth)):
+        """Validate a candidate port for ``service`` without persisting it."""
+        if service not in serviceconf.SERVICE_CONF:
+            raise HTTPException(404, f"unknown service {service!r}")
+        return serviceconf.validate_port(port, service)
+
+    @app.post("/api/settings/services/{service}")
+    def api_settings_set_service(service: str, body: dict,
+                                 _=Depends(_require_auth)):
+        """Validate + persist a host/port change for one service.
+
+        Body: ``{"port": 8081, "external": true}`` (either field optional).
+        Does NOT restart the unit — the Settings page shows a restart button
+        so the new values take effect when the user is ready.
+        """
+        if service not in serviceconf.SERVICE_CONF:
+            raise HTTPException(404, f"unknown service {service!r}")
+        res = serviceconf.set_service_port(service, port=body.get("port"),
+                                           external=body.get("external"))
+        if not res.get("ok"):
+            raise HTTPException(422, {"ok": False, "errors": res["errors"],
+                                      "warnings": res["warnings"]})
+        db.event("portal", "config",
+                 f"service {service}: host={res['host']} port={res['port']} "
+                 f"external={res['external']}")
+        return res
+
+    # ---------------------------------------- huggingface CLI + library
+    def _hf_cli_venv() -> Path | None:
+        """The dedicated venv the ``hf`` CLI lives in (shebang of ~/.local/bin/hf)."""
+        hf_bin = paths.HOME / ".local" / "bin" / "hf"
+        if not hf_bin.exists():
+            return None
+        try:
+            shebang = hf_bin.read_text().splitlines()[0].lstrip("#!")
+            vpy = Path(shebang.strip())
+            return vpy.parent.parent  # <venv>/bin/python -> <venv>
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _pypi_latest(name: str) -> tuple[str | None, bool]:
+        """(latest_version, stale). Offline -> (None, True)."""
+        try:
+            r = httpx.get(f"https://pypi.org/pypi/{name}/json", timeout=8)
+            r.raise_for_status()
+            return r.json().get("info", {}).get("version"), False
+        except Exception:  # noqa: BLE001
+            return None, True
+
+    def _ver_tuple(v: str | None) -> tuple:
+        if not v:
+            return ()
+        out = []
+        for part in re.split(r"[.+-]", v):
+            out.append(int(part) if part.isdigit() else 0)
+        return tuple(out)
+
+    @app.get("/api/hf/status")
+    def api_hf_status(force: bool = False, _=Depends(_require_auth)):
+        """Versions of the hf CLI, the hub library (portal venv + OS python),
+        cache stats, and whether PyPI has a newer huggingface-cli."""
+        p = get_provider("huggingface")
+        st = p.status()
+        detail = st.detail or {}
+
+        cli_version: str | None = None
+        venv = _hf_cli_venv()
+        if venv and (venv / "bin" / "python").exists():
+            try:
+                out = subprocess.run(
+                    [str(venv / "bin" / "python"), "-c",
+                     "import importlib.metadata as m; "
+                     "print(m.version('huggingface_hub'))"],
+                    capture_output=True, text=True, timeout=20)
+                cli_version = out.stdout.strip() or None
+            except Exception:  # noqa: BLE001
+                pass
+
+        os_hub: str | None = None
+        try:
+            out = subprocess.run(
+                ["/usr/bin/python3", "-c",
+                 "import huggingface_hub; print(huggingface_hub.__version__)"],
+                capture_output=True, text=True, timeout=20)
+            os_hub = out.stdout.strip() or None
+        except Exception:  # noqa: BLE001
+            pass
+
+        # the `hf` CLI ships inside huggingface_hub; that's what we compare
+        latest, stale = _pypi_latest("huggingface_hub")
+        update_available = bool(
+            cli_version and latest and _ver_tuple(latest) > _ver_tuple(cli_version))
+
+        return {
+            "cli_path": str(paths.HOME / ".local" / "bin" / "hf"),
+            "cli_venv": str(venv) if venv else None,
+            "cli_version": cli_version,
+            "hub_portal": getattr(sys.modules.get("huggingface_hub", None), "__version__", None),
+            "hub_os": os_hub,
+            "python_portal": sys.version.split()[0],
+            "cache": detail.get("cache"),
+            "cache_size": detail.get("cache_size"),
+            "repos": detail.get("repos", []),
+            "pypi_latest": latest,
+            "stale": stale,
+            "update_available": update_available,
+        }
+
+    @app.post("/api/updates/hf")
+    def api_hf_update(_=Depends(_require_auth)):
+        """Upgrade huggingface-cli in its dedicated venv (background job)."""
+        venv = _hf_cli_venv()
+        if not venv or not (venv / "bin" / "python").exists():
+            raise HTTPException(status_code=400,
+                                detail="hf CLI venv not found (~/.hf-cli/venv)")
+
+        def run(log):
+            log(f"upgrading huggingface_hub (hf CLI) in {venv}")
+            out = subprocess.run(
+                [str(venv / "bin" / "python"), "-m", "pip", "install",
+                 "--upgrade", "huggingface_hub"],
+                capture_output=True, text=True, timeout=600)
+            for ln in (out.stdout or "").splitlines()[-25:]:
+                log(ln)
+            if out.returncode != 0:
+                raise RuntimeError("pip upgrade failed:\n" +
+                                   (out.stderr or "")[-800:])
+            v = subprocess.run(
+                [str(venv / "bin" / "python"), "-c",
+                 "import importlib.metadata as m; "
+                 "print(m.version('huggingface_hub'))"],
+                capture_output=True, text=True, timeout=20)
+            log("done: huggingface_hub " + (v.stdout.strip() or "upgraded"))
+            return "huggingface_hub upgraded"
+
+        job_id = updater.start_job("huggingface", "upgrade-hf-cli", run)
+        if job_id is None:
+            raise HTTPException(status_code=409, detail="an update is already running")
+        db.event("portal", "update", f"huggingface: job {job_id} started")
+        return {"job": job_id}
+
+    # ---------------------------------------- GPU / ROCm / SDK probes
+    @app.get("/api/gpu")
+    def api_gpu(_=Depends(_require_auth)):
+        """Read-only probe of the AMD stack: ROCm core version under
+        /opt/rocm, amdgpu/amdrocm package counts, Vulkan build SDK.
+        OS-managed (amdgpu-install) — reported, not updated here."""
+        rocm = Path("/opt/rocm")
+        cores = []
+        if rocm.is_dir():
+            for d in sorted(rocm.glob("core-*")):
+                cores.append(d.name.replace("core-", ""))
+        pkg_counts = {}
+        for pat in ("amdgpu*", "amdrocm*"):
+            try:
+                out = subprocess.run(["dpkg-query", "-W", pat],
+                                     capture_output=True, text=True, timeout=15)
+                pkg_counts[pat] = len([l for l in out.stdout.splitlines() if l.strip()])
+            except Exception:  # noqa: BLE001
+                pkg_counts[pat] = None
+        return {
+            "rocm_version": cores[-1] if cores else None,
+            "rocm_cores": cores,
+            "rocm_packages": pkg_counts,
+            "vulkan_sdk": str(paths.VULKAN_SDK).replace(str(paths.HOME), "~"),
+            "radv_driver": "system (mesa amdgpu/radv via Ubuntu + ROCm)",
+        }
 
     return app
 

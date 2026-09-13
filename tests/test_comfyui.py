@@ -2,7 +2,7 @@
 model inventory, and portal-side download placement.
 
 All offline and hermetic: a throwaway AI_PORTAL_HOME, and a local HTTP server
-for the download test. The systemd daemon-reload in serviceenv is stubbed so
+for the download test. The systemd daemon-reload in core.units is stubbed so
 no real user session is touched.
 """
 import http.server
@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-comfy-"))
 os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
-from app.core import serviceenv          # noqa: E402
+from app.core import units          # noqa: E402
 from app.main import app                 # noqa: E402
 from app.providers.comfyui import ComfyUI  # noqa: E402
 
@@ -32,21 +32,22 @@ C = ComfyUI()
 def test_ensure_service_writes_env_wrapper_unit(monkeypatch):
     """Static unit + generated env file + exec wrapper, all under the
     (throwaway) home; env keeps multi-word args intact through quoting."""
-    monkeypatch.setattr(serviceenv.subprocess, "run",
+    monkeypatch.setattr(units.subprocess, "run",
                         lambda *a, **k: type("P", (), {"returncode": 0,
                                                        "stdout": "", "stderr": ""})())
     C.ensure_service(log=lambda m: None)
 
-    env = serviceenv.env_path("comfyui").read_text()
-    assert 'COMFY_ARGS="--listen 127.0.0.1 --port 8188"' in env
+    env = units.env_path("comfyui").read_text()
+    assert 'COMFY_HOST="127.0.0.1"' in env and 'COMFY_PORT="8188"' in env
     assert "COMFY_PYTHON=" in env and "COMFY_MAIN=" in env
 
-    wrapper = serviceenv.wrapper_path("comfyui")
+    wrapper = units.wrapper_path("comfyui")
     assert wrapper.stat().st_mode & 0o111, "wrapper must be executable"
-    assert 'exec "$COMFY_PYTHON" "$COMFY_MAIN" $COMFY_ARGS' in wrapper.read_text()
+    assert ('exec "$COMFY_PYTHON" "$COMFY_MAIN" --listen "$COMFY_HOST" '
+            '--port "$COMFY_PORT" $COMFY_ARGS') in wrapper.read_text()
 
-    unit = serviceenv.unit_path("ai-comfyui").read_text()
-    assert f"EnvironmentFile={serviceenv.env_path('comfyui')}" in unit
+    unit = units.unit_path("ai-comfyui").read_text()
+    assert f"EnvironmentFile={units.env_path('comfyui')}" in unit
     assert f"ExecStart={wrapper}" in unit
     assert "WantedBy=default.target" in unit
 
@@ -67,12 +68,13 @@ def test_config_defaults_validation_and_roundtrip():
                    "extra_args": "--fast --disable-auto-launch"}
     assert C.config() == cfg  # persisted
 
-    env = serviceenv.env_path("comfyui").read_text()
-    assert '--port 8200 --fast --disable-auto-launch' in env
+    env = units.env_path("comfyui").read_text()
+    assert 'COMFY_PORT="8200"' in env
+    assert 'COMFY_ARGS="--fast --disable-auto-launch"' in env
 
 
 def test_inventory_groups_by_category():
-    models = serviceenv.paths.COMFY_MODELS
+    models = units.paths.COMFY_MODELS
     (models / "checkpoints").mkdir(parents=True, exist_ok=True)
     (models / "loras").mkdir(parents=True, exist_ok=True)      # empty -> omitted
     (models / ".hidden").mkdir(parents=True, exist_ok=True)    # skipped
@@ -92,7 +94,7 @@ def test_inventory_groups_by_category():
 
 
 def test_download_target_validation():
-    models = serviceenv.paths.COMFY_MODELS
+    models = units.paths.COMFY_MODELS
     (models / "loras").mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ValueError, match="unknown model category"):
@@ -119,7 +121,7 @@ def test_download_target_validation():
 def test_download_file_streams_to_part_then_renames():
     """A local HTTP server stands in for Hugging Face: the file must land
     byte-identical, with no .part left behind."""
-    models = serviceenv.paths.COMFY_MODELS
+    models = units.paths.COMFY_MODELS
     (models / "checkpoints").mkdir(parents=True, exist_ok=True)
     payload = os.urandom(300_000)
     src = tempfile.NamedTemporaryFile(delete=False, suffix=".safetensors")
@@ -156,8 +158,7 @@ def test_api_endpoints_shape():
     r = c.post("/api/services/comfyui/config", json={"port": 9999})
     assert r.status_code == 200
     assert r.json()["config"]["port"] == 9999
-    assert 'COMFY_ARGS="--listen 127.0.0.1 --port 9999' in \
-        serviceenv.env_path("comfyui").read_text()
+    assert 'COMFY_PORT="9999"' in units.env_path("comfyui").read_text()
 
     r = c.post("/api/services/comfyui/config", json={"port": "nope"})
     assert r.status_code == 400
