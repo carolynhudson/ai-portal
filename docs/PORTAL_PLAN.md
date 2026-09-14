@@ -682,7 +682,7 @@ while the page still feels instant. Three things came out of measuring this one:
 | C (done, 2026-09-03) | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (no-op path proven by `tools/live_smoke.sh`); old release restorable |
 | D | Model manager: inventory, gguf metadata, presets generator, HF-command downloads, dedup/GC | paste an `hf download` cmd → model appears in router with correct preset |
 | E | ComfyUI provider: status, venv sync, systemd service | start/stop from UI; update runbook verified |
-| **F (done, 2026-09-14)** | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness (`/health`, `app/core/health.py`) | every UPDATES.md input visible **and the pane found four real problems the first time it ran** (13-day-old index, 3 model dirs one level too deep, HF cache dirs inside the models dir, ROCm never stamped at build time); 26 tests incl. 4 route tests; §4.5 |
+| **F (done, 2026-09-14)** | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness (`/health`, `app/core/health.py`) | every UPDATES.md input visible **and the pane found four real problems the first time it ran** (13-day-old index, 3 model dirs one level too deep, HF cache dirs inside the models dir, ROCm never stamped at build time); 28 tests incl. 4 route tests, 4 new mutations (28/28 caught); §4.5 |
 | G | Frontend polish per D1 | — |
 | H | RAG service: per-project stores, ingestion jobs, MCP interface (§4.8) | two demo projects searchable, zero cross-project hits; start/stop from UI |
 | I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
@@ -842,13 +842,16 @@ Remaining open (can proceed without them):
      not alternatives); `base.html` gains the nav link. Local styles only: the
      attention list, the free-space bar. No tab geometry, so `tabs.css` is not
      required by this page.
-   - Tests: 26 in `tests/test_health.py` (probe tests against shims + temp trees,
-     4 route tests asserting what a person sees, that the pane offers no form of
-     its own, and that `?refresh=1` really re-probes); UI spec entry with
-     `expectNoRequests` on the update endpoints; `tests/ui/bin/{apt-get,
-     dpkg-query,hipcc}` shims and sandbox seeds for a ROCm tree, a torch venv,
-     presets.ini and the model index, so the page renders deterministic numbers
-     in jsdom.
+   - Tests: 28 in `tests/test_health.py` (probe tests against shims + temp
+     trees, 4 route tests asserting what a person sees, that the pane offers no
+     form of its own, and that `?refresh=1` really re-probes); UI spec entry with
+     `expectNoRequests` on the update endpoints and assertions pinning **values
+     next to their labels** (`ROCm installed (apt) 9.9.0`, sizes carrying a unit)
+     rather than the existence of a heading; `tests/ui/bin/{apt-get,dpkg-query,
+     hipcc}` shims plus sandbox seeds for a ROCm tree, a torch venv, presets.ini
+     and the model index, so jsdom sees deterministic numbers; 4 new mutations
+     (empty attention list, missing model-store card, raw byte counts, blank
+     installed ROCm) — 28/28 caught.
    - The first live render found four real things (index 13 days old, three model
      directories one level too deep for `--models-dir`, HF `hub/`+`xet/` cache
      dirs sitting inside the models dir, and no ROCm stamp on the deployed

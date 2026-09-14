@@ -90,7 +90,7 @@ app/
 web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
 deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
 scripts/dev-run.sh   # source tree on :8091, next to the service
-tests/               # 212 pytest tests, all on a throwaway AI_PORTAL_HOME
+tests/               # 214 pytest tests, all on a throwaway AI_PORTAL_HOME
   ui/                # DOM harness (jsdom): drives every control on every page
 ```
 
