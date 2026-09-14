@@ -81,28 +81,45 @@ function collectStylesheets() {
   }
 }
 
-// The most specific declared value for `prop` on rules whose *own* compound
-// selector is this element's class list (optionally +.active).
-function declared(el, prop) {
-  const classes = Array.from(el.classList);
-  const wanted = [`.${classes.join(".")}`];
-  if (classes.includes("active"))
-    wanted.push(`.${classes.filter((c) => c !== "active").join(".")}.active`);
+// The value of `prop` that wins for this element, walking every parsed rule
+// whose selector the element actually matches, in source order, falling back to
+// the listed shorthands. Needed because jsdom's getComputedStyle does not
+// expand shorthands: a card that says `border-radius:10px` reports an empty
+// border-top-left-radius, which is exactly how a rounded corner hid from the
+// first version of this check.
+function cascaded(el, prop, shorthands = []) {
+  let value = null;
   for (const sheet of realSheets) {
     for (const rule of sheet.cssRules) {
       if (!rule.selectorText || !rule.style) continue;
+      let hit = false;
       for (const sel of rule.selectorText.split(",").map((x) => x.trim())) {
-        const parts = sel.split(/\s*[>+~]\s+/).filter(Boolean);
-        const own = parts[parts.length - 1].replace(/:hover|:focus|:active\b/g, "");
-        if (wanted.includes(own)) {
-          const v = rule.style.getPropertyValue(prop);
-          if (v) return String(v).trim();
+        const clean = sel.replace(/:(?:hover|focus|active|visited|disabled|focus-visible)\b/g, "");
+        if (!clean) continue;
+        try {
+          if (el.matches(clean)) {
+            hit = true;
+            break;
+          }
+        } catch {
+          /* selector jsdom cannot evaluate against a single element */
+        }
+      }
+      if (!hit) continue;
+      for (const p of [prop, ...shorthands]) {
+        const v = rule.style.getPropertyValue(p);
+        if (v) {
+          value = String(v).trim();
+          break;
         }
       }
     }
   }
-  return "";
+  return value;
 }
+
+// A length is "square/zero" if jsdom resolved it to 0 or the rule said so.
+const isZero = (v) => v === null || v === "0" || v === "0px" || v === "none";
 
 function checkTabGeometry() {
   for (const want of spec.expectStylesheets || []) {
@@ -127,28 +144,38 @@ function checkTabGeometry() {
     // the rules must target this strip, or the checks below would pass against
     // a page whose tabs are styled by nothing at all
     const stripClasses = Array.from(strip.classList);
-    const ruleFound = realSheets.some((sheet) =>
-      Array.from(sheet.cssRules).some(
-        (r) => r.selectorText && stripClasses.some((c) => r.selectorText.includes(`.${c}`))));
-    if (stripClasses.length && !ruleFound)
+    if (stripClasses.length && !realSheets.some((sheet) =>
+        Array.from(sheet.cssRules).some(
+          (r) => r.selectorText && stripClasses.some((c) => r.selectorText.includes(`.${c}`)))))
       fail(`${label}: no stylesheet rule targets the tab strip (.${stripClasses.join(", .")}) — its geometry is unverifiable`);
 
-    // 1. no floating gap between the tabs and their panels
+    // 1. no floating gap between the strip and its panels
     const mb = win.getComputedStyle(strip).marginBottom || "";
     if (!mb) fail(`${label}: could not read the strip's computed margin-bottom`);
-    else if (mb !== "0px" && mb !== "0")
+    else if (!isZero(mb))
       fail(`${label}: strip has margin-bottom ${mb} — the panels float below the tabs instead of attaching to them`);
 
-    // 2. neither strip nor panel may be positioned: in normal flow the panel
-    //    (later in the DOM) paints over the baseline where the tab opens it
-    for (const [what, el] of [
-      ["strip", strip],
-      ["panel", panels[0]],
-      ["panel card", panels[0].querySelector(".card") || panels[0].firstElementChild],
-    ]) {
-      if (!el) continue;
-      const pos = declared(el, "position") || "";
-      const z = declared(el, "z-index") || "";
+    // the baseline the tabs stand on, spanning the full width
+    const stripEdge = cascaded(strip, "border-bottom", ["border"]);
+    if (!stripEdge || stripEdge === "none")
+      fail(`${label}: the strip draws no bottom edge, so there is no baseline for the tabs to meet`);
+
+    // 2. every tab carries its own bottom edge and is lowered onto the
+    //    baseline; without the overlap the tab's frame stops 1px above the panel
+    for (const tab of tabs) {
+      const own = cascaded(tab, "border-bottom", ["border"]);
+      if (!own || own === "none")
+        fail(`${label}: ${JSON.stringify(tab.textContent.trim())} draws no bottom border — the frame edge cannot continue into the panel`);
+      const overlap = win.getComputedStyle(tab).marginBottom || "";
+      if (overlap && overlap !== "-1px")
+        fail(`${label}: ${JSON.stringify(tab.textContent.trim())} has margin-bottom ${overlap}; tabs must sit 1px onto the baseline so their rails reach the panel`);
+    }
+
+    // 3. neither strip nor panel may be positioned: in normal flow the later
+    //    elements paint in order, and positioning re-covers the baseline
+    for (const [what, el] of [["strip", strip], ["panel", panels[0]]]) {
+      const pos = cascaded(el, "position") || "";
+      const z = cascaded(el, "z-index") || "";
       if (/(relative|absolute|fixed|sticky)/.test(pos) || z)
         fail(`${label}: ${what} is positioned (position:${pos} z-index:${z}) — that puts the baseline back on top of the active tab`);
     }
@@ -156,26 +183,38 @@ function checkTabGeometry() {
     for (const panel of panels) {
       const card = panel.querySelector(".card") || panel.firstElementChild;
       if (!card) continue;
+      // the card must be flush: a negative margin would slide its opaque
+      // background over the baseline and erase it under the inactive tabs
       const mt = win.getComputedStyle(card).marginTop || "";
-      if (mt !== "-1px" && mt !== "0px")
-        fail(`${label}: the card of #${panel.id} has margin-top ${mt}; it should be pulled up onto the strip's baseline`);
-      const radius = win.getComputedStyle(card).borderTopLeftRadius || "";
-      if (radius && radius !== "0px" && radius !== "0")
-        fail(`${label}: the card of #${panel.id} keeps a ${radius} top-left corner where it meets the square tab bottoms`);
-      const borderTop = declared(card, "border-top");
+      if (!isZero(mt))
+        fail(`${label}: the card of #${panel.id} has margin-top ${mt}; the overlap belongs on the tab — a pulled-up card paints over the baseline`);
+
+      // jsdom reports "" for corners set through border-radius, so read the
+      // cascade by hand — and note the longhand is border-top-left-radius
+      for (const corner of ["top-left", "top-right"]) {
+        const radius = cascaded(card, `border-${corner}-radius`, ["border-radius"]);
+        if (!isZero(radius))
+          fail(`${label}: the card of #${panel.id} keeps a ${radius} ${corner} corner where it meets the square tab bottoms`);
+      }
+      const borderTop = cascaded(card, "border-top", ["border"]);
       if (borderTop && borderTop !== "none")
-        fail(`${label}: the card of #${panel.id} declares border-top:${borderTop} — a border here draws a line under the active tab`);
+        fail(`${label}: the card of #${panel.id} has border-top:${borderTop} — the junction would draw twice`);
     }
 
-    const active = tabs.find((t) => t.classList.contains("active"));
-    if (active) {
-      const bg = declared(active, "background") || declared(active, "background-color");
-      if (!bg) fail(`${label}: the active tab's background is undeclared — it cannot read as the panel's own surface`);
-      else if (!bg.includes("--panel"))
-        fail(`${label}: active tab background is ${bg}; it must be var(--panel), the colour of the panel it controls`);
-      const bb = declared(active, "border-bottom");
-      if (!bb || !bb.includes("--panel"))
-        fail(`${label}: active tab border-bottom is ${bb || "(none)"}; it must close the baseline in the panel colour`);
+    // the selected tab must open the baseline in the panel's own colour
+    for (const tab of tabs) {
+      const isActive = tab.classList.contains("active");
+      const bg = cascaded(tab, "background", ["background-color"]) || "";
+      const bb = cascaded(tab, "border-bottom", ["border"]) || "";
+      const who = `${JSON.stringify(tab.textContent.trim())}${isActive ? " (active)" : ""}`;
+      if (isActive) {
+        if (!bg.includes("--panel"))
+          fail(`${label}: active tab ${who} background is ${bg || "(none)"}; it must be var(--panel) — the colour of the panel it controls`);
+        if (!bb.includes("--panel"))
+          fail(`${label}: active tab ${who} border-bottom is ${bb || "(none)"}; it must open the baseline in var(--panel)`);
+      } else if (bg.includes("--panel")) {
+        fail(`${label}: inactive tab ${who} is painted in the panel colour — it claims a panel it does not control`);
+      }
     }
   }
 }

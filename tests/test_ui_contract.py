@@ -214,36 +214,60 @@ def test_tabs_stylesheet_is_served_and_well_formed():
         f"unbalanced braces in tabs.css ({css.count('{')} vs {css.count('}')})")
 
 
-def test_tab_geometry_holds_the_three_rules(client):
+def test_tab_geometry_holds_the_four_rules(client):
     """Cheap mirror of what the DOM harness measures, so a missing file or a
-    reverted rule is caught in milliseconds rather than in the browser sweep:
-    no gap under the strip, the panel pulled onto the baseline with no top
-    border and square top corners, and the active tab in the panel's colour."""
+    reverted rule is caught in milliseconds instead of in the browser sweep.
+
+    The contract, in order: no gap under the strip; the strip draws the baseline;
+    every tab carries its own bottom edge and overlaps the baseline by 1px; the
+    active tab opens that baseline in the panel's colour; and the panel sits
+    flush, borderless on top, with square top corners."""
     css = client.get("/static/tabs.css")
     assert css.status_code == 200, f"/static/tabs.css: {css.status_code}"
     assert "text/css" in css.headers.get("content-type", "")
-    sheet = css.text
+    # comments would otherwise be swept into the selector text and split on
+    # their own commas
+    sheet = re.sub(r"/\*.*?\*/", "", css.text, flags=re.S)
 
     def rule_for(selector):
-        for chunk in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
-            if selector in chunk[0]:
-                return chunk[1]
+        """The declarations of the rule whose selector list contains `selector`."""
+        for head, body in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
+            if any(part.strip() == selector for part in head.split(",")):
+                return body
         return ""
 
-    strip = rule_for(".update-tabs")
-    assert strip, "no rule for the tab strip (.update-tabs)"
-    m = re.search(r"margin\s*:\s*([^;]+)", strip)
-    assert m, f"tab strip must set its margin explicitly, got: {strip.strip()}"
-    parts = m.group(1).split()
-    bottom = parts[{1: 0, 2: 1, 3: 2, 4: 2}[len(parts)]]
+    def margin_bottom(decls):
+        """The declared bottom margin, from either the longhand or the shorthand."""
+        long = re.search(r"margin-bottom\s*:\s*([^;]+)", decls)
+        if long:
+            return long.group(1).strip()
+        short = re.search(r"margin\s*:\s*([^;]+)", decls)
+        if not short:
+            return None
+        parts = short.group(1).split()
+        return parts[{1: 0, 2: 1, 3: 2, 4: 2}[len(parts)]]
+
+    strip = rule_for(".update-tabs") or rule_for(".model-tabs")
+    assert strip, "no rule for the tab strip (.update-tabs / .model-tabs)"
+    bottom = margin_bottom(strip)
     assert bottom in ("0", "0px"), f"tab strip margin-bottom must be 0, got {bottom!r} in {strip.strip()}"
+    assert re.search(r"border-bottom\s*:\s*1px solid var\(--line\)", strip), \
+        f"the strip must draw the baseline the tabs stand on: {strip.strip()}"
+
+    tabs = rule_for(".update-tab") or rule_for(".model-tab")
+    assert tabs, "no rule for the tabs themselves"
+    assert margin_bottom(tabs) == "-1px", \
+        f"tabs must sit 1px onto the baseline so their rails reach the panel: {tabs.strip()}"
+    assert re.search(r"border\s*:\s*1px solid", tabs), \
+        f"each tab needs a full frame, bottom edge included: {tabs.strip()}"
 
     card = rule_for(".update-tab-content > .card")
     assert card, "no rule joining a tab panel to its card"
-    assert "margin-top:-1px" in card.replace(" ", ""), \
-        f"panel card must be pulled up onto the baseline, got: {card.strip()}"
+    mt = re.search(r"margin-top\s*:\s*([^;]+)", card)
+    assert mt and mt.group(1).strip() in ("0", "0px"), \
+        f"the panel card must sit flush on the baseline (margin-top:0), got {mt.group(1).strip() if mt else 'no margin-top'}: {card.strip()}"
     assert re.search(r"border-top\s*:\s*none", card), \
-        f"panel card must have no top border (it would draw a line under the active tab): {card.strip()}"
+        f"panel card must have no top border — the junction would draw twice: {card.strip()}"
     assert re.search(r"border-top-left-radius\s*:\s*0", card), \
         f"panel card needs square top corners where it meets the tabs: {card.strip()}"
 
@@ -252,7 +276,7 @@ def test_tab_geometry_holds_the_three_rules(client):
     assert re.search(r"background\s*:\s*var\(--panel\)", active), \
         f"active tab must be the panel's own colour, got: {active.strip()}"
     assert re.search(r"border-bottom\s*:\s*1px solid var\(--panel\)", active), \
-        f"active tab must close the baseline in the panel colour, got: {active.strip()}"
+        f"active tab must open the baseline in the panel colour, got: {active.strip()}"
 
 
 def test_pages_with_tabs_link_the_stylesheet(pages):

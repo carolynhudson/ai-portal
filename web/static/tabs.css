@@ -5,43 +5,58 @@
  * (.model-tabs / .model-tab / .model-tab-content). Two copies of this rule set
  * drifted apart once already, which is why it lives here.
  *
- * The geometry that matters visually: **a tab must connect to the panel it
- * controls.** Three rules do that, and test_ui_contract asserts each one so a
- * "nice little frame edge floating above the panel" cannot come back:
+ * The geometry that matters visually: **a tab connects to the panel it
+ * controls.** Every tab shares one baseline with its panel, and that line reads
+ * as a single unbroken frame edge with exactly one opening, under the selected
+ * tab. Four rules do that, each asserted by tests/test_ui_contract.py and
+ * measured again through jsdom in tests/ui/run.mjs:
  *
- *   1. the strip has no bottom margin — the panel starts at the strip's
- *      baseline instead of 16px below it;
- *   2. the panel's card is pulled up 1px with no top border and square top
- *      corners, so it covers the baseline wherever it is not supposed to show;
- *   3. the active tab is painted in the panel's own colour and closes the
- *      baseline with a bottom border of that colour, so tab and panel are one
- *      continuous surface — the baseline then reads as a single unbroken line
- *      with exactly one opening, under the selected tab.
+ *   1. the strip has no bottom margin, so its panels start at the baseline
+ *      instead of 16px below it;
+ *   2. every tab carries its own bottom border and is pulled 1px onto the
+ *      strip's baseline with a negative bottom margin, so the tab's frame ends
+ *      on the panel's top edge rather than floating above it;
+ *   3. the active tab paints that bottom border — and itself — in the panel's
+ *      colour, which opens the baseline exactly where the tab meets the panel
+ *      and makes the two one continuous surface;
+ *   4. the panel card starts flush on the baseline with no top border of its
+ *      own (a second 1px line would read as a 2px line) and square top corners.
  *
- * Neither the strip nor the card is positioned: with both in normal flow, the
- * card (later in the DOM) paints over the strip's baseline in the region it
- * covers. Adding position/z-index here would flip that order and put the line
- * back under the active tab.
+ * Two traps here, both of which look right in a stylesheet and wrong on screen:
+ *
+ *   - pulling the *card* up with a negative margin instead of the tab: the
+ *     card's background is opaque, so it paints over the baseline and erases it
+ *     under the inactive tabs too. The overlap belongs on the tab;
+ *   - giving the card a top border as well: the junction then draws twice.
  */
 
+/* ---------------------------------------------------------------------------
+ * Rule 1 — the strip: flush, and it owns the baseline that spans the full
+ * width, including past the last tab.
+ * ------------------------------------------------------------------------- */
 .update-tabs,
 .model-tabs{
   display:flex;
   gap:0;
-  margin:0;                       /* rule 1: no gap below the tab strip */
+  margin:0;
   border-bottom:1px solid var(--line);
 }
 
+/* ---------------------------------------------------------------------------
+ * Rule 2 — each tab is drawn with a complete frame and lowered 1px onto the
+ * strip's baseline, so its left and right rails land on the panel's top edge.
+ * Inactive tabs draw that bottom edge in --line, keeping the baseline whole.
+ * ------------------------------------------------------------------------- */
 .update-tab,
 .model-tab{
   padding:9px 16px;
   cursor:pointer;
+  user-select:none;
   border:1px solid var(--line);
-  border-bottom:none;
   border-radius:8px 8px 0 0;
+  margin-bottom:-1px;
   background:var(--bg);           /* inactive tabs recede from the panel */
   color:var(--mut);
-  user-select:none;
 }
 
 /* one hairline between neighbours, not two */
@@ -51,9 +66,13 @@
 .update-tab:hover,
 .model-tab:hover{ color:var(--fg) }
 
+/* ---------------------------------------------------------------------------
+ * Rule 3 — the selected tab becomes the panel: same fill, and its bottom
+ * border turns into the panel's surface, opening the baseline under it.
+ * ------------------------------------------------------------------------- */
 .update-tab.active,
 .model-tab.active{
-  background:var(--panel);        /* rule 3: same surface as the card below */
+  background:var(--panel);
   color:var(--fg);
   border-bottom:1px solid var(--panel);
 }
@@ -63,10 +82,13 @@
 .update-tab-content.active,
 .model-tab-content.active{ display:block }
 
-/* rule 2: the panel belongs to the strip it sits under */
+/* ---------------------------------------------------------------------------
+ * Rule 4 — the panel sits flush on the baseline: no gap, no top border, and
+ * square top corners to match the tabs standing on it.
+ * ------------------------------------------------------------------------- */
 .update-tab-content > .card,
 .model-tab-content > .card{
-  margin-top:-1px;
+  margin-top:0;
   border-top:none;
   border-top-left-radius:0;
   border-top-right-radius:0;
@@ -79,10 +101,6 @@
   border-top:1px solid var(--line);
   border-radius:10px;
 }
-
-/* one tab group per page, and its strip is the first thing in it */
-h2 + .update-tabs,
-h2 + .model-tabs{ margin-top:0 }
 
 @media (max-width:640px){
   .update-tab,

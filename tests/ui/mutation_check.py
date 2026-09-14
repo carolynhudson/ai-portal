@@ -7,8 +7,9 @@ and stylesheet, runs the UI suite against it, and requires a failure that names 
 right thing. If you change the harness and this still passes, the harness got
 weaker.
 
-    uv run python -m tests.ui.mutation_check          # ~2 min
-    uv run python -m tests.ui.mutation_check --keep   # keep the mutated tree for inspection
+    ./scripts/check-ui.sh --mutations           # every mutation, ~10 min
+    python tests/ui/mutation_check.py --help    # list them
+    python tests/ui/mutation_check.py "tab strip floats above its panels"   # one
 """
 from __future__ import annotations
 
@@ -105,18 +106,44 @@ MUTATIONS = [
         # 16px below the baseline the tabs sit on
         "tab strip floats above its panels",
         "static/tabs.css",
-        "  margin:0;                       /* rule 1: no gap below the tab strip */",
-        "  margin:0 0 16px 0;",
+        "  gap:0;\n  margin:0;",
+        "  gap:0;\n  margin:0 0 16px 0;",
         "dashboard",
         "margin-bottom 16px",
     ),
     (
+        # the fix for that bug taken too far: overlapping with the card instead
+        # of the tab paints the opaque card over the baseline
+        "panel card pulled up over the baseline",
+        "static/tabs.css",
+        "  margin-top:0;\n  border-top:none;",
+        "  margin-top:-1px;\n  border-top:none;",
+        "dashboard",
+        "paints over the baseline",
+    ),
+    (
+        "tabs no longer reach the baseline they stand on",
+        "static/tabs.css",
+        "  margin-bottom:-1px;",
+        "  margin-bottom:0;",
+        "dashboard",
+        "1px onto the baseline",
+    ),
+    (
         "active tab no longer painted in the panel's colour",
         "static/tabs.css",
-        "  background:var(--panel);        /* rule 3: same surface as the card below */",
-        "  background:var(--bg);",
+        "  background:var(--panel);\n  color:var(--fg);",
+        "  background:var(--bg);\n  color:var(--fg);",
         "dashboard",
         "must be var(--panel)",
+    ),
+    (
+        "active tab no longer opens the baseline",
+        "static/tabs.css",
+        "  border-bottom:1px solid var(--panel);",
+        "  border-bottom:1px solid var(--line);",
+        "dashboard",
+        "must open the baseline",
     ),
     (
         "panel card keeps a round top corner against the square tabs",
@@ -132,11 +159,11 @@ MUTATIONS = [
 ]
 
 
-def _clean_templates() -> bool:
-    """This tool edits the real templates temporarily (the app resolves its web
-    tree from its own location), so refuse to start from a dirty tree: if it
-    ever died mid-run, `git checkout web/templates` recovers without eating
-    anyone's work."""
+def _clean_web() -> bool:
+    """This tool edits the real templates and stylesheet in place (the app
+    resolves its web tree from its own location), so refuse to start from a
+    dirty tree: if it ever died mid-run, `git checkout -- web` recovers without
+    eating anyone's work."""
     import subprocess
 
     out = subprocess.run(["git", "status", "--porcelain", "--", "web"],
@@ -148,44 +175,60 @@ def _clean_templates() -> bool:
     return True
 
 
-def apply_and_test(name, filename, old, new, page, expect, keep=False) -> tuple[bool, str]:
-    """Mutate the template, drive the page, require a matching failure."""
+def apply_and_test(filename, old, new, page, expect, keep_on_miss=False):
+    """Mutate a real file, drive the page, require a matching failure.
+
+    Restores the file unless the suite missed the bug and keep_on_miss is set,
+    in which case the mutated tree is left behind to be inspected."""
     target = WEB / filename
     original = target.read_text()
     if old not in original:
-        return False, f"mutation target not found in {filename}: {old[:50]!r}"
-    mutated = original.replace(old, new, 1)
+        return False, f"mutation target not found in {filename}: {old[:60]!r}"
     try:
-        target.write_text(mutated)
+        target.write_text(original.replace(old, new, 1))
         with Sandbox() as sbx:
             report = sbx.page(page)
-        failures = report.get("failures", [])
-        blob = "\n".join(failures)
-        if report.get("ok"):
-            return False, "suite PASSED despite the injected bug — the harness is blind to it"
-        if expect and expect not in blob:
-            return False, f"failed, but not with a message naming {expect!r}:\n{blob[:600]}"
-        return True, next(ln for ln in failures if not expect or expect in ln)
-    finally:
+    except Exception as exc:                       # noqa: BLE001 — report, don't crash
+        return False, f"harness blew up: {str(exc).splitlines()[0][:160]}"
+    failures = report.get("failures", [])
+    blob = "\n".join(failures)
+    if report.get("ok"):
+        caught, detail = False, "suite PASSED despite the injected bug — the harness is blind to it"
+    elif expect and expect not in blob:
+        caught, detail = False, f"failed, but not with a message naming {expect!r}:\n{blob[:600]}"
+    else:
+        caught, detail = True, next((ln for ln in failures if not expect or expect in ln), "failed")
+    if caught or not keep_on_miss:
         target.write_text(original)
-        restored = target.read_text() == original
-        if not restored:
-            print(f"   !! {filename} was NOT restored — run: git checkout {target}")
+        if target.read_text() != original:
+            print(f"   !! {filename} was NOT restored — run: git checkout -- {target}")
+    return caught, detail
 
 
 def main(argv: list[str]) -> int:
-    keep = "--keep" in argv
+    if {"-h", "--help"} & set(argv):
+        print(__doc__.rstrip() + "\n\navailable mutations:")
+        for m in MUTATIONS:
+            print(f"  {m[0]}  [{m[1]} -> /{m[4]}]")
+        return 0
+    keep_on_miss = "--keep-on-miss" in argv
     names = [a for a in argv if not a.startswith("-")]
     selected = [m for m in MUTATIONS if not names or m[0] in names]
-    if not _clean_templates():
+    if not selected:
+        print("no such mutation; available:")
+        for m in MUTATIONS:
+            print(f"  {m[0]}")
         return 2
+    if not _clean_web():
+        return 2
+
     results = []
-    for mut in selected:
-        name, filename, old, new, page, expect = mut
+    for name, filename, old, new, page, expect in selected:
         print(f"* {name}", flush=True)
-        ok, detail = apply_and_test(name, filename, old, new, page, expect, keep)
-        print(f"    {'caught' if ok else 'MISSED'}: {str(detail)[:160]}")
-        results.append((name, ok))
+        caught, detail = apply_and_test(filename, old, new, page, expect, keep_on_miss)
+        print(f"    {'caught' if caught else 'MISSED'}: {str(detail)[:170]}")
+        results.append((name, caught))
+
     missed = [n for n, ok in results if not ok]
     print()
     print(f"{len(results) - len(missed)}/{len(results)} injected regressions caught")
@@ -193,8 +236,10 @@ def main(argv: list[str]) -> int:
         print("the UI suite does NOT detect:")
         for n in missed:
             print(f"  - {n}")
+        if keep_on_miss:
+            print("\nthe last mutated file was left in place; reset with: git checkout -- web")
         return 1
-    print("the UI suite detects every injected regression")
+    print("the UI suite detects every injected regression; the tree is back at HEAD")
     return 0
 
 
