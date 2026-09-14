@@ -152,7 +152,9 @@ must be confirm-gated **before** the request (an `alert()` afterwards is not a
 confirmation); a final coverage pass fails if any visible control was never
 driven. `tests/test_ui_contract.py` is the fast static half (every inline
 `<script>` must parse, every `onclick` must name a function that exists, every
-`fetch` target must be a registered route).
+`fetch` target must be a registered route, and the tab/panel junction in
+`/static/tabs.css` holds — asserted as CSS text there, and measured through the
+DOM by the harness, since a frame edge meeting its panel is geometry, not taste).
 
 Running them cannot disturb the machine: the portal under test gets a temp
 `AI_PORTAL_HOME`, `tests/ui/bin` on `PATH` (`systemctl`/`journalctl` are shims
@@ -167,7 +169,8 @@ cannot be committed.
 
 ### What's next (see PORTAL_PLAN.md §7)
 
-Phase B (service start/stop/logs from UI, with the router-rollback safety model),
-C (llama.cpp build→stage→verify→swap updater + rollback), D (model manager +
-HF-command downloads + presets generator — deriving ctx from GGUF metadata, not
-hard-coded caps), E (ComfyUI service), F (full health pane).
+F (full health pane: apt/ROCm/SDK probes, disk, orphans, index freshness),
+G (remaining frontend polish), H (RAG service: per-project stores, ingestion
+jobs, MCP interface). Everything through G in the roadmap table — service
+controls, the llama.cpp and ComfyUI updaters with rollback, the model manager,
+the settings page, LAN bind modes, deployment and the UI test harness — is done.

@@ -20,8 +20,8 @@ Companions:
 **Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
 **network exposure** + **Phase J steps 1, 4, 5, 6, 7** + **Phase L (UI
 integration tests)**.
-Green: 136 tests (`./scripts/check-ui.sh`), of which 19 drive the real pages in a
-DOM (see §6.6).
+Green: 140 tests (`./scripts/check-ui.sh`), of which 19 drive the real pages in a
+DOM (see §6.6), plus the tab/panel geometry contract (§6.7).
 
 **Phase L — UI integration tests (2026-09-13).** `tests/ui/` drives every
 interactable element of every page in jsdom against a sandboxed portal: 96
@@ -30,8 +30,8 @@ The point is that a no-build-step UI fails *silently* — a browser skips a
 `<script>` block that does not parse and every button in it becomes inert — and
 nothing in the old suite could see that. It found three real bugs, one of which
 was live and breaking four of the dashboard's five update tabs (§6.6).
-`./scripts/check-ui.sh --mutations` injects nine known regressions and requires
-all nine to be caught, so the suite cannot quietly stop testing.
+`./scripts/check-ui.sh --mutations` injects fifteen known regressions and requires
+all fifteen to be caught, so the suite cannot quietly stop testing.
 
 **Running right now — none of them loopback-only any more:**
 
@@ -402,11 +402,16 @@ tests cannot see this, so the suite drives the pages.
   requests can be asserted, `requireConfirmFor`.
 - `tests/ui_sandbox.py` — the sandbox (temp `AI_PORTAL_HOME`, `tests/ui/bin`
   shims, dead outbound proxy) and a `__main__` for driving one page by hand.
-- `tests/ui/mutation_check.py` — injects nine realistic regressions (renamed id,
-  deleted function, unparseable block, renamed endpoint, removed panel, missing
-  confirmation ×2, wrong request field, emptied handler) and requires all nine
-  to fail the suite. This is what keeps the harness honest: two of the nine were
-  missed the first time it ran, and both were holes in the tests.
+- `tests/ui/mutation_check.py` — injects fifteen realistic regressions (renamed
+  id, deleted function, unparseable block, renamed endpoint, removed panel,
+  missing confirmation ×2, wrong request field, emptied handler, and six tab
+  geometry breakages, §6.7) and requires all fifteen to fail the suite with a
+  message naming the right thing. This is what keeps the harness honest: two of
+  the first nine were missed when it first ran, and both were holes in the tests.
+  It edits the real `web/` tree temporarily, so it refuses to start unless that
+  tree is clean, and restores after every mutation.
+- `scripts/check-ui.sh` — the single entry point (`--ui-only`, `--mutations`),
+  wired into the pre-commit hook installed by `scripts/install-hooks.sh`.
 
 Three real bugs found, all live before this change:
 
@@ -427,6 +432,40 @@ Also hardened: tabs receive the clicked element instead of reading the global
 `selectModel()` finds its tab by id rather than by index, and a stray brace in a
 `settings.html` style attribute.
 
+### 6.7 Tab and panel geometry (2026-09-13)
+
+Reported: both tab groups drew their bottom frame edge 10–20px above the panel
+they control, so the strip looked like it was floating off the card. Cause was
+`margin-bottom:16px` on the strip, plus the active tab being painted in the page
+colour rather than the panel colour, so nothing visually joined the two.
+
+Tab geometry now lives once in `web/static/tabs.css` (the two page-local copies
+had already drifted), loaded from `base.html`, and states four rules:
+
+1. the strip has no bottom margin and draws the full-width baseline;
+2. every tab draws its own bottom edge and overlaps the baseline with
+   `margin-bottom:-1px`, so its left and right rails land on the panel's top
+   edge — inactive tabs draw that edge in `var(--line)`, keeping the line whole;
+3. the active tab paints itself and that bottom edge in `var(--panel)`, opening
+   the baseline exactly where tab meets panel, so they read as one surface;
+4. the panel card sits flush on the baseline (`margin-top:0`), carries no top
+   border (the junction would draw twice) and has square top corners.
+
+Two traps worth writing down, both of which look right in a stylesheet and wrong
+on screen: pulling the *card* up with a negative margin instead of the tab — the
+card's background is opaque, so it paints over the baseline and erases it under
+the inactive tabs too — and giving the card a top border as well as the strip's.
+The checks reject both.
+
+Pinned at two speeds: `test_ui_contract.py` reads the served CSS (milliseconds,
+no node), and `run.mjs` measures it — `getComputedStyle` for the margins, and a
+hand-written cascade walk (`el.matches()` over every parsed rule, falling back to
+shorthands) for what jsdom will not expand. That cascade walk is a test-found fix
+in its own right: jsdom reports an empty `border-top-left-radius` for a card whose
+rounding came from `border-radius:10px`, which is how a real round corner sat
+there unnoticed while the first version of the check "passed". Six of the fifteen
+mutations are these geometries, one per way each rule can silently regress.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -442,7 +481,8 @@ Also hardened: tabs receive the clicked element instead of reading the global
 | I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
 | **K (done, 2026-09-13)** — network | Bind **modes** (loopback / lan / all) per service, live reachability probes, firewall state + scoped `ufw` hints without root, exposure warnings, optional router `--api-key-file`, login throttle; all three services on the generated env→wrapper→unit launch pattern | portal + ComfyUI answering on `192.168.1.228` (verified by LAN-address HTTP from this box), router env/unit prepared with argv verified against the live process, `pending_restart` reported until it is restarted |
 | J (mostly done, 2026-09-13) | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0). Remaining: `app/main.py` route split, `tools/` migrations move | redeploy-from-git-SHA works and **verifies the running sha**; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
-| **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 9/9 injected regressions caught; found 3 real UI bugs (§6.6) |
+| **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 15/15 injected regressions caught; found 3 real UI bugs (§6.6) |
+| **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.
