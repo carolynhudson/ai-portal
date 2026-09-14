@@ -343,6 +343,14 @@ const requireConfirmUnless = spec.requireConfirmUnlessBodyContains || {};
 const expectInert = (allSpec.expectInert || []).concat(spec.expectInert || []);
 
 const covered = new Set();   // identities driven by any means, sweep or case
+// An endpoint error is only a failure if somebody can attribute it to a click.
+// A response that lands between two interactions used to slip through entirely:
+// recorded in the trace, never inside any single interaction's window, so the
+// page passed with a 400 in it. Anything not consumed by judgeControl fails here.
+const httpAttributed = new Set(trace.httpErrors);   // load-time errors already failed
+function attributeHttp(messages) {
+  for (const m of messages) httpAttributed.add(m);
+}
 
 // ------------------------------------------------- selection-driven enablement
 // A control that locks or unlocks another one has to be asserted, not assumed:
@@ -479,6 +487,8 @@ function withIdentities(list) {
 // matter what drove it: no errors, no endpoint failures, destructive requests
 // confirm-gated before they happen, and some visible effect.
 function judgeControl(info, r, phase, { toleratedNoop = false } = {}) {
+    attributeHttp(r.newHttpErrors);
+
     // Destructive requests must be confirm-gated. Checked in both passes: in
     // the denied pass an ungated request is the bug itself (the app acted
     // without asking), and in the accepted pass it catches a handler that asks
@@ -523,8 +533,12 @@ async function sweep(phase, answerDialogs, visited, context, budget) {
       step++;
       continue;
     }
-    visited.add(key);
+    // A control that is disabled right now is *not* marked visited: a page can
+    // enable it later (the API-key panel does exactly that when its state
+    // arrives), and a sweep that wrote it off then reported it at coverage time
+    // was a flake waiting for a response to be one tick slow.
     if (el.disabled) continue;
+    visited.add(key);
     if (info.type === "file") continue;
     if (!el.isConnected) { step++; continue; } // re-rendered away before we got to it
 
@@ -633,13 +647,35 @@ for (const tab of tabContexts[0].length ? tabContexts[0] : [null]) {
   }
   for (const el of withIdentities(listInteractables(ctx))) {
     if (el.disabled) continue;
-    if (!covered.has(el.__uiId)) missedCoverage.push(`${tab ? (tab.textContent || "").trim().slice(0, 20) : "default"}: ${baseIdentity(el)}`);
+    if (covered.has(el.__uiId)) continue;
+    // Driven late rather than reported: this control became usable after the
+    // sweep passed its place in the DOM. Drive and judge it now — same rules —
+    // so the gate means "unreachable", not "arrived at too early".
+    const r = await interact(ctx, el, { answerDialogs: true, noopCheck });
+    const info = describeElement(el, win);
+    covered.add(el.__uiId);
+    report.controls.push({ phase: "coverage", tab: (tab ? tab.textContent : "default") || "default",
+      ...info, effect: r.effect,
+      requests: r.newRequests.map((q) => `${q.method} ${q.path}${q.blocked ? " (blocked)" : ""}`),
+      dialogs: r.newDialogs.map((d) => d.kind), navigations: r.newNavigations.length });
+    judgeControl(info, r, "coverage", { toleratedNoop: r.expectedNoop });
+  }
+  for (const el of withIdentities(listInteractables(ctx))) {
+    if (!el.disabled && !covered.has(el.__uiId))
+      missedCoverage.push(`${tab ? (tab.textContent || "").trim().slice(0, 20) : "default"}: ${baseIdentity(el)}`);
   }
 }
 const uniqueMisses = [...new Set(missedCoverage)];
 if (uniqueMisses.length)
   fail(`controls never driven: ${uniqueMisses.slice(0, 12).join("  |  ")}` +
        (uniqueMisses.length > 12 ? ` (+${uniqueMisses.length - 12} more)` : ""));
+
+const orphanHttp = trace.httpErrors.filter((m) => !httpAttributed.has(m));
+if (orphanHttp.length) {
+  const detail = orphanHttp.slice(0, 5).join("  |  ");
+  fail("endpoint errors that no control was held responsible for — they happened, "
+       + "after every interaction window, and nothing failed for them: " + detail);
+}
 
 report.summary = {
   controls: report.controls.length,

@@ -71,10 +71,10 @@ MUTATIONS = [
         "update-python",
     ),
     (
-        "destructive button no longer confirms",
+        "switch build no longer confirms before it happens",
         "templates/dashboard.html",
-        "if (!confirm('Roll back to ' + name",
-        "if (false && !confirm('Roll back to ' + name",
+        "  if (!confirm(`Switch to this build?",
+        "  if (false && !confirm(`Switch to this build?",
         "dashboard",
         "without asking for confirmation",
     ),
