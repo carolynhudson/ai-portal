@@ -191,12 +191,22 @@ MUTATIONS = [
         "#tps-now",
     ),
     (
-        "lane board never rendered from the journal",
+        # the Jinja lane loop is first paint only — the script is the renderer —
+        # so what has to break for the board to be gone is the node it draws into
+        "lane board container renamed, the script has nothing to draw into",
         "templates/dashboard.html",
-        "    {% for s in p.get('slots', []) %}",
-        "    {% for s in [] and p.get('slots', []) %}",
+        '<div class="lanes" id="pulse-lanes" aria-label="router slots">',
+        '<div class="lanes" id="pulse-rows" aria-label="router slots">',
         "dashboard",
-        "at least 2",
+        "#pulse-lanes",
+    ),
+    (
+        "attention toggle stops switching the pane",
+        "templates/dashboard.html",
+        "function toggleFeedView(){",
+        "function toggleFeedView(){ return;",
+        "dashboard",
+        "dead control",
     ),
     (
         # llama.cpp changes a log spelling, the parser stops matching, and every

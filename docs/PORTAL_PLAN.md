@@ -584,7 +584,12 @@ What replaced it, and the rules behind it:
    — evicting the oldest cached context ×23`). Counters (`errors`, `warns`,
    requests) are scoped to the same window the chart is drawn over, so a number
    and the picture next to it always describe the same span of time.
-7. **Service state and controls are untouchable.** The card head — state pill,
+7. **The browser is the renderer; the template's lane loop is first paint.** The
+   jsdom harness cannot see the Jinja loop being removed (the script redraws the
+   board from the fetched pulse a moment later), which is why the mutation for a
+   missing board breaks the container node instead — that is the thing whose
+   absence actually kills the pane.
+8. **Service state and controls are untouchable.** The card head — state pill,
    unit name, bind mode, Web UI/API links, start/stop/restart — is unchanged and
    asserted by `test_hero.py::test_service_state_and_controls_survive_the_redesign`.
    The log pane shrank (240px → 112px) and shows attention only; `all lines`
