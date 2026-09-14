@@ -20,8 +20,9 @@ Companions:
 **Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
 **network exposure** + **Phase J steps 1, 4, 5, 6, 7** + **Phase L (UI
 integration tests)**.
-Green: 140 tests (`./scripts/check-ui.sh`), of which 19 drive the real pages in a
-DOM (see §6.6), plus the tab/panel geometry contract (§6.7).
+Green: 151 tests (`./scripts/check-ui.sh`), of which 9 drive the real pages in a
+DOM (see §6.6), plus the tab/panel geometry contract (§6.7) and the stored-build
+controls (§6.8).
 
 **Phase L — UI integration tests (2026-09-13).** `tests/ui/` drives every
 interactable element of every page in jsdom against a sandboxed portal: 96
@@ -466,6 +467,59 @@ rounding came from `border-radius:10px`, which is how a real round corner sat
 there unnoticed while the first version of the check "passed". Six of the fifteen
 mutations are these geometries, one per way each rule can silently regress.
 
+### 6.8 Stored builds, and what does not belong on a hero card (2026-09-13)
+
+Two dashboard complaints, one about noise and one about a control that could not
+survive its own success:
+
+* A Vulkan SDK path and a *host metrics* link sat stranded under the ComfyUI
+  hero card, outside its border. The nav already links Metrics, and the SDK path
+  is inventory. The line now carries only the reboot badge, and only when a
+  reboot is pending; the SDK inventory (Vulkan, ROCm, HIP) lives in the GPU
+  Drivers / SDKs tab, where the Vulkan explanation already was. The same SDK path
+  was also a row in the llama.cpp panel — it appears once now.
+  `test_sdk_inventory_lives_in_the_gpu_tab` asserts it (against the *template*:
+  a running ComfyUI log line can legitimately contain the word "vulkan").
+* The llama.cpp panel listed every build as its own row with its own rollback
+  button — one more row per build, forever, each doing exactly one thing: be
+  picked — while a dropdown next to it already did that job.
+
+Builds are one dropdown now: newest first, each option labelled
+`name · commit · built · size` (or `current`), a line saying how many are stored
+and what they weigh, and two actions — **Switch build** and **Delete build**.
+
+Both actions are locked while the running build is selected: switching to it is a
+no-op, and deleting it would pull the binaries out from under a live router.
+A locked button says why in the hint line instead of just refusing, and the
+lockout is asserted, not assumed (`spec.json` → `selectCases`: select the current
+build → both locked; select any other → both usable, and *clicked there*, against
+a known selection, because the generic sweep only reaches such a button in
+whatever state the `<select>` happened to be left in).
+
+Deleting is the one irreversible thing the portal does to disk, so the
+destructive-request rules stack (§6):
+
+1. the confirm dialog shows the build's facts — build, commit, built date, size,
+   location — and says it cannot be undone and that rebuilding costs 10–20 min;
+2. the endpoint refuses without `confirm: true`;
+3. `delete_release()` then refuses, in order: an update job running; a name not
+   in the registry (the registry is the only source of paths, so a caller cannot
+   aim `rmtree`); the current build; a path outside `~/ai/releases`;
+   and — because the farm, not the registry, is what is really executing — any
+   release `~/ai/bin` still points *into* (containment, not equality: links point
+   at `…/llama.cpp-b1/llama-server`);
+4. the registry is copied to `~/ai/state/rollback/llamacpp-delete-<stamp>/` with
+   a note naming what was deleted, and the audit log records bytes freed and
+   builds remaining.
+
+Harness changes this needed: `expectDisabled` (locked on load), `selectCases`
+(select → assert enabled/locked), `then_click` (drive the control a selection
+unlocked, judged by the same rules as everything else), and `judgeControl()` —
+the rule set that used to live inline in the sweep, so a click is judged the same
+however it was caused. It paid for itself immediately: the first version of the
+two new buttons shipped **without `onclick` attributes**, and the dead-control
+rule reported them instead of a green page.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -483,6 +537,7 @@ mutations are these geometries, one per way each rule can silently regress.
 | J (mostly done, 2026-09-13) | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0). Remaining: `app/main.py` route split, `tools/` migrations move | redeploy-from-git-SHA works and **verifies the running sha**; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
 | **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 15/15 injected regressions caught; found 3 real UI bugs (§6.6) |
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
+| **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
 scripts working as the manual fallback.

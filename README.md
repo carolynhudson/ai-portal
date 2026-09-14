@@ -4,9 +4,10 @@ Web portal for managing, updating and configuring the AI tools on this
 Framework Desktop (Ubuntu 26.04, AMD Ryzen AI Max+ 395, 128 GB shared RAM):
 **llama.cpp**, **ComfyUI**, and the **huggingface** CLI/libraries.
 
-Backend is Python. This repo currently contains the *environment
-consolidation* phase (analysis + plan + migration tooling); the portal service
-itself is the next milestone.
+Backend is Python (FastAPI, no front-end build step: Jinja templates + inline
+JS, which is why the test suite drives the pages in a real DOM — see *Tests*).
+The repo also holds the earlier environment-consolidation planning and migration
+tooling that the portal is built on top of.
 
 ## Contents
 
@@ -149,8 +150,9 @@ element** — clicks, typing, changes, submits, all tabs — requiring per contr
 that nothing threw, no id lookup missed, no endpoint 4xx'd, and that the control
 actually *did* something. Tab groups must be a bijection; destructive requests
 must be confirm-gated **before** the request (an `alert()` afterwards is not a
-confirmation); a final coverage pass fails if any visible control was never
-driven. `tests/test_ui_contract.py` is the fast static half (every inline
+confirmation); a control unlocked by a selection is asserted in that selection
+(`selectCases`, and `then_click` to drive it against a known choice); a final
+coverage pass fails if any visible control was never driven. `tests/test_ui_contract.py` is the fast static half (every inline
 `<script>` must parse, every `onclick` must name a function that exists, every
 `fetch` target must be a registered route, and the tab/panel junction in
 `/static/tabs.css` holds — asserted as CSS text there, and measured through the

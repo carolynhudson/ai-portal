@@ -4,12 +4,14 @@ detection, rollback validation, and the background job runner.
 Nothing here builds llama.cpp or touches the live router — the real pipeline
 is proven by the deterministic no-op job in tools/live_smoke.sh.
 """
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 # Isolation: when this file runs alone, test_smoke (which normally sets the
 # throwaway AI_PORTAL_HOME first) is never imported — set one here too, or
@@ -34,9 +36,11 @@ def test_updates_endpoint_shape():
     r = c.get("/api/updates/llamacpp")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"current", "current_commit", "repo_head",
-                         "releases", "vulkan_sdk", "job", "remote",
+    assert set(body) == {"current", "current_commit", "current_size_bytes",
+                         "repo_head", "releases", "release_count",
+                         "total_bytes", "vulkan_sdk", "job", "remote",
                          "binary", "source"}
+    assert body["release_count"] == 0 and body["total_bytes"] == 0
     # throwaway home: probe either reports a missing repo or a failed
     # fetch — either way a well-formed dict
     assert isinstance(body["remote"], dict)
@@ -260,3 +264,136 @@ def test_check_endpoint_forces_probe():
     assert body["master_head"] == C
     assert body["behind_release"] == 1
     assert body["update_available"] is True
+
+
+# ------------------------------------------------------ deleting stored builds
+# The dashboard lists every build in one dropdown and offers to delete the
+# selected one, so the server is the only thing standing between a stray click
+# and pulling the binaries out from under a running router. Each refusal here is
+# a test the UI's lockout is not trusted to be the only defence.
+
+def _fake_builds(current="llama.cpp-b2"):
+    """A registry with two real build directories and a ~/ai/bin farm pointing
+    at the current one. Returns {name: path}."""
+    db.init()
+    paths.RELEASES.mkdir(parents=True, exist_ok=True)
+    paths.AI_BIN.mkdir(parents=True, exist_ok=True)
+    entries, dirs = [], {}
+    for name in ("llama.cpp-b1", "llama.cpp-b2"):
+        d = paths.RELEASES / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "llama-server").write_bytes(b"x" * 2048)
+        (d / "llama-cli").write_bytes(b"y" * 1024)
+        dirs[name] = d
+        entries.append({"name": name, "commit": ("a" if name.endswith("1") else "b") * 40,
+                        "version": name.rsplit("b", 1)[-1], "path": str(d),
+                        "built_at": "2026-09-01T00:00:00+00:00"})
+    paths.RELEASES_JSON.parent.mkdir(parents=True, exist_ok=True)
+    paths.RELEASES_JSON.write_text(json.dumps({"current": current,
+                                               "releases": entries}))
+    _repoint_farm(dirs[current])
+    return dirs
+
+
+def _repoint_farm(rel_dir: Path):
+    for exe in sorted(rel_dir.iterdir()):
+        link = paths.AI_BIN / exe.name
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(exe)
+
+
+def test_update_status_marks_and_sizes_builds():
+    _fake_builds()
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    body = c.get("/api/updates/llamacpp").json()
+    assert body["release_count"] == 2
+    assert body["current"] == "llama.cpp-b2"
+    active = [e for e in body["releases"] if e["active"]]
+    assert [e["name"] for e in active] == ["llama.cpp-b2"]
+    assert active[0]["size_bytes"] >= 3072
+    assert body["total_bytes"] >= sum(e["size_bytes"] for e in body["releases"])
+
+
+def test_delete_requires_confirmation_and_a_known_name():
+    _fake_builds()
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    r = c.post("/api/updates/llamacpp/delete", json={"release": "llama.cpp-b1"})
+    assert r.status_code == 400 and "confirm" in r.json()["detail"]
+    r = c.post("/api/updates/llamacpp/delete",
+               json={"release": "llama.cpp-b99", "confirm": True})
+    assert r.status_code == 400 and "unknown release" in r.json()["detail"]
+
+
+def test_delete_refuses_the_current_build():
+    dirs = _fake_builds()
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    r = c.post("/api/updates/llamacpp/delete",
+               json={"release": "llama.cpp-b2", "confirm": True})
+    assert r.status_code == 400
+    assert "current build" in r.json()["detail"]
+    assert (dirs["llama.cpp-b2"] / "llama-server").exists()
+
+
+def test_delete_removes_the_build_and_remembers_it_did():
+    dirs = _fake_builds()
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    before = len(db.query("SELECT * FROM events"))
+    r = c.post("/api/updates/llamacpp/delete",
+               json={"release": "llama.cpp-b1", "confirm": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "success" and body["remaining"] == 1
+    assert body["freed_bytes"] >= 3072
+    assert not dirs["llama.cpp-b1"].exists()
+    assert (dirs["llama.cpp-b2"] / "llama-server").exists()
+
+    reg = json.loads(paths.RELEASES_JSON.read_text())
+    assert [e["name"] for e in reg["releases"]] == ["llama.cpp-b2"]
+    assert reg["current"] == "llama.cpp-b2"        # untouched
+
+    # the registry is copied out first, and the audit log says what was freed
+    note = Path(body["note_dir"])
+    assert json.loads((note / "releases.json").read_text())["current"] == "llama.cpp-b2"
+    assert "llama.cpp-b1" in (note / "note.txt").read_text()
+    assert len(db.query("SELECT * FROM events")) > before
+
+    # and the page now reports one build, none of them deletable-but-current
+    body = c.get("/api/updates/llamacpp").json()
+    assert body["release_count"] == 1
+    assert [e for e in body["releases"] if e["active"]] == body["releases"]
+
+
+def test_delete_refuses_a_registry_pointing_anywhere_else():
+    """A hand-edited registry must not turn the delete button into `rmtree ~`."""
+    dirs = _fake_builds()
+    reg = json.loads(paths.RELEASES_JSON.read_text())
+    victim = next(e for e in reg["releases"] if e["name"] == "llama.cpp-b1")
+    victim["path"] = str(paths.AI_BIN)
+    paths.RELEASES_JSON.write_text(json.dumps(reg))
+
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    r = c.post("/api/updates/llamacpp/delete",
+               json={"release": "llama.cpp-b1", "confirm": True})
+    assert r.status_code == 400
+    assert "outside" in r.json()["detail"]
+    assert paths.AI_BIN.is_dir()
+
+
+def test_delete_refuses_while_the_bin_farm_points_at_it():
+    """Registry says it is not current; the farm says otherwise. The farm wins."""
+    dirs = _fake_builds()
+    _repoint_farm(dirs["llama.cpp-b1"])
+
+    c = TestClient(app)
+    c.post("/login", data={"password": "test-password-123"})
+    r = c.post("/api/updates/llamacpp/delete",
+               json={"release": "llama.cpp-b1", "confirm": True})
+    assert r.status_code == 400
+    assert "~/ai/bin still points" in r.json()["detail"]
+    assert (dirs["llama.cpp-b1"] / "llama-server").exists()

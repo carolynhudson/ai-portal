@@ -30,7 +30,9 @@ import pytest
 
 # throwaway home, before the app is imported (same pattern as test_smoke.py)
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-uic-"))
-os.environ.setdefault("AI_PORTAL_PASSWORD", "contract-test-password")
+# same default the other test modules use: whichever module is imported first
+# wins the environment, so a differing password makes test order matter
+os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
@@ -188,6 +190,76 @@ def test_no_unrendered_template_or_none_values_in_markup(pages):
             if re.search(r"\bNone\b|undefined", m.group(2)):
                 bad.append(f"{path}: broken attribute {m.group(0)!r}")
     assert not bad, "\n".join(bad)
+
+
+# ------------------------------------------------------------------ noise
+# The dashboard hero cards are for the two services. Two things crept in that
+# were not: a second Metrics link (the nav is right there) and the Vulkan SDK
+# path, which is inventory and belongs in the GPU Drivers / SDKs tab.
+def test_dashboard_does_not_duplicate_the_navigation(pages):
+    html = pages["/"]
+    assert html.count('href="/metrics"') == 1, (
+        "Metrics is in the top nav; a repeated link under a hero card is noise, "
+        "not navigation")
+
+
+def test_sdk_inventory_lives_in_the_gpu_tab():
+    """Asserted on the template, not the rendered page: the ComfyUI log tail is
+    part of the page and can legitimately contain the word 'vulkan'."""
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    head, sep, gpu = tpl.partition('id="update-gpu"')
+    assert sep, "the GPU Drivers / SDKs panel is gone from the dashboard"
+    for word in ("vulkan", "rocm"):
+        assert word not in head.lower(), (
+            f"{word!r} is marked up outside the GPU Drivers / SDKs tab — the SDK "
+            f"inventory has one home")
+    assert "gpu-vulkan-sdk" in gpu and "gpu-rocm-version" in gpu
+
+
+# ------------------------------------------------------- stored build controls
+def test_stored_builds_are_one_dropdown(pages):
+    """A table of builds grows one row per build forever, and every row did one
+    thing: be picked. One dropdown, one count, two actions."""
+    html = pages["/"]
+    for sel in ('id="build-select"', 'id="build-count"', 'id="switch-build-btn"',
+                'id="delete-build-btn"'):
+        assert sel in html, f"missing {sel}"
+    assert 'id="upd-releases"' not in html, "the old per-build row list is back"
+    assert "updRollback(" not in html, "the old per-row rollback handler is still defined"
+
+
+def test_delete_build_confirms_every_step_of_the_way():
+    """An irreversible delete: client confirm carrying the build's details, a
+    server that does not believe a request without `confirm: true`, and an audit
+    event after it."""
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    body = tpl[tpl.index("async function deleteBuild()"):
+               tpl.index("const buildSelectEl")] if "async function deleteBuild()" in tpl else ""
+    assert body, "deleteBuild() is missing"
+    assert "if (!confirm(" in body, "delete sends the request without confirming first"
+    assert "buildFacts(e)" in body, "the confirmation does not show what is being deleted"
+    assert "if (e.active)" in body, "the current build is not refused before the request"
+    assert body.index("if (!confirm(") < body.index("fetch("), "confirm must precede the request"
+    assert "'/api/updates/llamacpp/delete'" in body
+    assert "confirm: true" in body
+
+    src = (ROOT / "app" / "main.py").read_text()
+    route = src[src.index('"/api/updates/llamacpp/delete"'):]
+    route = route[:route.index("\n    @app")]
+    assert 'if not body.confirm:' in route, "the endpoint deletes without a confirmation flag"
+    assert "db.event(" in route, "the deletion is not audited"
+
+
+def test_switch_build_locks_the_running_build():
+    """The lockout is the safety story of both buttons; assert the JS that
+    implements it, not just that a button exists."""
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    sync = tpl[tpl.index("function syncBuildButtons()"):] if "function syncBuildButtons()" in tpl else ""
+    assert sync, "syncBuildButtons() is missing"
+    sync = sync[:sync.index("\nasync function")]
+    assert "sw.disabled = !e || !!e.active;" in sync
+    assert "del.disabled = !e || !!e.active;" in sync
+    assert "build-hint" in sync, "a locked button should say why it is locked"
 
 
 # --------------------------------------------------------------------- tabs

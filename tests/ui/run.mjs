@@ -342,6 +342,92 @@ const requireConfirm = spec.requireConfirmFor || [];
 const requireConfirmUnless = spec.requireConfirmUnlessBodyContains || {};
 const expectInert = (allSpec.expectInert || []).concat(spec.expectInert || []);
 
+const covered = new Set();   // identities driven by any means, sweep or case
+
+// ------------------------------------------------- selection-driven enablement
+// A control that locks or unlocks another one has to be asserted, not assumed:
+// "delete is disabled for the running build" is the whole safety story of that
+// button, and a page can look perfectly fine with it permanently clickable.
+for (const sel of spec.expectDisabled || []) {
+  const el = win.document.querySelector(sel);
+  if (!el) fail(`expected disabled control missing: ${sel}`);
+  else if (!el.disabled) fail(`control should be locked on load but is enabled: ${sel}`);
+}
+
+// choose: {index} | {value} | {labelContains} | {labelNotContaining}
+function pickOption(select, choose) {
+  const opts = Array.from(select.querySelectorAll("option")).filter((o) => o.value !== "");
+  if (!opts.length) return null;
+  let hit = null;
+  if (choose.index != null) hit = opts[choose.index];
+  else if (choose.value != null) hit = opts.find((o) => o.value === choose.value) || null;
+  else if (choose.labelContains != null)
+    hit = opts.find((o) => (o.textContent || "").includes(choose.labelContains)) || null;
+  else if (choose.labelNotContaining != null)
+    hit = opts.find((o) => !(o.textContent || "").includes(choose.labelNotContaining)) || null;
+  if (!hit) return null;
+  select.value = hit.value;
+  select.dispatchEvent(new win.Event("change", { bubbles: true }));
+  return hit;
+}
+
+for (const c of spec.selectCases || []) {
+  const select = win.document.querySelector(c.select);
+  const what = `select case ${c.select} (${c.note || ""})`;
+  if (!select) {
+    fail(`${what}: select missing`);
+    continue;
+  }
+  const errBefore = trace.errors.length;
+  const picked = pickOption(select, c.choose || {});
+  if (!picked) {
+    if (c.optional) continue;
+    fail(`${what}: no option matched ${JSON.stringify(c.choose)} — the page offers: ` +
+         Array.from(select.querySelectorAll("option")).map((o) => o.textContent).join(" | "));
+    continue;
+  }
+  await ctx.idle({ quietMs: 60, maxMs: 3000 });
+  if (trace.errors.length > errBefore)
+    fail(`${what}: changing the selection threw ${trace.errors[errBefore]}`);
+  for (const sel of c.expectEnabled || []) {
+    const el = win.document.querySelector(sel);
+    if (!el) fail(`${what}: expected enabled control missing: ${sel}`);
+    else if (el.disabled) fail(`${what}: ${sel} should be usable with ${JSON.stringify(picked.textContent)}, but it is disabled`);
+  }
+  for (const sel of c.expectDisabled || []) {
+    const el = win.document.querySelector(sel);
+    if (!el) fail(`${what}: expected disabled control missing: ${sel}`);
+    else if (!el.disabled) fail(`${what}: ${sel} must stay locked with ${JSON.stringify(picked.textContent)} selected`);
+  }
+
+  // A case may also drive the control its selection just unlocked. Destructive
+  // endpoints behind a selection-dependent button have to be exercised against
+  // a known selection — the sweep reaches the button only in whatever state the
+  // select happened to be left in.
+  for (const target of c.then_click || []) {
+    const btn = win.document.querySelector(target);
+    if (!btn) {
+      fail(`${what}: click target ${target} missing`);
+      continue;
+    }
+    if (btn.disabled) {
+      fail(`${what}: ${target} is disabled with ${JSON.stringify(picked.textContent)} selected — it cannot be exercised`);
+      continue;
+    }
+    const rr = await interact(ctx, btn, { answerDialogs: true, noopCheck });
+    const rinfo = describeElement(btn, win);
+    report.controls.push({
+      phase: "select-case", tab: c.note || "case", ...rinfo, effect: rr.effect,
+      requests: rr.newRequests.map((q) => `${q.method} ${q.path}${q.blocked ? " (blocked)" : ""}`),
+      dialogs: rr.newDialogs.map((d) => d.kind),
+      navigations: rr.newNavigations.length,
+    });
+    covered.add(btn.__uiId || baseIdentity(btn));
+    judgeControl(rinfo, rr, `${what}, clicked ${target}`, {});
+  }
+}
+
+
 // Clicking the tab that is already showing changes nothing — in a browser
 // too. This is safe to tolerate because the tab-group check above proves the
 // clicked tab and the one visible panel correspond; a broken mapping fails
@@ -386,6 +472,38 @@ function withIdentities(list) {
     el.__uiId = counts.get(base) > 1 ? `${base}#${n}` : base;
   }
   return list;
+}
+
+// One set of rules decides whether an interaction was acceptable. Both the
+// sweep and the selection cases use it, so a click is judged identically no
+// matter what drove it: no errors, no endpoint failures, destructive requests
+// confirm-gated before they happen, and some visible effect.
+function judgeControl(info, r, phase, { toleratedNoop = false } = {}) {
+    // Destructive requests must be confirm-gated. Checked in both passes: in
+    // the denied pass an ungated request is the bug itself (the app acted
+    // without asking), and in the accepted pass it catches a handler that asks
+    // but then sends something the endpoint needs anyway without it.
+    const MUTATING = ["POST", "PUT", "PATCH", "DELETE"];
+    for (const req of r.newRequests.filter((x) => MUTATING.includes(x.method))) {
+      if (!requireConfirm.some((p) => new RegExp(p).test(req.path))) continue;
+      // same endpoint, different verb: creating a router key is additive and
+      // does not need a confirmation, rotating or revoking one does
+      const exempt = Object.entries(requireConfirmUnless).find(
+        ([p, needle]) => new RegExp(p).test(req.path) && (req.body || "").includes(needle));
+      if (exempt) continue;
+      // confirm() must have happened before the request — an alert() afterwards
+      // ("rolled back") is not a confirmation
+      if (req.confirmsBefore - r.confirmsAtMark <= 0)
+        fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first (${phase} pass)`);
+    }
+
+    if (r.effect === "none" && !toleratedNoop && !expectInert.some((p) => new RegExp(p).test(info.selector))) {
+      const what = [info.text && `text=${JSON.stringify(info.text)}`, info.handler && `handler=${JSON.stringify(info.handler)}`]
+        .filter(Boolean)
+        .join(" ");
+      fail(`dead control: ${info.selector}${what ? " " + what : ""} — no request, no dialog, no navigation, no DOM change`);
+    }
+
 }
 
 async function sweep(phase, answerDialogs, visited, context, budget) {
@@ -452,36 +570,7 @@ async function sweep(phase, answerDialogs, visited, context, budget) {
       navigations: r.newNavigations.length,
     });
 
-    for (const m of r.newErrors) fail(`${info.selector} threw: ${m}`);
-    for (const m of r.newConsoleErrors) fail(`${info.selector} logged console.error: ${m}`);
-    for (const m of r.newMissedIds) fail(`${info.selector} looked up missing id #${m}`);
-    for (const m of r.newHttpErrors) fail(`${info.selector} hit an endpoint error: ${m}`);
-
-    // Destructive requests must be confirm-gated. Checked in both passes: in
-    // the denied pass an ungated request is the bug itself (the app acted
-    // without asking), and in the accepted pass it catches a handler that asks
-    // but then sends something the endpoint needs anyway without it.
-    const MUTATING = ["POST", "PUT", "PATCH", "DELETE"];
-    for (const req of r.newRequests.filter((x) => MUTATING.includes(x.method))) {
-      if (!requireConfirm.some((p) => new RegExp(p).test(req.path))) continue;
-      // same endpoint, different verb: creating a router key is additive and
-      // does not need a confirmation, rotating or revoking one does
-      const exempt = Object.entries(requireConfirmUnless).find(
-        ([p, needle]) => new RegExp(p).test(req.path) && (req.body || "").includes(needle));
-      if (exempt) continue;
-      // confirm() must have happened before the request — an alert() afterwards
-      // ("rolled back") is not a confirmation
-      if (req.confirmsBefore - r.confirmsAtMark <= 0)
-        fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first (${phase} pass)`);
-    }
-
-    const toleratedNoop = samePage || r.expectedNoop;
-    if (r.effect === "none" && !toleratedNoop && !expectInert.some((p) => new RegExp(p).test(info.selector))) {
-      const what = [info.text && `text=${JSON.stringify(info.text)}`, info.handler && `handler=${JSON.stringify(info.handler)}`]
-        .filter(Boolean)
-        .join(" ");
-      fail(`dead control: ${info.selector}${what ? " " + what : ""} — no request, no dialog, no navigation, no DOM change`);
-    }
+    judgeControl(info, r, phase, { toleratedNoop: samePage || r.expectedNoop });
 
     // advance unless the list grew from under us (a control that rendered new
     // controls, e.g. search results), in which case rescan from here
@@ -512,7 +601,6 @@ const lap = (label) => {
 // can move the page to another tab (a search result jumps to the download
 // form), which hides controls the pass has not reached yet — re-running under
 // each tab guarantees every control is driven while it is actually visible.
-const covered = new Set();
 for (const [phase, answerDialogs] of [["dialogs-denied", false], ["dialogs-accepted", true]]) {
   for (const tab of tabContexts[0].length ? tabContexts[0] : [null]) {
     if (Date.now() - t0 > (spec.maxSweepMs || 150000)) {

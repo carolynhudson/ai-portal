@@ -737,6 +737,28 @@ def create_app() -> FastAPI:
         db.event("portal", "update", f"llamacpp: rollback -> {body.release}")
         return res
 
+    @app.post("/api/updates/llamacpp/delete")
+    def api_delete_release(body: RollbackBody, _=Depends(_require_auth)):
+        """Delete a stored build that is not the current one. Irreversible: the
+        UI confirms with the build's details first, and confirm must be true
+        here too (defence in depth, not a formality — see PORTAL_PLAN §6)."""
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        p = get_provider("llamacpp")
+        if not hasattr(p, "delete_release"):
+            raise HTTPException(status_code=501, detail="not supported for this service")
+        try:
+            res = p.delete_release(body.release, log=lambda m: print("[ai-portal]", m))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        db.event("portal", "update",
+                 f"llamacpp: deleted build {body.release} "
+                 f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB freed, "
+                 f"{res.get('remaining')} remain)")
+        return res
+
     # --------------------------------------------- updates (E: ComfyUI)
     @app.get("/api/updates/comfyui")
     def api_comfy_updates(_=Depends(_require_auth)):

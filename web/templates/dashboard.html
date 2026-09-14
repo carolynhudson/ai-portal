@@ -37,6 +37,7 @@
 .bubble-body{padding:2px 16px 14px;border-top:1px solid var(--line)}
 .bubble-body .kv{padding:5px 0}
 .sysline{margin:0 0 14px;font-size:13px;color:var(--mut);display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.sysline:empty{display:none}
 .badge{padding:2px 9px;border-radius:6px;border:1px solid var(--warn);color:var(--warn);font-size:12px}
 .pill.bad{background:rgba(248,81,73,.15);color:var(--bad)}
 .totals-row{display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
@@ -145,11 +146,13 @@
   <pre id="comfy-feed" class="feed">{% for ln in comfy.activity %}<span class="ln">{{ ln }}</span>{% else %}<span class="ln mut">no recent log lines captured</span>{% endfor %}</pre>
 </div>
 
+{# only the reboot badge earns a line of its own; the SDK inventory lives in the
+   GPU Drivers / SDKs tab and the nav already links to Metrics #}
+{% if health.reboot_required %}
 <div class="sysline">
-  {% if health.reboot_required %}<span class="badge">reboot required</span>{% endif %}
-  <span>vulkan sdk: <span class="mono">{{ health.vulkan_sdk or '—' }}</span></span>
-  <a href="/metrics">host metrics ↗</a>
+  <span class="badge">reboot required</span>
 </div>
+{% endif %}
 
 {# ---- Tool Repository Update Status ---- #}
 <h2>Tool Repository Update Status</h2>
@@ -176,18 +179,28 @@
     <div class="kv"><span class="k">repo head</span><span class="mono" id="upd-head">—</span></div>
     <div class="kv"><span class="k">upstream</span><span class="mono" id="upd-remote">—</span></div>
     <div class="kv"><span class="k">release notes</span><span id="upd-notes" style="display:none"><a id="upd-notes-link" href="#" target="_blank" rel="noopener">latest release ↗</a></span></div>
-    <div class="kv"><span class="k">vulkan sdk</span><span class="mono" id="upd-sdk">—</span></div>
-    <div id="upd-releases"></div>
-    <div class="switch-version-section" style="margin-top:16px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px">
-      <div class="switch-version-row">
-        <span class="switch-version-label">Current build:</span>
-        <span class="switch-version-current" id="switch-current-release">—</span>
-        <span class="switch-version-label" style="margin-left:24px">Switch to:</span>
-        <select id="rollback-select" style="padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);min-width:200px">
-          <option value="">-- Select a build --</option>
-        </select>
-        <button id="rollback-btn" class="btn btn-warning-sm" disabled onclick="doRollback()">Switch Build</button>
+
+    {# Stored builds live in one dropdown, not a growing table: each release adds
+       a row to a table forever, and every row's only job is to be picked. #}
+    <div class="builds-frame">
+      <div class="builds-row">
+        <span class="builds-label">Current build:</span>
+        <span class="switch-version-current" id="current-build">—</span>
+        <span class="mut" id="build-count"></span>
       </div>
+      <div class="builds-row">
+        <label class="builds-label" for="build-select">Stored builds:</label>
+        <select id="build-select" class="builds-select">
+          <option value="">— none —</option>
+        </select>
+        <button id="switch-build-btn" class="btn btn-warning-sm" disabled
+                onclick="switchBuild()"
+                title="select a build that is not the current one">Switch build</button>
+        <button id="delete-build-btn" class="btn btn-danger-sm" disabled
+                onclick="deleteBuild()"
+                title="select a build that is not the current one">Delete build</button>
+      </div>
+      <div class="mut builds-hint" id="build-hint"></div>
     </div>
     <div id="upd-job"></div>
   </div>
@@ -286,10 +299,16 @@
 .btn-warning-sm{padding:4px 12px;font-size:12px;border-radius:4px;border:none;background:#ffc107;color:#000;cursor:pointer}
 .btn-warning-sm:hover{background:#e0a800}
 .btn-warning-sm:disabled{background:#ccc;color:#666;cursor:not-allowed}
-.switch-version-section{margin-top:16px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
-.switch-version-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
-.switch-version-label{font-size:13px;color:var(--fg);font-weight:500}
+.builds-frame{margin-top:16px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.builds-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.builds-row + .builds-row{margin-top:10px}
+.builds-label{font-size:13px;color:var(--fg);font-weight:500}
 .switch-version-current{font-size:13px;color:var(--acc);font-family:ui-monospace,Menlo,Consolas,monospace}
+.builds-select{padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);min-width:260px;max-width:100%}
+.builds-hint{font-size:12px;margin-top:8px;min-height:1em}
+.btn-danger-sm{padding:4px 12px;font-size:12px;border-radius:4px;border:none;background:#8b2f2f;color:#fff;cursor:pointer}
+.btn-danger-sm:hover{background:#b3392f}
+.btn-danger-sm:disabled{background:#3a3f47;color:#7b8494;cursor:not-allowed}
 .scrollable-logs{
   max-height:320px;
   overflow-y:auto;
@@ -468,34 +487,9 @@ async function loadUpd(){
       pill.textContent = running ? 'updating…' : (d.current || 'no release');
     }
     setText('upd-current', (d.current || '—') + (d.current_commit ? ' @ ' + d.current_commit.slice(0, 12) : ''));
-    setText('switch-current-release', (d.current || 'no active build') + (d.current_commit ? ' @ ' + d.current_commit.slice(0, 12) : ''));
     setText('upd-head', d.repo_head ? d.repo_head.slice(0, 12) : '—');
-    setText('upd-sdk', (d.vulkan_sdk || '—').replace(/^\/home\/[^/]+/, '~'));
     renderUpdRemote(d.remote || {});
-    document.getElementById('upd-releases').innerHTML = (d.releases || []).map(e =>
-      '<div class="kv"><span class="k">' + esc(e.name) + '</span><span>' +
-      (e.commit || '').slice(0, 12) + ' · ' + (e.built_at || '').slice(0, 10) + ' ' +
-      (e.name === d.current ? '<span class="pill ok">current</span>'
-                            : '<button onclick="updRollback(\'' + esc(e.name) + '\')">rollback</button>') +
-      '</span></div>').join('');
-    // Populate rollback select
-    const rollbackSelect = document.getElementById('rollback-select');
-    if (rollbackSelect) {
-      rollbackSelect.innerHTML = '<option value="">-- Select a release --</option>';
-      (d.releases || []).forEach(e => {
-        if (e.name !== d.current) {
-          const option = document.createElement('option');
-          option.value = e.name;
-          option.textContent = e.name + ' (' + (e.commit || '').slice(0, 12) + ') - ' + (e.built_at || '').slice(0, 10);
-          rollbackSelect.appendChild(option);
-        }
-      });
-      rollbackSelect.disabled = !running && (d.releases || []).length <= 1;
-    }
-    const rollbackBtn = document.getElementById('rollback-btn');
-    if (rollbackBtn) {
-      rollbackBtn.disabled = !rollbackSelect || !rollbackSelect.value;
-    }
+    renderBuilds(d);
     renderUpdJob(d.job);
     if (running) {
       if (!UPD.timer) { UPD.job = d.job.id; UPD.timer = setInterval(pollUpd, 3000); }
@@ -607,45 +601,127 @@ async function updDeploy(tag){
     loadUpd();
   }catch(e){ alert('update failed to start: ' + e); }
 }
-async function updRollback(name){
-  if (!confirm('Roll back to ' + name + '?\n\nThis repoints the binaries and RESTARTS THE ROUTER — agent sessions will drop.')) return;
-  try{
-    const r = await fetch('/api/updates/llamacpp/rollback', {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'content-type': 'application/json'},
-      body: JSON.stringify({release: name, confirm: true})});
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { alert('rollback failed: ' + (d.detail || r.status)); return; }
-    alert('rolled back to ' + name);
-    location.reload();
-  }catch(e){ alert('rollback failed: ' + e); }
+// --------------------------------------------------- stored builds (dropdown)
+// One dropdown replaces the old release table: a table grew a row with every
+// build forever, and each row did exactly one thing — be picked. `BUILDS` keeps
+// the last API payload per name so the delete confirmation can show what it is
+// about to destroy: a name alone is not enough to consent to an irreversible
+// delete.
+const BUILDS = new Map();
+
+function humanSize(b){
+  if (b == null) return '';
+  const mb = b / 1048576;
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
+}
+function buildLabel(e){
+  return [(e.name || '?'), (e.commit || '').slice(0, 12), (e.built_at || '').slice(0, 10),
+          e.active ? 'current' : (e.size_bytes ? humanSize(e.size_bytes) : '')]
+        .filter(Boolean).join(' · ');
+}
+// The details block both confirmations show before anything happens.
+function buildFacts(e){
+  return ['', `  build    ${e.name}`,
+          `  commit   ${(e.commit || '—').slice(0, 12)}`,
+          `  built    ${(e.built_at || '—').slice(0, 10)}`,
+          `  size     ${humanSize(e.size_bytes) || 'unknown'}`,
+          `  location ${String(e.path || '—').replace(/^\/home\/[^/]+/, '~')}`,
+          ''].join('\n');
 }
 
-async function doRollback(){
-  const select = document.getElementById('rollback-select');
-  const name = select ? select.value : '';
-  if (!name) { alert('Please select a release to rollback to'); return; }
-  if (!confirm('Roll back to ' + name + '?\n\nThis repoints the binaries and RESTARTS THE ROUTER — agent sessions will drop.')) return;
-  try{
-    const r = await fetch('/api/updates/llamacpp/rollback', {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'content-type': 'application/json'},
-      body: JSON.stringify({release: name, confirm: true})});
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { alert('rollback failed: ' + (d.detail || r.status)); return; }
-    alert('rolled back to ' + name);
-    location.reload();
-  }catch(e){ alert('rollback failed: ' + e); }
-}
-
-// Enable rollback button when a release is selected
-const rollbackSelectEl = document.getElementById('rollback-select');
-if (rollbackSelectEl) {
-  rollbackSelectEl.addEventListener('change', function(){
-    const btn = document.getElementById('rollback-btn');
-    if (btn) btn.disabled = !this.value;
+function renderBuilds(d){
+  const sel = document.getElementById('build-select');
+  if (!sel) return;
+  // newest first: the registry is append-ordered, and the newest is what
+  // someone almost always wants
+  const ordered = (d.releases || []).slice().reverse();
+  BUILDS.clear();
+  // `active` is the server's answer, but a payload that only carries `current`
+  // must not make the running build look deletable
+  (d.releases || []).forEach(e =>
+    BUILDS.set(e.name, Object.assign({}, e, {
+      active: e.active != null ? !!e.active : (e.name === d.current) })));
+  const keep = sel.value;
+  sel.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = ordered.length ? '— select a build —' : '— no stored builds —';
+  sel.appendChild(blank);
+  ordered.forEach(e => {
+    const o = document.createElement('option');
+    o.value = e.name;
+    o.textContent = buildLabel(e);
+    sel.appendChild(o);
   });
+  sel.value = (keep && BUILDS.has(keep)) ? keep : '';
+  sel.disabled = (d.job && d.job.status === 'running') || !ordered.length;
+  setText('current-build', (d.current || 'no active build') +
+          (d.current_commit ? ' @ ' + d.current_commit.slice(0, 12) : ''));
+  setText('build-count', ordered.length
+        ? `· ${ordered.length} stored` + (d.total_bytes ? `, ${humanSize(d.total_bytes)} total` : '')
+        : '');
+  syncBuildButtons();
 }
+
+// The current build is what the router is executing: switching to it is a no-op
+// and deleting it would pull the binaries out from under a running service, so
+// both stay locked while it is selected — and the hint says why instead of
+// leaving two dead-looking buttons.
+function syncBuildButtons(){
+  const sel = document.getElementById('build-select');
+  const sw = document.getElementById('switch-build-btn');
+  const del = document.getElementById('delete-build-btn');
+  if (!sel || !sw || !del) return;
+  const e = BUILDS.get(sel.value);
+  sw.disabled = !e || !!e.active;
+  del.disabled = !e || !!e.active;
+  setText('build-hint', !e ? 'Select a stored build to switch to or delete.'
+        : e.active ? 'This is the build the router is running — switch to another build before deleting it.'
+        : `Switching restarts the router. Deleting frees ${humanSize(e.size_bytes) || 'its space'} and cannot be undone.`);
+  sw.title = sw.disabled ? (e ? 'already the current build' : 'select a build first')
+                         : 'repoint the binaries at this build and restart the router';
+  del.title = del.disabled ? (e ? 'the current build cannot be deleted' : 'select a build first')
+                           : 'delete this build from disk';
+}
+
+async function switchBuild(){
+  const sel = document.getElementById('build-select');
+  const e = BUILDS.get(sel ? sel.value : '');
+  if (!e) { alert('Select a build first'); return; }
+  if (e.active) { alert(e.name + ' is already the current build'); return; }
+  if (!confirm(`Switch to this build?${buildFacts(e)}This repoints the binaries and RESTARTS THE ROUTER — agent sessions riding it will drop.`)) return;
+  try{
+    const r = await fetch('/api/updates/llamacpp/rollback', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({release: e.name, confirm: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('switch failed: ' + (d.detail || r.status)); return; }
+    location.reload();
+  }catch(err){ alert('switch failed: ' + err); }
+}
+
+async function deleteBuild(){
+  const sel = document.getElementById('build-select');
+  const e = BUILDS.get(sel ? sel.value : '');
+  if (!e) { alert('Select a build first'); return; }
+  if (e.active) { alert('The current build cannot be deleted — switch to another build first.'); return; }
+  if (!confirm(`DELETE THIS BUILD?${buildFacts(e)}This deletes it from disk. It cannot be undone — rebuilding takes 10–20 minutes.`)) return;
+  try{
+    const r = await fetch('/api/updates/llamacpp/delete', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({release: e.name, confirm: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('delete refused: ' + (d.detail || r.status)); return; }
+    if (sel) sel.value = '';
+    loadUpd();
+    alert('Deleted ' + e.name + (d.freed_bytes ? ' — ' + humanSize(d.freed_bytes) + ' freed' : ''));
+  }catch(err){ alert('delete failed: ' + err); }
+}
+
+const buildSelectEl = document.getElementById('build-select');
+if (buildSelectEl) buildSelectEl.addEventListener('change', syncBuildButtons);
 
 loadUpd();
 </script>

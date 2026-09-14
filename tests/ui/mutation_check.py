@@ -23,17 +23,18 @@ sys.path.insert(0, str(ROOT))
 
 from tests.ui_sandbox import Sandbox  # noqa: E402
 
-WEB = ROOT / "web"   # mutations are paths under web/
+WEB = ROOT / "web"   # template/static mutations are relative to here
+APP = ROOT           # backend mutations are written "app/..." and relative to here
 
 # (name, file, old text, new text, page, substring the failure must contain)
 MUTATIONS = [
     (
-        "element id renamed (rollback select)",
+        "element id renamed (build dropdown)",
         "templates/dashboard.html",
-        'id="rollback-select"',
-        'id="rollback-chooser"',
+        'id="build-select"',
+        'id="build-chooser"',
         "dashboard",
-        "rollback-select",   # the page still looks for the old id
+        "build-select",   # expectVisible/expectDisabled still look for the old id
     ),
     (
         "tab handler deleted",
@@ -102,6 +103,23 @@ MUTATIONS = [
         "dead control",
     ),
     (
+        # the delete button's whole safety story: the running build stays locked
+        "delete unlocks for the build the router is running",
+        "templates/dashboard.html",
+        "  del.disabled = !e || !!e.active;",
+        "  del.disabled = !e;",
+        "dashboard",
+        "must stay locked",
+    ),
+    (
+        "build deletion no longer confirms before it happens",
+        "templates/dashboard.html",
+        "  if (!confirm(`DELETE THIS BUILD?${buildFacts(e)}This deletes it from disk. It cannot be undone — rebuilding takes 10–20 minutes.`)) return;",
+        "  // confirm removed by mutation",
+        "dashboard",
+        "without asking for confirmation",
+    ),
+    (
         # the reported bug itself: the strip's bottom margin floats the panels
         # 16px below the baseline the tabs sit on
         "tab strip floats above its panels",
@@ -159,20 +177,34 @@ MUTATIONS = [
 ]
 
 
-def _clean_web() -> bool:
-    """This tool edits the real templates and stylesheet in place (the app
-    resolves its web tree from its own location), so refuse to start from a
-    dirty tree: if it ever died mid-run, `git checkout -- web` recovers without
-    eating anyone's work."""
+def target_of(filename: str) -> Path:
+    """Mutation paths are relative to web/, except backend ones written app/..."""
+    return (ROOT / filename) if filename.startswith("app/") else WEB / filename
+
+
+def _clean(targets) -> bool:
+    """This tool edits files in place, so refuse to touch one that already
+    differs from HEAD: if a run ever died midway, `git checkout -- <file>`
+    recovers it without eating anyone's work."""
     import subprocess
 
-    out = subprocess.run(["git", "status", "--porcelain", "--", "web"],
-                         cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    if out:
-        print("refusing to run: web/ has uncommitted changes\n" + out)
-        print("commit or stash first — this tool temporarily edits those files")
-        return False
-    return True
+    ok = True
+    for target in sorted(set(targets), key=str):
+        rel = target.relative_to(ROOT)
+        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(rel)],
+                                 cwd=ROOT, capture_output=True, text=True)
+        if tracked.returncode != 0:
+            print(f"refusing to run: {rel} is not tracked by git")
+            ok = False
+            continue
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", str(rel)],
+                               cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        if dirty:
+            print(f"refusing to run: {rel} has uncommitted changes\n{dirty}")
+            ok = False
+    if not ok:
+        print("commit or stash first — this tool temporarily edits these files")
+    return ok
 
 
 def apply_and_test(filename, old, new, page, expect, keep_on_miss=False):
@@ -180,7 +212,7 @@ def apply_and_test(filename, old, new, page, expect, keep_on_miss=False):
 
     Restores the file unless the suite missed the bug and keep_on_miss is set,
     in which case the mutated tree is left behind to be inspected."""
-    target = WEB / filename
+    target = target_of(filename)
     original = target.read_text()
     if old not in original:
         return False, f"mutation target not found in {filename}: {old[:60]!r}"
@@ -219,7 +251,7 @@ def main(argv: list[str]) -> int:
         for m in MUTATIONS:
             print(f"  {m[0]}")
         return 2
-    if not _clean_web():
+    if not _clean([target_of(f) for _, f, *_ in selected]):
         return 2
 
     results = []
@@ -237,7 +269,7 @@ def main(argv: list[str]) -> int:
         for n in missed:
             print(f"  - {n}")
         if keep_on_miss:
-            print("\nthe last mutated file was left in place; reset with: git checkout -- web")
+            print("\nthe last mutated file was left in place; reset it with git checkout")
         return 1
     print("the UI suite detects every injected regression; the tree is back at HEAD")
     return 0

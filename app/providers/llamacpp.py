@@ -369,16 +369,30 @@ class LlamaCpp(Provider):
     # it again. See docs/PORTAL_PLAN.md §4.4.
 
     def update_status(self) -> dict:
-        """Everything the dashboard's release bubble needs."""
+        """Everything the dashboard's release bubble needs.
+
+        Each release carries its size and an ``active`` flag: the dashboard lists
+        builds in one dropdown and offers to delete the selected one, so the page
+        needs to know which entry is locked and what deleting it would free."""
         reg = releases()
         current = reg.get("current")
-        entry = next((r for r in reg.get("releases", [])
-                      if r.get("name") == current), None)
+        known = []
+        for r in reg.get("releases", []):
+            e = dict(r)
+            e["active"] = e.get("name") == current
+            size = release_size(e.get("path"))
+            e["size_bytes"] = size
+            e["size_mb"] = round(size / 1048576, 1) if size is not None else None
+            known.append(e)
+        active = next((e for e in known if e["active"]), None) or {}
         return {
             "current": current,
-            "current_commit": (entry or {}).get("commit"),
+            "current_commit": active.get("commit"),
+            "current_size_bytes": active.get("size_bytes"),
             "repo_head": _git_head(paths.LLAMA_REPO),
-            "releases": reg.get("releases", []),
+            "releases": known,
+            "release_count": len(known),
+            "total_bytes": sum(e["size_bytes"] or 0 for e in known),
             "vulkan_sdk": str(paths.VULKAN_SDK),
             "binary": _binary_version(),
             "source": str(paths.LLAMA_REPO),
@@ -547,6 +561,73 @@ class LlamaCpp(Provider):
                 raise RuntimeError(f"router not healthy after rollback to {release}")
         return {"status": "success", "release": release, "restarted": restart}
 
+    def delete_release(self, release: str, log=print) -> dict:
+        """Delete a **non-current** release directory and forget it from the
+        registry. This is the one thing the portal does to disk permanently, so
+        every guard is a refusal, not a warning:
+
+        * the name must be in the registry — the registry is the only source of
+          paths, so an API caller cannot aim the delete anywhere;
+        * the current release is untouchable (the router runs from it) and so is
+          any release the ``~/ai/bin`` farm still points at, even if a
+          hand-edited registry claims otherwise;
+        * the path must live under ``~/ai/releases``;
+        * no update job may be running (one could be building into it).
+
+        The registry is copied to the rollback dir first, and the audit log gets
+        an event with the size freed.
+        """
+        if (updater.latest_job(self.key) or {}).get("status") == "running":
+            raise ValueError("an update job is running — try again when it finishes")
+
+        reg = releases()
+        entry = next((r for r in reg.get("releases", [])
+                      if r.get("name") == release), None)
+        if entry is None:
+            known = ", ".join(r.get("name", "?") for r in reg.get("releases", []))
+            raise ValueError(f"unknown release {release!r} (known: {known or 'none'})")
+        if reg.get("current") == release:
+            raise ValueError(f"{release} is the current build — switch to another "
+                             f"build before deleting it")
+
+        rel_dir = Path(entry.get("path") or "")
+        root = paths.RELEASES.resolve()
+        if not rel_dir.is_dir():
+            raise ValueError(f"release directory missing: {rel_dir}")
+        resolved = rel_dir.resolve()
+        if resolved.parent != root or resolved == root:
+            raise ValueError(f"refusing to delete outside {root}: {resolved}")
+
+        # the farm, not the registry, is the truth about what is executing: the
+        # links point *into* a release directory, so match containment, not
+        # equality — a link to .../llama.cpp-b1/llama-server holds b1
+        held = sorted(l.name for l in (paths.AI_BIN.glob("*") if paths.AI_BIN.is_dir() else [])
+                      if l.is_symlink() and _points_into(_link_target(l), resolved))
+        if held:
+            raise ValueError(f"~/ai/bin still points at {resolved} "
+                             f"({', '.join(held)}) — not deleting")
+
+        size = release_size(resolved, force=True) or 0
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        rb = paths.ROLLBACK_DIR / f"llamacpp-delete-{stamp}"
+        rb.mkdir(parents=True, exist_ok=True)
+        (rb / "releases.json").write_text(json.dumps(reg, indent=2) + "\n")
+        (rb / "note.txt").write_text(
+            f"deleted release {release} ({resolved}, "
+            f"{size / 1048576:.1f} MiB, commit {(entry.get('commit') or '')[:12]}, "
+            f"built {entry.get('built_at')}) at {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"registry before deletion is releases.json\n")
+
+        shutil.rmtree(resolved)
+        reg["releases"] = [r for r in reg.get("releases", [])
+                           if r.get("name") != release]
+        paths.RELEASES_JSON.write_text(json.dumps(reg, indent=2) + "\n")
+        db.set_release_active(self.key, release, active=False)
+        log(f"deleted {resolved} ({size / 1048576:.1f} MiB freed); "
+            f"{len(reg['releases'])} release(s) remain")
+        return {"status": "success", "deleted": release, "freed_bytes": size,
+                "remaining": len(reg["releases"]), "note_dir": str(rb)}
+
     # ------------------------------------------------------------ internals
 
     def _resolve(self, target: str, log) -> str:
@@ -688,6 +769,53 @@ class LlamaCpp(Provider):
 # ------------------------------------------------------------------ helpers
 
 _VER_RE = re.compile(r"build (\d+), commit ([0-9a-f]{7,40})")
+
+
+def _link_target(link: Path) -> Path | None:
+    """Where a symlink points, or None if it is dangling or unreadable."""
+    try:
+        return link.resolve(strict=True)
+    except OSError:
+        return None
+
+
+def _points_into(target: Path | None, directory: Path) -> bool:
+    return bool(target) and (target == directory or directory in target.parents)
+
+
+# Release directories are immutable once built, so their size is worth caching:
+# the dashboard polls the release list and a size walk over a dozen builds on a
+# busy disk should not ride along with every poll.
+_SIZE_CACHE: dict[str, tuple[float, int | None]] = {}
+_SIZE_TTL = 300.0
+
+
+def release_size(path, force: bool = False) -> int | None:
+    """Bytes under a release directory (recursive), or None if it is missing."""
+    if not path:
+        return None
+    p = Path(path)
+    if not p.is_dir():
+        return None
+    key = str(p)
+    now = time.time()
+    hit = _SIZE_CACHE.get(key)
+    if hit and not force and now - hit[0] < _SIZE_TTL:
+        return hit[1]
+    total = 0
+    try:
+        for dirpath, _dirs, files in os.walk(p):
+            for f in files:
+                try:
+                    fp = Path(dirpath) / f
+                    if not fp.is_symlink():
+                        total += fp.stat().st_size
+                except OSError:
+                    continue    # raced with a build; the next refresh sees it
+    except OSError:
+        return None
+    _SIZE_CACHE[key] = (now, total)
+    return total
 
 
 def releases() -> dict:

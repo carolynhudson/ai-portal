@@ -15,3 +15,6 @@ portal.auth.json
 # UI test harness dependencies (installed by scripts/check-ui.sh)
 tests/ui/node_modules/
 tests/ui/package-lock.json
+
+# Drop a screenshot here to talk about it; it is not part of the repo
+/*.png

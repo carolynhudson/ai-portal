@@ -6,10 +6,12 @@
     "for every page automatically; this file only adds what cannot be derived:",
     "which endpoints a page must have called, which tabs form a group, which",
     "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app — test_ui_integration",
+    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
     "fails if the app serves an HTML page with no spec."
   ],
-  "blockMutations": [".*"],
+  "blockMutations": [
+    ".*"
+  ],
   "allowHttpErrors": [],
   "expectInert": [],
   "fixtures": [
@@ -52,8 +54,11 @@
         "#update-huggingface",
         "#update-python",
         "#update-gpu",
-        "#rollback-select",
-        "#upd-btn"
+        "#build-select",
+        "#upd-btn",
+        "#build-count",
+        "#switch-build-btn",
+        "#delete-build-btn"
       ],
       "expectEnabled": [
         "#update-llamacpp button.btn-primary-sm",
@@ -61,6 +66,53 @@
         "#comfy-upd-btn",
         "#hf-upd-btn",
         ".update-tab"
+      ],
+      "expectAbsent": [
+        "#upd-releases",
+        "#upd-sdk"
+      ],
+      "expectDisabled": [
+        "#switch-build-btn",
+        "#delete-build-btn"
+      ],
+      "_selectCases_comment": [
+        "The delete button's entire safety story is which selection unlocks",
+        "it: the build the router is running must never be deletable or",
+        "switchable to, and any other stored build must be both."
+      ],
+      "selectCases": [
+        {
+          "select": "#build-select",
+          "note": "current build is locked",
+          "choose": {
+            "labelContains": "current"
+          },
+          "expectDisabled": [
+            "#switch-build-btn",
+            "#delete-build-btn"
+          ]
+        },
+        {
+          "select": "#build-select",
+          "note": "a stored build is unlocked",
+          "choose": {
+            "labelNotContaining": "current"
+          },
+          "expectEnabled": [
+            "#switch-build-btn",
+            "#delete-build-btn"
+          ],
+          "expectDisabled": [],
+          "then_click": [
+            "#switch-build-btn",
+            "#delete-build-btn"
+          ],
+          "_then_click_comment": [
+            "Destructive endpoints behind a selection-dependent button are clicked",
+            "here, against a known selection; the sweep only reaches them in whatever",
+            "state the select was left in."
+          ]
+        }
       ],
       "_fixtures_comment": [
         "GET fixtures for the update tabs: they make the deploy/rollback buttons",
@@ -86,23 +138,64 @@
               "stale": false
             },
             "releases": [
-              { "name": "llama.cpp-b10913", "commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5", "built_at": "2026-09-01T10:00:00" },
-              { "name": "llama.cpp-b10900", "commit": "1111111111111111111111111111111111111111", "built_at": "2026-08-01T10:00:00" },
-              { "name": "llama.cpp-b10888", "commit": "2222222222222222222222222222222222222222", "built_at": "2026-07-01T10:00:00" }
+              {
+                "name": "llama.cpp-b10913",
+                "commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
+                "built_at": "2026-09-01T10:00:00",
+                "active": true,
+                "path": "/home/tester/ai/releases/llama.cpp-b10913",
+                "size_bytes": 440401920,
+                "version": "10913"
+              },
+              {
+                "name": "llama.cpp-b10900",
+                "commit": "1111111111111111111111111111111111111111",
+                "built_at": "2026-08-01T10:00:00",
+                "active": false,
+                "path": "/home/tester/ai/releases/llama.cpp-b10900",
+                "size_bytes": 440401920,
+                "version": "10900"
+              },
+              {
+                "name": "llama.cpp-b10888",
+                "commit": "2222222222222222222222222222222222222222",
+                "built_at": "2026-07-01T10:00:00",
+                "active": false,
+                "path": "/home/tester/ai/releases/llama.cpp-b10888",
+                "size_bytes": 440401920,
+                "version": "10888"
+              }
             ],
-            "job": null
+            "job": null,
+            "release_count": 3,
+            "total_bytes": 1321205760
           }
         },
         {
           "path": "^/api/updates/comfyui$",
           "body": {
             "commit": "abc1234567890abcdef1234567890abcdef123456",
-            "remote": { "remote_head": "9999999fffffff000000000000000000000000", "behind": 3, "update_available": true },
+            "remote": {
+              "remote_head": "9999999fffffff000000000000000000000000",
+              "behind": 3,
+              "update_available": true
+            },
             "recent": [
-              { "sha": "abc1234", "subject": "fix something", "date": "2026-09-01" },
-              { "sha": "def5678", "subject": "another commit", "date": "2026-08-20" }
+              {
+                "sha": "abc1234",
+                "subject": "fix something",
+                "date": "2026-09-01"
+              },
+              {
+                "sha": "def5678",
+                "subject": "another commit",
+                "date": "2026-08-20"
+              }
             ],
-            "venv": { "python": "3.12.6", "torch": "2.8.0" },
+            "venv": {
+              "python": "3.12.6",
+              "torch": "2.8.0"
+            },
             "job": null
           }
         },
@@ -117,22 +210,34 @@
             "python_portal": "3.12.6",
             "cache": "/home/tester/.cache/huggingface",
             "cache_size": 1234567890,
-            "repos": [{ "name": "models--x--y" }],
+            "repos": [
+              {
+                "name": "models--x--y"
+              }
+            ],
             "pypi_latest": "1.0.0",
             "stale": false,
             "update_available": true
           }
         }
       ],
-      "expectStylesheets": ["/static/tabs.css"],
+      "expectStylesheets": [
+        "/static/tabs.css"
+      ],
       "tabGroups": [
-        { "tabs": ".update-tab", "panels": ".update-tab-content", "expectTabs": 5, "expectPanels": 5 }
+        {
+          "tabs": ".update-tab",
+          "panels": ".update-tab-content",
+          "expectTabs": 5,
+          "expectPanels": 5
+        }
       ],
       "requireConfirmFor": [
         "^/api/services/llamacpp/(stop|restart)$",
         "^/api/services/comfyui/(stop|restart)$",
         "^/api/updates/llamacpp$",
         "^/api/updates/llamacpp/rollback$",
+        "^/api/updates/llamacpp/delete$",
         "^/api/updates/comfyui$",
         "^/api/updates/hf$"
       ]
@@ -153,9 +258,16 @@
         "#add-dir",
         "#add-cat"
       ],
-      "expectStylesheets": ["/static/tabs.css"],
+      "expectStylesheets": [
+        "/static/tabs.css"
+      ],
       "tabGroups": [
-        { "tabs": ".model-tab", "panels": ".model-tab-content", "expectTabs": 2, "expectPanels": 2 }
+        {
+          "tabs": ".model-tab",
+          "panels": ".model-tab-content",
+          "expectTabs": 2,
+          "expectPanels": 2
+        }
       ],
       "fixtures": [
         {
@@ -169,7 +281,10 @@
                 "downloads": 1234,
                 "likes": 56,
                 "pipeline_tag": "text-generation",
-                "tags": ["gguf", "llama"],
+                "tags": [
+                  "gguf",
+                  "llama"
+                ],
                 "has_gguf": true
               },
               {
@@ -177,7 +292,9 @@
                 "downloads": 99,
                 "likes": 4,
                 "pipeline_tag": "text-to-image",
-                "tags": ["safetensors"],
+                "tags": [
+                  "safetensors"
+                ],
                 "has_safetensors": true
               }
             ]
@@ -190,15 +307,27 @@
       "name": "metrics",
       "path": "/metrics",
       "expectTitle": "Metrics",
-      "expectRequests": ["/api/metrics"],
-      "expectVisible": ["#chart", "#cpu", "#mem", "#load", "#gpu", "#mstate"],
+      "expectRequests": [
+        "/api/metrics"
+      ],
+      "expectVisible": [
+        "#chart",
+        "#cpu",
+        "#mem",
+        "#load",
+        "#gpu",
+        "#mstate"
+      ],
       "tabGroups": []
     },
     {
       "name": "settings",
       "path": "/settings",
       "expectTitle": "Settings",
-      "expectRequests": ["/api/settings/services", "/api/network"],
+      "expectRequests": [
+        "/api/settings/services",
+        "/api/network"
+      ],
       "expectVisible": [
         "#ld-lib-path",
         "#svc-ports",
@@ -216,7 +345,11 @@
         "#key-state",
         "#key-body"
       ],
-      "expectEnabled": ["#save-llamacpp", "#ld-lib-path", "#bind-llamacpp"],
+      "expectEnabled": [
+        "#save-llamacpp",
+        "#ld-lib-path",
+        "#bind-llamacpp"
+      ],
       "blockMutations": [
         "^/api/services/",
         "^/api/updates/",
@@ -237,7 +370,11 @@
       "auth": false,
       "expectTitle": "Sign in",
       "expectRequests": [],
-      "expectVisible": ["form[action='/login']", "input[name=password]", "button[type=submit]"],
+      "expectVisible": [
+        "form[action='/login']",
+        "input[name=password]",
+        "button[type=submit]"
+      ],
       "tabGroups": []
     }
   ]
