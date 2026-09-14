@@ -403,14 +403,26 @@ tests cannot see this, so the suite drives the pages.
   requests can be asserted, `requireConfirmFor`.
 - `tests/ui_sandbox.py` — the sandbox (temp `AI_PORTAL_HOME`, `tests/ui/bin`
   shims, dead outbound proxy) and a `__main__` for driving one page by hand.
-- `tests/ui/mutation_check.py` — injects fifteen realistic regressions (renamed
+- `tests/ui/mutation_check.py` — injects seventeen realistic regressions (renamed
   id, deleted function, unparseable block, renamed endpoint, removed panel,
-  missing confirmation ×2, wrong request field, emptied handler, and six tab
-  geometry breakages, §6.7) and requires all fifteen to fail the suite with a
-  message naming the right thing. This is what keeps the harness honest: two of
-  the first nine were missed when it first ran, and both were holes in the tests.
-  It edits the real `web/` tree temporarily, so it refuses to start unless that
-  tree is clean, and restores after every mutation.
+  missing confirmation ×2, wrong request field, emptied handler, six tab geometry
+  breakages §6.7, and the two build-lockout breakages §6.8) and requires every one
+  to fail the suite with a message naming the right thing. This is what keeps the
+  harness honest: it has caught itself four times — two of the first nine missed,
+  then a settings mutation and a dashboard one, each a hole in the tests rather
+  than in the app. It edits real files temporarily (templates, stylesheet, and
+  `app/` for an endpoint-level bug), refuses to start unless those files are
+  clean, and restores after every mutation.
+- **The harness checks its own shape.** Extracting the per-control rules out of
+  the sweep into `judgeControl()` moved the confirm-gate and dead-control checks
+  and silently left behind the four before them — uncaught errors,
+  `console.error`, element-id misses, endpoint errors. Nothing failed: the
+  surviving checks were loud enough that 16/17 mutations still got caught while a
+  page passed with six 400s in it. `run.mjs` now asserts that `judgeControl`
+  still contains every rule it is supposed to apply, and endpoint errors that no
+  control claimed fail the page on their own. An assertion that vanished with a
+  refactor is the failure mode no app-side mutation can see, so the harness
+  watches itself.
 - `scripts/check-ui.sh` — the single entry point (`--ui-only`, `--mutations`),
   wired into the pre-commit hook installed by `scripts/install-hooks.sh`.
 
