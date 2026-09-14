@@ -237,6 +237,42 @@ MUTATIONS = [
     # (a template gaining an hx-* attribute is caught by
     # test_ui_contract.test_templates_carry_no_htmx_attributes, not by the DOM
     # harness, so it is not a mutation for this tool)
+    (
+        # the health pane exists so something gets acted on; an empty list is the
+        # failure mode that matters most, and it looks like a quiet machine
+        "health pane stops listing what needs attention",
+        "templates/health.html",
+        "{% for a in advisories %}",
+        "{% for a in [] %}",
+        "health",
+        "amdrocm-base9.9",
+    ),
+    (
+        "health pane loses the model-store card",
+        "templates/health.html",
+        '<div class="card" id="model-store">',
+        '<div class="card" id="store-model">',
+        "health",
+        "#model-store",
+    ),
+    (
+        "disk sizes arrive as raw byte counts",
+        "templates/health.html",
+        "{{ t.bytes|sz }}",
+        "{{ t.bytes }}",
+        "health",
+        "#disk table td.mono",
+    ),
+    (
+        # the ROCm coupling table is the reason the pane exists: without the
+        # installed version every advisory about version drift is guesswork
+        "health pane loses the installed ROCm version",
+        "templates/health.html",
+        '<b>{{ rocm.installed or "—" }}</b>',
+        '<b>"—"</b>',
+        "health",
+        "9.9.0",
+    ),
 ]
 
 

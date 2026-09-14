@@ -378,11 +378,14 @@
         {"_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."},
         {"selector": "#attention h3", "contains": "Needs attention"},
         {"selector": "#attention", "contains": "amdrocm-base9.9"},
-        {"selector": "#gpu-stack", "contains": "ROCm installed (apt)"},
+        {"_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."},
+        {"selector": "#gpu-stack .kv", "matches": "ROCm installed \\(apt\\)\\s*9\\.9\\.0"},
         {"selector": "#deployed", "contains": "ROCm it was built for"},
         {"selector": "#vulkan", "contains": "latest known upstream"},
         {"selector": "#updates", "contains": "never runs"},
         {"selector": "#disk", "contains": "cmake build trees"},
+        {"_comment": "Sizes must arrive formatted: the tree table exists to be compared at a glance, and 581000000000 is comparable to nothing."},
+        {"selector": "#disk table td.mono", "matches": "\\d(\\.\\d)?[KMGTP]"},
         {"selector": "#model-store", "contains": "invisible to llama.cpp"}
       ],
       "tabGroups": []
