@@ -277,6 +277,27 @@ for (const sel of spec.expectVisible || [])
 for (const sel of spec.expectAbsent || [])
   if (win.document.querySelector(sel)) fail(`element should not exist: ${sel}`);
 
+// A live region must show *data*, not merely exist: a panel that renders "—"
+// forever passes a visibility check and tells the user nothing. `contains` is
+// matched against any element of the selector; `minCount` pins how many there
+// are (a slot board with no rows is the classic failure).
+for (const t of spec.expectText || []) {
+  if (!t.selector) {                        // annotation-only entry
+    if (!t._comment) fail(`expectText entry has no selector: ${JSON.stringify(t)}`);
+    continue;
+  }
+  const els = Array.from(win.document.querySelectorAll(t.selector));
+  const seen = () => els.slice(0, 3)
+    .map((el) => JSON.stringify((el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90)));
+  if (!els.length) { fail(`expected text region missing: ${t.selector}`); continue; }
+  if (t.minCount != null && els.length < t.minCount)
+    fail(`${t.selector}: ${els.length} element(s), expected at least ${t.minCount}`);
+  if (t.contains != null && !els.some((el) => (el.textContent || "").includes(t.contains)))
+    fail(`${t.selector}: nothing contains ${JSON.stringify(t.contains)} (saw ${seen().join(", ")})`);
+  if (t.matches != null && !els.some((el) => new RegExp(t.matches).test(el.textContent || "")))
+    fail(`${t.selector}: nothing matches /${t.matches}/ (saw ${seen().join(", ")})`);
+}
+
 // A control the user is meant to use must not be stuck disabled.
 report.disabledControls = [];
 for (const el of listInteractables(ctx)) {

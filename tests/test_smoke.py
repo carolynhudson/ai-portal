@@ -80,9 +80,15 @@ def test_router_endpoint():
     assert r.status_code == 200
     body = r.json()
     # Every key the dashboard reads must be present, whether the router is up or down.
-    assert set(body) >= {"host", "service", "web", "api", "loaded", "tps", "activity"}
+    assert set(body) >= {"host", "service", "web", "api", "loaded", "tps",
+                         "pulse", "totals", "completions", "memory"}
     assert "state" in body["service"]
-    assert isinstance(body["activity"], list)
+    # the raw journal tail is opt-in: this endpoint is polled every couple of
+    # seconds and the tail is most of the bytes (§6.9)
+    assert "activity" not in body
+    assert isinstance(r.json()["pulse"]["slots"], list)
+    raw = c.get("/api/router?raw=1")
+    assert raw.status_code == 200 and isinstance(raw.json()["activity"], list)
 
 
 def test_dashboard_renders_router_hero():

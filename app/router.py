@@ -10,7 +10,11 @@ from __future__ import annotations
 import re
 import time
 
-from .core import db, llamakey, paths, serviceconf, systemd
+from .core import db, llamakey, paths, rlog, serviceconf, systemd
+
+# the hero's "last N minutes" window and the width of its time bins
+_PULSE_WINDOW_S = 420
+_PULSE_BIN_S = 5
 
 _PROBE_TIMEOUT = 3.0
 _TTL = 2.0
@@ -206,7 +210,9 @@ def _parse(lines: list[str]) -> dict:
                 open_comps.pop(slot, None)
         events.append({"kind": _classify(ln), "text": ln.rstrip()})
     return {
-        "events": events[-80:],
+        # the hero shows curated attention items by default; this raw tail is
+        # only what the "all lines" view reads, so it stays small
+        "events": events[-60:],
         "tps_recent": tps[-90:],
         "tps_latest": tps[-1] if tps else None,
         "loaded": loaded,
@@ -217,7 +223,12 @@ def _parse(lines: list[str]) -> dict:
 def _build() -> dict:
     url_base = base()
     svc = systemd.unit_state(paths.ROUTER_UNIT)
-    parsed = _parse(systemd.journal_tail(paths.ROUTER_UNIT, _JOURNAL_LINES))
+    # one journal read, two readers: `_parse` for the raw activity tail, `rlog`
+    # for the live picture (per-slot phase, throughput history, model switches)
+    tail = systemd.journal_tail_timed(paths.ROUTER_UNIT, _JOURNAL_LINES)
+    parsed = _parse([msg for _, msg in tail])
+    pulse = rlog.parse(tail, window_s=_PULSE_WINDOW_S, bin_s=_PULSE_BIN_S,
+                       now_wall=time.time())
     api = _api()
     prom = _fetch_metrics(api.get("loaded")) if db.get_setting("router_metrics", True) else {}
     bind = serviceconf.service_ports()["llamacpp"]
@@ -240,11 +251,24 @@ def _build() -> dict:
         "completions": parsed["completions"],
         "memory": systemd.service_memory(paths.ROUTER_UNIT),
         "activity": parsed["events"],
+        # what the hero renders: lanes, bins, model switching, attention
+        "pulse": pulse,
     }
 
 
-def snapshot() -> dict:
-    """A fresh (or <2s-old cached) probe of the router, for the dashboard."""
+def snapshot(raw: bool = False) -> dict:
+    """A fresh (or <2s-old cached) probe of the router, for the dashboard.
+
+    ``raw=False`` drops the raw journal tail: the hero polls every few seconds,
+    and 60 log lines are most of the payload while the pane that shows them is
+    switched off by default. Ask ``?raw=1`` when the raw tail is actually being
+    read.
+    """
+    view = _snapshot()
+    return view if raw else {k: v for k, v in view.items() if k != "activity"}
+
+
+def _snapshot() -> dict:
     global _cache
     now = time.time()
     if now - _cache[0] >= _TTL:
@@ -260,5 +284,6 @@ def snapshot() -> dict:
                                        "generated_tokens": None,
                                        "enabled": False},
                             "completions": [], "memory": None,
-                            "activity": [], "error": str(e)})
+                            "activity": [], "pulse": rlog.parse([]),
+                            "error": str(e)})
     return _cache[1]

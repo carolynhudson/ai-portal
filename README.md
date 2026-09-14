@@ -83,13 +83,14 @@ app/
   core/              # paths · config(auth) · db(sqlite) · systemd · units (env file +
                      # wrapper + unit generation) · serviceenv · serviceconf · network ·
                      # llamakey · ratelimit · logsetup · updater · modeladd · modelmeta
+                     # · rlog (router journal -> live slots/throughput)
   providers/         # llamacpp.py · comfyui.py · huggingface.py  (one class per tool)
   metrics.py         # /proc + rocm-smi host metrics (stdlib)
   router.py          # live llama.cpp router state (dashboard hero)
 web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
 deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
 scripts/dev-run.sh   # source tree on :8091, next to the service
-tests/               # 136 pytest tests, all on a throwaway AI_PORTAL_HOME
+tests/               # 183 pytest tests, all on a throwaway AI_PORTAL_HOME
   ui/                # DOM harness (jsdom): drives every control on every page
 ```
 
@@ -154,7 +155,9 @@ confirmation); a control unlocked by a selection is asserted in that selection
 (`selectCases`, and `then_click` to drive it against a known choice); a final
 coverage pass fails if any visible control was never driven. `tests/test_ui_contract.py` is the fast static half (every inline
 `<script>` must parse, every `onclick` must name a function that exists, every
-`fetch` target must be a registered route, and the tab/panel junction in
+`fetch` target must be a registered route, `expectText` requires live regions to
+show *data* rather than merely exist (a slot board stuck on `—` has a working id
+and tells you nothing), and the tab/panel junction in
 `/static/tabs.css` holds — asserted as CSS text there, and measured through the
 DOM by the harness, since a frame edge meeting its panel is geometry, not taste).
 

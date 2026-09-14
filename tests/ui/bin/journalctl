@@ -1,12 +1,77 @@
 #!/usr/bin/env bash
-# journalctl stand-in for the UI test sandbox: a fixed, realistic tail so the
-# dashboard activity feeds render content (and the log-classification code in
-# app/router.py runs) without depending on this machine's journal.
+# journalctl stand-in for the UI test sandbox.
+#
+# Two jobs:
+#   1. never touch this machine's journal
+#   2. answer with a journal that looks like a *running llama.cpp router*, so
+#      the dashboard's pulse pane (lanes, throughput bins, model switches,
+#      attention feed) renders real shapes in tests instead of an empty box
+#
+# Lines carry llama.cpp's own `min.sec.ms.us LEVEL ` prefix (common/log.cpp:
+# time since process start), because that is what the app parses. With
+# `-o short-iso` each line additionally gets journalctl's wall-clock prefix,
+# which is what makes "that slot went quiet 4 minutes ago" computable.
 echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
-cat <<'EOF'
-llama_server: server listening on http://0.0.0.0:8080
-llama_server: model loaded: Qwen3-8B-Q4_K_M.gguf (5.2 GiB)
-llama_server: POST /v1/chat/completions 200 - in 4317, out 512, 31.42 t/s
-llama_server: POST /v1/completions 500 - upstream error: context limit
-EOF
+
+FMT=cat
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) FMT="${2:-cat}"; shift 2 ;;
+    -n) shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# i -> seconds since the router started; the newest line is 2s old so the hero
+# sees one slot mid-generation and the other freshly truncated
+START=54000
+STEP=3
+
+emit() {
+  local i=0 line
+  while IFS= read -r line; do
+    local t=$(( START + i * STEP ))
+    local m=$(( t / 60 )) s=$(( t % 60 ))
+    if [[ "$FMT" == short-iso* ]]; then
+      local age=$(( (TOTAL - i) * STEP ))
+      printf '%s Halo ai-llamacpp.sh[81606]: %s.%02d.000.000 %s\n' \
+        "$(date -d "@$(( EPOCH - age ))" --iso-8601=seconds)" "$m" "$s" "$line"
+    else
+      printf '%s.%02d.000.000 %s\n' "$m" "$s" "$line"
+    fi
+    i=$(( i + 1 ))
+  done <<'LOG'
+I srv  llama_server: starting server in router mode. models will be automatically loaded on-demand
+I srv   load_models: Loaded 16 local model presets from /home/tester/ai/models/llama
+I srv  proxy_reques: proxying request to model Qwen3-8B-Q4_K_M on port 55601
+I slot get_availabl: id  1 | task -1 | selected slot by LCP similarity, f_sim_best = 0.996 (> 0.100 thold), f_keep = 0.920
+I slot launch_slot_: id  1 | task 282100 | processing task, is_child = 0
+I slot print_timing: id  1 | task 282100 | prompt processing, n_tokens = 2048, progress = 0.62, t = 3.10 s / 660.00 tokens per second
+I srv  proxy_reques: proxying request to model Qwen3-8B-Q4_K_M on port 55601
+I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 0.120 (> 0.100 thold), f_keep = 0.140
+I slot launch_slot_: id  3 | task 282101 | processing task, is_child = 0
+I slot print_timing: id  1 | task 282100 | n_gen =    48, tg =   6.10 t/s, tg_3s =   6.20 t/s
+I slot print_timing: id  3 | task 282101 | prompt processing, n_tokens = 900, progress = 0.30, t = 3.02 s / 298.00 tokens per second
+W find_slot: non-consecutive token position 513 after 511 for sequence 7788 with 2 slots
+I slot print_timing: id  1 | task 282100 | n_gen =    66, tg =   6.05 t/s, tg_3s =   6.00 t/s
+I slot print_timing: id  3 | task 282101 | n_gen =    12, tg =   5.80 t/s, tg_3s =   5.80 t/s
+W srv alloc: 0 - making room for prompt cache entry, removing oldest entry (size = 32.0 MiB)
+I slot      release: id  3 | task 282101 | stop processing: n_tokens = 8192, truncated = 1
+I slot print_timing: id  1 | task 282100 | n_gen =    84, tg =   6.02 t/s, tg_3s =   6.05 t/s
+I srv  proxy_reques: proxying request to model Qwen3-8B-Q4_K_M on port 55601
+E srv operator(): http client error: Connection handling canceled
+I slot print_timing: id  1 | task 282100 | n_gen =   102, tg =   6.01 t/s, tg_3s =   6.00 t/s
+I slot print_timing: id  1 | task 282100 | n_gen =   120, tg =   6.00 t/s, tg_3s =   6.00 t/s
+LOG
+}
+
+TOTAL=21
+EPOCH=$(date +%s)
+
+if [[ "$FMT" == json ]]; then
+  # journalctl -o json is not used by the portal; emit nothing rather than
+  # something that would parse as a log line
+  exit 0
+fi
+emit
 exit 0

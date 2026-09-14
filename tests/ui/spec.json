@@ -58,7 +58,15 @@
         "#upd-btn",
         "#build-count",
         "#switch-build-btn",
-        "#delete-build-btn"
+        "#delete-build-btn",
+        "#pulse-lanes",
+        "#pulse-dot",
+        "#pulse-switch",
+        "#pulse-signals",
+        "#attention-toggle",
+        "#model-loaded",
+        "#pulse-sub",
+        "#tps-now"
       ],
       "expectEnabled": [
         "#update-llamacpp button.btn-primary-sm",
@@ -69,7 +77,8 @@
       ],
       "expectAbsent": [
         "#upd-releases",
-        "#upd-sdk"
+        "#upd-sdk",
+        "#lanes-none"
       ],
       "expectDisabled": [
         "#switch-build-btn",
@@ -240,6 +249,43 @@
         "^/api/updates/llamacpp/delete$",
         "^/api/updates/comfyui$",
         "^/api/updates/hf$"
+      ],
+      "expectText": [
+        {
+          "_comment": "The pulse pane has to say something a person can act on. These strings come from tests/ui/bin/journalctl, the sandbox's stand-in router journal: one slot mid-generation, one just truncated, two warnings and an error. Order matters for mutation reports: the most specific assertion of a given state comes first."
+        },
+        {
+          "selector": "#pulse-lanes .lane.s-generate .lane-detail",
+          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
+        },
+        {
+          "selector": "#pulse-lanes .lane",
+          "minCount": 2
+        },
+        {
+          "selector": "#pulse-lanes",
+          "contains": "generating"
+        },
+        {
+          "selector": "#pulse-lanes",
+          "contains": "context limit"
+        },
+        {
+          "selector": "#pulse-signals",
+          "contains": "requests"
+        },
+        {
+          "selector": "#tps-now",
+          "matches": "\\d"
+        },
+        {
+          "selector": "#router-feed .ln",
+          "contains": "prompt cache pressure"
+        },
+        {
+          "selector": "#attention-count",
+          "matches": "\\d"
+        }
       ]
     },
     {

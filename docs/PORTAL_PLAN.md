@@ -20,9 +20,9 @@ Companions:
 **Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
 **network exposure** + **Phase J steps 1, 4, 5, 6, 7** + **Phase L (UI
 integration tests)**.
-Green: 151 tests (`./scripts/check-ui.sh`), of which 9 drive the real pages in a
-DOM (see §6.6), plus the tab/panel geometry contract (§6.7) and the stored-build
-controls (§6.8).
+Green: 183 tests (`./scripts/check-ui.sh`), of which 9 drive the real pages in a
+DOM (see §6.6), plus the tab/panel geometry contract (§6.7), the stored-build
+controls (§6.8) and the router pulse (§6.9).
 
 **Phase L — UI integration tests (2026-09-13).** `tests/ui/` drives every
 interactable element of every page in jsdom against a sandboxed portal: 96
@@ -403,10 +403,12 @@ tests cannot see this, so the suite drives the pages.
   requests can be asserted, `requireConfirmFor`.
 - `tests/ui_sandbox.py` — the sandbox (temp `AI_PORTAL_HOME`, `tests/ui/bin`
   shims, dead outbound proxy) and a `__main__` for driving one page by hand.
-- `tests/ui/mutation_check.py` — injects seventeen realistic regressions (renamed
+- `tests/ui/mutation_check.py` — injects twenty-three realistic regressions (renamed
   id, deleted function, unparseable block, renamed endpoint, removed panel,
   missing confirmation ×2, wrong request field, emptied handler, six tab geometry
-  breakages §6.7, and the two build-lockout breakages §6.8) and requires every one
+  breakages §6.7, the two build-lockout breakages §6.8, and six pulse breakages
+  §6.9 — frozen lane states, an empty board, a stalled readout, parser rot on a
+  log spelling, and lost truncation/attention text) and requires every one
   to fail the suite with a message naming the right thing. This is what keeps the
   harness honest: it has caught itself four times — two of the first nine missed,
   then a settings mutation and a dashboard one, each a hole in the tests rather
@@ -532,6 +534,71 @@ however it was caused. It paid for itself immediately: the first version of the
 two new buttons shipped **without `onclick` attributes**, and the dead-control
 rule reported them instead of a green page.
 
+### 6.9 The router pulse: reading a log the way a person needs it (2026-09-13)
+
+The Status page's router card used to be a scrolling wall of lines that differ
+from each other only in numbers:
+
+```
+[55601] 905.38.610.130 I slot print_timing: id  1 | task 282178 | n_gen =  512, tg =   5.97 t/s, tg_3s =   6.02 t/s
+[55601] 905.41.614.660 I slot print_timing: id  1 | task 282178 | n_gen =  530, tg =   5.97 t/s, tg_3s =   5.99 t/s
+```
+
+A census of six hours of the live journal — 4,432 lines — said why that fails:
+**95% of the volume is three line shapes** (generation ticks every ~3 s, prompt
+read progress, and task summaries), and the lines that matter (a model being
+swapped in, a truncated answer, a cancelled request, cache eviction) were 0.3%
+of what was on screen. It also surfaced the fact that matters most on this box:
+the router runs `--models-max 1` over 16 models, so **a request for a different
+model stalls for a minute while weights load** — which looks exactly like a hang.
+
+What replaced it, and the rules behind it:
+
+1. **`app/core/rlog.py` parses, the browser draws.** One pure function turns the
+   journal tail into slots / throughput bins / model state / attention. It has
+   no I/O and no clock dependency, so the same log always yields the same
+   picture — which is why the chart shows history the moment the page opens
+   instead of after it has been sitting there.
+2. **llama.cpp's own timestamp is the monotonic clock, the journal is the wall
+   clock.** `common/log.cpp` stamps each line as `min.sec.ms.us` since process
+   start; `systemd.journal_tail_timed()` asks journalctl (`-o short-iso`) for a
+   real time per entry and hands the parser `(epoch, message)` pairs. Without
+   the epoch, "that slot went quiet 4 minutes ago" is uncomputable, because the
+   newest line of an idle router is *always* "just now" relative to itself.
+3. **Progress is only shown when llama.cpp states it.** A prompt read has a real
+   `progress = 0.42`; generation has no known target, so a running slot gets a
+   sweep, a token count and a speed — never a made-up percentage bar. (`/slots`
+   was tried: this build exposes `is_processing` and prompt counts but no
+   generated-token count, and its `n_predict` is the leftover of the last task.)
+4. **A model switch is the one thing shouted about.** `model name=X is not
+   loaded, loading...` / `waiting until model name=X is fully loaded...` /
+   `evicting idle LRU name=X` set `models.loading`, and it clears on the first
+   *slot activity* — deliberately **not** on `proxying request to model X`, since
+   that line is what *triggers* the load and clearing on it would hide the switch
+   exactly while the user is waiting for it.
+5. **A busy slot that stops talking is called out.** A running slot prints every
+   ~3 s; silence for >15 s while still marked busy means it is waiting on the
+   client, so the lane says `quiet 3m` with a hollow bar instead of a bar frozen
+   mid-flight.
+6. **Repeated notices fold into one line with a count** (`prompt cache pressure
+   — evicting the oldest cached context ×23`). Counters (`errors`, `warns`,
+   requests) are scoped to the same window the chart is drawn over, so a number
+   and the picture next to it always describe the same span of time.
+7. **Service state and controls are untouchable.** The card head — state pill,
+   unit name, bind mode, Web UI/API links, start/stop/restart — is unchanged and
+   asserted by `test_hero.py::test_service_state_and_controls_survive_the_redesign`.
+   The log pane shrank (240px → 112px) and shows attention only; `all lines`
+   switches it back to the raw tail for debugging.
+
+Tests: 22 parser tests over the real captured journal (`tests/fixtures/
+router_journal.log`) plus source-accurate rare lines; 10 page tests that render
+the template from a canned snapshot; `expectText` in the jsdom harness (new) so
+live regions must show *data*, not merely exist — the board must contain a
+`generating` row with `120 tok · 6.0 t/s`, and the attention pane must contain
+the cache-pressure line. `tests/ui/bin/journalctl` now emits a realistic router
+journal in both `-o cat` and `-o short-iso`, so the hero renders real shapes in
+a sandbox that cannot touch this machine.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -549,6 +616,7 @@ rule reported them instead of a green page.
 | J (mostly done, 2026-09-13) | Project reorg + deployment model: source repo vs `~/ai/ai-portal/` deployment, idempotent install/update script, portal as a real user service, logging system (levels via launch param), documented debug tooling (§0). Remaining: `app/main.py` route split, `tools/` migrations move | redeploy-from-git-SHA works and **verifies the running sha**; `dev-run.sh` runs alongside the service on 8091; log level changeable without code edits |
 | **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 15/15 injected regressions caught; found 3 real UI bugs (§6.6) |
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
+| **L.3 (done, 2026-09-13)** — router pulse | Status page reads the journal instead of showing it: per-slot lanes with real phases, throughput stacked by slot, model-switch banner, collapsed attention pane (§6.9) | "is it working, on what, how fast, anything wrong?" answered without reading a log line; 22 parser + 10 page tests; 6 new mutations; service controls provably untouched |
 | **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`

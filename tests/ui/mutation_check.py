@@ -171,6 +171,59 @@ MUTATIONS = [
         "dashboard",
         "top-left corner",
     ),
+    # --- the router pulse pane: lanes, throughput, attention -----------------
+    (
+        # the board renders once and then stops tracking the router: exactly the
+        # complaint the pane exists to fix, in new form
+        "slot board stops reporting what each slot is doing",
+        "templates/dashboard.html",
+        "    k[1].textContent = PHASE[s.state] || s.state;",
+        "    k[1].textContent = 'idle';",
+        "dashboard",
+        "generating",
+    ),
+    (
+        "throughput readout never fills in",
+        "templates/dashboard.html",
+        "  setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');",
+        "  setText('tps-now', '—');",
+        "dashboard",
+        "#tps-now",
+    ),
+    (
+        "lane board never rendered from the journal",
+        "templates/dashboard.html",
+        "    {% for s in p.get('slots', []) %}",
+        "    {% for s in [] and p.get('slots', []) %}",
+        "dashboard",
+        "at least 2",
+    ),
+    (
+        # llama.cpp changes a log spelling, the parser stops matching, and every
+        # slot silently looks idle
+        "generation lines no longer recognised (parser rot)",
+        "app/core/rlog.py",
+        'GEN_RE = re.compile(r"\\bn_gen\\s*=\\s*(\\d+),',
+        'GEN_RE = re.compile(r"\\bn_gne\\s*=\\s*(\\d+),',
+        "dashboard",
+        "#pulse-lanes .lane.s-generate",
+    ),
+    (
+        "a truncated answer stops being called out",
+        "app/core/rlog.py",
+        '                slot.truncated = bool(rm and rm.group(2) != "0")',
+        '                slot.truncated = False',
+        "dashboard",
+        "context limit",
+    ),
+    (
+        "attention items lose their text",
+        "app/core/rlog.py",
+        'attention.append({"level": level, "text": _clip(text),',
+        'attention.append({"level": level, "text": "",',
+        "dashboard",
+        "prompt cache pressure",
+    ),
     # (a template gaining an hx-* attribute is caught by
     # test_ui_contract.test_templates_carry_no_htmx_attributes, not by the DOM
     # harness, so it is not a mutation for this tool)

@@ -17,7 +17,7 @@
 .tps-row{display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap}
 .tps-big{font-size:22px;font-weight:700;color:var(--acc)}
 .tps-chart{flex:1;min-width:220px}
-.tps-chart canvas{height:48px;width:100%}
+.tps-chart canvas{height:52px;width:100%}
 .feed-head{margin:16px 0 6px;font-size:13px;text-transform:none;letter-spacing:.02em}
 .feed{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
       margin:0;max-height:240px;overflow-y:auto;font-family:ui-monospace,Menlo,Consolas,monospace;
@@ -40,7 +40,56 @@
 .sysline:empty{display:none}
 .badge{padding:2px 9px;border-radius:6px;border:1px solid var(--warn);color:var(--warn);font-size:12px}
 .pill.bad{background:rgba(248,81,73,.15);color:var(--bad)}
-.totals-row{display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+/* --- router pulse: what the GPU is doing right now ---------------------
+   The log said "is it working?" in 400 look-alike lines; this says it in four
+   rows, one per slot, plus one bar chart of who produced tokens when. */
+.pulse-top{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.pulse-model{display:flex;align-items:baseline;gap:9px;min-width:0;flex:1}
+.pulse-model-name{font-size:15px;font-weight:600;color:var(--fg);overflow-wrap:anywhere}
+.pulse-sub{font-size:12px}
+.pulse-lights{display:flex;align-items:center;gap:14px;font-size:13px}
+.pulse-lights .light-row{padding:0;font-size:13px}
+.pm-dot{width:9px;height:9px;border-radius:50%;background:var(--mut);flex:none}
+.pm-dot.busy{background:var(--acc);box-shadow:0 0 8px var(--acc);animation:pulse-dot 1.6s ease-in-out infinite}
+.pm-dot.load{background:var(--warn);box-shadow:0 0 8px var(--warn);animation:pulse-dot .9s ease-in-out infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.pm-dot,.lane-bar i,.spin{animation:none!important}}
+.switch-line{display:flex;align-items:center;gap:9px;margin:0 0 10px;padding:7px 10px;
+  border:1px solid var(--warn);border-radius:8px;background:rgba(210,153,34,.08);font-size:13px}
+.switch-line[hidden]{display:none}
+.spin{width:11px;height:11px;border-radius:50%;border:2px solid var(--warn);border-top-color:transparent;
+  animation:spin 1s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lanes{display:flex;flex-direction:column;gap:3px;margin:2px 0 12px}
+.lane{display:flex;align-items:center;gap:10px;font-size:13px;padding:2px 0}
+.lane-id{width:24px;flex:none;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--mut)}
+.lane-phase{width:112px;flex:none;text-transform:lowercase}
+.lane-bar{flex:1;height:7px;border-radius:4px;background:#0b0e13;overflow:hidden;min-width:60px}
+.lane-bar i{display:block;height:100%;width:0;border-radius:4px;background:var(--mut);
+  transition:width .45s ease}
+.lane.s-prompt .lane-phase{color:var(--warn)}
+.lane.s-prompt .lane-bar i{background:var(--warn)}
+.lane.s-generate .lane-phase{color:var(--acc)}
+.lane.s-generate .lane-bar i{background:linear-gradient(90deg,var(--acc),#8fd0ff,var(--acc));
+  background-size:200% 100%;animation:run 1.4s linear infinite}
+@keyframes run{to{background-position:-200% 0}}
+.lane.s-queued .lane-phase{color:var(--mut)}
+.lane.s-queued .lane-bar i{background:var(--mut);animation:pulse-dot 1.8s ease-in-out infinite}
+.lane.s-idle .lane-phase,.lane.s-idle .lane-detail{color:var(--mut)}
+.lane.stalled .lane-phase{color:var(--warn)}
+.lane.stalled .lane-bar i{background:transparent;box-shadow:inset 0 0 0 1px var(--warn)}
+.lane-detail{flex:none;max-width:52%;color:var(--mut);overflow-wrap:anywhere;text-align:right}
+.lane.trunc .lane-detail{color:var(--bad)}
+.lanes-none{font-size:13px;color:var(--mut);padding:4px 0}
+.pulse-signals{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);margin:2px 0 0}
+.pulse-signals b{color:var(--fg);font-weight:600}
+.feed-quiet{max-height:112px}
+.feed .ln .age{color:var(--mut)}
+.feed .ln b.ct{color:var(--warn);font-weight:700}
+.feed-head-row{display:flex;align-items:center;gap:10px}
+.feed-head-row .feed-head{margin:14px 0 6px}
+.feed-head-row .toggle{margin-left:auto}
+
 .totals-row .kv{margin:0}
 .totals-note{font-size:12px}
 .totals-note code{background:#0b0e13;padding:1px 5px;border-radius:4px}
@@ -72,31 +121,77 @@
     </div>
   </div>
 
-  <div class="hero-cols">
-    <div>
-      <div class="light-row">
-        <span class="light {{ 'on' if r.web.ok else 'off' }}" id="light-web"></span>
-        <a class="light-label" href="http://127.0.0.1:8080/" target="_blank" rel="noopener">Web UI</a>
-        <span class="mut" id="web-state">{{ ('ok · ' ~ r.web.ms ~ 'ms') if r.web.ok else 'down' }}</span>
-      </div>
-      <div class="light-row">
-        <span class="light {{ 'on' if r.api.ok else 'off' }}" id="light-api"></span>
-        <a class="light-label" href="http://127.0.0.1:8080/v1/models" target="_blank" rel="noopener">REST API</a>
-        <span class="mut" id="api-state">{{ ('ok · ' ~ r.api.ms ~ 'ms · ' ~ r.api.count ~ ' models') if r.api.ok else 'down' }}</span>
-      </div>
+  {# ---- the pulse: one row per slot, ordered by who worked last ---- #}
+  {% set p = r.pulse or {} %}
+  {% set m = p.get('models', {}) %}
+  <div class="pulse-top">
+    <div class="pulse-model">
+      <span class="pm-dot {{ 'load' if m.get('switching') else ('busy' if p.get('active_slots')) }}"
+            id="pulse-dot" aria-hidden="true"></span>
+      <span class="mut">loaded</span>
+      <span class="mono pulse-model-name" id="model-loaded">{{ r.loaded or 'nothing' }}</span>
+      <span class="mut pulse-sub" id="pulse-sub">
+        {{ p.get('slot_ids') | length or '—' }} slots{% if r.api.ok %} · {{ r.api.count }} on disk{% endif %}</span>
     </div>
-    <div>
-      <div class="kv"><span class="k">models available</span><span class="mono" id="model-count">{{ r.api.count if r.api.ok else '—' }}</span></div>
-      <div class="kv"><span class="k">loaded</span><span class="mono" id="model-loaded">{{ r.loaded or '—' }}</span></div>
+    <div class="pulse-lights">
+      <span class="light-row">
+        <span class="light {{ 'on' if r.web.ok else 'off' }}" id="light-web"></span>
+        <a href="http://127.0.0.1:8080/" target="_blank" rel="noopener">web</a>
+        <span class="mut" id="web-state">{{ ('ok · ' ~ r.web.ms ~ 'ms') if r.web.ok else 'down' }}</span>
+      </span>
+      <span class="light-row">
+        <span class="light {{ 'on' if r.api.ok else 'off' }}" id="light-api"></span>
+        <a href="http://127.0.0.1:8080/v1/models" target="_blank" rel="noopener">api</a>
+        <span class="mut" id="api-state">{{ ('ok · ' ~ r.api.ms ~ 'ms') if r.api.ok else 'down' }}</span>
+      </span>
+      <span class="kv" style="margin:0"><span class="k">models</span>
+        <span class="mono" id="model-count">{{ r.api.count if r.api.ok else '—' }}</span></span>
     </div>
   </div>
 
-  <div class="tps-row">
-    <div class="kv" style="min-width:160px"><span class="k">throughput</span>
-      <span class="mono tps-big" id="tps-now">{{ '%.1f' % r.tps.latest if r.tps.latest else '—' }}</span>
-      <span class="mut">tokens/s</span></div>
-    <div class="tps-chart"><canvas id="tps" width="560" height="48"></canvas></div>
+  {# a model swap is the one thing that looks like a hang and isn't #}
+  <div class="switch-line" id="pulse-switch"{% if not m.get('switching') %} hidden{% endif %}>
+    <span class="spin" aria-hidden="true"></span>
+    <span id="pulse-switch-text">{% if m.get('switching') %}{{ 'waiting for a free slot to load' if m.get('waiting_for_slot') else 'loading' }} <span class="mono">{{ m.get('loading') }}</span> — the first token waits for the weights{% else %}loading{% endif %}</span>
+    <span class="mut" id="pulse-switch-age">{{ ('· ' ~ m.get('loading_age_s') ~ 's in') if m.get('loading_age_s') else '' }}</span>
   </div>
+
+  <div class="lanes" id="pulse-lanes" aria-label="router slots">
+    {% for s in p.get('slots', []) %}
+    {# first paint matches what the script would draw a second later, so the
+       board never jumps: a running slot's bar is a sweep, not a percentage #}
+    {% set bar = 100 if s.state in ('generate', 'queued')
+              else ((s.prompt_pct or 0) * 100) | round | int %}
+    {% if s.state == 'generate' and s.gen_tps %}
+      {% set detail = '%d tok · %.1f t/s · %s' % (s.gen_tokens, s.gen_tps, s.elapsed_text or '') %}
+    {% elif s.state == 'prompt' and s.prompt_pct is not none %}
+      {% set detail = '%d%% of %d tok in' % ((s.prompt_pct * 100) | round | int, s.prompt_done) %}
+    {% elif s.truncated %}
+      {% set detail = 'idle · last answer was cut off by the context limit' %}
+    {% else %}
+      {% set detail = '' %}
+    {% endif %}
+    <div class="lane s-{{ s.state }}{% if s.stalled %} stalled{% endif %}{% if s.truncated %} trunc{% endif %}"
+         data-slot="{{ s.id }}" style="order:{{ loop.index0 }}">
+      <span class="lane-id">S{{ s.id }}</span>
+      <span class="lane-phase">{{ {'prompt': 'reading prompt', 'generate': 'generating',
+                                   'queued': 'queued', 'idle': 'idle'}[s.state] }}</span>
+      <span class="lane-bar"><i style="width:{{ bar }}%"></i></span>
+      <span class="lane-detail">{{ detail }}</span>
+    </div>
+    {% else %}
+    <div class="lanes-none" id="lanes-none">no requests in the log window — slots appear here as the router picks them up</div>
+    {% endfor %}
+  </div>
+
+  <div class="tps-row">
+    <div class="kv" style="min-width:160px"><span class="k">generating</span>
+      <span class="mono tps-big" id="tps-now">—</span>
+      <span class="mut">tokens/s</span></div>
+    <div class="tps-chart"><canvas id="tps" width="560" height="52"></canvas></div>
+  </div>
+
+  <div class="pulse-signals" id="pulse-signals"></div>
 
   <div class="totals-row">
     <div class="kv"><span class="k">prompt tokens (in)</span><span class="mono" id="tok-in">—</span></div>
@@ -106,8 +201,15 @@
     {% if not r.totals.enabled %}<span class="mut totals-note">cumulative totals need <code>--metrics</code> on the router and a loaded model</span>{% endif %}
   </div>
 
-  <h4 class="feed-head">Activity · live tail of <span class="mono">{{ r.service.name }}</span></h4>
-  <pre id="router-feed" class="feed">{% for ev in r.activity %}<span class="ln {{ ev.kind }}">{{ ev.text }}</span>{% else %}<span class="ln mut">no recent log lines captured</span>{% endfor %}</pre>
+  {# the critical-only tail: warnings, cancellations, model swaps — never the
+     per-3-second timing chatter, which is what the lanes above already say #}
+  <div class="feed-head-row">
+    <h4 class="feed-head">Attention · <span class="mono">{{ r.service.name }}</span>
+      <span class="mut" id="attention-count">{% if p.get('attention') %}{{ p.attention | length }}{% endif %}</span></h4>
+    <button class="btn-sm toggle" id="attention-toggle" type="button"
+            title="switch between curated lines and the raw journal tail">all lines</button>
+  </div>
+  <pre id="router-feed" class="feed feed-quiet">{% for a in p.get('attention', []) %}<span class="ln {{ a.level }}"><span class="age">{{ a.age_text }} · </span>{{ a.text }}{% if a.count > 1 %} <b class="ct">×{{ a.count }}</b>{% endif %}</span>{% else %}<span class="ln mut">nothing unusual in the recent journal</span>{% endfor %}</pre>
 </div>
 
 {# ---- live ComfyUI: the other running thing on this box ---- #}
@@ -325,28 +427,212 @@
 </style>
 
 <script>
-// D1: no build step — the router hero is live by polling the /api/router JSON
-// endpoint and updating the DOM directly (same pattern as the metrics chart).
-const MAX = 90; const tpsHist = [];
+// D1: no build step — the hero is live by polling the /api/router JSON endpoint
+// and updating the DOM directly (same pattern as the metrics chart). The server
+// does the log parsing; this file only draws what it is told.
 const tpsCv = document.getElementById('tps');
 const tpsCx = tpsCv ? tpsCv.getContext('2d') : null;
-function drawTps(){
-  if (!tpsCx) return;
-  const W = tpsCv.width, H = tpsCv.height;
-  tpsCx.clearRect(0,0,W,H);
-  if (!tpsHist.length) return;
-  const peak = Math.max(20, ...tpsHist);
-  tpsCx.beginPath(); tpsCx.strokeStyle = '#5aa9ff'; tpsCx.lineWidth = 2;
-  tpsHist.forEach((v,i)=>{
-    const x = (i/(MAX-1))*W;
-    const y = H - (v/peak)*(H-4) - 2;
-    i ? tpsCx.lineTo(x,y) : tpsCx.moveTo(x,y);
+const SLOT_COLORS = ['#5aa9ff', '#f0883e', '#3fb950', '#bc8cff', '#f778ba', '#ffd33d'];
+const PHASE = {prompt: 'reading prompt', generate: 'generating', queued: 'queued', idle: 'idle'};
+// 'attention' (curated) or 'all' (raw journal tail) — the pane defaults to the
+// lines a person could act on, never the 3-second timing chatter
+let feedView = 'attention';
+let LAST = null;
+
+function laneDetail(s){
+  if (s.state === 'generate'){
+    let t = fmtNum(s.gen_tokens) + ' tok';
+    if (s.gen_tps != null) t += ' · ' + Number(s.gen_tps).toFixed(1) + ' t/s';
+    if (s.elapsed_text) t += ' · ' + s.elapsed_text;
+    if (s.stalled) t += ' · quiet ' + (s.age_text || fmtAge(s.age_s));
+    return t;
+  }
+  if (s.state === 'prompt'){
+    let t = (s.prompt_pct != null ? Math.round(s.prompt_pct * 100) + '% of ' : '')
+          + fmtNum(s.prompt_done || s.prompt_tokens) + ' tok in';
+    if (s.prompt_tps != null) t += ' @ ' + Math.round(s.prompt_tps) + ' t/s';
+    if (s.stalled) t += ' · quiet ' + (s.age_text || fmtAge(s.age_s));
+    return t;
+  }
+  if (s.state === 'queued') return 'waiting for cache / slot';
+  if (s.truncated) return 'idle · last answer was cut off by the context limit';
+  let u = 'idle';
+  if (s.age_s != null && s.age_s < 7200) u += ' · last line ' + (s.age_text || fmtAge(s.age_s)) + ' ago';
+  if (s.gen_tokens) u += ' · last ' + fmtNum(s.gen_tokens) + ' tok';
+  return u;
+}
+function laneBar(s){
+  if (s.state === 'generate' || s.state === 'queued') return '100%';
+  if (s.state === 'prompt') return Math.round((s.prompt_pct || 0) * 100) + '%';
+  return '0%';
+}
+// Nodes are reused across polls (keyed by slot id) so the width transition
+// survives, and `order` does the re-sorting: the slot that just worked moves up
+// without the whole board being rebuilt out from under a running animation.
+function renderLanes(slots){
+  const box = document.getElementById('pulse-lanes');
+  if (!box) return;
+  const have = {};
+  Array.prototype.slice.call(box.children).forEach(n => {
+    if (n.dataset && n.dataset.slot) have[n.dataset.slot] = n; else n.remove();
   });
-  tpsCx.stroke();
+  (slots || []).forEach((s, i) => {
+    const key = String(s.id);
+    let node = have[key];
+    if (!node){
+      node = document.createElement('div');
+      node.className = 'lane';
+      node.dataset.slot = key;
+      node.innerHTML = '<span class="lane-id"></span><span class="lane-phase"></span>'
+                     + '<span class="lane-bar"><i></i></span><span class="lane-detail"></span>';
+      box.appendChild(node);
+    }
+    delete have[key];
+    node.className = 'lane s-' + s.state + (s.stalled ? ' stalled' : '') + (s.truncated ? ' trunc' : '');
+    node.style.order = i;
+    const k = node.children;
+    k[0].textContent = 'S' + s.id;
+    k[1].textContent = PHASE[s.state] || s.state;
+    k[2].firstChild.style.width = laneBar(s);
+    k[3].textContent = laneDetail(s);
+  });
+}
+function drawPulse(series){
+  if (!tpsCx) return;
+  const W = tpsCv.width, H = tpsCv.height, bins = (series && series.bins) || [];
+  tpsCx.clearRect(0, 0, W, H);
+  const peakOf = b => Object.keys(b.per).reduce((a, k) => a + b.per[k], 0);
+  if (!bins.length){
+    tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
+    tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
+    tpsCx.fillStyle = '#6b7483'; tpsCx.font = '11px ui-monospace, Menlo, monospace';
+    tpsCx.fillText('no token activity in this window', 4, H / 2);
+    return;
+  }
+  const totals = bins.map(peakOf);
+  const peak = Math.max(20, Math.max.apply(null, totals));
+  const ids = [];
+  bins.forEach(b => Object.keys(b.per).forEach(k => { if (ids.indexOf(k) < 0) ids.push(k); }));
+  ids.sort((a, b) => a - b);
+  const n = bins.length - 1 || 1;
+  const xAt = i => (i / n) * W;
+  const yAt = v => H - (v / peak) * (H - 8) - 2;
+  // stacked areas, one band per slot, so "three prompts at once" reads as height
+  // and "one long generation" reads as width
+  let cum = bins.map(() => 0);
+  ids.forEach((id, k) => {
+    const color = SLOT_COLORS[k % SLOT_COLORS.length];
+    const top = bins.map((b, i) => cum[i] + (b.per[id] || 0));
+    tpsCx.beginPath();
+    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(i), yAt(v)) : tpsCx.moveTo(xAt(i), yAt(v)); });
+    for (let i = bins.length - 1; i >= 0; i--) tpsCx.lineTo(xAt(i), yAt(cum[i]));
+    tpsCx.closePath();
+    tpsCx.fillStyle = color + '4d'; tpsCx.fill();
+    tpsCx.beginPath();
+    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(i), yAt(v)) : tpsCx.moveTo(xAt(i), yAt(v)); });
+    tpsCx.strokeStyle = color; tpsCx.lineWidth = 1.2; tpsCx.stroke();
+    cum = top;
+  });
+  tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
+  tpsCx.fillText(peak.toFixed(0) + ' t/s', 3, 9);
+  tpsCx.fillText('last ' + Math.max(1, Math.round((series.window_s || 420) / 60)) + ' min · now →',
+                 3, H - 2);
+}
+function renderSignals(p){
+  const el = document.getElementById('pulse-signals');
+  if (!el) return;
+  const s = p.stats || {};
+  const mins = Math.max(1, Math.round((s.window_s || 420) / 60));
+  const out = [];
+  out.push('<b>' + (s.requests_window || 0) + '</b> requests / ' + mins + ' min');
+  if (s.tokens_out_window) out.push('<b>' + fmtNum(s.tokens_out_window) + '</b> tokens generated');
+  if (s.gen_tps_avg != null) out.push('avg <b>' + Number(s.gen_tps_avg).toFixed(1) + '</b> t/s out');
+  if (s.prompt_tps_avg != null) out.push('<b>' + Math.round(s.prompt_tps_avg) + '</b> t/s in');
+  if (s.cache_keep_avg != null) out.push('prompt cache <b>' + s.cache_keep_avg + '%</b> reused');
+  out.push('<b>' + (s.errors || 0) + '</b> errors · <b>' + (s.warns || 0) + '</b> warnings in window');
+  el.innerHTML = out.map(x => '<span>' + x + '</span>').join('');
+}
+function renderFeed(d){
+  const feed = document.getElementById('router-feed');
+  if (!feed) return;
+  if (feedView === 'all'){
+    const acts = (d.activity || []).slice().reverse();
+    feed.innerHTML = acts.length
+      ? acts.map(ev => '<span class="ln ' + esc(ev.kind) + '">' + esc(ev.text) + '</span>').join('')
+      : '<span class="ln mut">no recent log lines captured</span>';
+  } else {
+    const items = (d.pulse && d.pulse.attention) || [];
+    feed.innerHTML = items.length
+      ? items.map(a => '<span class="ln ' + esc(a.level) + '"><span class="age">'
+          + (a.age_text || fmtAge(a.age_s)) + ' · </span>' + esc(a.text)
+          + (a.count > 1 ? ' <b class="ct">×' + a.count + '</b>' : '') + '</span>').join('')
+      : '<span class="ln mut">nothing unusual in the recent journal</span>';
+  }
+  feed.scrollTop = 0;
+}
+function renderRouter(d){
+  LAST = d;
+  const p = d.pulse || {};
+  const m = p.models || {};
+  const st = document.getElementById('router-state');
+  if (st){ st.textContent = d.service.state; st.className = 'pill ' + (d.service.state === 'active' ? 'ok' : 'bad'); }
+  setText('router-since', d.service.since ? ('up since ' + d.service.since) : '');
+  setLight('light-web', !!d.web.ok);
+  setText('web-state', d.web.ok ? ('ok · ' + d.web.ms + 'ms') : 'down');
+  setLight('light-api', !!d.api.ok);
+  setText('api-state', d.api.ok ? ('ok · ' + d.api.ms + 'ms') : 'down');
+  setText('model-count', d.api.ok ? String(d.api.count) : '—');
+  setText('model-loaded', d.loaded || 'nothing');
+  const nSlots = (p.slot_ids || []).length;
+  setText('pulse-sub', (nSlots ? nSlots + ' slots' : 'no slots seen')
+          + (d.api.ok ? ' · ' + d.api.count + ' on disk' : ''));
+  const dot = document.getElementById('pulse-dot');
+  if (dot) dot.className = 'pm-dot ' + (m.switching ? 'load' : (p.active_slots ? 'busy' : ''));
+  const sw = document.getElementById('pulse-switch');
+  if (sw){
+    sw.hidden = !m.switching;
+    if (m.switching){
+      setText('pulse-switch-text',
+        (m.waiting_for_slot ? 'waiting for a free slot to load ' : 'loading ')
+        + m.loading + ' — the first token waits for the weights');
+      setText('pulse-switch-age', m.loading_age_s != null ? ('· ' + Math.round(m.loading_age_s) + 's in') : '');
+    }
+  }
+  renderLanes(p.slots);
+  const bins = (p.series && p.series.bins) || [];
+  const now = bins.length ? Object.keys(bins[bins.length - 1].per)
+        .reduce((a, k) => a + bins[bins.length - 1].per[k], 0) : null;
+  const latest = now != null ? now : (d.tps && d.tps.latest);
+  setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
+  drawPulse(p.series);
+  renderSignals(p);
+  const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
+  setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));
+  setText('tok-out', fmtTok(d.totals && d.totals.generated_tokens));
+  if (d.memory && d.memory.current != null){
+    const gb = (x) => (x / 1073741824).toFixed(1) + ' G';
+    setText('svc-ram', gb(d.memory.current) + (d.memory.peak != null ? ' · peak ' + gb(d.memory.peak) : ''));
+  }
+  const last = (d.completions && d.completions.length) ? d.completions[d.completions.length - 1] : null;
+  setText('last-completion', fmtCompletion(last));
+  const ac = document.getElementById('attention-count');
+  if (ac){
+    const items = p.attention || [];
+    const n = items.reduce((a, x) => a + (x.count || 1), 0);
+    ac.textContent = items.length ? (n + (items.length === n ? '' : ' (' + items.length + ')')) : 'clean';
+  }
+  renderFeed(d);
 }
 function setLight(id, on){ const el = document.getElementById(id); if (el) el.className = 'light ' + (on ? 'on' : 'off'); }
 function setText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
 function fmtDur(ms){ const s = ms / 1000; return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'; }
+function fmtNum(n){ return (n == null) ? '0' : Number(n).toLocaleString(); }
+function fmtAge(s){
+  if (s == null) return '';
+  if (s < 60) return Math.round(s) + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (Math.round(s) % 60) + 's';
+  return (s / 3600).toFixed(1) + 'h';
+}
 function fmtCompletion(c){
   if (!c) return '—';
   let s = 'slot ' + c.slot;
@@ -361,48 +647,25 @@ function fmtCompletion(c){
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 async function tick(){
   try{
-    const res = await fetch('/api/router', {credentials:'same-origin'});
+    // ask for the raw tail only while that view is actually open: the poll runs
+    // every couple of seconds and the log lines are most of the bytes
+    const res = await fetch('/api/router' + (feedView === 'all' ? '?raw=1' : ''),
+                            {credentials:'same-origin'});
     if (res.status === 401) { location.href = '/login'; return; }
-    const d = await res.json();
-    const st = document.getElementById('router-state');
-    if (st){ st.textContent = d.service.state; st.className = 'pill ' + (d.service.state === 'active' ? 'ok' : 'bad'); }
-    setText('router-since', d.service.since ? ('up since ' + d.service.since) : '');
-    setLight('light-web', !!d.web.ok);
-    setText('web-state', d.web.ok ? ('ok · ' + d.web.ms + 'ms') : 'down');
-    setLight('light-api', !!d.api.ok);
-    setText('api-state', d.api.ok ? ('ok · ' + d.api.ms + 'ms · ' + d.api.count + ' models') : 'down');
-    setText('model-count', d.api.ok ? String(d.api.count) : '—');
-    setText('model-loaded', d.loaded || '—');
-    const latest = d.tps && d.tps.latest;
-    setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
-    const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
-    setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));
-    setText('tok-out', fmtTok(d.totals && d.totals.generated_tokens));
-    if (d.memory && d.memory.current != null){
-      const gb = (x) => (x / 1073741824).toFixed(1) + ' G';
-      setText('svc-ram', gb(d.memory.current) + (d.memory.peak != null ? ' · peak ' + gb(d.memory.peak) : ''));
-    }
-    const last = (d.completions && d.completions.length) ? d.completions[d.completions.length - 1] : null;
-    setText('last-completion', fmtCompletion(last));
-    // Update sparkline: push latest TPS or 0.0 for idle time to properly represent gaps
-    if (latest != null){ 
-        tpsHist.push(latest); 
-        if (tpsHist.length > MAX) tpsHist.shift(); 
-    } else {
-        // Idle time marker: represents no token production in the last poll window
-        tpsHist.push(0.0);
-        if (tpsHist.length > MAX) tpsHist.shift();
-    }
-    drawTps();
-    const feed = document.getElementById('router-feed');
-    if (feed){
-      feed.innerHTML = (d.activity && d.activity.length)
-        ? d.activity.map(ev => '<span class="ln ' + esc(ev.kind) + '">' + esc(ev.text) + '</span>').join('')
-        : '<span class="ln mut">no recent log lines captured</span>';
-      feed.scrollTop = feed.scrollHeight;
-    }
+    renderRouter(await res.json());
   }catch(e){ /* keep last good state on a transient error */ }
 }
+// the attention pane is the only control in the pulse, and it is a view switch:
+// curated lines by default, the raw journal tail one click away
+function toggleFeedView(){
+  feedView = (feedView === 'attention') ? 'all' : 'attention';
+  const btn = document.getElementById('attention-toggle');
+  if (btn) btn.textContent = (feedView === 'attention') ? 'all lines' : 'attention only';
+  if (feedView === 'all') tick();      // this fetch brings the raw tail with it
+  else if (LAST) renderFeed(LAST);
+};
+const _toggleBtn = document.getElementById('attention-toggle');
+if (_toggleBtn) _toggleBtn.addEventListener('click', function(){ toggleFeedView(); });
 const _poll = (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.router_poll_ms) || 2500;
 tick();
 setInterval(tick, _poll);

@@ -7,8 +7,10 @@ cutover of it is a confirmed, user-visible operation (docs/PORTAL_PLAN.md §6).
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from . import logsetup, paths
@@ -35,6 +37,10 @@ def unit_state(name: str) -> dict:
     return d
 
 
+# ``-o short-iso`` prefixes each entry with: ISO timestamp, host, unit[pid]:
+_JOURNAL_PREFIX_RE = re.compile(r"^(\S+)\s+\S+\s+[^\s:]+\[[0-9]+\]:\s?")
+
+
 def journal_tail(name: str, lines: int = 140) -> list[str]:
     """Raw message lines from a user unit's journal (oldest -> newest).
 
@@ -51,6 +57,44 @@ def journal_tail(name: str, lines: int = 140) -> list[str]:
         return [ln for ln in p.stdout.splitlines() if ln.strip()]
     except Exception:  # noqa: BLE001
         return []
+
+
+def journal_tail_timed(name: str, lines: int = 140) -> list[tuple[float | None, str]]:
+    """Journal messages paired with their wall-clock time: ``[(epoch, message)]``.
+
+    The router's own line prefix only carries time *since process start*, which
+    is enough for durations but not for "that slot went quiet 4 minutes ago".
+    ``-o short-iso`` gives a real timestamp per entry; we strip the journal
+    prefix back off so callers still see exactly what ``-o cat`` would print.
+    Falls back to ``(None, message)`` when the prefix is unrecognisable, and to
+    an empty list when the journal is unreadable.
+    """
+    try:
+        p = subprocess.run(
+            ["journalctl", "--user", "-u", name, "-n", str(lines),
+             "-o", "short-iso", "--no-pager"],
+            capture_output=True, text=True, timeout=8)
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[tuple[float | None, str]] = []
+    for raw in p.stdout.splitlines():
+        if not raw.strip():
+            continue
+        line = raw.rstrip()
+        if line.startswith("-- "):        # journalctl's own notices, not log lines
+            continue
+        # 2026-09-13T23:50:58-07:00 Halo ai-llamacpp.sh[81606]: message
+        m = _JOURNAL_PREFIX_RE.match(line)
+        if not m:
+            out.append((None, line))
+            continue
+        try:
+            epoch = datetime.fromisoformat(m.group(1)).timestamp()
+        except ValueError:
+            out.append((None, line))
+            continue
+        out.append((epoch, line[m.end():]))
+    return out
 
 
 def _needs_restarting() -> str | None:

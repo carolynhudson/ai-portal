@@ -458,9 +458,13 @@ def create_app() -> FastAPI:
         return _health_bundle()
 
     @app.get("/api/router")
-    def api_router(_=Depends(_require_auth)):
-        """Live router state (web UI, REST API, models, loaded, tokens/s, log tail)."""
-        return router_mod.snapshot()
+    def api_router(raw: bool = False, _=Depends(_require_auth)):
+        """Live router state: service, models, loaded, and the pulse (§6.9).
+
+        The raw journal tail is left out unless ``?raw=1`` — the dashboard polls
+        this every few seconds, and the pane that reads it is off by default.
+        """
+        return router_mod.snapshot(raw=raw)
 
     @app.get("/api/settings")
     def api_settings(_=Depends(_require_auth)):
