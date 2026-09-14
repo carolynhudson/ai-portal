@@ -31,6 +31,7 @@ const report = {
   failures,
   warnings,
   initial: {},
+  stylesheets: [],
   tabs: [],
   controls: [],
   summary: {},
@@ -42,6 +43,142 @@ if (!spec) {
 }
 
 const url = base.replace(/\/$/, "") + spec.path;
+
+// ---------------------------------------------------------------------------
+// Tab geometry, measured rather than string-matched
+//
+// The complaint this guards: a tab strip whose baseline "floats" 10-20px above
+// the panels it controls. jsdom performs no layout, but it does resolve the
+// cascade for margin and radius — which is exactly where such a gap comes from
+// — so the invariants are read off the computed style of the real elements, and
+// the handful of properties jsdom cannot compute (border shorthands, var()
+// colours) are read from the parsed rule instead.
+//
+// The visual contract, restated: the strip has no bottom margin; the panel is
+// pulled up 1px onto the strip's baseline with no top border and square top
+// corners; and the active tab is painted in the panel's own colour so tab and
+// panel form one surface, with the baseline reading as one line broken only
+// under the selected tab.
+const realSheets = []; // stylesheets the page actually parsed and rendered with
+
+function collectStylesheets() {
+  // jsdom exposes a linked sheet on link.sheet even when document.styleSheets
+  // omits it, and both are needed to see the whole cascade
+  const collected = []
+    .concat(Array.from(win.document.styleSheets))
+    .concat(Array.from(win.document.querySelectorAll('link[rel="stylesheet"]')).map((l) => l.sheet));
+  for (const sheet of collected) {
+    if (!sheet || realSheets.includes(sheet)) continue;
+    let rules = null;
+    try {
+      rules = sheet.cssRules; // throws for a cross-origin sheet
+    } catch {
+      continue;
+    }
+    if (!rules) continue;
+    realSheets.push(sheet);
+    report.stylesheets.push(`${sheet.href || "(inline)"}: ${rules.length} rules`);
+  }
+}
+
+// The most specific declared value for `prop` on rules whose *own* compound
+// selector is this element's class list (optionally +.active).
+function declared(el, prop) {
+  const classes = Array.from(el.classList);
+  const wanted = [`.${classes.join(".")}`];
+  if (classes.includes("active"))
+    wanted.push(`.${classes.filter((c) => c !== "active").join(".")}.active`);
+  for (const sheet of realSheets) {
+    for (const rule of sheet.cssRules) {
+      if (!rule.selectorText || !rule.style) continue;
+      for (const sel of rule.selectorText.split(",").map((x) => x.trim())) {
+        const parts = sel.split(/\s*[>+~]\s+/).filter(Boolean);
+        const own = parts[parts.length - 1].replace(/:hover|:focus|:active\b/g, "");
+        if (wanted.includes(own)) {
+          const v = rule.style.getPropertyValue(prop);
+          if (v) return String(v).trim();
+        }
+      }
+    }
+  }
+  return "";
+}
+
+function checkTabGeometry() {
+  for (const want of spec.expectStylesheets || []) {
+    const link = Array.from(win.document.querySelectorAll('link[rel="stylesheet"]')).find(
+      (l) => (l.getAttribute("href") || "").endsWith(want));
+    if (!link) fail(`page does not link ${want}`);
+    else if (!link.sheet || !link.sheet.cssRules || link.sheet.cssRules.length === 0)
+      fail(`${want} is linked but never loaded and parsed (404? wrong content-type? syntax error?)`);
+  }
+  if (!realSheets.length) {
+    fail("no stylesheet was parsed — tab geometry cannot be verified");
+    return;
+  }
+
+  for (const g of spec.tabGroups || []) {
+    const tabs = Array.from(win.document.querySelectorAll(g.tabs));
+    const panels = Array.from(win.document.querySelectorAll(g.panels));
+    if (!tabs.length || !panels.length) continue;
+    const strip = tabs[0].parentElement;
+    const label = `tab group ${g.tabs}`;
+
+    // the rules must target this strip, or the checks below would pass against
+    // a page whose tabs are styled by nothing at all
+    const stripClasses = Array.from(strip.classList);
+    const ruleFound = realSheets.some((sheet) =>
+      Array.from(sheet.cssRules).some(
+        (r) => r.selectorText && stripClasses.some((c) => r.selectorText.includes(`.${c}`))));
+    if (stripClasses.length && !ruleFound)
+      fail(`${label}: no stylesheet rule targets the tab strip (.${stripClasses.join(", .")}) — its geometry is unverifiable`);
+
+    // 1. no floating gap between the tabs and their panels
+    const mb = win.getComputedStyle(strip).marginBottom || "";
+    if (!mb) fail(`${label}: could not read the strip's computed margin-bottom`);
+    else if (mb !== "0px" && mb !== "0")
+      fail(`${label}: strip has margin-bottom ${mb} — the panels float below the tabs instead of attaching to them`);
+
+    // 2. neither strip nor panel may be positioned: in normal flow the panel
+    //    (later in the DOM) paints over the baseline where the tab opens it
+    for (const [what, el] of [
+      ["strip", strip],
+      ["panel", panels[0]],
+      ["panel card", panels[0].querySelector(".card") || panels[0].firstElementChild],
+    ]) {
+      if (!el) continue;
+      const pos = declared(el, "position") || "";
+      const z = declared(el, "z-index") || "";
+      if (/(relative|absolute|fixed|sticky)/.test(pos) || z)
+        fail(`${label}: ${what} is positioned (position:${pos} z-index:${z}) — that puts the baseline back on top of the active tab`);
+    }
+
+    for (const panel of panels) {
+      const card = panel.querySelector(".card") || panel.firstElementChild;
+      if (!card) continue;
+      const mt = win.getComputedStyle(card).marginTop || "";
+      if (mt !== "-1px" && mt !== "0px")
+        fail(`${label}: the card of #${panel.id} has margin-top ${mt}; it should be pulled up onto the strip's baseline`);
+      const radius = win.getComputedStyle(card).borderTopLeftRadius || "";
+      if (radius && radius !== "0px" && radius !== "0")
+        fail(`${label}: the card of #${panel.id} keeps a ${radius} top-left corner where it meets the square tab bottoms`);
+      const borderTop = declared(card, "border-top");
+      if (borderTop && borderTop !== "none")
+        fail(`${label}: the card of #${panel.id} declares border-top:${borderTop} — a border here draws a line under the active tab`);
+    }
+
+    const active = tabs.find((t) => t.classList.contains("active"));
+    if (active) {
+      const bg = declared(active, "background") || declared(active, "background-color");
+      if (!bg) fail(`${label}: the active tab's background is undeclared — it cannot read as the panel's own surface`);
+      else if (!bg.includes("--panel"))
+        fail(`${label}: active tab background is ${bg}; it must be var(--panel), the colour of the panel it controls`);
+      const bb = declared(active, "border-bottom");
+      if (!bb || !bb.includes("--panel"))
+        fail(`${label}: active tab border-bottom is ${bb || "(none)"}; it must close the baseline in the panel colour`);
+    }
+  }
+}
 
 let ctx;
 try {
@@ -153,6 +290,9 @@ for (const g of spec.tabGroups || []) {
   for (const [panel, n] of activated) if (n > 1) fail(`panel ${panel} is activated by ${n} tabs`);
   for (const m of trace.httpErrors) fail(`endpoint error while exercising tabs: ${m}`);
 }
+
+collectStylesheets();
+checkTabGeometry();
 
 // Stop the pollers before the sweep.
 ctx.quiesce();

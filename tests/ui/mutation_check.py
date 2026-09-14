@@ -2,8 +2,8 @@
 
 A test suite that has never failed on a real bug proves nothing, and a harness
 that drives 96 controls could in principle be clicking into the void. This
-script introduces one small, realistic regression at a time into a *copy* of the
-templates, runs the UI suite against it, and requires a failure that names the
+script introduces one small, realistic regression at a time into the real templates
+and stylesheet, runs the UI suite against it, and requires a failure that names the
 right thing. If you change the harness and this still passes, the harness got
 weaker.
 
@@ -22,13 +22,13 @@ sys.path.insert(0, str(ROOT))
 
 from tests.ui_sandbox import Sandbox  # noqa: E402
 
-TEMPLATES = ROOT / "web" / "templates"
+WEB = ROOT / "web"   # mutations are paths under web/
 
 # (name, file, old text, new text, page, substring the failure must contain)
 MUTATIONS = [
     (
         "element id renamed (rollback select)",
-        "dashboard.html",
+        "templates/dashboard.html",
         'id="rollback-select"',
         'id="rollback-chooser"',
         "dashboard",
@@ -36,7 +36,7 @@ MUTATIONS = [
     ),
     (
         "tab handler deleted",
-        "dashboard.html",
+        "templates/dashboard.html",
         "function switchUpdateTab(tab, el){",
         "function _switchUpdateTab_renamed(tab, el){",
         "dashboard",
@@ -46,7 +46,7 @@ MUTATIONS = [
         # the bug that actually shipped: an apostrophe inside a single-quoted
         # JS string. Jinja-safe, so it is a pure JavaScript syntax error
         "a string literal broken, killing its script block",
-        "dashboard.html",
+        "templates/dashboard.html",
         "alert('update refused: '",
         "alert('update refused don't: '",
         "dashboard",
@@ -54,7 +54,7 @@ MUTATIONS = [
     ),
     (
         "endpoint renamed in a page fetch",
-        "dashboard.html",
+        "templates/dashboard.html",
         "fetch('/api/gpu'",
         "fetch('/api/gpu-x'",
         "dashboard",
@@ -62,7 +62,7 @@ MUTATIONS = [
     ),
     (
         "tab panel removed",
-        "dashboard.html",
+        "templates/dashboard.html",
         '<div id="update-python" class="update-tab-content">',
         '<div id="update-pythonX" class="update-tab-content">',
         "dashboard",
@@ -70,7 +70,7 @@ MUTATIONS = [
     ),
     (
         "destructive button no longer confirms",
-        "dashboard.html",
+        "templates/dashboard.html",
         "if (!confirm('Roll back to ' + name",
         "if (false && !confirm('Roll back to ' + name",
         "dashboard",
@@ -78,7 +78,7 @@ MUTATIONS = [
     ),
     (
         "service stop button skips its confirm",
-        "dashboard.html",
+        "templates/dashboard.html",
         "  if (action !== 'start' &&\n      !confirm(meta.confirm",
         "  if (false &&\n      !confirm(meta.confirm",
         "dashboard",
@@ -86,7 +86,7 @@ MUTATIONS = [
     ),
     (
         "settings save posts the wrong field",
-        "settings.html",
+        "templates/settings.html",
         "body: JSON.stringify({bind, address})});",
         "body: JSON.stringify({bindMode: bind, address})});",
         "settings",
@@ -94,11 +94,37 @@ MUTATIONS = [
     ),
     (
         "dead button: handler emptied",
-        "settings.html",
+        "templates/settings.html",
         '<button onclick="saveSharedEnv()">Save</button>',
         "<button>Save</button>",
         "settings",
         "dead control",
+    ),
+    (
+        # the reported bug itself: the strip's bottom margin floats the panels
+        # 16px below the baseline the tabs sit on
+        "tab strip floats above its panels",
+        "static/tabs.css",
+        "  margin:0;                       /* rule 1: no gap below the tab strip */",
+        "  margin:0 0 16px 0;",
+        "dashboard",
+        "margin-bottom 16px",
+    ),
+    (
+        "active tab no longer painted in the panel's colour",
+        "static/tabs.css",
+        "  background:var(--panel);        /* rule 3: same surface as the card below */",
+        "  background:var(--bg);",
+        "dashboard",
+        "must be var(--panel)",
+    ),
+    (
+        "panel card keeps a round top corner against the square tabs",
+        "static/tabs.css",
+        "  border-top-left-radius:0;\n  border-top-right-radius:0;\n}",
+        "}",
+        "dashboard",
+        "top-left corner",
     ),
     # (a template gaining an hx-* attribute is caught by
     # test_ui_contract.test_templates_carry_no_htmx_attributes, not by the DOM
@@ -113,10 +139,10 @@ def _clean_templates() -> bool:
     anyone's work."""
     import subprocess
 
-    out = subprocess.run(["git", "status", "--porcelain", "--", "web/templates"],
+    out = subprocess.run(["git", "status", "--porcelain", "--", "web"],
                          cwd=ROOT, capture_output=True, text=True).stdout.strip()
     if out:
-        print("refusing to run: web/templates is not committed\n" + out)
+        print("refusing to run: web/ has uncommitted changes\n" + out)
         print("commit or stash first — this tool temporarily edits those files")
         return False
     return True
@@ -124,7 +150,7 @@ def _clean_templates() -> bool:
 
 def apply_and_test(name, filename, old, new, page, expect, keep=False) -> tuple[bool, str]:
     """Mutate the template, drive the page, require a matching failure."""
-    target = TEMPLATES / filename
+    target = WEB / filename
     original = target.read_text()
     if old not in original:
         return False, f"mutation target not found in {filename}: {old[:50]!r}"

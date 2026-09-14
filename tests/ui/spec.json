@@ -124,6 +124,7 @@
           }
         }
       ],
+      "expectStylesheets": ["/static/tabs.css"],
       "tabGroups": [
         { "tabs": ".update-tab", "panels": ".update-tab-content", "expectTabs": 5, "expectPanels": 5 }
       ],
@@ -152,6 +153,7 @@
         "#add-dir",
         "#add-cat"
       ],
+      "expectStylesheets": ["/static/tabs.css"],
       "tabGroups": [
         { "tabs": ".model-tab", "panels": ".model-tab-content", "expectTabs": 2, "expectPanels": 2 }
       ],

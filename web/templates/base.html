@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}AI Portal{% endblock %}</title>
 <script src="/static/htmx.min.js"></script>
+{# tab geometry lives in one shared stylesheet; test_ui_contract requires every
+   page that has tabs to load it, and to define no tab geometry of its own #}
+<link rel="stylesheet" href="/static/tabs.css">
 <style>
 :root{--bg:#0e1116;--panel:#171c24;--fg:#e6e9ef;--mut:#8b95a7;--acc:#5aa9ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--line:#232a35}
 *{box-sizing:border-box}

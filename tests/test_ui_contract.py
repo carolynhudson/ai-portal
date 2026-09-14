@@ -190,6 +190,77 @@ def test_no_unrendered_template_or_none_values_in_markup(pages):
     assert not bad, "\n".join(bad)
 
 
+# --------------------------------------------------------------------- tabs
+TAB_CLASS_RE = re.compile(r"\.(?:update|model)-tabs?[\w-]*(?:\s*,|\s*\{)")
+
+
+def test_tab_geometry_is_defined_in_one_place():
+    """Tab styling used to be copy-pasted into both tab pages and they drifted.
+    The component lives in /static/tabs.css; a page re-declaring it can put the
+    floating gap back."""
+    offenders = []
+    for tpl in sorted((ROOT / "web" / "templates").glob("*.html")):
+        text = tpl.read_text()
+        for m in TAB_CLASS_RE.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            offenders.append(f"{tpl.name}:{line}: {m.group(0).strip()}")
+    assert not offenders, (
+        "tab geometry declared outside web/static/tabs.css:\n" + "\n".join(offenders))
+
+
+def test_tabs_stylesheet_is_served_and_well_formed():
+    css = (ROOT / "web" / "static" / "tabs.css").read_text()
+    assert css.count("{") == css.count("}"), (
+        f"unbalanced braces in tabs.css ({css.count('{')} vs {css.count('}')})")
+
+
+def test_tab_geometry_holds_the_three_rules(client):
+    """Cheap mirror of what the DOM harness measures, so a missing file or a
+    reverted rule is caught in milliseconds rather than in the browser sweep:
+    no gap under the strip, the panel pulled onto the baseline with no top
+    border and square top corners, and the active tab in the panel's colour."""
+    css = client.get("/static/tabs.css")
+    assert css.status_code == 200, f"/static/tabs.css: {css.status_code}"
+    assert "text/css" in css.headers.get("content-type", "")
+    sheet = css.text
+
+    def rule_for(selector):
+        for chunk in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
+            if selector in chunk[0]:
+                return chunk[1]
+        return ""
+
+    strip = rule_for(".update-tabs")
+    assert strip, "no rule for the tab strip (.update-tabs)"
+    m = re.search(r"margin\s*:\s*([^;]+)", strip)
+    assert m, f"tab strip must set its margin explicitly, got: {strip.strip()}"
+    parts = m.group(1).split()
+    bottom = parts[{1: 0, 2: 1, 3: 2, 4: 2}[len(parts)]]
+    assert bottom in ("0", "0px"), f"tab strip margin-bottom must be 0, got {bottom!r} in {strip.strip()}"
+
+    card = rule_for(".update-tab-content > .card")
+    assert card, "no rule joining a tab panel to its card"
+    assert "margin-top:-1px" in card.replace(" ", ""), \
+        f"panel card must be pulled up onto the baseline, got: {card.strip()}"
+    assert re.search(r"border-top\s*:\s*none", card), \
+        f"panel card must have no top border (it would draw a line under the active tab): {card.strip()}"
+    assert re.search(r"border-top-left-radius\s*:\s*0", card), \
+        f"panel card needs square top corners where it meets the tabs: {card.strip()}"
+
+    active = rule_for(".update-tab.active")
+    assert active, "no rule for the active tab"
+    assert re.search(r"background\s*:\s*var\(--panel\)", active), \
+        f"active tab must be the panel's own colour, got: {active.strip()}"
+    assert re.search(r"border-bottom\s*:\s*1px solid var\(--panel\)", active), \
+        f"active tab must close the baseline in the panel colour, got: {active.strip()}"
+
+
+def test_pages_with_tabs_link_the_stylesheet(pages):
+    for path, html in pages.items():
+        if 'class="update-tabs"' in html or 'class="model-tabs"' in html:
+            assert 'href="/static/tabs.css"' in html, f"{path} has tabs but does not load tabs.css"
+
+
 def test_templates_carry_no_htmx_attributes():
     """htmx is loaded on every page but the templates use none of it, which is
     what makes the harness's document.evaluate shim safe (jsdom and htmx
