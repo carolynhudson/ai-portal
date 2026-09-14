@@ -60,6 +60,7 @@ curl -s -b /tmp/c.txt "$BASE/api/exposure"   | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/status"     | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/router"     | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/settings/llamacpp/apikey" | python3 -m json.tool
+curl -s -b /tmp/c.txt "$BASE/api/health/detail" | python3 -m json.tool   # the /health pane (read-only)
 ```
 
 Open endpoints (no auth): `GET /healthz` — used by monitoring and by

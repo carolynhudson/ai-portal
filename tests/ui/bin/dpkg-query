@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# dpkg-query stand-in for the UI test sandbox: a fixed installed ROCm, so the
+# health pane's "ROCm installed" row is deterministic. The real query walks this
+# machine's dpkg database (hundreds of amdrocm packages) and changes with apt.
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+cat <<'EOF'
+amdrocm-base9.9 9.9.0-100
+amdrocm-blas9.9 9.9.0-100
+rocm-core 9.9.0-100
+firefox 1.0-2
+EOF

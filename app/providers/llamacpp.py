@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, llamakey, paths, serviceconf, systemd, units, updater
+from ..core import db, health, llamakey, paths, serviceconf, systemd, units, updater
 
 
 def _git_head(repo: str) -> str | None:
@@ -368,6 +368,34 @@ class LlamaCpp(Provider):
     # The previous release stays on disk until a one-click rollback replaces
     # it again. See docs/PORTAL_PLAN.md §4.4.
 
+    def provenance(self) -> dict:
+        """What the deployed release was built against — **local reads only**.
+
+        The health pane needs this on page load. ``update_status()`` refreshes
+        the upstream probe whenever its cache is stale, which can mean a
+        ``git fetch`` of up to 300 s: a read-only pane must not be able to block
+        for minutes, so it reads the last saved probe instead. The Status page's
+        check button is what costs a fetch.
+        """
+        reg = releases()
+        cur = next((r for r in reg.get("releases", [])
+                    if r.get("name") == reg.get("current")), {}) or {}
+        sdk = (cur.get("vulkan_sdk") or "").rstrip("/").split("/")[-1]
+        remote = _cache_read()
+        return {
+            "name": reg.get("current"),
+            "commit": (cur.get("commit") or "")[:7],
+            "built_at": cur.get("built_at"),
+            "rocm_built": cur.get("rocm"),
+            "vulkan_built": sdk or None,
+            "repo_head": _git_head(paths.LLAMA_REPO),
+            "release_count": len(reg.get("releases") or []),
+            "behind_master": remote.get("behind_master"),
+            "latest_release": remote.get("latest_release"),
+            "remote_checked": remote.get("checked_at"),
+            "remote_stale": remote.get("stale"),
+        }
+
     def update_status(self) -> dict:
         """Everything the dashboard's release bubble needs.
 
@@ -672,6 +700,11 @@ class LlamaCpp(Provider):
         entry = {"name": rel_name, "commit": commit,
                  "version": rel_name.rsplit("b", 1)[-1],
                  "path": str(rel_dir), "vulkan_sdk": str(paths.VULKAN_SDK),
+                 # the ROCm this compiled against, stamped now: after an apt
+                 # upgrade there is no way to recover it from the binary, and
+                 # "rebuild for the new ROCm?" is the question the health pane
+                 # has to answer (docs/UPDATES.md, version-coupling watch items)
+                 "rocm": health.installed_rocm(),
                  "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         if rel_name in {r.get("name") for r in reg.get("releases", [])}:
             reg["releases"] = [e if e.get("name") == rel_name else e

@@ -90,7 +90,7 @@ app/
 web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
 deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
 scripts/dev-run.sh   # source tree on :8091, next to the service
-tests/               # 185 pytest tests, all on a throwaway AI_PORTAL_HOME
+tests/               # 212 pytest tests, all on a throwaway AI_PORTAL_HOME
   ui/                # DOM harness (jsdom): drives every control on every page
 ```
 
@@ -113,8 +113,16 @@ bash tools/live_smoke.sh         # end-to-end against the live router
 First run generates a password and writes it to
 `~/ai/state/portal/PORTAL_PASSWORD.txt` (delete after reading). To set your own,
 put `AI_PORTAL_PASSWORD=...` in `~/ai/config/portal.env`. Pages: `/` (status),
-`/models`, `/metrics`, `/settings`; JSON API under `/api/*` — full endpoint and
-curl list in [docs/DEBUGGING.md](docs/DEBUGGING.md).
+`/models`, `/metrics`, `/health`, `/settings`; JSON API under `/api/*` — full
+endpoint and curl list in [docs/DEBUGGING.md](docs/DEBUGGING.md).
+
+**`/health` never changes anything.** It is the one page whose whole job is to
+say what the machine needs — pending apt with the GPU packages called out, the
+ROCm a build was compiled for vs the ROCm that loads at launch vs the ROCm
+ComfyUI's torch ships, Vulkan SDK installed vs published, disk by tree, model
+index age, model directories the router cannot see, broken links in `~/ai/bin`.
+Its only control is a re-check; applying updates and rebooting stay where they
+can be confirmed (PORTAL_PLAN §4.5).
 
 ### Network access (who can reach these services)
 
@@ -162,8 +170,9 @@ and tells you nothing), and the tab/panel junction in
 DOM by the harness, since a frame edge meeting its panel is geometry, not taste).
 
 Running them cannot disturb the machine: the portal under test gets a temp
-`AI_PORTAL_HOME`, `tests/ui/bin` on `PATH` (`systemctl`/`journalctl` are shims
-that log instead of acting), a dead outbound proxy, and a harness that
+`AI_PORTAL_HOME`, `tests/ui/bin` on `PATH` (`systemctl`/`journalctl`/`apt-get`/
+`dpkg-query`/`hipcc` are shims that answer fixed data or log instead of acting), a
+dead outbound proxy, and a harness that
 intercepts service/update mutations and answers them synthetically. A test
 asserts no `start|stop|restart` ever reached systemd. Debug a page by hand with
 `uv run python -m tests.ui_sandbox dashboard` (or `--serve` to leave it up).
@@ -174,8 +183,8 @@ cannot be committed.
 
 ### What's next (see PORTAL_PLAN.md §7)
 
-F (full health pane: apt/ROCm/SDK probes, disk, orphans, index freshness),
 G (remaining frontend polish), H (RAG service: per-project stores, ingestion
-jobs, MCP interface). Everything through G in the roadmap table — service
-controls, the llama.cpp and ComfyUI updaters with rollback, the model manager,
-the settings page, LAN bind modes, deployment and the UI test harness — is done.
+jobs, MCP interface), and the `app/main.py` route split left over from J. Phase F
+(the health pane) landed 2026-09-14; service controls, the llama.cpp and ComfyUI
+updaters with rollback, the model manager, the settings page, LAN bind modes,
+deployment and the UI test harness are done.

@@ -302,12 +302,54 @@ Implementation: `app/core/serviceenv.py` + `ComfyUI.ensure_service()` /
   (lunarg URL, known pattern), ROCm/torch version drift → offers
   "rebuild llama.cpp" / "sync ComfyUI venv".
 
-### 4.5 Health & status pane
+### 4.5 Health & status pane (done 2026-09-14)
 Inputs (UPDATES.md §"health pane"): apt pending set, reboot-pending, ROCm
 version vs llama.cpp build vs ComfyUI torch, Vulkan SDK installed + latest,
 llama.cpp local vs `origin` (git ls-remote), deployed release id, router
 uptime, ComfyUI commit/venv versions, disk sizes (`~/ai`, HF cache,
 rollback), model-index freshness, orphan files, broken hardlinks.
+
+**Built as `/health`** (`app/core/health.py` + `web/templates/health.html`). Two
+rules hold it together, and they are the reason it is useful:
+
+- **Read-only.** Nothing on the page installs, reboots, deletes or restarts; the
+  only control is a re-check (`?refresh=1`). Each advisory *links* to the control
+  that acts, on the Status page or in Settings, behind its own confirm. The UI
+  contract asserts the pane makes no request to an update endpoint.
+- **Every probe degrades alone**, on its own TTL, because they cost wildly
+  different amounts: `apt -s upgrade` 0.7 s (600 s cache), `du -sxb` over 580 GB
+  0.5 s (600 s), dpkg 50 ms (90 s), the upstream version check 5 s (24 h, and a
+  failure is held an hour so an offline box does not pay it per page load). A
+  missing binary or unreadable directory becomes `{"error": …}` in its own
+  section, never a 500 and never a blank page.
+
+What the machine taught while building it:
+
+- **Three ROCm versions, one of which is the real one.** apt says 10.0.0,
+  `hipcc` says 7.15, and the ROCm that actually loads is whatever
+  `LD_LIBRARY_PATH` names in the shared service env — RPATH does not decide it.
+  The pane shows all three and calls out a launch directory that no longer
+  exists (that is a router that will not start) as `bad`.
+- **torch's ROCm is not a bug.** ComfyUI's wheel is built for ROCm 7.13 on a
+  10.0 system and works, because the wheel ships its own ROCm libraries; that is
+  an *info* advisory with the trade-off, not an alarm (UPDATES.md's rule).
+- **LunarXchange cannot be scraped** — `vulkan.lunarg.com/sdk/home` is a JS
+  portal whose HTML contains no version (verified). The tags on
+  `KhronosGroup/Vulkan-Headers` are the SDK versions, are public, and one cached
+  call a day stays inside GitHub's rate limit.
+- **The build must stamp its own ROCm.** `llama-releases.json` recorded the
+  Vulkan SDK but not ROCm, so "rebuild for the new ROCm?" was unanswerable after
+  an apt upgrade. Builds now write `"rocm": <installed version>` into the
+  registry (`providers/llamacpp.py`); the pane says when the deployed entry
+  predates that.
+- **Orphans are real here**: model directories holding `.gguf` files one level
+  too deep (invisible to `--models-dir`, which scans a single level), HF cache
+  directories sitting inside the models dir, and an index 13 days stale. The pane
+  found all three the first time it ran.
+
+Not done on purpose: a dashboard badge with the attention count (it would put an
+apt simulation and a 580 GB `du` on the dashboard's hot path — §6.10); the count
+lives in `/api/health/detail` until the dashboard's polling is reworked.
 
 ### 4.6 State & history (SQLite)
 `~/ai/state/portal/portal.db` (WAL mode):
@@ -611,6 +653,26 @@ the cache-pressure line. `tests/ui/bin/journalctl` now emits a realistic router
 journal in both `-o cat` and `-o short-iso`, so the hero renders real shapes in
 a sandbox that cannot touch this machine.
 
+### 6.10 What a read-only pane may cost (Phase F, 2026-09-14)
+
+A health pane is free of risk but not of cost, and the two are easy to confuse
+while the page still feels instant. Three things came out of measuring this one:
+
+1. **A view must never be able to block for minutes.** The obvious way to fill
+   the "deployed build" card was `update_status()` — which refreshes the upstream
+   probe when its cache is stale, and that is a `git fetch` with a 300 s timeout.
+   Opening a page should never be able to do that, so the provider grew
+   `provenance()`: the same facts, read from the registry and the last saved
+   probe, with no network path at all. The check button on the Status page is
+   what pays for a fetch. `expectNoRequests` in the UI spec keeps it that way.
+2. **Cost belongs to the page that needs it.** `attention_count()` is one number
+   the dashboard could show, and getting it runs an apt simulation and a `du` of
+   a 580 GB tree. Those live behind `/health` and its own TTLs instead; the
+   dashboard's polling stays as it was until that polling is reworked (J).
+3. **Cache failures too.** A 5 s network timeout that is also a cache miss means
+   every page load on an offline machine pays it. A failed upstream check is held
+   for an hour and shown as "unknown", which is the honest answer anyway.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -620,7 +682,7 @@ a sandbox that cannot touch this machine.
 | C (done, 2026-09-03) | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (no-op path proven by `tools/live_smoke.sh`); old release restorable |
 | D | Model manager: inventory, gguf metadata, presets generator, HF-command downloads, dedup/GC | paste an `hf download` cmd → model appears in router with correct preset |
 | E | ComfyUI provider: status, venv sync, systemd service | start/stop from UI; update runbook verified |
-| F | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness | all UPDATES.md inputs visible |
+| **F (done, 2026-09-14)** | Health pane: apt/ROCm/SDK probes, disk, orphans, index freshness (`/health`, `app/core/health.py`) | every UPDATES.md input visible **and the pane found four real problems the first time it ran** (13-day-old index, 3 model dirs one level too deep, HF cache dirs inside the models dir, ROCm never stamped at build time); 26 tests incl. 4 route tests; §4.5 |
 | G | Frontend polish per D1 | — |
 | H | RAG service: per-project stores, ingestion jobs, MCP interface (§4.8) | two demo projects searchable, zero cross-project hits; start/stop from UI |
 | I (done, 2026-09-11) | Settings page: shared runtime env (`ai-env.env`, e.g. ROCm `LD_LIBRARY_PATH`) + per-service host/port with live validation (TCP range, cross-service collision, system-wide binding probe, privileged warning) and external-access toggle (loopback ↔ 0.0.0.0) | change a port in the UI → validated live → persisted to env file → explicit restart applies it; shared var visible + editable for all three services |
@@ -757,4 +819,41 @@ Remaining open (can proceed without them):
      `serviceconf` reads. Tests updated accordingly (64 green).
    - `.env` (repo root, held an HF token; nothing in code reads it) is now
      gitignored.
-8. **Phase J** — see §0 for the step list and target layout.
+8. **Phase F (health pane, done 2026-09-14):** `/health` — the operator's
+   "what does this machine need from me?" page, built from docs/UPDATES.md's
+   list of things that were previously a runbook.
+   - `app/core/health.py` — NEW. One probe per question, each TTL-cached on its
+     own and each degrading alone: `apt()` (`apt-get -s upgrade`, GPU/kernel
+     packages separated by regex), `rocm()` (dpkg + `hipcc` + the launch
+     directory from the shared service env), `torch()` (parsed out of the venv's
+     `dist-info` name — never imported), `vulkan()` (installed dirs, the one the
+     deployed build used, newest Khronos tag), `disk()` (`du -sxb` per tree),
+     `model_store()` (index age, presets without directories, directories the
+     router cannot see, broken links in `~/ai/bin`), `host()`, and
+     `advisories()` which turns them into bad/warn/info with a link to the
+     control that acts. `rocm_root()`/`apt_stamp()` are env-overridable so no
+     test reads the host's /opt/rocm or /var/lib/apt.
+   - `providers/llamacpp.py` — builds now stamp `"rocm"` into
+     `llama-releases.json`, and `provenance()` answers the health pane from local
+     reads only (§6.10).
+   - `app/main.py` — `GET /health`, `GET /api/health/detail`, `_ago`/`_dur`/`sz`
+     Jinja filters (the pane asks "how old" about a dozen things).
+   - `web/templates/health.html` — cards, no tabs (§4.5: panels read together,
+     not alternatives); `base.html` gains the nav link. Local styles only: the
+     attention list, the free-space bar. No tab geometry, so `tabs.css` is not
+     required by this page.
+   - Tests: 26 in `tests/test_health.py` (probe tests against shims + temp trees,
+     4 route tests asserting what a person sees, that the pane offers no form of
+     its own, and that `?refresh=1` really re-probes); UI spec entry with
+     `expectNoRequests` on the update endpoints; `tests/ui/bin/{apt-get,
+     dpkg-query,hipcc}` shims and sandbox seeds for a ROCm tree, a torch venv,
+     presets.ini and the model index, so the page renders deterministic numbers
+     in jsdom.
+   - The first live render found four real things (index 13 days old, three model
+     directories one level too deep for `--models-dir`, HF `hub/`+`xet/` cache
+     dirs sitting inside the models dir, and no ROCm stamp on the deployed
+     build), which is the exit criterion this phase was actually for.
+   - Deferred, on purpose: dashboard attention badge (§6.10), reboot/apt apply
+     buttons (§6 says a confirm is not the same as a root policy), and the
+     ComfyUI commit row (the repo's git state is not in the registry yet).
+9. **Phase J** — see §0 for the step list and target layout.

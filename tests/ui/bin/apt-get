@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# apt-get stand-in for the UI test sandbox.
+#
+# The health pane runs `apt-get -s upgrade` (a simulation — it installs nothing)
+# to list what is pending. The real command answers from this machine's package
+# lists, which change daily, so a UI test against it could never assert anything.
+# This shim prints a fixed, realistic simulation: three pending, one of them in
+# the GPU stack, which is the case the pane has to call out.
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+cat <<'EOF'
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following packages will be upgraded:
+  firefox amdrocm-base9.9 curl
+Inst firefox [1:1snap1-0ubuntu8] (1:1snap1-0ubuntu9.1 Ubuntu:26.04/resolute-updates [amd64])
+Inst amdrocm-base9.9 [9.9.0~pre3] (9.9.0~pre4 AMD:resolute [amd64])
+Inst curl [8.8.0-1] (8.8.0-2 Ubuntu:26.04/resolute-security [amd64])
+EOF
+exit 0

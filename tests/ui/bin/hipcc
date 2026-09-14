@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# hipcc stand-in for the UI test sandbox: one line in the format the real
+# compiler prints, so the health pane's HIP row is deterministic without
+# requiring ROCm on the test host.
+echo "$0 $*" >> "${AI_PORTAL_TEST_SYSCALL_LOG:-/dev/null}"
+echo "HIP version: 7.9.12345-aabbccdd"
+exit 0

@@ -367,6 +367,27 @@
       "tabGroups": []
     },
     {
+      "name": "health",
+      "path": "/health",
+      "expectTitle": "Health",
+      "_comment_requests": "the pane is server-rendered and read-only: it must not reach the update endpoints (that is how a view accidentally starts a git fetch on page load)",
+      "expectRequests": [],
+      "expectNoRequests": ["/api/updates/llamacpp", "/api/updates/comfyui", "/api/health/detail"],
+      "expectVisible": ["#attention", "#gpu-stack", "#deployed", "#vulkan", "#updates", "#disk", "#model-store"],
+      "expectText": [
+        {"_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."},
+        {"selector": "#attention h3", "contains": "Needs attention"},
+        {"selector": "#attention", "contains": "amdrocm-base9.9"},
+        {"selector": "#gpu-stack", "contains": "ROCm installed (apt)"},
+        {"selector": "#deployed", "contains": "ROCm it was built for"},
+        {"selector": "#vulkan", "contains": "latest known upstream"},
+        {"selector": "#updates", "contains": "never runs"},
+        {"selector": "#disk", "contains": "cmake build trees"},
+        {"selector": "#model-store", "contains": "invisible to llama.cpp"}
+      ],
+      "tabGroups": []
+    },
+    {
       "name": "settings",
       "path": "/settings",
       "expectTitle": "Settings",

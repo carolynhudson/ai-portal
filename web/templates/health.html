@@ -1,0 +1,182 @@
+{# Health pane (PORTAL_PLAN §4.5, phase F): what this machine needs from its
+   operator. Read-only on purpose — every control that changes something lives on
+   the Status page or in Settings, behind its own confirm. No tabs: these are
+   panels read together, not alternatives (plan §4.5). #}
+{% extends "base.html" %}
+{% block title %}Health · AI Portal{% endblock %}
+{% block body %}
+<style>
+/* page-local only: the attention list, the free-space bar, the version table.
+   No tab geometry here (that lives in tabs.css) and nothing reusable enough
+   to belong in the shared stylesheet. */
+.adv{list-style:none;margin:0;padding:0}
+.adv li{display:flex;gap:10px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+.adv li:last-child{border-bottom:0}
+.tag{flex:0 0 auto;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.tag.bad{background:rgba(248,81,73,.16);color:var(--bad)}
+.tag.warn{background:rgba(210,153,34,.16);color:var(--warn)}
+.tag.info{background:rgba(90,169,255,.14);color:var(--acc)}
+.bar{height:8px;border-radius:999px;background:var(--line);overflow:hidden;margin:8px 0 2px}
+.bar i{display:block;height:100%;background:var(--acc)}
+.vers td:nth-child(2){color:var(--mut)}
+.old{color:var(--warn)}
+.gone{color:var(--bad)}
+</style>
+
+<div class="card" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+  <h2 style="margin:0">Health</h2>
+  <span class="mut">{{ host.hostname }} · {{ host.os }} · kernel {{ host.kernel }} · up
+    {{ host.uptime_s|dur }} · python {{ host.python }}</span>
+  <a href="/health?refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
+</div>
+
+<div class="card" id="attention" style="margin-bottom:14px">
+  <h3>Needs attention <span class="mut">({{ advisories|length }})</span></h3>
+  {% if advisories %}
+  <ul class="adv">
+    {% for a in advisories %}
+    <li><span class="tag {{ a.level }}">{{ a.level }}</span> <span>{{ a.text }}
+      {% if a.where %} — <a href="{{ a.where }}">{{ a.where_label or "open" }}</a>{% endif %}
+      {% if a.cmd %} <code class="mono">{{ a.cmd }}</code>{% endif %}
+    </span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="mut">Nothing needs attention.</p>
+  {% endif %}
+</div>
+
+<div class="grid" style="margin-bottom:14px">
+  <div class="card" id="gpu-stack">
+    <h3>GPU stack</h3>
+    <div class="kv"><span class="k">ROCm installed (apt)</span><b>{{ rocm.installed or "—" }}</b></div>
+    <div class="kv"><span class="k">HIP (hipcc)</span><b>{{ rocm.hip or "—" }}</b></div>
+    <div class="kv"><span class="k">torch</span><b class="mono">{{ torch.version or "—" }}</b></div>
+    {% if torch.rocm_built %}
+    <div class="kv"><span class="k">torch built for ROCm</span><b>{{ torch.rocm_built }}</b></div>
+    {% endif %}
+    <div class="kv"><span class="k">ComfyUI repo</span><b class="mono">{{ comfyui.commit or "—" }}
+      {% if comfyui.committed %}<span class="mut">({{ comfyui.committed }})</span>{% endif %}</b></div>
+    <div class="kv"><span class="k">ROCm dirs</span><b class="mono">{{ rocm.cores|join(", ") or "—" }}</b></div>
+    {# the launch path is the one thing here that is long enough to wrap badly in
+       a two-column row, so it gets a block of its own #}
+    <p class="mut" style="margin:10px 0 2px">The router loads ROCm from
+      <code class="mono">LD_LIBRARY_PATH</code>, not an RPATH — this is what actually runs:</p>
+    <div class="mono {% if rocm.launch_dir and not rocm.launch_dir_ok %}gone{% endif %}">{{
+      rocm.launch_dir or ("none set — loader default" if rocm.root_exists else "—") }}</div>
+    {% if rocm.error %}<p class="err">{{ rocm.error }}</p>{% endif %}
+  </div>
+
+  <div class="card" id="deployed">
+    <h3>llama.cpp deployed</h3>
+    <div class="kv"><span class="k">release</span><b class="mono">{{ deployed.name or "—" }}</b></div>
+    <div class="kv"><span class="k">commit</span><b class="mono">{{ deployed.commit or "—" }}</b></div>
+    <div class="kv"><span class="k">built</span><b>{{ deployed.built_ago or deployed.built_at or "—" }}</b></div>
+    <div class="kv"><span class="k">ROCm it was built for</span>
+      <b>{{ deployed.rocm_built or "not recorded" }}</b></div>
+    <div class="kv"><span class="k">Vulkan SDK it was built with</span>
+      <b>{{ deployed.vulkan_built or "not recorded" }}</b></div>
+    <div class="kv"><span class="k">repo head</span><b class="mono">{{ (deployed.repo_head or "—")[:7] }}</b></div>
+    <div class="kv"><span class="k">behind origin/master</span><b>{{ deployed.behind_master if deployed.behind_master is not none else "—" }}</b></div>
+    <div class="kv"><span class="k">latest upstream release</span><b>{{ deployed.latest_release or "—" }}</b></div>
+    <div class="kv"><span class="k">upstream check</span>
+      <b>{% if deployed.remote_checked %}{{ ((generated_at - deployed.remote_checked) / 3600)|ago }} ago{% if deployed.remote_stale %} (stale){% endif %}{% else %}never{% endif %}</b></div>
+    <div class="kv"><span class="k">builds kept</span><b>{{ deployed.release_count or 0 }}</b></div>
+    {% if deployed.error %}<p class="err">{{ deployed.error }}</p>{% endif %}
+  </div>
+
+  <div class="card" id="vulkan">
+    <h3>Vulkan SDK</h3>
+    <div class="kv"><span class="k">installed</span><b class="mono">{{ vulkan.installed|join(", ") or "—" }}</b></div>
+    <div class="kv"><span class="k">used by deployed build</span>
+      <b class="mono">{{ (vulkan.used_by_current_build or "").rstrip("/").split("/")[-1] or "—" }}</b></div>
+    <div class="kv"><span class="k">latest known upstream</span><b>{{ vulkan.latest_known or "unknown" }}</b></div>
+    <p class="mut" style="margin:10px 0 0">Checked
+      {{ (generated_at - vulkan.checked_at)|dur if vulkan.checked_at else "never" }}
+      against the Khronos Vulkan-Headers tags. glslc is pinned by the CMake cache at
+      configure time, so a newer SDK only matters on a fresh build directory.</p>
+    {% if vulkan.check_error %}<p class="mut">Version check: {{ vulkan.check_error }} (offline?)</p>{% endif %}
+  </div>
+</div>
+
+<h2>Updates</h2>
+<div class="card" id="updates" style="margin-bottom:14px">
+  {% if apt.available %}
+  <div class="kv"><span class="k">pending (apt)</span><b>{{ apt.pending }}</b></div>
+  <div class="kv"><span class="k">of which GPU stack</span>
+    <b>{{ apt.gpu_pending|join(", ") or "none" }}</b></div>
+  <div class="kv"><span class="k">package lists</span>
+    <b class="{% if apt.lists_age_h and apt.lists_age_h > 72 %}old{% endif %}">{{ apt.lists_age_h|ago }} old</b></div>
+  {% if apt.error %}<p class="err">{{ apt.error }}</p>{% endif %}
+  {% if apt.packages %}
+  <table style="margin-top:10px">
+    <tr><th>package</th><th>installed</th><th>candidate</th><th>suite</th></tr>
+    {% for p in apt.packages %}
+    <tr>
+      <td>{{ p.name }}{% if p.gpu %} <span class="tag warn">gpu</span>{% elif p.kernel %}
+        <span class="tag warn">kernel</span>{% endif %}</td>
+      <td class="mono">{{ p.from }}</td>
+      <td class="mono">{{ p.to }}</td>
+      <td class="mut">{{ p.suite }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p class="mut" style="margin:12px 0 0">The portal never runs <code>apt upgrade</code> and never
+    reboots: applying these is
+    <code class="mono">sudo apt upgrade</code> then <code class="mono">sudo reboot</code> when the
+    running kernel or driver is behind. Rebuilding llama.cpp after a ROCm series change is on the
+    <a href="/#update-llamacpp">Status page</a>.</p>
+  {% else %}
+  <p class="err">{{ apt.error or "no package manager found" }}</p>
+  {% endif %}
+</div>
+
+<h2>Disk</h2>
+<div class="card" id="disk" style="margin-bottom:14px">
+  <div class="kv"><span class="k">free</span><b>{{ disk.free_bytes|sz }} of {{ disk.total_bytes|sz }}
+    ({{ disk.used_pct }}% used)</b></div>
+  <div class="bar"><i style="width:{{ disk.used_pct or 0 }}%"></i></div>
+  <table style="margin-top:10px">
+    <tr><th>tree</th><th>size</th><th></th></tr>
+    {% for t in disk.trees %}
+    <tr><td>{{ t.label }}</td><td class="mono">{{ t.bytes|sz }}</td>
+      <td class="mut">{{ t.note }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="mut" style="margin:12px 0 0">Models dominate, and that is the point of a 24 GB VRAM
+    box. The disposable trees are the cmake build directories and old stored builds; both are
+    listed so freeing space is a decision, not an excavation.</p>
+</div>
+
+<h2>Model store</h2>
+<div class="card" id="model-store">
+  <div class="kv"><span class="k">index (INDEX.json)</span>
+    <b class="{% if model_store.index.age_h and model_store.index.age_h > 168 %}old{% endif %}">
+      {{ "updated " + (model_store.index.age_h|ago) + " ago" if model_store.index.exists else "never built" }}</b></div>
+  {% if model_store.index.files_on_disk is not none %}
+  <div class="kv"><span class="k">files in index</span><b>{{ model_store.index.files_on_disk }}
+    ({{ model_store.index.total_bytes|sz }})</b></div>
+  {% endif %}
+  <div class="kv"><span class="k">model directories</span><b>{{ model_store.model_dirs }}</b></div>
+  <div class="kv"><span class="k">preset sections</span><b>{{ model_store.presets.sections }}</b></div>
+  <table style="margin-top:10px">
+    <tr><th>what</th><th>detail</th></tr>
+    <tr><td>invisible to llama.cpp</td>
+      <td>{% if model_store.invisible_models %}models in a sub-subdirectory (the router scans one
+        level deep): <span class="mono">{{ model_store.invisible_models|join(", ") }}</span>
+        {% else %}none{% endif %}</td></tr>
+    <tr><td>directories with no model</td>
+      <td>{% if model_store.dirs_without_model %}<span class="mono">{{ model_store.dirs_without_model|join(", ") }}</span>
+        — no .gguf in them; cache leftovers, ignored by the router{% else %}none{% endif %}</td></tr>
+    <tr><td>presets without a model</td>
+      <td>{% if model_store.stale_presets %}<span class="mono">{{ model_store.stale_presets|join(", ") }}</span>{% else %}none{% endif %}</td></tr>
+    <tr><td>broken links in ~/ai/bin</td>
+      <td>{% if model_store.broken_links %}<span class="gone mono">{{ model_store.broken_links|join(", ") }}</span>
+        — those commands fail until relinked{% else %}none{% endif %}</td></tr>
+  </table>
+  <p class="mut" style="margin:12px 0 0">The index is built by the gguf-indexer timer; when it is
+    old, the Models page and any hash in a preset may not match the file on disk. Rebuild it with
+    <code class="mono">gguf-indexer --scan</code>.</p>
+</div>
+{% endblock %}

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,7 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, modeladd, paths, systemd, updater
+from .core import db, health, modeladd, paths, systemd, updater
 from .providers import PROVIDERS, get as get_provider
 
 HERE = Path(__file__).resolve().parent
@@ -157,6 +158,36 @@ def _settings() -> cfg.Settings:
 _settings_cache: cfg.Settings | None = None
 
 
+def _dur(seconds: float | None) -> str:
+    """'12d 4h' / '38m' / 'just now' — spans, not ages (uptime, elapsed)."""
+    if seconds is None:
+        return "—"
+    s = int(seconds)
+    if s < 5:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60}m"
+    d, rem = divmod(s, 86400)
+    h, m = divmod(rem // 60, 60)
+    if d:
+        return f"{d}d {h}h"
+    if h:
+        return f"{h}h {m:02d}m"
+    return f"{m}m"
+
+
+def _ago(hours: float | None) -> str:
+    """'20m' / '3h' / '12d' — the health pane answers "how fresh is this?" in
+    the same shape everywhere, because it asks it about a dozen things."""
+    if hours is None:
+        return "—"
+    if hours < 1:
+        return f"{max(0, int(hours * 60))}m"
+    if hours < 48:
+        return f"{hours:.0f}h"
+    return f"{hours / 24:.0f}d"
+
+
 def _human(n: int | None) -> str:
     if not n:
         return "—"
@@ -225,6 +256,11 @@ def create_app() -> FastAPI:
     log = logsetup.setup()          # level: AI_PORTAL_LOG_LEVEL (env/unit)
     app = FastAPI(title="AI Portal", version="0.1.0")
     templates = Jinja2Templates(directory=str(WEB / "templates"))
+    # the health pane asks "how big / how old" about a dozen things; formatting
+    # them once here beats a dozen inconsistent template expressions
+    templates.env.filters["ago"] = _ago
+    templates.env.filters["dur"] = _dur
+    templates.env.filters["sz"] = _human
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     log.info("AI Portal %s: home=%s ai_root=%s state=%s",
              app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)
@@ -354,10 +390,13 @@ def create_app() -> FastAPI:
     def index(request: Request, _=Depends(_require_auth)):
         s = _settings()
         providers = {p.key: _provider_card(p.status()) for p in PROVIDERS}
-        health = _health_bundle()
+        # local named hb, not health: `health` is the probe module (Phase F), and
+        # shadowing a module with a dict in one route is how the next person's
+        # NameError happens
+        hb = _health_bundle()
         snap = router_mod.snapshot()
         return templates.TemplateResponse(request, "dashboard.html",
-                                          {"providers": providers, "health": health,
+                                          {"providers": providers, "health": hb,
                                            "r": snap, "comfy": comfy_snapshot(),
                                            "settings": db.current_settings()})
 
@@ -397,6 +436,50 @@ def create_app() -> FastAPI:
     @app.get("/settings")
     def settings_page(request: Request, _=Depends(_require_auth)):
         return templates.TemplateResponse(request, "settings.html", {})
+
+    def _health_page(refresh: bool = False) -> dict:
+        """Health pane data: host probes plus the deployed build's provenance.
+
+        The unit states come from systemd directly rather than from a provider:
+        this page has to keep answering when a service is down, which is exactly
+        when it gets read.
+        """
+        router_u = systemd.unit_state(paths.ROUTER_UNIT)
+        comfy_u = systemd.unit_state(paths.COMFY_UNIT)
+        p = get_provider("llamacpp")
+        try:
+            prov = p.provenance() if p else {}
+        except Exception as e:  # noqa: BLE001 — a broken release is a row, not a 500
+            prov = {"error": f"{type(e).__name__}: {e}"}
+        body = health.summary(
+            release=({"rocm": prov.get("rocm_built"), "name": prov.get("name")}
+                     if prov.get("name") else None),
+            service={"state": router_u.get("ActiveState", "unknown")},
+            comfy={"state": comfy_u.get("ActiveState", "unknown")},
+            refresh=refresh)
+        # "built 2026-09-11T13:41:12+00:00" is not a fact a person reads; the
+        # age is, and the raw stamp stays in the payload for any JSON consumer
+        try:
+            built = datetime.fromisoformat(str(prov.get("built_at")))
+            prov["built_ago"] = _ago((time.time() - built.timestamp()) / 3600)
+        except (TypeError, ValueError):
+            prov["built_ago"] = None
+        body["deployed"] = prov
+        body["host"] = health.host()
+        return body
+
+    @app.get("/health")
+    def health_page(request: Request, refresh: bool = False,
+                    _=Depends(_require_auth)):
+        """What this machine needs from its operator (PORTAL_PLAN §4.5, F).
+
+        Read-only by construction: the only control on the page is a re-check.
+        Applying updates, rebooting and deleting builds stay on the Status page
+        and in Settings behind their own confirms — so this pane can be read
+        without fear of what reading it might do.
+        """
+        return templates.TemplateResponse(request, "health.html",
+                                          _health_page(refresh))
 
     # ----------------------------------------------------------------- JSON
     def _health_bundle() -> dict:
@@ -456,6 +539,11 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def api_health(_=Depends(_require_auth)):
         return _health_bundle()
+
+    @app.get("/api/health/detail")
+    def api_health_detail(refresh: bool = False, _=Depends(_require_auth)):
+        """The health pane as JSON (same bundle as /health, no HTML)."""
+        return _health_page(refresh)
 
     @app.get("/api/router")
     def api_router(raw: bool = False, _=Depends(_require_auth)):
