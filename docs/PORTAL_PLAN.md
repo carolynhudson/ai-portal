@@ -20,7 +20,7 @@ Companions:
 **Committed & verified:** Phases A–E + router hero + Phase I (Settings) +
 **network exposure** + **Phase J steps 1, 4, 5, 6, 7** + **Phase L (UI
 integration tests)**.
-Green: 183 tests (`./scripts/check-ui.sh`), of which 9 drive the real pages in a
+Green: 185 tests (`./scripts/check-ui.sh`), of which 9 drive the real pages in a
 DOM (see §6.6), plus the tab/panel geometry contract (§6.7), the stored-build
 controls (§6.8) and the router pulse (§6.9).
 
@@ -594,6 +594,13 @@ What replaced it, and the rules behind it:
    asserted by `test_hero.py::test_service_state_and_controls_survive_the_redesign`.
    The log pane shrank (240px → 112px) and shows attention only; `all lines`
    switches it back to the raw tail for debugging.
+
+The throughput chart is the one part jsdom cannot see (no canvas), so
+`test_hero.py` pulls `drawPulse()` out of the template and runs it against a stub
+2D context — asserting it draws the areas, labels the peak, and names a silent
+tail (`last sample 35s ago`) instead of drawing it as a drop to zero. It failed
+loudly when checked against the previous version of the function, so it is not
+decoration.
 
 Tests: 22 parser tests over the real captured journal (`tests/fixtures/
 router_journal.log`) plus source-accurate rare lines; 10 page tests that render

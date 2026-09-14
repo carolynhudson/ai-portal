@@ -497,12 +497,25 @@ function renderLanes(slots){
     k[3].textContent = laneDetail(s);
   });
 }
-function drawPulse(series){
+function drawPulse(pulse){
   if (!tpsCx) return;
-  const W = tpsCv.width, H = tpsCv.height, bins = (series && series.bins) || [];
+  const series = (pulse && pulse.series) || {};
+  const W = tpsCv.width, H = tpsCv.height, all = series.bins || [];
   tpsCx.clearRect(0, 0, W, H);
   const peakOf = b => Object.keys(b.per).reduce((a, k) => a + b.per[k], 0);
-  if (!bins.length){
+  // A 5-second bin with no sample means llama.cpp has not printed in it yet, not
+  // that throughput fell to zero — so the area stops at the last real sample and
+  // the gap is named instead of drawn as a cliff.
+  let bins = all, silence = 0;
+  if (bins.length){
+    let last = bins.length - 1;
+    while (last > 0 && !peakOf(bins[last])) last--;
+    if (peakOf(bins[last])){
+      bins = bins.slice(0, last + 1);
+      silence = ((pulse.time && pulse.time.now) || 0) - bins[bins.length - 1].t;
+    }
+  }
+  if (!bins.some(peakOf)){
     tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
     tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
     tpsCx.fillStyle = '#6b7483'; tpsCx.font = '11px ui-monospace, Menlo, monospace';
@@ -533,10 +546,13 @@ function drawPulse(series){
     tpsCx.strokeStyle = color; tpsCx.lineWidth = 1.2; tpsCx.stroke();
     cum = top;
   });
+  const span = (bins[bins.length - 1].t - bins[0].t) / 60;
   tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
   tpsCx.fillText(peak.toFixed(0) + ' t/s', 3, 9);
-  tpsCx.fillText('last ' + Math.max(1, Math.round((series.window_s || 420) / 60)) + ' min · now →',
-                 3, H - 2);
+  tpsCx.fillText(Math.max(1, Math.round(span)) + ' min'
+                 + (silence > (series.bin_s || 5) * 1.5
+                    ? ' · last sample ' + Math.round(silence) + 's ago'
+                    : ' · generating now →'), 3, H - 2);
 }
 function renderSignals(p){
   const el = document.getElementById('pulse-signals');
@@ -604,7 +620,7 @@ function renderRouter(d){
         .reduce((a, k) => a + bins[bins.length - 1].per[k], 0) : null;
   const latest = now != null ? now : (d.tps && d.tps.latest);
   setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
-  drawPulse(p.series);
+  drawPulse(p);
   renderSignals(p);
   const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
   setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));

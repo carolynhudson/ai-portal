@@ -157,6 +157,77 @@ def test_an_idle_log_says_so_instead_of_rendering_an_empty_board():
     assert "no requests in the log window" in body
 
 
+# ---------------------------------------------------------------- throughput chart
+# jsdom has no canvas, so the harness can only see that <canvas> exists. The
+# drawing function is pure arithmetic over the pulse's bins, so it can be pulled
+# out of the template and run against a stub context — which is the only way
+# this pane gets any test at all.
+
+DRIVER = r"""
+import { writeFileSync } from "fs";
+const calls = [];
+const ctx = new Proxy({}, {
+  get: (o, k) => (typeof o[k] !== "undefined" ? o[k] : (...a) => { calls.push([k, a]); }),
+  set: (o, k, v) => { calls.push([k, v]); o[k] = v; return true; },
+});
+const tpsCv = { width: 560, height: 52 };
+const tpsCx = ctx;
+const SLOT_COLORS = ["#5aa9ff", "#f0883e"];
+%SOURCE%
+
+const say = (label, ok) => console.log(label + " " + (ok ? "yes" : "no"));
+
+// 50 seconds of samples, then silence: the area must stop at the last real
+// sample and the gap must be named, not drawn as a drop to zero
+drawPulse({ series: { bins: Array.from({ length: 10 }, (_, i) => ({
+      t: 1000 + i * 5, per: i < 7 ? { "1": 6, "3": 2 } : {} })),
+    bin_s: 5, window_s: 420 }, time: { now: 1000 + 13 * 5 } });
+const pts = calls.filter(c => c[0] === "moveTo" || c[0] === "lineTo");
+say("draws-areas", pts.length > 10);
+say("reaches-right-edge", Math.max(...pts.map(c => c[1][0])) > 500);
+const labels = calls.filter(c => c[0] === "fillText").map(c => c[1][0]);
+say("names-the-silence", labels.some(t => /last sample \d+s ago/.test(t)));
+say("labels-peak", labels.some(t => /^\d+ t\/s$/.test(t)));
+
+// an empty window says so instead of drawing a flat line pretending to be data
+calls.length = 0;
+drawPulse({ series: { bins: [], bin_s: 5, window_s: 420 }, time: { now: 1 } });
+say("empty-says-so", calls.filter(c => c[0] === "fillText")
+  .map(c => c[1][0]).some(t => /no token activity/.test(t)));
+
+// all-empty bins must not divide by zero or throw
+drawPulse({ series: { bins: [{ t: 1, per: {} }], bin_s: 5 }, time: { now: 99 } });
+console.log("survived");
+"""
+
+
+def test_throughput_chart_draws_what_the_bins_say():
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required to execute the chart code")
+    template = pathlib.Path(__file__).resolve().parents[1] / "web" / "templates" / "dashboard.html"
+    text = template.read_text()
+    start = text.find("function drawPulse(pulse){")
+    assert start >= 0, "drawPulse disappeared from the hero — update this test"
+    end = text.index("\n}\n", start) + 3
+    source = text[start:end]
+    with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False) as fh:
+        fh.write(DRIVER.replace("%SOURCE%", source))
+        script = fh.name
+    out = subprocess.run([node, script], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr[-800:]
+    lines = dict(line.split(" ", 1) for line in out.stdout.strip().splitlines()
+                 if " " in line)
+    for behaviour in ("draws-areas", "reaches-right-edge", "names-the-silence",
+                      "labels-peak", "empty-says-so"):
+        assert lines.get(behaviour) == "yes", f"{behaviour}: {out.stdout}"
+    assert "survived" in out.stdout
+
+
 # ------------------------------------------------------------- model switching
 
 def test_a_model_switch_is_announced_with_the_model_name():
