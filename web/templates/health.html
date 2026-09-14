@@ -18,6 +18,11 @@
 .tag.info{background:rgba(90,169,255,.14);color:var(--acc)}
 .bar{height:8px;border-radius:999px;background:var(--line);overflow:hidden;margin:8px 0 2px}
 .bar i{display:block;height:100%;background:var(--acc)}
+/* wide tables scroll inside their card instead of widening the page: version
+   strings and suites are long, and this pane is read on a phone as often as on
+   a desktop (the app-wide narrow-viewport pass is phase G) */
+.scroll{overflow-x:auto}
+.scroll table{min-width:520px}
 .vers td:nth-child(2){color:var(--mut)}
 .old{color:var(--warn)}
 .gone{color:var(--bad)}
@@ -109,7 +114,7 @@
     <b class="{% if apt.lists_age_h and apt.lists_age_h > 72 %}old{% endif %}">{{ apt.lists_age_h|ago }} old</b></div>
   {% if apt.error %}<p class="err">{{ apt.error }}</p>{% endif %}
   {% if apt.packages %}
-  <table style="margin-top:10px">
+  <div class="scroll"><table>
     <tr><th>package</th><th>installed</th><th>candidate</th><th>suite</th></tr>
     {% for p in apt.packages %}
     <tr>
@@ -120,7 +125,7 @@
       <td class="mut">{{ p.suite }}</td>
     </tr>
     {% endfor %}
-  </table>
+  </table></div>
   {% endif %}
   <p class="mut" style="margin:12px 0 0">The portal never runs <code>apt upgrade</code> and never
     reboots: applying these is
@@ -137,13 +142,13 @@
   <div class="kv"><span class="k">free</span><b>{{ disk.free_bytes|sz }} of {{ disk.total_bytes|sz }}
     ({{ disk.used_pct }}% used)</b></div>
   <div class="bar"><i style="width:{{ disk.used_pct or 0 }}%"></i></div>
-  <table style="margin-top:10px">
+  <div class="scroll"><table>
     <tr><th>tree</th><th>size</th><th></th></tr>
     {% for t in disk.trees %}
     <tr><td>{{ t.label }}</td><td class="mono">{{ t.bytes|sz }}</td>
       <td class="mut">{{ t.note }}</td></tr>
     {% endfor %}
-  </table>
+  </table></div>
   <p class="mut" style="margin:12px 0 0">Models dominate, and that is the point of a 24 GB VRAM
     box. The disposable trees are the cmake build directories and old stored builds; both are
     listed so freeing space is a decision, not an excavation.</p>
@@ -160,7 +165,7 @@
   {% endif %}
   <div class="kv"><span class="k">model directories</span><b>{{ model_store.model_dirs }}</b></div>
   <div class="kv"><span class="k">preset sections</span><b>{{ model_store.presets.sections }}</b></div>
-  <table style="margin-top:10px">
+  <div class="scroll"><table>
     <tr><th>what</th><th>detail</th></tr>
     <tr><td>invisible to llama.cpp</td>
       <td>{% if model_store.invisible_models %}models in a sub-subdirectory (the router scans one
@@ -174,7 +179,7 @@
     <tr><td>broken links in ~/ai/bin</td>
       <td>{% if model_store.broken_links %}<span class="gone mono">{{ model_store.broken_links|join(", ") }}</span>
         — those commands fail until relinked{% else %}none{% endif %}</td></tr>
-  </table>
+  </table></div>
   <p class="mut" style="margin:12px 0 0">The index is built by the gguf-indexer timer; when it is
     old, the Models page and any hash in a preset may not match the file on disk. Rebuild it with
     <code class="mono">gguf-indexer --scan</code>.</p>

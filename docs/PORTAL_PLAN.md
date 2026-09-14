@@ -856,6 +856,15 @@ Remaining open (can proceed without them):
      directories one level too deep for `--models-dir`, HF `hub/`+`xet/` cache
      dirs sitting inside the models dir, and no ROCm stamp on the deployed
      build), which is the exit criterion this phase was actually for.
+   - Wide tables (apt packages, disk trees) scroll inside their card via a
+     page-local `.scroll`, measured at a 400px viewport: the pane adds no
+     horizontal overflow of its own. **Found while measuring:** every existing
+     page already overflows ~100px at 400px wide because of the nav's logout
+     form (`/`, `/models`, `/metrics`, `/settings` alike) — pre-existing, not
+     introduced here, and part of phase G's narrow-viewport pass.
+   - ComfyUI's repo commit (`comfy_install()`, a local ``git log`` with no
+     network path) completes the version table: when a workflow breaks, "did the
+     repo move or did the venv" is two rows, not an excavation.
    - Deferred, on purpose: dashboard attention badge (§6.10), reboot/apt apply
      buttons (§6 says a confirm is not the same as a root policy), and the
      ComfyUI commit row (the repo's git state is not in the registry yet).
