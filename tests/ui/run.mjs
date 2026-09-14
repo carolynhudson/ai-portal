@@ -351,6 +351,19 @@ const httpAttributed = new Set(trace.httpErrors);   // load-time errors already 
 function attributeHttp(messages) {
   for (const m of messages) httpAttributed.add(m);
 }
+// A regression test for this file's own reason for existing: judgeControl used
+// to lose these four assertions in a refactor and nothing failed, because the
+// checks it kept (dead control, confirm gate) were loud enough to hide the ones
+// it dropped. Mutation 8 in mutation_check.py is what catches that class of edit;
+// this is the cheap version, and it costs nothing.
+if (typeof judgeControl.toString === "function") {
+  for (const needle of ["newErrors", "newConsoleErrors", "newMissedIds", "newHttpErrors",
+                        "confirmsBefore", "dead control"]) {
+    if (!judgeControl.toString().includes(needle)) {
+      fail(`harness integrity: judgeControl no longer checks ${needle} — assertions were dropped in a refactor`);
+    }
+  }
+}
 
 // ------------------------------------------------- selection-driven enablement
 // A control that locks or unlocks another one has to be asserted, not assumed:
@@ -487,6 +500,12 @@ function withIdentities(list) {
 // matter what drove it: no errors, no endpoint failures, destructive requests
 // confirm-gated before they happen, and some visible effect.
 function judgeControl(info, r, phase, { toleratedNoop = false } = {}) {
+    for (const m of r.newErrors) fail(`${info.selector} threw: ${m}`);
+    for (const m of r.newConsoleErrors) fail(`${info.selector} logged console.error: ${m}`);
+    for (const m of r.newMissedIds) fail(`${info.selector} looked up missing id #${m}`);
+    for (const m of r.newHttpErrors) fail(`${info.selector} hit an endpoint error: ${m}`);
+    // claimed here so the end-of-page sweep can tell "judged" from "nobody saw
+    // it"; without this line an error would be both failed and orphaned
     attributeHttp(r.newHttpErrors);
 
     // Destructive requests must be confirm-gated. Checked in both passes: in
