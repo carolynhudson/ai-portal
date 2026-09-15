@@ -17,6 +17,7 @@ import httpx
 
 from .base import Provider, ToolStatus
 from ..core import db, health, llamakey, paths, serviceconf, systemd, units, updater
+from ..core.modeladd import _AUX_PREFIX_RE   # what counts as a model: one opinion
 
 
 def _git_head(repo: str) -> str | None:
@@ -738,65 +739,207 @@ class LlamaCpp(Provider):
         log(f"symlink farm -> {rel_dir}")
 
     def _smoke_worker(self, rel_dir: Path, log) -> None:
-        """Boot a throwaway worker from the staged release loading the
-        smallest model on disk — proves the release actually runs here."""
-        model = None
-        if paths.LLAMA_MODELS.is_dir():
-            ggufs = [f for f in paths.LLAMA_MODELS.rglob("*.gguf") if f.is_file()]
-            if ggufs:
-                model = min(ggufs, key=lambda f: f.stat().st_size)
-        if model is None:
+        """Boot a throwaway worker from the staged release and wait for /health.
+
+        Proves the release runs *here* — which is the whole gate in front of a
+        deploy, so it must not be able to fail for a reason unrelated to the
+        build. Picking the model is therefore not a detail:
+
+        Live, this took `min(every *.gguf, key=size)` and chose
+        `Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf` at 11 MB — the first
+        shard of a 94 GB model, which is the smallest *file* on disk and nowhere
+        near the smallest *model*. llama.cpp read its header (which describes the
+        whole model) and asked for a 37 GB buffer on a box with 14 GB free. The
+        build was fine; the update was reported as failed.
+
+        So: shards are treated as one model at their full size, projectors and
+        imatrix files are not models at all, candidates have to fit the memory
+        actually available, and a failure that says "could not allocate" is
+        reported as the environment problem it is instead of blaming the build.
+        """
+        cands = _model_candidates(paths.LLAMA_MODELS)
+        if not cands:
             log("no models on disk — skipping smoke worker")
             return
-        s = socket.socket()
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-        s.close()
-        log(f"smoke worker: {model.name} on 127.0.0.1:{port}")
-        proc = subprocess.Popen(
+        avail = _mem_available()
+        fits = [c for c in cands if c[1] + _SMOKE_HEADROOM <= avail]
+        too_big = cands[len(fits):]
+        if too_big:
+            log(f"smoke worker: {len(too_big)} model(s) too large for the "
+                f"{_sz(avail)} free, smallest skipped: "
+                + ", ".join(f"{c[2]} ({_sz(c[1])})" for c in too_big[:3]))
+        if not fits:
+            raise RuntimeError(
+                f"smoke test could not run: no model on disk fits in the "
+                f"{_sz(avail)} of memory available (smallest is "
+                f"{cands[0][2]} at {_sz(cands[0][1])}). The build itself "
+                f"verified clean and is staged at {rel_dir} — it was NOT "
+                f"deployed. Free memory, or update with smoke off.")
+        last = None
+        for path, size, label in fits[:_SMOKE_ATTEMPTS]:
+            ok, out = _run_worker(rel_dir, path, log, label, size)
+            if ok:
+                log("smoke worker OK")
+                return
+            if _is_memory_error(out):
+                last = (label, out)
+                log(f"smoke worker: {label} could not get memory — "
+                    f"{'trying a smaller model' if len(fits) > 1 else 'no smaller model left'}")
+                continue
+            log("smoke worker output (tail):")
+            log(out[-1500:] or "(no output)")
+            raise RuntimeError(f"smoke worker failed for {label}: the staged "
+                               f"release did not serve /health (output above)")
+        label, out = last
+        log("smoke worker output (tail):")
+        log(out[-1500:] or "(no output)")
+        raise RuntimeError(
+            f"smoke test could not get memory for any candidate (last: {label}). "
+            f"The build verified clean but is NOT deployed — something is holding "
+            f"the memory this box needs. See the tail above.")
+
+# ------------------------------------------------------------------ smoke test
+#
+# What a candidate model is, and what it costs. Both halves of that have to be
+# right or the gate in front of a deploy fails for reasons that have nothing to
+# do with the build.
+
+_SMOKE_ATTEMPTS = 3        # candidates to try, smallest first
+_SMOKE_HEADROOM = 2 << 30  # a model this much smaller than free memory still fits
+
+# Below this a .gguf is not a model: an LFS pointer, a placeholder, a download
+# that died in its first seconds. Not a size ranking — a sanity floor, which is
+# why it is 20 MB and not "bigger than the biggest toy model".
+_MIN_MODEL_BYTES = 20 << 20
+
+# A .gguf that is not a model: a vision projector, a draft/MTP head, or imatrix
+# calibration data. All three load *into* a model; none of them is one, and each
+# sits next to real models in the library looking exactly like one. `mmproj`/
+# `mtp`/`draft` is the convention modeladd already uses for the same question —
+# shared, so the two can never disagree about what the library contains.
+_NOT_A_MODEL = re.compile(
+    _AUX_PREFIX_RE.pattern.replace("(?:mmproj|mtp|draft)",
+                                   "(?:mmproj|mtp|draft|imatrix|adapter)"), re.I)
+
+# `name-00001-of-00003.gguf`: one file of one model. llama.cpp reads the header
+# of the first part, which describes the *whole* model — so the cost of a shard
+# is the size of its set, never its own.
+_SHARD = re.compile(r"^(?P<base>.+)-(?P<idx>\d{5})-of-(?P<n>\d{5})\.gguf$", re.I)
+
+# How llama.cpp says "I ran out of memory". Distinct from "this binary is
+# broken": the first is the machine's fault and must not be blamed on a build.
+_OOM = re.compile(
+    r"failed to allocate|unable to allocate|out of memory|bad_alloc"
+    r"|not enough memory|failed to mmap|could not lock memory"
+    r"|resource temporarily unavailable", re.I)
+
+
+def _sz(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _model_candidates(models_dir: Path) -> list[tuple[Path, int, str]]:
+    """Loadable models on disk, smallest first, as (path to load, bytes, label).
+
+    Shards collapse into their first part at the size of the whole set; a set
+    with a part missing is not loadable and is left out entirely. Projectors and
+    imatrix files are not models. Zero-byte and truncated files are left out
+    because a partially-downloaded model fails a smoke test for the wrong reason.
+    """
+    if not models_dir.is_dir():
+        return []
+    singles: list[tuple[Path, int, str]] = []
+    groups: dict[tuple[str, str], dict[str, tuple[Path, int]]] = {}
+    for f in models_dir.rglob("*.gguf"):
+        if not f.is_file() or _NOT_A_MODEL.search(f.name):
+            continue
+        try:
+            size = f.stat().st_size
+        except OSError:
+            continue
+        m = _SHARD.match(f.name)
+        if m:
+            groups.setdefault((str(f.parent), m["base"]), {})[m["idx"]] = (f, size)
+            continue
+        if size < _MIN_MODEL_BYTES:
+            continue
+        singles.append((f, size, f.stem))
+    for (parent, base), parts in groups.items():
+        want = int(next(iter(parts.values()))[0].name.rsplit("-of-", 1)[1]
+                   .split(".")[0])
+        if len(parts) < want or "00001" not in parts:
+            continue      # incomplete set: llama.cpp cannot load it
+        total = sum(v[1] for v in parts.values())
+        if total < _MIN_MODEL_BYTES:
+            continue
+        singles.append((parts["00001"][0], total, f"{base} ({want} parts)"))
+    return sorted(singles, key=lambda c: c[1])
+
+
+def _mem_available() -> int:
+    """Bytes the kernel says are available (cache reclaim counted, buffers not)."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError):  # non-Linux, or a kernel that won't say
+        pass
+    return 8 << 30   # assume a modest box rather than skipping the gate
+
+
+def _is_memory_error(out: str) -> bool:
+    return bool(_OOM.search(out))
+
+
+def _run_worker(rel_dir: Path, model: Path, log, label: str, size: int) -> tuple[bool, str]:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    log(f"smoke worker: {label} ({_sz(size)}) on 127.0.0.1:{port}")
+    proc = subprocess.Popen(
             [str(rel_dir / "llama-server"), "--model", str(model),
              "--host", "127.0.0.1", "--port", str(port), "-c", "128"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        # drain the pipe in a thread: a chatty startup can fill the 64 KB
-        # buffer and deadlock the server before it ever binds the port
-        tail = deque(maxlen=60)
+    # drain the pipe in a thread: a chatty startup can fill the 64 KB
+    # buffer and deadlock the server before it ever binds the port
+    tail = deque(maxlen=60)
 
-        def _drain() -> None:
-            assert proc.stdout is not None
-            for ln in proc.stdout:
-                tail.append(ln)
-            proc.stdout.close()
+    def _drain() -> None:
+        assert proc.stdout is not None
+        for ln in proc.stdout:
+            tail.append(ln)
+        proc.stdout.close()
 
-        drainer = threading.Thread(target=_drain, daemon=True)
-        drainer.start()
-        ok = False
-        try:
-            for _ in range(180):
-                if proc.poll() is not None:
-                    break
-                try:
-                    r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=2)
-                    if r.status_code == 200:
-                        ok = True
-                        break
-                except Exception:  # noqa: BLE001 — not up yet
-                    time.sleep(1)
-                else:
-                    time.sleep(1)  # server up but /health not 200 yet
-        finally:
-            proc.terminate()
+    drainer = threading.Thread(target=_drain, daemon=True)
+    drainer.start()
+    ok = False
+    try:
+        for _ in range(180):
+            if proc.poll() is not None:
+                break
             try:
-                proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            drainer.join(timeout=5)
-        if not ok:
-            log("smoke worker output (tail):")
-            log("".join(tail)[-1500:] or "(no output)")
-            raise RuntimeError("smoke worker did not become healthy "
-                               "(output tail in job log)")
-        log("smoke worker OK")
+                r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=2)
+                if r.status_code == 200:
+                    ok = True
+                    break
+            except Exception:  # noqa: BLE001 — not up yet
+                time.sleep(1)
+            else:
+                time.sleep(1)  # server up but /health not 200 yet
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        drainer.join(timeout=5)
+    return ok, "".join(tail)
 
 
 # ------------------------------------------------------------------ helpers
