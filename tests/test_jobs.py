@@ -23,6 +23,7 @@ import os
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 # Isolation (same contract as tests/test_updates.py): never touch the real ~/ai.
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-jobs-"))
@@ -282,6 +283,90 @@ def test_a_download_does_not_hold_a_service_restart(client, monkeypatch):
     finally:
         h.finish()
     settle()
+
+
+# --------------------------------------------------- staleness: is the writer alive?
+
+def _row(**kw) -> int:
+    kw.setdefault("kind", "llamacpp")
+    kw.setdefault("status", "running")
+    kw.setdefault("started_at", time.time() - 120)   # well inside every timeout
+    cols = ", ".join(kw)
+    q = ",".join("?" * len(kw))
+    db.execute(f"INSERT INTO jobs ({cols}) VALUES ({q})", tuple(kw.values()))
+    return db.query("SELECT last_insert_rowid() AS id")[0]["id"]
+
+
+def test_a_row_from_an_earlier_boot_is_not_a_running_job():
+    """The machine rebooted, so whatever that thread was doing is over.
+
+    This is the bug: a reboot during a build left the row saying "running", and
+    for six hours the bar reported a job that could not exist and locked every
+    disruptive control behind it — on a machine that had been up for an hour.
+    Believing a row because it is young is not the same as knowing it is alive.
+    """
+    jid = _row(boot="a-boot-that-is-not-this-one", pid=999999)
+    assert updater.running() == [], "a previous boot's job is not running"
+    row = updater.job(jid)
+    assert row["status"] == "failed"
+    assert "previous boot" in row["log"]
+
+
+def test_a_previous_boot_wins_over_a_pid_that_happens_to_exist(monkeypatch):
+    """A pid is a recycled number. After a reboot the old writer is gone even if
+    something alive answers to its pid now — so the boot token, not the pid, is
+    the decisive fact."""
+    monkeypatch.setattr(updater, "BOOT", "this-boot")
+    jid = _row(boot="the-boot-before", pid=os.getpid())   # this pid: definitely alive
+    assert updater.running() == []
+    assert "previous boot" in updater.job(jid)["log"]
+
+
+def test_boot_detection_actually_works_here():
+    """Not a tautology: `_boot_id` swallows every error to stay probe-safe, which
+    is exactly how it once returned None forever from a missing `import Path` —
+    and every boot-based test still passed through the pid branch. If the OS
+    offers a boot id, the module must have read it."""
+    if Path("/proc/sys/kernel/random/boot_id").is_file():
+        assert updater.BOOT and len(updater.BOOT) == 12
+        assert updater.BOOT == updater._boot_id(), "recomputed per call?"
+
+
+def test_a_row_whose_process_is_gone_is_not_a_running_job():
+    """Same boot, but the portal was restarted/updated/killed mid-job."""
+    jid = _row(boot=updater.BOOT, pid=999999)
+    assert updater.running() == []
+    assert updater.job(jid)["status"] == "failed"
+
+
+def test_a_job_this_process_is_writing_is_still_running():
+    jid = _row(boot=updater.BOOT, pid=os.getpid())
+    assert [j["id"] for j in updater.running()] == [jid]
+    db.execute("DELETE FROM jobs WHERE id=?", (jid,))
+
+
+def test_the_bar_unlocks_the_page_after_a_reboot(client, monkeypatch):
+    """What the operator sees: the page must not be locked by an impossible job.
+
+    Asserted through the endpoint the bar polls, because that response is what
+    sets `data-jobbusy` and disables every update control on every page.
+    """
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda key, action: {"ok": True})
+    _row(boot="earlier-boot", pid=999999)
+    body = client.get("/api/jobs/active").json()
+    assert body["running"] == [] and body["blocker"] is None
+    r = client.post("/api/services/comfyui/restart", json={"confirm": True})
+    assert r.status_code == 200, "a dead job refused a live service action"
+
+
+def test_a_new_job_stamps_who_wrote_it(monkeypatch):
+    """The liveness rule is only as good as the stamp, so pin it."""
+    monkeypatch.setattr(updater, "BOOT", "test-boot-token")
+    jid = updater.start_job("model-add", "x.gguf", lambda log: "ok")
+    settle()
+    row = db.query("SELECT pid, boot FROM jobs WHERE id=?", (jid,))[0]
+    assert row["pid"] == os.getpid() and row["boot"] == "test-boot-token"
 
 
 # ------------------------------------------------------------------- staleness

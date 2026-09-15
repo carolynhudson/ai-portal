@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS releases (
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT, target TEXT, status TEXT, log TEXT, started_at REAL, ended_at REAL
+  kind TEXT, target TEXT, status TEXT, log TEXT, started_at REAL, ended_at REAL,
+  -- who wrote this row, so "running" can be proved dead without waiting for a
+  -- timeout: a row from an earlier boot, or from a process that is gone, is not
+  -- a job, whatever it says
+  pid INTEGER, boot TEXT
 );
 CREATE TABLE IF NOT EXISTS downloads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +75,11 @@ def init() -> None:
         c.execute("ALTER TABLE model_files ADD COLUMN meta TEXT")
     except sqlite3.OperationalError:  # column already there
         pass
+    for col in ("pid INTEGER", "boot TEXT"):
+        try:
+            c.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
+        except sqlite3.OperationalError:  # already migrated
+            pass
     c.commit()
 
 

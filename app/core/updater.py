@@ -20,9 +20,12 @@ reclaimed as failed so the machine is not locked forever.
 from __future__ import annotations
 
 import datetime
+import hashlib
+import os
 import re
 import threading
 import time
+from pathlib import Path
 import traceback
 from collections import deque
 
@@ -47,7 +50,24 @@ KIND_LABEL = {
 DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python"}
 
 _TAIL = 300                # log lines kept in the DB for the API
-_STALE_AFTER = 6 * 3600    # a 'running' row older than this = a dead portal
+_STALE_AFTER = 6 * 3600    # backstop for rows whose writer cannot be identified
+
+
+def _boot_id() -> str | None:
+    """A token for this boot of this machine, or None if the OS won't say.
+
+    A job row carries it so the next boot can tell, immediately, that a row still
+    saying 'running' belongs to a world that no longer exists — rather than
+    believing it for six hours and locking the machine behind it.
+    """
+    try:
+        return hashlib.sha1(Path("/proc/sys/kernel/random/boot_id")
+                            .read_text().encode()).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 — non-Linux, or masked: fall back to age
+        return None
+
+
+BOOT = _boot_id()
 
 _lock = threading.Lock()
 _running: dict[str, int] = {}   # kind -> job id (this process)
@@ -84,22 +104,55 @@ def _current_log(job_id: int) -> str:
 _live: dict[int, str] = {}
 
 
+def _writer_gone(row) -> bool:
+    """Is the process that wrote this row definitely gone?
+
+    Two structural proofs, both immediate, because a reboot that interrupts a
+    build must not cost six hours of a locked UI (that is the bug this closes:
+    the bar reported a 10-hour-old build as running on a machine that had been
+    rebooted for an hour):
+
+    * the row was written in an **earlier boot** — that process cannot exist;
+    * same boot, but its **pid is gone** (the portal was restarted, updated, or
+      killed mid-job). A pid we cannot signal-for-existence at all is assumed
+      alive, and a row with neither pid nor boot (written before this existed)
+      falls through to the age backstop.
+    """
+    boot = row["boot"] if "boot" in row.keys() else None
+    if boot and BOOT and boot != BOOT:
+        return True
+    pid = row["pid"] if "pid" in row.keys() else None
+    if pid and pid != os.getpid():
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return True
+        except Exception:  # noqa: BLE001 — not ours to signal ⇒ assume alive
+            return False
+    return False
+
+
 def _reclaim_stale() -> None:
-    """A 'running' row older than ``_STALE_AFTER`` belongs to a portal that died
-    mid-job. Reclaim it, or the whole machine stays locked forever."""
-    rows = db.query("SELECT id, started_at FROM jobs WHERE status='running'")
+    """Reclaim 'running' rows whose writer is gone, and as a backstop any row
+    older than ``_STALE_AFTER``. A job that is believed alive locks the whole
+    machine, so a dead row left standing is not a cosmetic problem."""
+    rows = db.query("SELECT id, started_at, pid, boot FROM jobs "
+                    "WHERE status='running'")
     cutoff = time.time() - _STALE_AFTER
     for r in rows:
-        if (r["started_at"] or 0) < cutoff:
-            # COALESCE, not bare `log ||`: a job that died before its first log
-            # line has NULL there, and NULL || text is NULL — the note, and with
-            # it the only clue to what happened, would vanish.
-            db.execute("UPDATE jobs SET status='failed', ended_at=?, "
-                       "log=COALESCE(log,'') || char(10) || ? WHERE id=?",
-                       (time.time(), "(stale: portal restarted mid-job)",
-                        r["id"]))
-            _running.pop(next((k for k, v in _running.items() if v == r["id"]),
-                              ""), None)
+        if not _writer_gone(r) and (r["started_at"] or 0) >= cutoff:
+            continue
+        note = ("(stale: written by a previous boot)"
+                if (r["boot"] if "boot" in r.keys() else None) not in (None, BOOT)
+                else "(stale: portal restarted mid-job)")
+        # COALESCE, not bare `log ||`: a job that died before its first log line
+        # has NULL there, and NULL || text is NULL — the note, and with it the
+        # only clue to what happened, would vanish.
+        db.execute("UPDATE jobs SET status='failed', ended_at=?, "
+                   "log=COALESCE(log,'') || char(10) || ? WHERE id=?",
+                   (time.time(), note, r["id"]))
+        _running.pop(next((k for k, v in _running.items() if v == r["id"]),
+                          ""), None)
 
 
 def running() -> list[dict]:
@@ -216,8 +269,13 @@ def start_job(kind: str, target: str, fn, exclusive: bool | None = None) -> int 
             kinds = [r["kind"] for r in busy]
             if kind in kinds or any(k in DISRUPTIVE for k in kinds):
                 return None
-        db.execute("INSERT INTO jobs (kind, target, status, started_at) "
-                   "VALUES (?,?,?,?)", (kind, target, "running", time.time()))
+        # pid + boot: the record of who can still be writing this row. Without
+        # them a row can only be judged dead by age, and every portal restart that
+        # interrupts a job would lock the machine for hours on a job that is not
+        # running.
+        db.execute("INSERT INTO jobs (kind, target, status, started_at, pid, boot) "
+                   "VALUES (?,?,?,?,?,?)",
+                   (kind, target, "running", time.time(), os.getpid(), BOOT))
         job_id = db.query("SELECT last_insert_rowid() AS id")[0]["id"]
         _running[kind] = job_id
     threading.Thread(target=_run, args=(kind, job_id, fn), daemon=True).start()
