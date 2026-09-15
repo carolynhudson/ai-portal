@@ -32,7 +32,7 @@ os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.core import db, systemd, updater  # noqa: E402
+from app.core import db, paths, systemd, updater  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -449,6 +449,27 @@ def test_a_refusal_survives_a_row_that_has_not_logged_yet(monkeypatch):
         assert "syncing venv" in updater.describe(row)
     finally:
         updater._live.pop(991, None)
+
+
+def test_a_finished_job_says_it_in_words_not_in_python():
+    """The step line is read from across the room; a repr is not an answer.
+
+    Live, the bar said: "ComfyUI update master finished after 1s — success:
+    {'status': 'noop', 'commit': '36da3ff763687eab86a35e1019995dd1fb369b0d', …}",
+    which is both unreadable and less informative than "nothing to do". The full
+    result still belongs to the record, so it goes to the job's file log.
+    """
+    jid = updater.start_job(
+        "comfyui", "master",
+        lambda log: {"status": "noop", "commit": "3" * 40,
+                     "python": "/home/x/venv/bin/python"})
+    settle()
+    row = updater.job(jid)
+    assert row["status"] == "success"
+    assert "nothing to do" in row["log"], row["log"]
+    assert "'status'" not in row["log"], "a Python dict was shown in the bar"
+    assert "'status': 'noop'" in (paths.LOGS / f"update-comfyui-{jid}.log").read_text(), \
+        "the full result vanished from the record"
 
 
 def test_a_failing_job_fails_loudly_in_its_own_row():

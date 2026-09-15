@@ -80,6 +80,25 @@ def _touch(job_id: int, status: str, log: str,
     _live[job_id] = log          # see _current_log
 
 
+def _human(result) -> str:
+    """A job's return value, in the few words the status bar has room for."""
+    if not isinstance(result, dict):
+        return str(result)[:120]
+    bits = []
+    status = str(result.get("status") or "")
+    bits.append({"noop": "nothing to do", "success": "done"}.get(status, status))
+    changed = result.get("changed")
+    if isinstance(changed, dict):
+        bits.append(f"{len(changed)} package(s) changed" if changed
+                    else "no package changes")
+    if result.get("commit"):
+        bits.append(str(result["commit"])[:12])
+    if "restarted" in result:
+        bits.append("service restarted" if result["restarted"]
+                    else "service left running")
+    return ", ".join(b for b in bits if b) or str(result)[:120]
+
+
 def step_of(job: dict) -> str:
     """This job's current step: its newest log line, timestamp stripped."""
     lines = [ln for ln in (job.get("log") or "").strip().splitlines() if ln]
@@ -297,7 +316,14 @@ def _run(kind: str, job_id: int, fn) -> None:
     status = "failed"
     try:
         result = fn(log)
-        log(f"success: {result}" if result else "success")
+        # The bar shows this line, so it is written for a person reading it from
+        # across the room. The full result still goes to the job's file log for
+        # archaeology — a finished update that ended in
+        # "success: {'status': 'noop', 'commit': '36da3ff…'}" told you less than
+        # the one word "nothing to do".
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] success (raw): {result}\n")
+        log("success" + (": " + _human(result) if result else ""))
         status = "success"
     except Exception:  # noqa: BLE001 — the job's fate, not the portal's
         log(traceback.format_exc())
