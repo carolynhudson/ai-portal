@@ -24,6 +24,7 @@ models page and the gguf-indexer pick it up without a rescan.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil

@@ -161,6 +161,33 @@ def test_add_gguf_local_places_and_indexes(scratch):
     assert not (paths.STATE / "downloads" / f"add-{os.getpid()}").exists()
 
 
+def test_reindex_keeps_other_files_and_reads_their_metadata(scratch):
+    """Adding the second file to a model dir re-indexes the whole dir, and the
+    files that were already there are *read back* from the DB rather than
+    re-hashed (a 270 GB gguf is not re-sniffed for a sibling).
+
+    That read-back path is one missing `import json` away from a NameError, so
+    this test exists: two files in the directory, and the stored meta of the
+    first must survive the second's arrival.
+    """
+    first = f"{scratch}/DeepSeek-R1-Q4_K_M.gguf"
+    make_gguf(first, name="DeepSeek R1")
+    modeladd.add_model(modeladd.parse_source(path=first), log=lambda m: None)
+    d = paths.LLAMA_MODELS / "DeepSeek-R1-Q4_K_M"
+    (d / "other-split-00001-of-00002.gguf").write_bytes(b"\0" * 512)
+
+    modeladd._index_llama_dir(d, d / "other-split-00001-of-00002.gguf",
+                              "0" * 64, {"general.name": "other"})
+
+    rows = {r[0]: r for r in db.query(
+        "SELECT path, sha256, meta FROM model_files WHERE model=?",
+        ("DeepSeek-R1-Q4_K_M",))}
+    assert len(rows) == 2, "one of the two files lost its row"
+    kept = [r for pth, r in rows.items() if pth.endswith("Q4_K_M.gguf")][0]
+    assert len(kept["sha256"] or "") == 64, "pre-existing hash was dropped"
+    assert json.loads(kept["meta"])["name"] == "DeepSeek R1"
+
+
 def test_add_mmproj_nests_under_parent(scratch):
     parent = paths.LLAMA_MODELS / "Qwen3.6-35B-A3B-Q4_K_M"
     parent.mkdir(parents=True, exist_ok=True)
