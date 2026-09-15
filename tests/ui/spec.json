@@ -390,7 +390,8 @@
           }
         }
       ],
-      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle"],
+      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle", "#jobbar.failed"],
+      "expectAbsent": ["#jobbar.done"],
       "expectText": [
         {"selector": "#jobbar-text", "contains": "llama.cpp build"},
         {"selector": "#jobbar-text", "contains": "FAILED"},
