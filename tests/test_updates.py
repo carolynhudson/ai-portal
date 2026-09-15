@@ -26,7 +26,7 @@ from app.main import app
 from app.providers.llamacpp import LlamaCpp
 
 
-def test_updates_endpoint_shape():
+def test_updates_endpoint_shape(tmp_path, monkeypatch):
     """Empty temp home: well-formed, no repo, no releases, no job."""
     db.init()
     db.execute("DELETE FROM settings WHERE key=?",
@@ -34,6 +34,10 @@ def test_updates_endpoint_shape():
     # the DB is shared across modules in this test home; "no job" has to mean
     # "none here", not "the module that creates jobs happened to run later"
     db.execute("DELETE FROM jobs")
+    # same trap, filesystem edition: AI_PORTAL_HOME is shared across modules, and
+    # tests/test_stray_builds.py leaves build directories in it. "Empty home" has
+    # to mean empty for the thing being asserted, so point the scan at nothing.
+    monkeypatch.setattr(paths, "RELEASES", tmp_path / "no-releases")
     c = TestClient(app)
     c.post("/login", data={"password": "test-password-123"})
     r = c.get("/api/updates/llamacpp")
@@ -42,8 +46,15 @@ def test_updates_endpoint_shape():
     assert set(body) == {"current", "current_commit", "current_size_bytes",
                          "repo_head", "releases", "release_count",
                          "total_bytes", "vulkan_sdk", "job", "remote",
-                         "binary", "source"}
+                         "binary", "source",
+                         # unregistered build directories, reported alongside the
+                         # list they should have been on
+                         "strays", "stray_bytes", "unexpected_builds",
+                         "stray_error"}
     assert body["release_count"] == 0 and body["total_bytes"] == 0
+    assert body["strays"] == [] and body["stray_bytes"] == 0, \
+        "no releases dir must read as no strays, not as an error"
+    assert body["stray_error"] is None
     # throwaway home: probe either reports a missing repo or a failed
     # fetch — either way a well-formed dict
     assert isinstance(body["remote"], dict)

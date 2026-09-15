@@ -6,7 +6,7 @@
     "for every page automatically; this file only adds what cannot be derived:",
     "which endpoints a page must have called, which tabs form a group, which",
     "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
+    "look like. Add a page here when you add one to the app — test_ui_integration",
     "fails if the app serves an HTML page with no spec."
   ],
   "blockMutations": [
@@ -178,7 +178,11 @@
             ],
             "job": null,
             "release_count": 3,
-            "total_bytes": 1321205760
+            "total_bytes": 1321205760,
+            "strays": [],
+            "stray_bytes": 0,
+            "unexpected_builds": [],
+            "stray_error": null
           }
         },
         {
@@ -257,7 +261,7 @@
         },
         {
           "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
+          "matches": "\\d+ tok · \\d+\\.\\d t/s"
         },
         {
           "selector": "#pulse-lanes .lane",
@@ -287,6 +291,10 @@
           "selector": "#attention-count",
           "matches": "\\d"
         }
+      ],
+      "expectHidden": [
+        "#stray-row",
+        "#stray-hint"
       ]
     },
     {
@@ -300,7 +308,9 @@
       "extends": "dashboard",
       "path": "/",
       "expectTitle": "Status",
-      "expectEnabled": [".update-tab"],
+      "expectEnabled": [
+        ".update-tab"
+      ],
       "fixtures": [
         {
           "path": "^/api/jobs/active$",
@@ -334,7 +344,11 @@
           }
         }
       ],
-      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle"],
+      "expectVisible": [
+        "#jobbar",
+        "#jobbar-text",
+        "#jobbar-toggle"
+      ],
       "expectText": [
         {
           "_comment": "names the job, not just 'something is running'",
@@ -364,7 +378,11 @@
         "static spec cannot see a lock that was never released, so it has to be",
         "broken in the template to know it is tested."
       ],
-      "expectDisabled": ["#comfy-upd-btn", "#hf-upd-btn", "#upd-btn"],
+      "expectDisabled": [
+        "#comfy-upd-btn",
+        "#hf-upd-btn",
+        "#upd-btn"
+      ],
       "_body_comment": [
         "data-jobbusy is the machine-wide lock and must still be set after every",
         "control has been driven: a panel re-rendering its own buttons can clear",
@@ -375,12 +393,14 @@
         "select case runs the dashboard's own panel renderer, which repaints its",
         "buttons and owns this attribute until the bar's next poll."
       ],
-      "expectBodyAttr": {"data-jobbusy": "1"}
+      "expectBodyAttr": {
+        "data-jobbusy": "1"
+      }
     },
     {
       "_comment": [
         "The other half of the bar: the job finished, possibly while you were",
-        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
+        "elsewhere, and said it failed. The bar must still say so — and the",
         "controls must be usable again."
       ],
       "name": "jobbar-finished",
@@ -408,15 +428,37 @@
           }
         }
       ],
-      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle", "#jobbar.failed"],
-      "expectAbsent": ["#jobbar.done"],
-      "expectText": [
-        {"selector": "#jobbar-text", "contains": "llama.cpp build"},
-        {"selector": "#jobbar-text", "contains": "FAILED"},
-        {"selector": "#jobbar.failed", "_comment": "styled as a failure, not a success", "contains": "after 10m 40s"}
+      "expectVisible": [
+        "#jobbar",
+        "#jobbar-text",
+        "#jobbar-toggle",
+        "#jobbar.failed"
       ],
-      "expectEnabled": ["#comfy-upd-btn", "#hf-upd-btn"],
-      "expectBodyAttr": {"data-jobbusy": ""}
+      "expectAbsent": [
+        "#jobbar.done"
+      ],
+      "expectText": [
+        {
+          "selector": "#jobbar-text",
+          "contains": "llama.cpp build"
+        },
+        {
+          "selector": "#jobbar-text",
+          "contains": "FAILED"
+        },
+        {
+          "selector": "#jobbar.failed",
+          "_comment": "styled as a failure, not a success",
+          "contains": "after 10m 40s"
+        }
+      ],
+      "expectEnabled": [
+        "#comfy-upd-btn",
+        "#hf-upd-btn"
+      ],
+      "expectBodyAttr": {
+        "data-jobbusy": ""
+      }
     },
     {
       "name": "models",
@@ -502,21 +544,66 @@
       "expectTitle": "Health",
       "_comment_requests": "the pane is server-rendered and read-only: it must not reach the update endpoints (that is how a view accidentally starts a git fetch on page load)",
       "expectRequests": [],
-      "expectNoRequests": ["/api/updates/llamacpp", "/api/updates/comfyui", "/api/health/detail"],
-      "expectVisible": ["#attention", "#gpu-stack", "#deployed", "#vulkan", "#updates", "#disk", "#model-store"],
+      "expectNoRequests": [
+        "/api/updates/llamacpp",
+        "/api/updates/comfyui",
+        "/api/health/detail"
+      ],
+      "expectVisible": [
+        "#attention",
+        "#gpu-stack",
+        "#deployed",
+        "#vulkan",
+        "#updates",
+        "#disk",
+        "#model-store"
+      ],
       "expectText": [
-        {"_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."},
-        {"selector": "#attention h3", "contains": "Needs attention"},
-        {"selector": "#attention", "contains": "amdrocm-base9.9"},
-        {"_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."},
-        {"selector": "#gpu-stack .kv", "matches": "ROCm installed \\(apt\\)\\s*9\\.9\\.0"},
-        {"selector": "#deployed", "contains": "ROCm it was built for"},
-        {"selector": "#vulkan", "contains": "latest known upstream"},
-        {"selector": "#updates", "contains": "never runs"},
-        {"selector": "#disk", "contains": "cmake build trees"},
-        {"_comment": "Sizes must arrive formatted: the tree table exists to be compared at a glance, and 581000000000 is comparable to nothing."},
-        {"selector": "#disk table td.mono", "matches": "\\d(\\.\\d)?[KMGTP]"},
-        {"selector": "#model-store", "contains": "invisible to llama.cpp"}
+        {
+          "_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."
+        },
+        {
+          "selector": "#attention h3",
+          "contains": "Needs attention"
+        },
+        {
+          "selector": "#attention",
+          "contains": "amdrocm-base9.9"
+        },
+        {
+          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."
+        },
+        {
+          "selector": "#gpu-stack .kv",
+          "matches": "ROCm installed \\(apt\\)\\s*9\\.9\\.0"
+        },
+        {
+          "selector": "#deployed",
+          "contains": "ROCm it was built for"
+        },
+        {
+          "selector": "#vulkan",
+          "contains": "latest known upstream"
+        },
+        {
+          "selector": "#updates",
+          "contains": "never runs"
+        },
+        {
+          "selector": "#disk",
+          "contains": "cmake build trees"
+        },
+        {
+          "_comment": "Sizes must arrive formatted: the tree table exists to be compared at a glance, and 581000000000 is comparable to nothing."
+        },
+        {
+          "selector": "#disk table td.mono",
+          "matches": "\\d(\\.\\d)?[KMGTP]"
+        },
+        {
+          "selector": "#model-store",
+          "contains": "invisible to llama.cpp"
+        }
       ],
       "tabGroups": []
     },
@@ -576,6 +663,113 @@
         "button[type=submit]"
       ],
       "tabGroups": []
+    },
+    {
+      "name": "builds-strays",
+      "extends": "dashboard",
+      "path": "/",
+      "_comment": [
+        "Build directories the registry never recorded. One is in use through a",
+        "broken link in ~/ai/bin and must never be purgeable; the other is dead",
+        "weight and must be. The fixture patches the dashboard payload rather",
+        "than copying it, so these assertions cannot quietly start describing a",
+        "state the base page no longer serves."
+      ],
+      "fixtures": [
+        {
+          "path": "^/api/updates/llamacpp$",
+          "merge": true,
+          "body": {
+            "strays": [
+              {
+                "name": "llama.cpp-b10921",
+                "path": "/home/tester/ai/releases/llama.cpp-b10921",
+                "bytes": 405012480,
+                "build": 10921,
+                "ahead": true,
+                "built_dir": "2026-09-13T04:11:09+00:00",
+                "held_by": [
+                  "llama-cli"
+                ],
+                "pids": [],
+                "proc_read": true,
+                "purgeable": false,
+                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) — this build is what the router is configured to run"
+              },
+              {
+                "name": "llama.cpp-b10796",
+                "path": "/home/tester/ai/releases/llama.cpp-b10796",
+                "bytes": 431296512,
+                "build": 10796,
+                "ahead": false,
+                "built_dir": "2026-09-13T04:11:09+00:00",
+                "held_by": [],
+                "pids": [],
+                "proc_read": true,
+                "purgeable": true,
+                "why_not": null
+              }
+            ],
+            "stray_bytes": 836308992
+          }
+        }
+      ],
+      "+expectVisible": [
+        "#stray-row",
+        "#stray-select",
+        "#purge-stray-btn"
+      ],
+      "+expectDisabled": [
+        "#purge-stray-btn"
+      ],
+      "+expectText": [
+        {
+          "_comment": "an unregistered build is reported with what it costs to keep",
+          "selector": "#stray-label",
+          "contains": "798 MB"
+        },
+        {
+          "_comment": "a directory the router is configured to run says so in the dropdown, next to the locked button",
+          "selector": "#stray-select",
+          "contains": "in use"
+        }
+      ],
+      "+selectCases": [
+        {
+          "select": "#stray-select",
+          "note": "an in-use build is never purgeable",
+          "choose": {
+            "labelContains": "in use"
+          },
+          "expectDisabled": [
+            "#purge-stray-btn"
+          ]
+        },
+        {
+          "select": "#stray-select",
+          "note": "a stray nothing uses can be purged",
+          "choose": {
+            "labelNotContaining": "in use"
+          },
+          "expectEnabled": [
+            "#purge-stray-btn"
+          ],
+          "then_click": [
+            "#purge-stray-btn"
+          ],
+          "_then_click_comment": [
+            "Purge deletes a directory permanently. This click is expected to stop",
+            "at the confirm dialog: requireConfirmFor is what proves the request",
+            "never leaves the page without one."
+          ]
+        }
+      ],
+      "+requireConfirmFor": [
+        "^/api/updates/llamacpp/purge$"
+      ],
+      "expectHidden": [
+        "#stray-hint"
+      ]
     }
   ]
 }

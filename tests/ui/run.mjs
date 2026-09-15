@@ -31,16 +31,46 @@ const allSpec = JSON.parse(readFileSync(arg("spec"), "utf8"));
 // tab group are what make that page deterministic, and a page that tests the
 // global job bar *from* the dashboard needs exactly them; repeating them invites
 // the two copies to drift apart, which is how a contract test stops testing
-// anything. Scalars and lists in the child replace the parent's; `fixtures`
-// concatenate (parent first, so the child's more specific route wins a lookup
-// only when it is anchored ahead of it).
+// anything. Scalars and lists in the child replace the parent's, unless the key
+// is written "+key", which adds to the parent's list instead — the alternative is
+// a child copying twenty inherited assertions to add one.
+//
+// Fixtures resolve by route, not by position: a child answering a route the
+// parent also answers wins (route matching takes the first match, so leaving the
+// parent ahead would let a child's "override" be silently ignored — the page
+// would pass while testing the parent's payload). `"merge": true` patches the
+// parent's body field-wise instead, which is how you change one field of a large
+// payload without copying it and watching the copy drift.
+function applyFixtures(base, overrides) {
+  const list = [...(base || [])];
+  for (const f of overrides || []) {
+    const i = list.findIndex((x) => x && f && x.path === f.path);
+    if (i < 0) { list.push(f); continue; }
+    list[i] = f && f.merge
+      ? { ...list[i], ...f, body: { ...list[i].body, ...f.body } }
+      : { ...f };
+  }
+  return list;
+}
+
 function resolvePage(p, seen = new Set()) {
   if (!p || seen.has(p.name)) return p || {};
   seen.add(p.name);
   const parent = resolvePage(
     (allSpec.pages || []).find((x) => x.name === p.extends), seen);
   const merged = { ...parent, ...p };
-  merged.fixtures = [...(parent.fixtures || []), ...(p.fixtures || [])];
+
+  // "+key" in a child *adds* to the parent's list instead of replacing it. The
+  // alternative is a child copying twenty-odd inherited assertions to add one —
+  // and a copy is what stops a contract test being a contract.
+  for (const k of Object.keys(merged)) {
+    if (!k.startsWith("+")) continue;
+    const base = k.slice(1);
+    merged[base] = [...(parent[base] || []), ...(merged[k] || [])];
+    delete merged[k];
+  }
+
+  merged.fixtures = applyFixtures(parent.fixtures, p.fixtures);
   return merged;
 }
 
@@ -248,7 +278,8 @@ try {
     cookieHeader: cookie,
     blockMutations: spec.blockMutations || allSpec.blockMutations || [".*"],
     allowHttpErrors: (allSpec.allowHttpErrors || []).concat(spec.allowHttpErrors || []),
-    fixtures: (allSpec.fixtures || []).concat(spec.fixtures || []),
+    // page spec wins over the global fixtures, by route (see applyFixtures)
+    fixtures: applyFixtures(allSpec.fixtures, spec.fixtures),
     maxWaitMs: spec.loadTimeoutMs || 20000,
   });
 } catch (e) {
@@ -298,6 +329,18 @@ for (const sel of spec.expectVisible || [])
   if (!win.document.querySelector(sel)) fail(`expected element missing: ${sel}`);
 for (const sel of spec.expectAbsent || [])
   if (win.document.querySelector(sel)) fail(`element should not exist: ${sel}`);
+
+// "Present but not showing" is a state of its own, and the one that matters for
+// a panel that only appears when there is something to act on: a row that never
+// hides is noise on every load, and a row that hides by never rendering takes
+// its own explanation with it. expectVisible cannot tell the difference because
+// it only asks whether the element is in the document.
+for (const sel of spec.expectHidden || []) {
+  const el = win.document.querySelector(sel);
+  if (!el) fail(`expected element present and hidden, got nothing: ${sel}`);
+  else if (!el.hidden && el.getAttribute("hidden") === null)
+    fail(`element should be hidden but is showing: ${sel}`);
+}
 
 // A live region must show *data*, not merely exist: a panel that renders "—"
 // forever passes a visibility check and tells the user nothing. `contains` is

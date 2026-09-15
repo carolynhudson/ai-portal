@@ -303,6 +303,17 @@
                 title="select a build that is not the current one">Delete build</button>
       </div>
       <div class="mut builds-hint" id="build-hint"></div>
+      <!-- Build directories the registry never recorded: no build list contains
+           them, so this row is the only way to see one, and Purge the only way to
+           remove it. Hidden when there are none, which is the normal state. -->
+      <div class="builds-row" id="stray-row" hidden>
+        <label class="builds-label" for="stray-select" id="stray-label">Unregistered:</label>
+        <select id="stray-select" class="builds-select" onchange="syncStray()"></select>
+        <button id="purge-stray-btn" class="btn btn-danger-sm" data-needs-machine disabled
+                onclick="purgeStray()"
+                title="select an unregistered build">Purge build</button>
+      </div>
+      <div class="mut builds-hint" id="stray-hint" hidden></div>
     </div>
     <div id="upd-job"></div>
   </div>
@@ -899,6 +910,12 @@ async function updDeploy(tag){
 // about to destroy: a name alone is not enough to consent to an irreversible
 // delete.
 const BUILDS = new Map();
+// Directories on disk that the registry never heard of. Kept apart from BUILDS
+// on purpose: these have no registry entry, so what they are comes from the
+// server's check of the bin farm and /proc, not from a record.
+const STRAYS = new Map();
+
+function pathHome(p){ return String(p || '—').replace(/^\/home\/[^/]+/, '~'); }
 
 function humanSize(b){
   if (b == null) return '';
@@ -923,6 +940,7 @@ function buildFacts(e){
 function renderBuilds(d){
   const sel = document.getElementById('build-select');
   if (!sel) return;
+  renderStrays(d);
   // newest first: the registry is append-ordered, and the newest is what
   // someone almost always wants
   const ordered = (d.releases || []).slice().reverse();
@@ -1009,6 +1027,93 @@ async function deleteBuild(){
     loadUpd();
     alert('Deleted ' + e.name + (d.freed_bytes ? ' — ' + humanSize(d.freed_bytes) + ' freed' : ''));
   }catch(err){ alert('delete failed: ' + err); }
+}
+
+// ------------------------------------------------- unregistered build directories
+function strayLabel(e){
+  const bits = [e.name, e.bytes ? humanSize(e.bytes) : null,
+                e.ahead ? 'newer than the running build' : null,
+                e.purgeable ? null : 'in use'];
+  return bits.filter(Boolean).join(' · ');
+}
+
+function strayFacts(e){
+  return ['', `  directory  ${e.name}`,
+          `  size       ${humanSize(e.bytes) || 'unknown'}`,
+          `  location   ${pathHome(e.path)}`,
+          `  in registry  no`,
+          e.purgeable ? '' : `  blocked by ${e.why_not || 'in use'}`,
+          ''].join('\n');
+}
+
+function renderStrays(d){
+  const row = document.getElementById('stray-row');
+  const sel = document.getElementById('stray-select');
+  if (!row || !sel) return;
+  const list = d.strays || [];
+  STRAYS.clear();
+  list.forEach(e => STRAYS.set(e.name, e));
+  row.hidden = list.length === 0;
+  if (!list.length) return;
+  const keep = sel.value;
+  sel.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = `— ${list.length} director${list.length === 1 ? 'y' : 'ies'} —`;
+  sel.appendChild(blank);
+  list.forEach(e => {
+    const o = document.createElement('option');
+    o.value = e.name;
+    o.textContent = strayLabel(e);
+    sel.appendChild(o);
+  });
+  sel.value = STRAYS.has(keep) ? keep : '';
+  const lbl = document.getElementById('stray-label');
+  if (lbl) lbl.textContent = 'Unregistered (' + humanSize(d.stray_bytes || 0) + '):';
+  syncStray();
+}
+
+// The server decides whether a directory can go (bin farm pointing at it, a
+// process executing from it, /proc unreadable); the button only reflects that
+// answer, so a stale page can never look like it cleared the way.
+function syncStray(){
+  const sel = document.getElementById('stray-select');
+  const btn = document.getElementById('purge-stray-btn');
+  const hint = document.getElementById('stray-hint');
+  if (!btn) return;
+  const e = sel ? STRAYS.get(sel.value) : null;
+  btn.disabled = !e || !e.purgeable;
+  btn.title = !e ? 'select an unregistered build first'
+             : e.purgeable ? 'delete this build directory from disk'
+             : e.why_not || 'in use';
+  if (hint) {
+    hint.hidden = !e;
+    hint.textContent = !e ? '' : (e.purgeable
+      ? `Nothing lists this directory, so nothing else can remove it. Purging deletes ${humanSize(e.bytes)} from ${pathHome(e.path)}. A record of what it held is kept.`
+      : 'Cannot purge: ' + (e.why_not || 'in use'));
+  }
+}
+
+async function purgeStray(){
+  const sel = document.getElementById('stray-select');
+  const e = sel ? STRAYS.get(sel.value) : null;
+  if (!e) { alert('Select an unregistered build first'); return; }
+  if (!e.purgeable) { alert('Cannot purge: ' + (e.why_not || 'in use')); return; }
+  if (!confirm(`PURGE THIS BUILD DIRECTORY?${strayFacts(e)}`
+               + (e.ahead ? 'WARNING: this build is NEWER than the running one — purging throws away a completed build.\n'
+                          : '')
+               + 'It is not in the registry, so no list will show it again. This deletes the directory for good.')) return;
+  try{
+    const r = await fetch('/api/updates/llamacpp/purge', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({release: e.name, confirm: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('purge refused: ' + (d.detail || r.status)); return; }
+    if (sel) sel.value = '';
+    loadUpd();
+    alert('Purged ' + e.name + (d.freed_bytes ? ' — ' + humanSize(d.freed_bytes) + ' freed' : ''));
+  }catch(err){ alert('purge failed: ' + err); }
 }
 
 const buildSelectEl = document.getElementById('build-select');

@@ -462,7 +462,7 @@ def model_store(refresh: bool = False) -> dict:
 # ------------------------------------------------------------------ advisories
 
 def advisories(release: dict | None = None, service: dict | None = None,
-               comfy: dict | None = None) -> list[dict]:
+               comfy: dict | None = None, builds: dict | None = None) -> list[dict]:
     """What the pane puts first: the things that need a decision.
 
     ``release`` (the deployed llama.cpp release record) and the two unit states
@@ -536,6 +536,34 @@ def advisories(release: dict | None = None, service: dict | None = None,
                     "against, so version drift can only be checked from the runtime "
                     "libraries. New builds record it.")
 
+    # Build directories the registry never recorded. Passed in like the rest,
+    # because finding them means walking ~/ai/releases and /proc — and because
+    # health.py must not import a provider to ask.
+    b = builds or {}
+    strays = b.get("strays") or []
+    if strays:
+        gib = (b.get("bytes") or 0) / 1024 ** 3
+        names = ", ".join(s["name"] for s in strays[:3])
+        ahead = [s for s in strays if s.get("ahead")]
+        if ahead:
+            add("warn", f"An update left {ahead[0]['name']} built on disk and never "
+                        f"deployed it — it is newer than the running build and is "
+                        f"not in the registry, so it appears in no build list. "
+                        f"{len(strays)} such director{'y' if len(strays) == 1 else 'ies'}"
+                        f", {gib:.1f} GiB: {names}.",
+                where="/#update-llamacpp", label="Builds panel")
+        else:
+            add("warn", f"{len(strays)} build director{'y' if len(strays) == 1 else 'ies'} "
+                        f"on disk that the registry never recorded — {gib:.1f} GiB "
+                        f"({names}). Nothing lists them, so nothing offers to remove "
+                        f"them; purge from the Builds panel.",
+                where="/#update-llamacpp", label="Builds panel")
+    for u in (b.get("unexpected") or [])[:1]:
+        add("info", f"{u['name']} sits in ~/ai/releases but is not a build the portal "
+                    "names (expected llama.cpp-b<N>), so it is reported and never "
+                    "offered for deletion.",
+            where="/#update-llamacpp", label="Builds panel")
+
     d = disk()
     if d.get("free_bytes") is not None and d["free_bytes"] < 50 * 1024 ** 3:
         add("warn", f"Only {_human_gb(d['free_bytes'])} free on the AI filesystem. "
@@ -602,7 +630,8 @@ def _human_gb(n: int) -> str:
 
 
 def summary(release: dict | None = None, service: dict | None = None,
-            comfy: dict | None = None, refresh: bool = False) -> dict:
+            comfy: dict | None = None, builds: dict | None = None,
+            refresh: bool = False) -> dict:
     """Everything, for /api/health and the health page."""
     body = {
         "generated_at": time.time(),
@@ -614,5 +643,6 @@ def summary(release: dict | None = None, service: dict | None = None,
         "disk": disk(refresh),
         "model_store": model_store(refresh),
     }
-    body["advisories"] = advisories(release=release, service=service, comfy=comfy)
+    body["advisories"] = advisories(release=release, service=service, comfy=comfy,
+                                     builds=builds)
     return body

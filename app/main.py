@@ -471,11 +471,20 @@ def create_app() -> FastAPI:
             prov = p.provenance() if p else {}
         except Exception as e:  # noqa: BLE001 — a broken release is a row, not a 500
             prov = {"error": f"{type(e).__name__}: {e}"}
+        # Unregistered builds belong to the provider, but the health page must
+        # still render if the provider throws — a broken release directory is a
+        # row on this page, not a 500.
+        try:
+            builds = p.stray_builds() if p else {}
+        except Exception as e:  # noqa: BLE001
+            builds = {"strays": [], "unexpected": [], "bytes": 0,
+                      "error": f"{type(e).__name__}: {e}"}
         body = health.summary(
             release=({"rocm": prov.get("rocm_built"), "name": prov.get("name")}
                      if prov.get("name") else None),
             service={"state": router_u.get("ActiveState", "unknown")},
             comfy={"state": comfy_u.get("ActiveState", "unknown")},
+            builds=builds,
             refresh=refresh)
         # "built 2026-09-11T13:41:12+00:00" is not a fact a person reads; the
         # age is, and the raw stamp stays in the payload for any JSON consumer
@@ -485,6 +494,7 @@ def create_app() -> FastAPI:
         except (TypeError, ValueError):
             prov["built_ago"] = None
         body["deployed"] = prov
+        body["builds"] = builds
         body["host"] = health.host()
         return body
 
@@ -881,6 +891,31 @@ def create_app() -> FastAPI:
                  f"llamacpp: deleted build {body.release} "
                  f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB freed, "
                  f"{res.get('remaining')} remain)")
+        return res
+
+    @app.post("/api/updates/llamacpp/purge")
+    def api_purge_build(body: RollbackBody, _=Depends(_require_auth)):
+        """Delete an **unregistered** build directory: one left on disk by an
+        update that died before it recorded anything, so it is in no list and
+        `delete build` refuses it by design.
+
+        Separate endpoint rather than a relaxation of `delete`, because its
+        authority is different — the registry cannot vouch for these, so the
+        provider re-derives safety from disk (name shape, containment, the bin
+        farm, running processes) and refuses if any of it is unverifiable.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        _refuse_if_busy(updater.DISRUPTIVE)
+        p = get_provider("llamacpp")
+        try:
+            res = p.purge_stray(body.release, log=lambda m: print("[ai-portal]", m))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        db.event("portal", "update",
+                 f"llamacpp: purged UNREGISTERED build {body.release} "
+                 f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB, "
+                 f"{res.get('files')} files; record: {res.get('note_dir')})")
         return res
 
     # --------------------------------------------- updates (E: ComfyUI)

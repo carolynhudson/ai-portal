@@ -414,10 +414,25 @@ class LlamaCpp(Provider):
             e["size_mb"] = round(size / 1048576, 1) if size is not None else None
             known.append(e)
         active = next((e for e in known if e["active"]), None) or {}
+        # Unregistered builds ride along with the list they should have been on:
+        # a build nobody can see is a build nobody can delete, and the pane that
+        # shows builds is where a person would look. A failed scan must not take
+        # the release list down with it — that list is how you switch builds.
+        try:
+            strays = stray_releases()
+        except Exception as e:  # noqa: BLE001 — degraded, not fatal
+            strays = {"strays": [], "unexpected": [], "bytes": 0,
+                      "error": f"{type(e).__name__}: {e}"}
         return {
             "current": current,
             "current_commit": active.get("commit"),
             "current_size_bytes": active.get("size_bytes"),
+            "strays": strays["strays"],
+            "stray_bytes": strays["bytes"],
+            "unexpected_builds": strays["unexpected"],
+            # empty strays and "could not check" must never look the same: the
+            # first means there is nothing to purge, the second means nobody knows
+            "stray_error": strays.get("error"),
             "repo_head": _git_head(paths.LLAMA_REPO),
             "releases": known,
             "release_count": len(known),
@@ -656,6 +671,100 @@ class LlamaCpp(Provider):
             f"{len(reg['releases'])} release(s) remain")
         return {"status": "success", "deleted": release, "freed_bytes": size,
                 "remaining": len(reg["releases"]), "note_dir": str(rb)}
+
+    def stray_builds(self) -> dict:
+        """Unregistered build directories, for the health pane (see the module
+        function). A method so callers stay provider-agnostic."""
+        return stray_releases()
+
+    def purge_stray(self, name: str, log=print) -> dict:
+        """Delete an **unregistered** release directory: built here, unknown to
+        the registry, invisible to every list in the UI.
+
+        This is the permanently-destructive path with less to lean on than
+        ``delete_release``, so the guards are re-derived from disk here rather
+        than trusted from whatever the caller was shown a moment ago:
+
+        * the name must have the shape of a release the portal builds — that plus
+          containment under ``~/ai/releases`` is the whole authority, since the
+          registry cannot vouch for a build it has never seen;
+        * a *registered* release is refused: it has ``delete build`` for that,
+          which also forgets the entry and keeps the registry consistent;
+        * the ``~/ai/bin`` farm may not point into it, and no process may be
+          executing from it — checked now, not assumed from page state;
+        * if ``/proc`` cannot be read, nothing is deleted. "Couldn't check" is
+          not evidence of safety.
+
+        What it was gets written down first — size, file manifest, and the
+        ``--version`` of the binary it contained — because after this there is
+        nothing left to ask.
+        """
+        if (updater.latest_job(self.key) or {}).get("status") == "running":
+            raise ValueError("an update job is running — try again when it finishes")
+
+        if not _REL_DIR_RE.match(name or ""):
+            raise ValueError(
+                f"{name!r} is not the name of a build directory "
+                f"(expected llama.cpp-b<build>)")
+        reg = releases()
+        if any(r.get("name") == name for r in reg.get("releases", [])):
+            raise ValueError(f"{name} is a registered build — use “Delete build”, "
+                             f"which also removes it from the registry")
+
+        root = paths.RELEASES.resolve()
+        target = (root / name)
+        if not target.is_dir():
+            raise ValueError(f"no such build directory: {target}")
+        resolved = target.resolve()
+        if resolved.parent != root or resolved == root:
+            raise ValueError(f"refusing to delete outside {root}: {resolved}")
+
+        held = _farm_links_into(resolved)
+        if held:
+            raise ValueError(
+                f"~/ai/bin still points at {resolved} ({_farm_note(held)}) — "
+                f"this build is in use, not deleting")
+        pids = _procs_using(resolved)
+        if pids is None:
+            raise ValueError("cannot verify that nothing is running from "
+                             f"{resolved} (no readable /proc) — not deleting")
+        if pids:
+            raise ValueError(f"a process is running from {resolved} "
+                             f"(pid {', '.join(map(str, pids))}) — not deleting")
+
+        # Record what is about to be destroyed: the registry never knew it, so
+        # this note is the only surviving answer to "what was that".
+        files = sorted(p.relative_to(resolved).as_posix()
+                       for p in resolved.rglob("*") if p.is_file())
+        size = release_size(resolved, force=True) or 0
+        version = ""
+        exe = resolved / "llama-server"
+        if exe.is_file():
+            try:
+                r = subprocess.run([str(exe), "--version"], capture_output=True,
+                                   text=True, timeout=20)
+                version = (r.stdout or r.stderr or "").strip().splitlines()[0] \
+                    if (r.stdout or r.stderr) else ""
+            except Exception as e:  # noqa: BLE001 — a stray build need not cooperate
+                version = f"(version check failed: {type(e).__name__}: {e})"
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        rb = paths.ROLLBACK_DIR / f"llamacpp-purge-{stamp}"
+        rb.mkdir(parents=True, exist_ok=True)
+        (rb / "note.txt").write_text(
+            f"purged UNREGISTERED build {name} ({resolved})\n"
+            f"{len(files)} file(s), {size / 1048576:.1f} MiB\n"
+            f"binary reported: {version or '(no llama-server in the directory)'}\n"
+            f"directory mtime: {datetime.fromtimestamp(resolved.stat().st_mtime, timezone.utc).isoformat()}\n"
+            f"purged at {time.strftime('%Y-%m-%dT%H:%M:%S%z')} by ai-portal\n"
+            f"this build was never in ~/ai/state/llama-releases.json\n")
+        (rb / "manifest.txt").write_text("\n".join(files) + "\n")
+
+        shutil.rmtree(resolved)
+        log(f"purged {resolved} ({size / 1048576:.1f} MiB freed, "
+            f"{len(files)} files); record in {rb}")
+        return {"status": "success", "purged": name, "freed_bytes": size,
+                "files": len(files), "version": version, "note_dir": str(rb)}
 
     # ------------------------------------------------------------ internals
 
@@ -957,6 +1066,143 @@ def _link_target(link: Path) -> Path | None:
 
 def _points_into(target: Path | None, directory: Path) -> bool:
     return bool(target) and (target == directory or directory in target.parents)
+
+
+# A release directory the portal built looks like this, and only this. It is the
+# boundary of what the purge will touch, and it has to be: the registry cannot be
+# the authority on a build it never heard of — that is precisely the situation
+# being cleaned up — so the *shape* of the name plus containment under
+# ~/ai/releases carries the constraint instead.
+_REL_DIR_RE = re.compile(r"^llama\.cpp-b(\d+)$")
+
+
+def _procs_using(directory: Path) -> list[int] | None:
+    """pids executing from `directory`; None if the kernel will not say.
+
+    `/proc/<pid>/exe` is the only source that does not depend on the registry
+    being right, which is the thing in question here. None means unverifiable,
+    and callers must treat that as *not* deletable.
+
+    Honest limitation: a process owned by someone else has an unreadable exe and
+    is invisible to this. Every service here runs as this user, so the blind spot
+    is a root process started by hand — which is also the case the farm check
+    would miss, so both are reported as "not verified" rather than "safe".
+    """
+    procs = Path("/proc")
+    if not procs.is_dir():
+        return None
+    out: list[int] = []
+    try:
+        entries = list(procs.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            exe = os.readlink(f"/proc/{entry.name}/exe")
+        except OSError:  # exited between listing and readlink, or not ours
+            continue
+        # a binary unlinked while running reads back as "…/llama-server (deleted)"
+        exe = exe.removesuffix(" (deleted)")
+        if _points_into(Path(exe), directory):
+            out.append(int(entry.name))
+    return sorted(out)
+
+
+def _farm_links_into(directory: Path) -> list[dict]:
+    """Which `~/ai/bin` links *name* a path inside `directory`.
+
+    Read lexically (readlink + normpath) rather than by resolving the symlink,
+    because the farm is a configuration and a broken link is still a declaration:
+    ``~/ai/bin/llama-server -> ../releases/llama.cpp-b1043/llama-server`` says
+    that build is the one the router runs, even while the target is missing. If
+    the directory is deleted behind it, the declaration becomes unrecoverable and
+    the reason it existed is gone. So dangling links hold too, and are labelled
+    as such — a broken link is a different problem to explain, not a licence to
+    delete.
+    """
+    out: list[dict] = []
+    if not paths.AI_BIN.is_dir():
+        return out
+    for l in sorted(paths.AI_BIN.glob("*")):
+        if not l.is_symlink():
+            continue
+        try:
+            raw = Path(os.readlink(l))
+        except OSError:  # vanished between listing and reading
+            continue
+        target = raw if raw.is_absolute() else l.parent / raw
+        norm = Path(os.path.normpath(str(target)))
+        if _points_into(norm, directory):
+            out.append({"name": l.name, "dangling": not l.exists()})
+    return out
+
+
+def _farm_note(held: list[dict]) -> str:
+    """`llama-server, llama-cli (broken link)` — naming a broken link is the
+    actionable half: the fix is the link, not necessarily the build."""
+    return ", ".join(x["name"] + (" (broken link)" if x["dangling"] else "")
+                     for x in held) or "(unnamed link)"
+
+
+def stray_releases() -> dict:
+    """Build directories on disk that the registry has never heard of.
+
+    An update that dies between staging and recording — interrupted by a reboot,
+    or failed by a smoke test that asked a 94 GB model for 37 GB of memory —
+    leaves a complete ~400 MB release directory that no list shows, so the user
+    cannot see it and has no way to remove it. It also has to be found
+    separately from `delete_release`, whose first guard is "is it registered",
+    which is the one thing that cannot be true here.
+
+    Every entry is reported with the two facts that make deletion dangerous — the
+    bin farm still pointing into it, or a process executing from it — and
+    `purgeable` is False unless both are clear and /proc could be read at all.
+    """
+    root = paths.RELEASES
+    out = {"strays": [], "unexpected": [], "bytes": 0, "scanned": bool(root.is_dir())}
+    if not root.is_dir():
+        return out
+    reg = releases()
+    known = {r.get("name") for r in reg.get("releases", [])}
+    current = reg.get("current")
+    try:
+        cur_build = int(_REL_DIR_RE.match(current or "").group(1))
+    except (AttributeError, ValueError):
+        cur_build = 0
+
+    for d in sorted(root.iterdir()):
+        if not d.is_dir() or d.name in known:
+            continue
+        m = _REL_DIR_RE.match(d.name)
+        if not m:                       # not ours; report, never offer to delete
+            out["unexpected"].append({"name": d.name, "path": str(d)})
+            continue
+        held = _farm_links_into(d)
+        pids = _procs_using(d)
+        why = None
+        if held:
+            why = ("~/ai/bin still links into it (" + _farm_note(held)
+                   + ") — this build is what the router is configured to run")
+        elif pids is None:
+            why = "cannot check for running processes (no readable /proc)"
+        elif pids:
+            why = f"a process is running from it (pid {', '.join(map(str, pids))})"
+        size = release_size(d) or 0
+        out["strays"].append({
+            "name": d.name, "path": str(d), "bytes": size,
+            "build": int(m.group(1)),
+            "ahead": bool(cur_build and int(m.group(1)) > cur_build),
+            "built_dir": datetime.fromtimestamp(d.stat().st_mtime,
+                                                timezone.utc).isoformat(),
+            "held_by": [x["name"] for x in held],
+            "pids": pids or [], "proc_read": pids is not None,
+            "purgeable": why is None, "why_not": why,
+        })
+        out["bytes"] += size
+    out["strays"].sort(key=lambda s: -s["bytes"])
+    return out
 
 
 # Release directories are immutable once built, so their size is worth caching:

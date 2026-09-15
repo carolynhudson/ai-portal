@@ -323,6 +323,44 @@ MUTATIONS = [
         "health",
         "9.9.0",
     ),
+    (
+        # The whole safety story of the purge control is which selection unlocks
+        # it. The server refuses whatever the browser shows, but a button that
+        # invites the click for a build the router is configured to run is a
+        # button that teaches people to ignore warnings.
+        "an in-use build becomes purgeable",
+        "templates/dashboard.html",
+        "  btn.disabled = !e || !e.purgeable;",
+        "  btn.disabled = !e;",
+        "builds-strays",
+        "#purge-stray-btn",
+    ),
+    (
+        "the unregistered-build row never hides",
+        "templates/dashboard.html",
+        "  row.hidden = list.length === 0;",
+        "  row.hidden = false;",
+        "dashboard",
+        "#stray-row",
+    ),
+    (
+        "the unregistered-build row never shows",
+        "templates/dashboard.html",
+        "  row.hidden = list.length === 0;",
+        "  row.hidden = true;",
+        "builds-strays",
+        "#stray-row",
+    ),
+    (
+        # "798 MB" is the part that makes it worth acting on: a list of directory
+        # names with no weight attached is not a reason to delete anything
+        "the weight of what is unregistered is dropped",
+        "templates/dashboard.html",
+        "'Unregistered (' + humanSize(d.stray_bytes || 0) + ')'",
+        "'Unregistered (' + '' + ')'",
+        "builds-strays",
+        "798 MB",
+    ),
 ]
 
 
