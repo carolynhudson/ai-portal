@@ -342,6 +342,17 @@ for (const sel of spec.expectHidden || []) {
     fail(`element should be hidden but is showing: ${sel}`);
 }
 
+// The mirror, and the reason expectVisible is not enough for a panel that shows
+// and hides: "in the document" is true whether or not anyone can see it. Without
+// this half, a row that is permanently hidden passes every expectVisible on the
+// page that exists to demonstrate it showing.
+for (const sel of spec.expectShown || []) {
+  const el = win.document.querySelector(sel);
+  if (!el) fail(`expected element showing, got nothing: ${sel}`);
+  else if (el.hidden || el.getAttribute("hidden") !== null)
+    fail(`element should be showing but is hidden: ${sel}`);
+}
+
 // A live region must show *data*, not merely exist: a panel that renders "—"
 // forever passes a visibility check and tells the user nothing. `contains` is
 // matched against any element of the selector; `minCount` pins how many there

@@ -356,8 +356,8 @@ MUTATIONS = [
         # names with no weight attached is not a reason to delete anything
         "the weight of what is unregistered is dropped",
         "templates/dashboard.html",
-        "'Unregistered (' + humanSize(d.stray_bytes || 0) + ')'",
-        "'Unregistered (' + '' + ')'",
+        "'Unregistered (' + humanSize(d.stray_bytes || 0) + '):'",
+        "'Unregistered (' + '' + '):'",
         "builds-strays",
         "798 MB",
     ),

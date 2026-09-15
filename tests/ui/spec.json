@@ -769,6 +769,11 @@
       ],
       "expectHidden": [
         "#stray-hint"
+      ],
+      "+expectShown": [
+        "#stray-row",
+        "#stray-select",
+        "#purge-stray-btn"
       ]
     }
   ]
