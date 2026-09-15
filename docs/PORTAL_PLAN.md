@@ -690,6 +690,18 @@ while the page still feels instant. Three things came out of measuring this one:
 3. **Cache failures too.** A 5 s network timeout that is also a cache miss means
    every page load on an offline machine pays it. A failed upstream check is held
    for an hour and shown as "unknown", which is the honest answer anyway.
+4. **A lock needs proof of life, not a clock** (found live, 2026-09-15). Once the
+   UI refuses work "because a job is running", the cost of *believing a dead job*
+   is no longer cosmetic: the machine looks wedged. A reboot during a build left
+   `status='running'` behind and the bar enforced it for the whole 6 h stale
+   window — a job that could not exist, on a machine rebooted an hour ago. So a
+   `jobs` row carries `pid` and a boot token, and is reclaimed the moment its
+   writer is provably gone (earlier boot, or no process behind the pid). Age is
+   only a backstop: it can answer "this row is old", never "this job is dead".
+   Related trap: making a probe "degrade alone" (`except Exception: return None`)
+   also hides the probe's own bugs — a missing `import Path` disabled boot
+   detection silently while every boot-based test still passed via another
+   branch. A probe that cannot fail loudly must at least be observed working.
 
 ### 6.11 Long actions, the venv question, and what a machine-specific Python stack
 means for `pip install -r requirements.txt` (2026-09-14)
