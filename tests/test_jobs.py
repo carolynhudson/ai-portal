@@ -323,6 +323,49 @@ def test_payload_shape_is_stable_for_the_bar():
     settle()
 
 
+# ------------------------------------------------------------------- refusal text
+
+def test_a_refusal_shows_the_busy_jobs_own_step_not_someones_last_line():
+    """The step in a refusal belongs to the job named in it.
+
+    It used to be "the newest line in the whole table": with a second request
+    arriving just as another job finished, the row was still empty and the line
+    came back from wherever else a log line lived — 'busy — ComfyUI update
+    master (job 22) — success: {…}', blaming a refusal on a finished job. Live,
+    on the machine, 30 seconds after the updater was written.
+    """
+    h = Held()
+    job_id = updater.start_job("llamacpp", "HEAD", h.fn)
+    try:
+        wait_for_job("llamacpp")
+        # a *finished* job with a newer id, whose log must never leak into a
+        # refusal about the running one
+        done = updater.start_job("comfyui", "master", lambda log: "unrelated work completed ok")
+        for _ in range(200):
+            if (updater.job(done) or {}).get("status") == "success":
+                break
+            time.sleep(0.02)
+        reason = updater.busy_reason(updater.DISRUPTIVE)
+        assert f"job {job_id}" in reason, reason
+        assert "step one" in reason, reason
+        assert "unrelated work completed" not in reason, reason
+    finally:
+        h.finish()
+    settle()
+
+
+def test_a_refusal_survives_a_row_that_has_not_logged_yet(monkeypatch):
+    """The row can be read a beat before the thread's first write; the live copy
+    this process holds covers that window."""
+    row = {"id": 991, "kind": "comfyui", "target": "master", "status": "running",
+           "log": "", "started_at": time.time() - 30}
+    updater._live[991] = "[10:00:01] syncing venv: install -q -r requirements.txt"
+    try:
+        assert "syncing venv" in updater.describe(row)
+    finally:
+        updater._live.pop(991, None)
+
+
 def test_a_failing_job_fails_loudly_in_its_own_row():
     def boom(log):
         log("about to fail")

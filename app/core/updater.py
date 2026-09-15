@@ -57,6 +57,31 @@ def _touch(job_id: int, status: str, log: str,
            ended: float | None = None) -> None:
     db.execute("UPDATE jobs SET status=?, log=?, ended_at=? WHERE id=?",
                (status, log, ended, job_id))
+    _live[job_id] = log          # see _current_log
+
+
+def step_of(job: dict) -> str:
+    """This job's current step: its newest log line, timestamp stripped."""
+    lines = [ln for ln in (job.get("log") or "").strip().splitlines() if ln]
+    return re.sub(r"^\[[\d:]+\]\s*", "", lines[-1])[:140] if lines else ""
+
+
+def _current_log(job_id: int) -> str:
+    """The freshest log this process holds for a job.
+
+    A row read from the DB at the instant a job starts can carry an empty log
+    while the thread is already writing: the refusal a second request gets must
+    not lose the step for that reason. Rows written by *this* process are
+    authoritative; anything else (another worker, a restart) falls back to the
+    row's own log.
+    """
+    return _live.get(job_id, "")
+
+
+# job_id -> latest log, for the process that is running the job. Bounded by the
+# job history one keeps in memory being small; entries are dropped when a job
+# ends and its result is in the DB.
+_live: dict[int, str] = {}
 
 
 def _reclaim_stale() -> None:
@@ -107,7 +132,7 @@ def brief(job: dict) -> dict:
     started = job.get("started_at") or time.time()
     ended = job.get("ended_at")
     tail_lines = [ln for ln in (job.get("log") or "").strip().splitlines() if ln]
-    step = re.sub(r"^\[[\d:]+\]\s*", "", tail_lines[-1])[:140] if tail_lines else ""
+    step = step_of(job)
     return {
         "id": job["id"],
         "kind": job["kind"],
@@ -150,13 +175,18 @@ def busy_reason(kinds: set[str] | None = None) -> str:
 
 
 def describe(job: dict) -> str:
-    """One human line: 'ComfyUI update of master (job 21) — syncing venv'."""
+    """One human line: 'ComfyUI update of master (job 21) — syncing venv'.
+
+    The step is *this* job's newest line, falling back to the copy this process
+    is holding for it: a row read at the moment a job starts can still be empty
+    while its thread is already writing. (It was once "the freshest line in the
+    whole table", which produced "busy — ComfyUI update master (job 22) —
+    success: {...}": a refusal blamed on a job that had already finished, because
+    the row reached here before the running job had logged anything.)
+    """
     started = datetime.datetime.fromtimestamp(job["started_at"])
     label = KIND_LABEL.get(job["kind"], job["kind"])
-    tail = (job.get("log") or "").strip().splitlines()
-    step = ""
-    if tail:
-        step = re.sub(r"^\[[\d:]+\]\s*", "", tail[-1])[:110]
+    step = step_of(job)[:110] or _current_log(job["id"])[:110]
     return f"{label} {job.get('target') or ''}".strip() + \
         f" (job {job['id']}, since {started:%H:%M:%S})" + (f" — {step}" if step else "")
 
@@ -217,6 +247,7 @@ def _run(kind: str, job_id: int, fn) -> None:
         with _lock:
             _running.pop(kind, None)
         _touch(job_id, status, "\n".join(lines), time.time())
+        _live.pop(job_id, None)   # the row in the DB is the truth from here
 
 
 def job(job_id: int) -> dict | None:
