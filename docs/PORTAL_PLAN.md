@@ -741,6 +741,22 @@ compares the pins before and after and refuses to restart on top of a replaced
 torch. This is the general rule for a stack built for one machine — *follow
 upstream, then prove nothing upstream-specific was undone.*
 
+**The bar's own lock was broken by the time it was tested.** `dataset.jobBusy`
+writes the attribute `data-job-busy`; every rule acting on the lock spells
+`data-jobbusy`. Nothing matched, so the bar painted correctly and locked nothing
+beyond `disabled` — which the next panel re-render clears. Two lessons:
+
+- `dataset.*` is not a JS property bag, it is attribute-name surgery. Anything a
+  stylesheet selects by must be written with `setAttribute`.
+- **A mutation test that isn't caught and a check that is broken look identical
+  until something prints the state.** The mutated and clean runs produced the
+  same report. `run.mjs` now tags failures with the phase that produced them and,
+  for a body-attribute assertion, logs the value and the last `/api/jobs/active`
+  poll. Related: the mutation tool restores files from a `finally` now — an earlier
+  version of it left an injected bug in the tree whenever the sandbox died (it
+  must be run under `uv run python`, not `python`, or the sandbox has no uvicorn),
+  and every run after that reported "refusing to run on a dirty tree".
+
 **What the tests had to get right** (`tests/test_comfyui_update.py`, 17 tests; a
 scripted `subprocess.run`, no network, no systemd): the dirty-repo path used to
 raise `NameError` from a typo (`diry`), which is exactly what "the update did
@@ -769,7 +785,7 @@ restarted", "the pull never happened") rather than only what it printed.
 | **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 15/15 injected regressions caught; found 3 real UI bugs (§6.6) |
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
 | **L.3 (done, 2026-09-13)** — router pulse | Status page reads the journal instead of showing it: per-slot lanes with real phases, throughput stacked by slot, model-switch banner, collapsed attention pane (§6.9) | "is it working, on what, how fast, anything wrong?" answered without reading a log line; 22 parser + 10 page tests; 6 new mutations; service controls provably untouched |
-| **M (done, 2026-09-14)** — jobs are machine state, not page state | Global job bar on every page (`/api/jobs/active`, step + elapsed + in-place log), machine-wide exclusivity for disruptive updates with named 409 refusals, service controls gated while a job runs, ComfyUI update rebuilt around the service's own venv + generated pip constraints + verify-before-restart (§6.11) | a job stays visible and its machine stays locked from any page; a ComfyUI sync cannot replace this box's ROCm torch, and cannot restart the service on a venv where `torch.version.hip` is missing; 17 job tests + 17 updater tests, 2 jobbar pages, 5 new mutations (33/33 caught) |
+| **M (done, 2026-09-14)** — jobs are machine state, not page state | Global job bar on every page (`/api/jobs/active`, step + elapsed + in-place log), machine-wide exclusivity for disruptive updates with named 409 refusals, service controls gated while a job runs, ComfyUI update rebuilt around the service's own venv + generated pip constraints + verify-before-restart (§6.11) | a job stays visible and its machine stays locked from any page; a ComfyUI sync cannot replace this box's ROCm torch, and cannot restart the service on a venv where `torch.version.hip` is missing; 17 job tests + 18 updater tests, 2 jobbar pages, 5 new mutations (33/33 caught) |
 | **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
