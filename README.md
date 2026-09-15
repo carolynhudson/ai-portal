@@ -124,6 +124,17 @@ index age, model directories the router cannot see, broken links in `~/ai/bin`.
 Its only control is a re-check; applying updates and rebooting stay where they
 can be confirmed (PORTAL_PLAN §4.5).
 
+**Long actions outlive the page they started on.** A build or a venv sync is a
+job on the server, so closing the tab never stops it — and a bar at the bottom of
+*every* page now says what is running, for how long, what step it is on, and lets
+you open its log without leaving. It holds the other update controls while a
+disruptive job runs, and the server refuses them too: one build, one venv sync,
+one CLI upgrade at a time, refused by name (`busy — ComfyUI update master (job
+77, since 10:14) — syncing venv`). A ComfyUI sync installs into the venv the
+service actually runs, holds this machine's ROCm builds of torch/triton in place
+with a generated constraint file, and verifies torch still has ROCm **before**
+restarting the service into it (PORTAL_PLAN §6.11).
+
 ### Network access (who can reach these services)
 
 Each managed service binds one of three ways, chosen per service on
@@ -161,7 +172,11 @@ actually *did* something. Tab groups must be a bijection; destructive requests
 must be confirm-gated **before** the request (an `alert()` afterwards is not a
 confirmation); a control unlocked by a selection is asserted in that selection
 (`selectCases`, and `then_click` to drive it against a known choice); a final
-coverage pass fails if any visible control was never driven. `tests/test_ui_contract.py` is the fast static half (every inline
+coverage pass fails if any visible control was never driven. A page spec may
+`extends` another: `jobbar` and `jobbar-finished` are the dashboard with a
+running/finished job pinned by a fixture, which is how "an update started on
+Status is still visible on Metrics, and still locking the machine" is tested
+without copying that page's fixtures. `tests/test_ui_contract.py` is the fast static half (every inline
 `<script>` must parse, every `onclick` must name a function that exists, every
 `fetch` target must be a registered route, `expectText` requires live regions to
 show *data* rather than merely exist (a slot board stuck on `—` has a working id
@@ -185,6 +200,7 @@ cannot be committed.
 
 G (remaining frontend polish), H (RAG service: per-project stores, ingestion
 jobs, MCP interface), and the `app/main.py` route split left over from J. Phase F
-(the health pane) landed 2026-09-14; service controls, the llama.cpp and ComfyUI
-updaters with rollback, the model manager, the settings page, LAN bind modes,
-deployment and the UI test harness are done.
+(the health pane) and phase M (the global job bar, machine-wide update
+exclusivity, and the ComfyUI venv fix) landed 2026-09-14; service controls, the
+llama.cpp and ComfyUI updaters with rollback, the model manager, the settings
+page, LAN bind modes, deployment and the UI test harness are done.

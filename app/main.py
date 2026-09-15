@@ -114,6 +114,10 @@ class ComfyDownloadBody(BaseModel):
 
 class ComfyUpdateBody(BaseModel):
     restart: bool = True
+    #: ``--upgrade`` the packages requirements.txt names. Off by default:
+    #: ComfyUI's own instruction is to satisfy requirements, and this machine's
+    #: ROCm torch is held either way (see providers/comfyui.write_constraints).
+    upgrade: bool = False
 
 
 class ComfyRollbackBody(BaseModel):
@@ -196,6 +200,22 @@ def _human(n: int | None) -> str:
             return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
         n /= 1024
     return str(n)
+
+
+def _busy(kinds: set[str] | None = None) -> HTTPException:
+    """The 409 for "the machine is busy", naming what is busy.
+
+    A refusal that says only "already running" leaves the operator guessing
+    whether to wait a minute or twenty, and for what.
+    """
+    return HTTPException(status_code=409,
+                         detail="busy — " + updater.busy_reason(kinds))
+
+
+def _refuse_if_busy(kinds: set[str] | None = None) -> None:
+    """Raise the 409 if a job currently owns the machine (default: any job)."""
+    if updater.blocker(kinds):
+        raise _busy(kinds)
 
 
 def _require_auth(request: Request) -> None:
@@ -656,7 +676,7 @@ def create_app() -> FastAPI:
             "comfyui-download", body.url,
             lambda log: p.download_file(body.url, dest_dir, dest, log))
         if jid is None:
-            raise HTTPException(409, "a download is already running")
+            raise _busy()
         db.event("portal", "download", f"comfyui {body.url} -> {dest}")
         return {"job": jid, "dest": str(dest)}
 
@@ -677,8 +697,7 @@ def create_app() -> FastAPI:
                 modeladd.parse_source(path=str(p)), log=log))
         if job_id is None:
             shutil.rmtree(dest, ignore_errors=True)
-            raise HTTPException(status_code=409,
-                                detail="a model add is already running")
+            raise _busy()
         db.event("portal", "model-add", f"upload {p.name}")
         return {"job": job_id, "path": str(p)}
 
@@ -700,7 +719,7 @@ def create_app() -> FastAPI:
                                     category=body.category,
                                     model_dir=body.model_dir, log=log))
         if jid is None:
-            raise HTTPException(409, "a model add is already running")
+            raise _busy()
         db.event("portal", "model-add", src["label"])
         return {"job": jid, "source": src}
 
@@ -767,6 +786,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown service")
         if action in ("stop", "restart") and not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
+        # Stopping a service that an update is mid-way through swapping, or
+        # restarting the portal and killing the thread that is building it, are
+        # both ways to end up with half-applied state. Wait for the job.
+        if action in ("stop", "restart"):
+            _refuse_if_busy(updater.DISRUPTIVE)
         res = systemd.service_action(key, action)
         if not res.get("ok"):
             raise HTTPException(status_code=500,
@@ -800,6 +824,9 @@ def create_app() -> FastAPI:
         background; poll /api/jobs/{id} for progress. The click IS the
         confirmation (PORTAL_PLAN §6)."""
         p = get_provider("llamacpp")
+        # busy first, validate second: whether the machine can take this at all
+        # is the more useful answer, and preflight costs a git probe
+        _refuse_if_busy()
         try:
             plan = p.preflight()
         except ValueError as e:
@@ -809,7 +836,7 @@ def create_app() -> FastAPI:
                                        body.target, restart=body.restart,
                                        smoke=body.smoke, dry=body.dry, log=log))
         if job_id is None:
-            raise HTTPException(status_code=409, detail="an update is already running")
+            raise _busy()
         db.event("portal", "update",
                  f"llamacpp: job {job_id} started (target={body.target}, "
                  f"restart={body.restart}, dry={body.dry})")
@@ -819,6 +846,7 @@ def create_app() -> FastAPI:
     def api_rollback(body: RollbackBody, _=Depends(_require_auth)):
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
+        _refuse_if_busy(updater.DISRUPTIVE)
         p = get_provider("llamacpp")
         try:
             res = p.rollback(body.release, log=lambda m: print("[ai-portal]", m))
@@ -833,9 +861,13 @@ def create_app() -> FastAPI:
     def api_delete_release(body: RollbackBody, _=Depends(_require_auth)):
         """Delete a stored build that is not the current one. Irreversible: the
         UI confirms with the build's details first, and confirm must be true
-        here too (defence in depth, not a formality — see PORTAL_PLAN §6)."""
+        here too (defence in depth, not a formality — see PORTAL_PLAN §6).
+
+        Gated like a rollback: deleting a tree while a job is swapping services
+        around is the same class of accident."""
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
+        _refuse_if_busy(updater.DISRUPTIVE)
         p = get_provider("llamacpp")
         if not hasattr(p, "delete_release"):
             raise HTTPException(status_code=501, detail="not supported for this service")
@@ -876,20 +908,22 @@ def create_app() -> FastAPI:
         if not (paths.COMFY_REPO / ".git").exists():
             raise HTTPException(status_code=400,
                                 detail="ComfyUI repo not found")
-        job_id = updater.start_job("comfyui", "master",
-                                   lambda log: p.update(
-                                       restart=body.restart, log=log))
+        job_id = updater.start_job(
+            "comfyui", "master" + (" (+upgrade)" if body.upgrade else ""),
+            lambda log: p.update(restart=body.restart, upgrade=body.upgrade,
+                                 log=log))
         if job_id is None:
-            raise HTTPException(status_code=409,
-                                detail="an update is already running")
+            raise _busy()
         db.event("portal", "update",
-                 f"comfyui: job {job_id} started (restart={body.restart})")
+                 f"comfyui: job {job_id} started (restart={body.restart}, "
+                 f"upgrade={body.upgrade})")
         return {"job": job_id}
 
     @app.post("/api/updates/comfyui/rollback")
     def api_comfy_rollback(body: ComfyRollbackBody, _=Depends(_require_auth)):
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
+        _refuse_if_busy(updater.DISRUPTIVE)
         p = get_provider("comfyui")
         try:
             res = p.rollback(body.commit,
@@ -898,6 +932,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
         db.event("portal", "update", f"comfyui: rollback -> {body.commit[:12]}")
         return res
+
+    # declared before /api/jobs/{job_id}: "active" is not an int
+    @app.get("/api/jobs/active")
+    def api_jobs_active(_=Depends(_require_auth)):
+        """What is running right now, for the status bar on every page.
+
+        One SQL query, no provider probes: the bar polls this continuously, and a
+        job that finished while you were on another page still has to reach you.
+        """
+        return updater.payload()
 
     @app.get("/api/jobs/{job_id}")
     def api_job(job_id: int, _=Depends(_require_auth)):
@@ -1172,7 +1216,7 @@ def create_app() -> FastAPI:
 
         job_id = updater.start_job("huggingface", "upgrade-hf-cli", run)
         if job_id is None:
-            raise HTTPException(status_code=409, detail="an update is already running")
+            raise _busy()
         db.event("portal", "update", f"huggingface: job {job_id} started")
         return {"job": job_id}
 

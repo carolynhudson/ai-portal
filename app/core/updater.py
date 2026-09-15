@@ -5,17 +5,46 @@ synchronous HTTP handlers. Each job runs on a daemon thread and is tracked in
 the ``jobs`` table (portal.db); its log goes to ``~/ai/logs/update-<kind>-<id>.log``
 and stays tail-able via :func:`job` for the UI's live progress pane.
 
-Only one job per ``kind`` may run at a time, so a second click while a build
-is in flight is rejected instead of double-building.
+**One job at a time, machine-wide.** Not one per kind: a llama.cpp build and a
+ComfyUI venv sync at the same moment are two long dependency moves against the
+same GPU stack, and either can restart a service the other is using. The rule is
+therefore global — while an exclusive job runs, no other exclusive job starts and
+no service may be started, stopped or restarted (see :func:`blocker`, which the
+API turns into a 409 that says what is busy and why).
+
+The job row is the source of truth, not this process: a job keeps running when
+the browser navigates to another page, and its log stays readable. What a portal
+restart does kill (the thread), and a row older than ``_STALE_AFTER`` is
+reclaimed as failed so the machine is not locked forever.
 """
 from __future__ import annotations
 
+import datetime
+import re
 import threading
 import time
 import traceback
 from collections import deque
 
 from . import db, paths
+
+#: What the UI calls each kind of job. A bar that says "llamacpp" when a build
+#: is running is the machine's vocabulary, not the operator's.
+KIND_LABEL = {
+    "llamacpp": "llama.cpp build",
+    "comfyui": "ComfyUI update",
+    "comfyui-download": "ComfyUI model download",
+    "model-add": "model add",
+    "huggingface": "HF CLI update",
+}
+
+#: Jobs that take the machine's side. A build, a venv sync or a CLI upgrade
+#: restarts services, replaces binaries a running service is using, and saturates
+#: disk and network — so one of these wants the machine to itself, and no service
+#: may be started, stopped or restarted while it runs. Downloads are not in this
+#: set: they move files, they do not disturb what is running (but they will not
+#: start on top of a disruptive job either).
+DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python"}
 
 _TAIL = 300                # log lines kept in the DB for the API
 _STALE_AFTER = 6 * 3600    # a 'running' row older than this = a dead portal
@@ -30,26 +59,133 @@ def _touch(job_id: int, status: str, log: str,
                (status, log, ended, job_id))
 
 
-def start_job(kind: str, target: str, fn) -> int | None:
-    """Run ``fn(log)`` on a background thread as an update job.
+def _reclaim_stale() -> None:
+    """A 'running' row older than ``_STALE_AFTER`` belongs to a portal that died
+    mid-job. Reclaim it, or the whole machine stays locked forever."""
+    rows = db.query("SELECT id, started_at FROM jobs WHERE status='running'")
+    cutoff = time.time() - _STALE_AFTER
+    for r in rows:
+        if (r["started_at"] or 0) < cutoff:
+            # COALESCE, not bare `log ||`: a job that died before its first log
+            # line has NULL there, and NULL || text is NULL — the note, and with
+            # it the only clue to what happened, would vanish.
+            db.execute("UPDATE jobs SET status='failed', ended_at=?, "
+                       "log=COALESCE(log,'') || char(10) || ? WHERE id=?",
+                       (time.time(), "(stale: portal restarted mid-job)",
+                        r["id"]))
+            _running.pop(next((k for k, v in _running.items() if v == r["id"]),
+                              ""), None)
+
+
+def running() -> list[dict]:
+    """Every job currently in flight (newest first), as the API reports it."""
+    with _lock:
+        _reclaim_stale()
+        rows = db.query("SELECT id FROM jobs WHERE status='running' "
+                        "ORDER BY id DESC")
+    return [j for j in (job(r["id"]) for r in rows) if j]
+
+
+def blocker(kinds: set[str] | None = None) -> dict | None:
+    """The job that owns the machine right now, for a refusal message.
+
+    Everything that can disrupt a running service asks this first. The answer is
+    a job dict, so the caller can say *which* update is busy and how far along —
+    "an update is already running" is not something an operator can act on.
+
+    ``kinds`` narrows it (e.g. only :data:`DISRUPTIVE` jobs hold a service
+    restart; a model download in flight does not).
+    """
+    for j in running():
+        if kinds is None or j["kind"] in kinds:
+            return j
+    return None
+
+
+def brief(job: dict) -> dict:
+    """A job as the status bar consumes it: label, elapsed, current step."""
+    started = job.get("started_at") or time.time()
+    ended = job.get("ended_at")
+    tail_lines = [ln for ln in (job.get("log") or "").strip().splitlines() if ln]
+    step = re.sub(r"^\[[\d:]+\]\s*", "", tail_lines[-1])[:140] if tail_lines else ""
+    return {
+        "id": job["id"],
+        "kind": job["kind"],
+        "label": KIND_LABEL.get(job["kind"], job["kind"]),
+        "target": job.get("target"),
+        "status": job["status"],
+        "started_at": started,
+        "ended_at": ended,
+        "elapsed_s": round((ended or time.time()) - started, 1),
+        "step": step,
+        "log_tail": "\n".join(tail_lines[-3:]),
+    }
+
+
+def payload(now: float | None = None, last_window: float = 30 * 60) -> dict:
+    """The machine's busy/idle state for the global status bar.
+
+    ``last`` is the most recent *finished* job inside ``last_window`` seconds: an
+    update that completed while you were on another page should still tell you it
+    finished, and whether it worked, instead of the bar simply vanishing.
+    """
+    jobs = running()
+    last = None
+    row = db.query("SELECT id FROM jobs WHERE status<>'running' "
+                   "ORDER BY id DESC LIMIT 1")
+    if row:
+        candidate = job(row[0]["id"])
+        if candidate and (now or time.time()) - (candidate.get("ended_at") or 0) \
+                < last_window:
+            last = brief(candidate)
+    return {"running": [brief(j) for j in jobs],
+            "blocker": brief(jobs[0]) if jobs else None,
+            "last": last}
+
+
+def busy_reason(kinds: set[str] | None = None) -> str:
+    """Why the machine will not accept this right now, in one honest line."""
+    j = blocker(kinds)
+    return describe(j) if j else "another job is running"
+
+
+def describe(job: dict) -> str:
+    """One human line: 'ComfyUI update of master (job 21) — syncing venv'."""
+    started = datetime.datetime.fromtimestamp(job["started_at"])
+    label = KIND_LABEL.get(job["kind"], job["kind"])
+    tail = (job.get("log") or "").strip().splitlines()
+    step = ""
+    if tail:
+        step = re.sub(r"^\[[\d:]+\]\s*", "", tail[-1])[:110]
+    return f"{label} {job.get('target') or ''}".strip() + \
+        f" (job {job['id']}, since {started:%H:%M:%S})" + (f" — {step}" if step else "")
+
+
+def start_job(kind: str, target: str, fn, exclusive: bool | None = None) -> int | None:
+    """Run ``fn(log)`` on a background thread as a job.
 
     ``fn`` receives a ``log(str)`` callback; its return value is recorded as the
     result and any exception it raises fails the job. Returns the job id, or
-    ``None`` if a job for this kind is already running.
+    ``None`` if the machine is busy.
+
+    ``exclusive`` defaults to "is this kind in :data:`DISRUPTIVE`". An exclusive
+    job starts only on an otherwise idle machine; a non-exclusive one (a download)
+    starts unless a disruptive job is running or another of its own kind is.
     """
+    if exclusive is None:
+        exclusive = kind in DISRUPTIVE
     with _lock:
-        if kind in _running:
-            return None
-        row = db.query("SELECT id, status, started_at FROM jobs WHERE kind=? "
-                       "ORDER BY id DESC LIMIT 1", (kind,))
-        if row and row[0]["status"] == "running":
-            if time.time() - row[0]["started_at"] < _STALE_AFTER:
+        _reclaim_stale()
+        # the jobs table is the source of truth: a job outlives the request that
+        # started it, and a second portal worker (or a reload) must still see it
+        busy = db.query("SELECT id, kind, started_at FROM jobs "
+                        "WHERE status='running' ORDER BY id DESC")
+        if busy:
+            if exclusive:
                 return None
-            # a portal killed mid-job leaves a 'running' row behind — clear it
-            db.execute("UPDATE jobs SET status='failed', ended_at=?, "
-                       "log=log || char(10) || ? WHERE id=?",
-                       (time.time(), "(stale: portal restarted mid-job)",
-                        row[0]["id"]))
+            kinds = [r["kind"] for r in busy]
+            if kind in kinds or any(k in DISRUPTIVE for k in kinds):
+                return None
         db.execute("INSERT INTO jobs (kind, target, status, started_at) "
                    "VALUES (?,?,?,?)", (kind, target, "running", time.time()))
         job_id = db.query("SELECT last_insert_rowid() AS id")[0]["id"]

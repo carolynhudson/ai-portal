@@ -289,14 +289,32 @@ Implementation: `app/core/serviceenv.py` + `ComfyUI.ensure_service()` /
   table) -> `systemctl --user restart ai-llama-router` + health poll;
   **auto-rollback** if the router doesn't come up. `dry=True` stops after
   staging+verify (production untouched). Rollback is a fast synchronous
-  repoint+restart (`LlamaCpp.rollback`). Endpoints: `GET /api/updates/llamacpp`,
+  repoint+restart (`LlamaCpp.rollback`). **Busy is checked before the preflight
+  git probe**: whether the machine can take the job at all is the more useful
+  answer, and the one that must not wait on the network.
+  Endpoints: `GET /api/updates/llamacpp`,
   `POST /api/updates/llamacpp` (`target`/`restart`/`smoke`/`dry`),
   `POST /api/updates/llamacpp/rollback` (confirm required), `GET /api/jobs/{id}`.
   The ComfyUI updater (Phase E) reuses `updater.start_job` with its own pipeline.
-- **ComfyUI**: `git fetch` -> checkout tag/commit -> `pip install -r
-  requirements.txt` in the venv (torch pinned, not re-downloaded unless
-  required) -> restart service.
+- **ComfyUI — implemented 2026-09-14** (`ComfyUI.update`, §6.11): `git status`
+  (refuse on local changes, naming them) -> `fetch` -> **no-op** when the
+  checkout is already current -> `pull --ff-only` -> generate a pip constraint
+  file from this venv's machine-specific builds -> `pip install -r
+  requirements.txt -c <constraints>` (plus `--upgrade` only when the operator
+  ticks it, plus `manager_requirements.txt`) -> **verify torch still imports
+  with ROCm** -> restart + health poll, version diff in the job log.
 - **Hugging Face**: downloads per 4.2; cache pruning as a managed job.
+- **One at a time** (2026-09-14): `updater.DISRUPTIVE` = llama.cpp build, ComfyUI
+  update, huggingface-cli, portal python. A job in that set requires an otherwise
+  idle machine — no second disruptive job, no service stop/restart, no rollback,
+  no release deletion — refused with HTTP 409 naming the job and its progress
+  (`busy — ComfyUI update master (job 77, since 10:14:02) — syncing venv`).
+  Downloads (`model-add`, `comfyui-download`) move files and are allowed to share
+  the machine, but never with a job of their own kind, and never with an update.
+  The DB `jobs` table is the source of truth, so a second browser tab, a second
+  operator, and a page that was closed all see the same answer; rows still
+  `running` after 6 h are reclaimed as `failed` (a portal killed mid-build must
+  not lock the machine for ever).
 - **Advisory only (never auto)**: apt deltas touching `amdrocm*|amdgpu*|
   mesa-amdgpu*` + kernel (reboot-pending flag), Vulkan SDK newer-version check
   (lunarg URL, known pattern), ROCm/torch version drift → offers
@@ -673,6 +691,66 @@ while the page still feels instant. Three things came out of measuring this one:
    every page load on an offline machine pays it. A failed upstream check is held
    for an hour and shown as "unknown", which is the honest answer anyway.
 
+### 6.11 Long actions, the venv question, and what a machine-specific Python stack
+means for `pip install -r requirements.txt` (2026-09-14)
+
+The report was "the ComfyUI update did nothing — no progress, nothing updated".
+It had in fact succeeded once before that (job #20: 113 commits, venv sync,
+restart, healthy in 6 s). Two separate problems were masquerading as one:
+
+1. **Progress existed and was invisible.** A job is a row in `jobs` plus a daemon
+   thread, so it survives navigation — but its log panel lived only inside the
+   Status page's ComfyUI tab. Navigate to Metrics and the machine is still
+   working while the page says nothing. Fixed by a bar in `base.html` that polls
+   `/api/jobs/active` (4 s running / 15 s idle, one SQL query, no provider
+   probes): name of the job, target, elapsed, **current step**, a `view log`
+   toggle that expands the tail without leaving the page, and a finished job held
+   on screen for 60 s so "did it work?" is answerable after the fact. It also
+   locks `[data-needs-machine]` controls while something runs — a courtesy; the
+   409 in §4.4 is the guarantee, because a disabled button is not a lock.
+2. **The updater was right by luck, and one day wrong.** It installed into
+   `paths.COMFY_VENV`, an assumed path, while the service starts
+   `$COMFY_PYTHON` from its own launch env. Today those agree; the day they
+   don't, an update installs into a venv nothing runs and reports success.
+   `service_python()` now reads the launch env and says *where* its answer came
+   from, including when it has to fall back because the recorded interpreter is
+   gone ("would be used, but does not exist" is a log line, not a surprise).
+
+**The landmine.** ComfyUI's README documents exactly `pip install -r
+requirements.txt`, and its requirements list `torch`, `torchvision`,
+`torchaudio` **unpinned**. This box runs local ROCm builds —
+`torch 2.12.0a0+rocm7.13.0a20260411`, `triton 3.7.0+git8108eb2c.rocm…` — which
+exist on no index. Run the documented command with `--upgrade` and pip resolves
+torch to a CUDA wheel: the update "succeeds", pip prints nothing alarming, and
+the GPU is gone. So the portal follows the README *plus* three things the README
+cannot know:
+
+- a generated **constraint file** (`~/ai/state/portal/comfyui-constraints.txt`)
+  pinning every installed package whose version carries a local segment (`+rocm`,
+  `+git`) and the torch family, passed as `-c` on every install. The log names
+  what is being held and why — an invisible hold reads as "it didn't upgrade";
+- **`--upgrade` is opt-in**, a checkbox, because on this machine "upgrade all
+  dependencies" is a different and more dangerous action than "update ComfyUI";
+- **verification before the restart**: import torch in that venv, require
+  `torch.version.hip` on a host whose ROCm is installed. A sync that produced a
+  CUDA build fails the job *while the old service is still running*, and the
+  error carries the `git reset --hard <prev>` that undoes the checkout half.
+
+A held package that changed version anyway is a failure, not a footnote: the job
+compares the pins before and after and refuses to restart on top of a replaced
+torch. This is the general rule for a stack built for one machine — *follow
+upstream, then prove nothing upstream-specific was undone.*
+
+**What the tests had to get right** (`tests/test_comfyui_update.py`, 17 tests; a
+scripted `subprocess.run`, no network, no systemd): the dirty-repo path used to
+raise `NameError` from a typo (`diry`), which is exactly what "the update did
+nothing" looks like from the outside — now a refusal that lists the files. Two
+less obvious rules the harness enforces: dispatch fakes on **command structure**,
+not on a substring of the joined command line (the temp dir contains the test's
+own name, and `test_pip_installs…` once turned every command into a pip
+install), and assert what a job *did* to the machine ("the service was not
+restarted", "the pull never happened") rather than only what it printed.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
@@ -691,6 +769,7 @@ while the page still feels instant. Three things came out of measuring this one:
 | **L (done, 2026-09-13)** — UI tests | Integration tests for every interactable element: jsdom harness driving each page against a sandboxed portal (`tests/ui/`), static UI contracts (`test_ui_contract.py`), `scripts/check-ui.sh` as the single entry point, pre-commit hook, and a mutation check that proves the suite can fail | every control on every page is driven and must have an effect; tabs are a bijection; destructive requests are confirm-gated before the request; coverage gate fails on any visible control never driven; 15/15 injected regressions caught; found 3 real UI bugs (§6.6) |
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
 | **L.3 (done, 2026-09-13)** — router pulse | Status page reads the journal instead of showing it: per-slot lanes with real phases, throughput stacked by slot, model-switch banner, collapsed attention pane (§6.9) | "is it working, on what, how fast, anything wrong?" answered without reading a log line; 22 parser + 10 page tests; 6 new mutations; service controls provably untouched |
+| **M (done, 2026-09-14)** — jobs are machine state, not page state | Global job bar on every page (`/api/jobs/active`, step + elapsed + in-place log), machine-wide exclusivity for disruptive updates with named 409 refusals, service controls gated while a job runs, ComfyUI update rebuilt around the service's own venv + generated pip constraints + verify-before-restart (§6.11) | a job stays visible and its machine stays locked from any page; a ComfyUI sync cannot replace this box's ROCm torch, and cannot restart the service on a venv where `torch.version.hip` is missing; 17 job tests + 17 updater tests, 2 jobbar pages, 5 new mutations (33/33 caught) |
 | **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
@@ -868,4 +947,22 @@ Remaining open (can proceed without them):
    - Deferred, on purpose: dashboard attention badge (§6.10), reboot/apt apply
      buttons (§6 says a confirm is not the same as a root policy), and the
      ComfyUI commit row (the repo's git state is not in the registry yet).
-9. **Phase J** — see §0 for the step list and target layout.
+9. **Phase M (done, 2026-09-14)** — long actions, everywhere:
+   - The complaint was "the ComfyUI update did nothing and showed no progress";
+     the job had succeeded. Progress was real and page-local, so the bar moved to
+     `base.html` and the machine learned to refuse (§4.4, §6.11).
+   - Two live bugs on the way: `ComfyUI.update` raised `NameError` on a dirty
+     repo, and the updater installed into an assumed venv instead of the one the
+     service runs (`$COMFY_PYTHON`). Both are now tests.
+   - The stale-job reclaim wrote its note with `log || ?`, which is NULL when the
+     log was NULL: a job killed before its first line left no trace at all. Fixed
+     with `COALESCE`, and the test asserts the note survives.
+   - Harness changes this needed: page specs can `extends` another page (the
+     jobbar pages are the dashboard with a job payload, not a copy of its
+     fixtures); fixtures answer by command structure; and the control sweep now
+     walks **past** a disabled control instead of stalling on it — with a job
+     locking the dashboard, it used to reach nothing and blame unrelated links.
+   - Left alone deliberately: per-job progress *percentage* (a cmake build has no
+     honest denominator; the step line and log are the truth), and a desktop
+     notification (the bar is already the notification).
+10. **Phase J** — see §0 for the step list and target layout.

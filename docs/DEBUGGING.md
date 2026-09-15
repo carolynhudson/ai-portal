@@ -61,7 +61,14 @@ curl -s -b /tmp/c.txt "$BASE/api/status"     | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/router"     | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/settings/llamacpp/apikey" | python3 -m json.tool
 curl -s -b /tmp/c.txt "$BASE/api/health/detail" | python3 -m json.tool   # the /health pane (read-only)
+curl -s -b /tmp/c.txt "$BASE/api/jobs/active"  | python3 -m json.tool   # what the job bar shows
+curl -s -b /tmp/c.txt "$BASE/api/jobs/77"      | python3 -m json.tool   # one job, whole log
 ```
+
+`/api/jobs/active` is the cheapest way to see what a job is *actually* doing — it
+is one SQL query with no provider probes, so it answers while a build is running.
+A 409 from any update or service endpoint is the exclusivity rule, not a bug: the
+message names the job that is using the machine.
 
 Open endpoints (no auth): `GET /healthz` — used by monitoring and by
 `tools/live_smoke.sh`.

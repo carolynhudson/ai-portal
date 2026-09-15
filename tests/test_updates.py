@@ -31,6 +31,9 @@ def test_updates_endpoint_shape():
     db.init()
     db.execute("DELETE FROM settings WHERE key=?",
                ("llamacpp_remote_state",))
+    # the DB is shared across modules in this test home; "no job" has to mean
+    # "none here", not "the module that creates jobs happened to run later"
+    db.execute("DELETE FROM jobs")
     c = TestClient(app)
     c.post("/login", data={"password": "test-password-123"})
     r = c.get("/api/updates/llamacpp")
