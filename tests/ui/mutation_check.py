@@ -54,8 +54,8 @@ MUTATIONS = [
         # spec asserts the attribute, not just a disabled button.
         "job bar stops locking the machine (jobbar-unlocks)",
         "templates/base.html",
-        "document.body.dataset.jobBusy = run ? '1' : '';",
-        "document.body.dataset.jobBusy = '';",
+        "document.body.setAttribute('data-jobbusy', run ? '1' : '');",
+        "document.body.setAttribute('data-jobbusy', '');",
         "jobbar",
         "body[data-jobbusy]",
     ),
