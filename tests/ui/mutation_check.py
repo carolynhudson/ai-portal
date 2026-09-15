@@ -47,22 +47,25 @@ MUTATIONS = [
         "holding 4 machine-specific package(s)",
     ),
     (
-        # A bar that locks the machine and never unlocks it is worse than no bar:
-        # after a finished job every update control would sit dead forever.
-        "job bar never unlocks the controls again (jobbar-unlocks)",
+        # One line does both halves of the lock: it marks <body> busy for CSS and
+        # for every other script, and it is the flag the whole page reads. Losing
+        # it un-styled the bar's controls *and* left the machine unlocked while the
+        # bar itself kept animating — which is the insidious part, and why the
+        # spec asserts the attribute, not just a disabled button.
+        "job bar stops locking the machine (jobbar-unlocks)",
         "templates/base.html",
-        "el.disabled = el.dataset.jobWasDisabled === '1';",
-        "el.disabled = true;",
-        "jobbar-finished",
-        "should be usable but is disabled",
+        "document.body.dataset.jobBusy = run ? '1' : '';",
+        "document.body.dataset.jobBusy = '';",
+        "jobbar",
+        "body[data-jobbusy]",
     ),
     (
         "finished job is reported as a success whatever happened",
         "templates/base.html",
-        "(last.status === 'success' ? 'finished' : 'FAILED')",
-        "'finished'",
+        "(last.status === 'success' ? 'done' : 'failed');",
+        "(last.status === 'success' ? 'done' : 'done');",
         "jobbar-finished",
-        "FAILED",
+        "#jobbar.failed",
     ),
     (
         # The server refuses a second disruptive job whatever the browser does;
@@ -362,12 +365,26 @@ def apply_and_test(filename, old, new, page, expect, keep_on_miss=False):
     original = target.read_text()
     if old not in original:
         return False, f"mutation target not found in {filename}: {old[:60]!r}"
+    target.write_text(original.replace(old, new, 1))
+    # Restore in `finally`. Restoring from the error path instead left the bug
+    # in the tree whenever the sandbox died (running this file with plain
+    # `python` picks the venv-less interpreter, and one missed mutation then
+    # poisoned every run after it — and the guard that refuses to run on a
+    # dirty tree reported it as "refusing to run", three times, as if the tool
+    # were refusing rather than having just trashed a file).
     try:
-        target.write_text(original.replace(old, new, 1))
         with Sandbox() as sbx:
             report = sbx.page(page)
     except Exception as exc:                       # noqa: BLE001 — report, don't crash
+        # The sandbox raises with its log tail; without it a sandbox-side
+        # failure is just "harness blew up: <first line>" and says nothing.
+        import traceback
+        detail = "\n".join(traceback.format_exception(exc)[-3:])
+        print(f"    harness error:\n      " + detail.strip().replace("\n", "\n      ")[:900])
         return False, f"harness blew up: {str(exc).splitlines()[0][:160]}"
+    finally:
+        if not keep_on_miss:
+            target.write_text(original)
     failures = report.get("failures", [])
     blob = "\n".join(failures)
     if report.get("ok"):

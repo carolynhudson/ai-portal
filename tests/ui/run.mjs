@@ -16,7 +16,11 @@ function arg(name, fallback = null) {
 
 const failures = [];
 const warnings = [];
-const fail = (m) => failures.push(m);
+// Failures are tagged with the phase that produced them ("load", "sweep",
+// "select-case", …). Without it, an assertion that only holds between page loads
+// reads like a product bug when it was a driver pass that broke it.
+let phase = "load";
+const fail = (m) => failures.push(phase === "load" ? m : `${m} [${phase}]`);
 
 const base = arg("base");
 const pageName = arg("page");
@@ -327,6 +331,31 @@ for (const sel of spec.expectEnabled || []) {
   else if (el.disabled) fail(`control should be usable but is disabled: ${sel}`);
 }
 
+// An attribute assertion on <body> that must hold at load **and** after the
+// whole sweep. `data-jobbusy` is the machine-wide job lock; a bar that said
+// "busy" on arrival and quietly forgot it while controls were being driven is
+// invisible to a point-in-time check. The console line names the last
+// /api/jobs/active poll so "when did it stop" is answerable from the report.
+const expectBodyAttr = spec.expectBodyAttr || [];
+const checkBodyAttr = (when) => {
+  const bad = Object.entries(expectBodyAttr).filter(
+    ([k, want]) => (win.document.body.getAttribute(k) || "") !== want);
+  if (bad.length) {
+    const last = trace.requests.filter((r) => r.path === "/api/jobs/active").slice(-1)[0];
+    console.error("[ui-body] " + JSON.stringify({
+      when, requests: trace.requests.length,
+      lastJobsPollS: last && last.t ? Math.round((Date.now() - last.t) / 1000) : null,
+      attrs: bad.map(([k, want]) => [k, want, win.document.body.getAttribute(k) || ""]),
+    }));
+  }
+  for (const [k, want] of bad) {
+    const got = win.document.body.getAttribute(k) || "";
+    fail(`body[${k}] is ${JSON.stringify(got)}${when}, expected ${JSON.stringify(want)}`);
+  }
+};
+checkBodyAttr("");
+
+phase = "tabs";
 // ------------------------------------------------------------------------ tabs
 // A tab group must be a bijection: one panel per tab, every panel reachable,
 // exactly one active and visible at a time, clicked tab marked active.
@@ -376,6 +405,7 @@ checkTabGeometry();
 ctx.quiesce();
 await ctx.idle({ quietMs: 80, maxMs: 2000 });
 
+phase = "sweep";
 // ------------------------------------------------------------- control sweep
 const requireConfirm = spec.requireConfirmFor || [];
 const requireConfirmUnless = spec.requireConfirmUnlessBodyContains || {};
@@ -404,6 +434,7 @@ if (typeof judgeControl.toString === "function") {
   }
 }
 
+phase = "select-case";
 // ------------------------------------------------- selection-driven enablement
 // A control that locks or unlocks another one has to be asserted, not assumed:
 // "delete is disabled for the running build" is the whole safety story of that
@@ -698,6 +729,7 @@ for (const [phase, answerDialogs] of [["dialogs-denied", false], ["dialogs-accep
 }
 report.coveredControls = covered.size;
 
+phase = "coverage";
 // ------------------------------------------------------------- coverage gate
 // "Every interactable element" has to be a checked claim, not a promise: walk
 // each tab's visible controls once more and require that each one was driven in
@@ -733,6 +765,9 @@ const uniqueMisses = [...new Set(missedCoverage)];
 if (uniqueMisses.length)
   fail(`controls never driven: ${uniqueMisses.slice(0, 12).join("  |  ")}` +
        (uniqueMisses.length > 12 ? ` (+${uniqueMisses.length - 12} more)` : ""));
+
+phase = "job-bar";
+checkBodyAttr(" after every control was driven");
 
 const orphanHttp = trace.httpErrors.filter((m) => !httpAttributed.has(m));
 if (orphanHttp.length) {

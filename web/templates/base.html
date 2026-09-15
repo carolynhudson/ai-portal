@@ -58,6 +58,12 @@ canvas{width:100%;height:160px;background:#0b0e13;border-radius:8px}
 /* a fixed bar is only harmless if content can pass under it: reserve its
    height while it is on screen, finished or not */
 body[data-jobbar="on"] main{padding-bottom:64px}
+/* The lock has two halves. `disabled`, set on each poll, is the honest one for
+   keyboards and screen readers; but a panel that re-renders its own buttons
+   clears it until the next poll, which is why the mouse half lives here where a
+   page's JavaScript cannot overwrite it. Neither is the safety mechanism: the
+   server refuses the request whatever the browser believes (PORTAL_PLAN §4.4). */
+body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
 @media (max-width:600px){.jobbar .jobbar-row{padding:10px 12px;gap:8px}
   .jobbar{font-size:13px}}
 </style>
@@ -116,8 +122,11 @@ body[data-jobbar="on"] main{padding-bottom:64px}
   function paint(d){
     const run = (d.running || [])[0];
     const queued = (d.running || []).slice(1);
-    // every page can ask "is the machine busy?" — and disable what would clash
-    document.body.dataset.jobBusy = run ? '1' : '';
+    // every page can ask "is the machine busy?" — and disable what would clash.
+    // setAttribute, not `dataset.jobBusy`: camelCase on a dataset writes the
+    // attribute `data-job-busy`, and every rule below spells `data-jobbusy` — a
+    // mismatch that is completely invisible until you measure the page.
+    document.body.setAttribute('data-jobbusy', run ? '1' : '');
     document.querySelectorAll('[data-needs-machine]').forEach(el => {
       if (run) {
         if (el.dataset.jobWasDisabled === undefined)
