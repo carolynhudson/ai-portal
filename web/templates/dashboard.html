@@ -115,9 +115,9 @@
     <div class="hero-controls">
       <a class="btn btn-sm" href="{{ r.web_ui or (r.host ~ '/') }}" target="_blank" rel="noopener">Web UI ↗</a>
       <a class="btn btn-sm" href="{{ r.host }}/v1/models" target="_blank" rel="noopener">API ↗</a>
-      <button onclick="svcAction('llamacpp', 'start')">start</button>
-      <button onclick="svcAction('llamacpp', 'stop')">stop</button>
-      <button onclick="svcAction('llamacpp', 'restart')">restart</button>
+      <button data-needs-machine onclick="svcAction('llamacpp', 'start')">start</button>
+      <button data-needs-machine onclick="svcAction('llamacpp', 'stop')">stop</button>
+      <button data-needs-machine onclick="svcAction('llamacpp', 'restart')">restart</button>
     </div>
   </div>
 
@@ -226,9 +226,9 @@
       {% if cb.mode == 'loopback' %}loopback only{% elif cb.mode == 'all' %}open to LAN :{{ cb.port }}{% else %}{{ cb.host }}:{{ cb.port }}{% endif %}</a>
     <div class="hero-controls">
       <a class="btn btn-sm" href="{{ comfy.host }}" target="_blank" rel="noopener">Web UI ↗</a>
-      <button onclick="svcAction('comfyui', 'start')">start</button>
-      <button onclick="svcAction('comfyui', 'stop')">stop</button>
-      <button onclick="svcAction('comfyui', 'restart')">restart</button>
+      <button data-needs-machine onclick="svcAction('comfyui', 'start')">start</button>
+      <button data-needs-machine onclick="svcAction('comfyui', 'stop')">stop</button>
+      <button data-needs-machine onclick="svcAction('comfyui', 'restart')">restart</button>
     </div>
   </div>
   <div class="hero-cols">
@@ -274,7 +274,7 @@
       <div class="tool-header-controls">
         <span class="pill mut" id="upd-pill">no release</span>
         <button class="btn btn-primary-sm" onclick="updCheck()">check now</button>
-        <button class="btn btn-primary-sm" id="upd-btn" disabled onclick="updDeploy(document.getElementById('upd-btn').dataset.tag)">build + deploy</button>
+        <button class="btn btn-primary-sm" id="upd-btn" data-needs-machine disabled onclick="updDeploy(document.getElementById('upd-btn').dataset.tag)">build + deploy</button>
       </div>
     </div>
     <div class="kv"><span class="k">current</span><span class="mono" id="upd-current">—</span></div>
@@ -295,10 +295,10 @@
         <select id="build-select" class="builds-select">
           <option value="">— none —</option>
         </select>
-        <button id="switch-build-btn" class="btn btn-warning-sm" disabled
+        <button id="switch-build-btn" class="btn btn-warning-sm" data-needs-machine disabled
                 onclick="switchBuild()"
                 title="select a build that is not the current one">Switch build</button>
-        <button id="delete-build-btn" class="btn btn-danger-sm" disabled
+        <button id="delete-build-btn" class="btn btn-danger-sm" data-needs-machine disabled
                 onclick="deleteBuild()"
                 title="select a build that is not the current one">Delete build</button>
       </div>
@@ -315,14 +315,26 @@
       <h3 style="margin:0">ComfyUI release</h3>
       <div class="tool-header-controls">
         <button class="btn btn-primary-sm" onclick="comfyCheck()">check now</button>
-        <button class="btn btn-primary-sm" id="comfy-upd-btn" disabled onclick="comfyDeploy(document.getElementById('comfy-upd-btn').dataset.commit)">update + sync venv</button>
+        <button class="btn btn-primary-sm" id="comfy-upd-btn" data-needs-machine disabled onclick="comfyDeploy(document.getElementById('comfy-upd-btn').dataset.commit)">update + sync venv</button>
       </div>
     </div>
     <div class="kv"><span class="k">current commit</span><span class="mono" id="comfy-current">—</span></div>
     <div class="kv"><span class="k">repo head</span><span class="mono" id="comfy-head">—</span></div>
     <div class="kv"><span class="k">upstream (origin/master)</span><span class="mono" id="comfy-remote">—</span></div>
-    <div class="kv"><span class="k">venv python</span><span class="mono" id="comfy-venv-python">—</span></div>
-    <div class="kv"><span class="k">venv torch</span><span class="mono" id="comfy-torch">—</span></div>
+    {# The two rows that make an update predictable: which interpreter gets the
+       packages (the service's own, read from its launch env — not assumed), and
+       the torch it already has, which the update holds in place because
+       requirements.txt lists torch unpinned and the index default would replace
+       this machine's GPU build with one for different hardware. #}
+    <div class="kv"><span class="k">venv python (the service's)</span><span class="mono" id="comfy-venv-python">—</span></div>
+    <div class="kv"><span class="k">that venv's torch</span><span class="mono" id="comfy-torch">—</span></div>
+    <div class="kv"><span class="k">held during the sync</span><span class="mono" id="comfy-held">—</span></div>
+    <label class="kv" style="justify-content:flex-start;gap:8px">
+      <input type="checkbox" id="comfy-upgrade-deps" data-needs-machine>
+      <span class="k">also upgrade the packages requirements.txt names
+        <span class="mut">(off = satisfy only, which is ComfyUI's own instruction;
+        this machine's own torch build is held in place either way)</span></span>
+    </label>
     <div id="comfy-releases"></div>
     <div id="comfy-job"></div>
   </div>
@@ -335,7 +347,7 @@
       <h3 style="margin:0">huggingface-cli</h3>
       <div class="tool-header-controls">
         <button class="btn btn-primary-sm" onclick="hfCheckUpdates()">check for updates</button>
-        <button class="btn btn-primary-sm" id="hf-upd-btn" disabled onclick="hfDeployUpdate()">update huggingface-cli</button>
+        <button class="btn btn-primary-sm" id="hf-upd-btn" data-needs-machine disabled onclick="hfDeployUpdate()">update huggingface-cli</button>
       </div>
     </div>
     <div class="kv"><span class="k">huggingface-cli version</span><span class="mono" id="hf-cli-version">—</span></div>
@@ -1008,6 +1020,15 @@ loadUpd();
 // Tab switching for update status. The clicked element is passed in rather
 // than read from the global `event`, so a tab that grows an icon or a badge
 // (event.target would then be the child) keeps working.
+// The global job bar's "open" link lands here: the bar knows which kind of job
+// is running, and its panel is otherwise one click away. sessionStorage carries
+// the target because a bare hash cannot activate a tab (tabs are chosen by a
+// click handler, and #update-comfyui alone would only scroll).
+function openUpdateTab(name){
+  const tab = document.querySelector('.update-tab[onclick*="' + name + '"]');
+  if (tab) switchUpdateTab(name, tab);
+}
+
 function switchUpdateTab(tab, el){
   document.querySelectorAll('.update-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.update-tab-content').forEach(c => c.classList.remove('active'));
@@ -1035,8 +1056,14 @@ async function loadComfyUpd(){
         (rem.behind != null ? ('behind master ' + rem.behind) : 'up to date'));
     }
     const venv = d.venv || {};
-    setText('comfy-venv-python', venv.python || (venv.error ? 'error: ' + venv.error : '—'));
-    setText('comfy-torch', venv.torch || (venv.python ? 'not installed' : '—'));
+    setText('comfy-venv-python', venv.python_bin || venv.python ||
+            (venv.error ? 'error: ' + venv.error : '—'));
+    setText('comfy-torch', venv.torch || (venv.python_bin ? 'not installed' : '—'));
+    // what the updater promises not to touch, and whether it looks like a ROCm
+    // build — a plain "2.x.y+cu121" here is the accident already having happened
+    setText('comfy-held', (venv.is_rocm_build === false && venv.torch)
+            ? 'not this machine\u2019s GPU build \u2014 check before updating'
+            : "this machine\u2019s own torch build (held)");
     const btn = document.getElementById('comfy-upd-btn');
     if (rem.update_available) {
       btn.dataset.commit = rem.remote_head || 'HEAD';
@@ -1091,14 +1118,25 @@ async function comfyCheck(){
 }
 async function comfyDeploy(commit){
   if (!commit) return;
-  if (!confirm('Update ComfyUI to ' + commit + '?\n\nThis will fetch, sync the venv, and restart the service.')) return;
+  const upgrade = !!(document.getElementById('comfy-upgrade-deps') || {}).checked;
+  if (!confirm('Update ComfyUI to ' + String(commit).slice(0, 12) + '?' +
+      '\n\nFetch + git pull --ff-only, then pip install -r requirements.txt into '
+      + 'the venv the service runs, holding this box\u2019s ROCm torch in place,' +
+      (upgrade ? '\nupgrading the other named packages (--upgrade).' : '.') +
+      '\n\nThe service restarts when the venv verifies. Progress shows at the '
+      + 'bottom of every page.')) return;
   try{
     const r = await fetch('/api/updates/comfyui', {
       method: 'POST', credentials: 'same-origin',
       headers: {'content-type': 'application/json'},
-      body: JSON.stringify({restart: true})});
+      body: JSON.stringify({restart: true, upgrade: upgrade})});
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { alert('update refused: ' + (d.detail || r.status)); return; }
+    if (!r.ok) {
+      // usually 409: the machine is busy, and the detail names the job that owns it
+      alert('update refused: ' + (d.detail || r.status));
+      if (window.__portalPaintJob) window.__portalPaintJob();
+      return;
+    }
     COMFY_UPD.job = d.job; COMFY_UPD.timer = setInterval(pollComfyUpd, 3000);
     loadComfyUpd();
   }catch(e){ alert('update failed to start: ' + e); }
@@ -1220,5 +1258,17 @@ async function loadGpuInfo(){
   }catch(e){ /* keep last good state */ }
 }
 loadGpuInfo();
+
+// Arriving from the global job bar's "open" link: show the panel for the job the
+// bar was talking about, whether the target came from the hash (a link followed
+// from another page) or from sessionStorage (a link clicked on this page).
+(function(){
+  let want = (location.hash || '').replace('#', '');
+  try {
+    want = sessionStorage.getItem('portal-open-tab') || want;
+    sessionStorage.removeItem('portal-open-tab');
+  } catch (e) { /* private mode: the hash alone still works */ }
+  if (want && want.indexOf('update-') === 0) openUpdateTab(want.slice('update-'.length));
+})();
 </script>
 {% endblock %}

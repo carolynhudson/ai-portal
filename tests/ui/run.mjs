@@ -22,7 +22,25 @@ const base = arg("base");
 const pageName = arg("page");
 const cookie = arg("cookie", "");
 const allSpec = JSON.parse(readFileSync(arg("spec"), "utf8"));
-const spec = (allSpec.pages || []).find((p) => p.name === pageName);
+
+// A page spec may `extends` another one. The dashboard's payload fixtures and
+// tab group are what make that page deterministic, and a page that tests the
+// global job bar *from* the dashboard needs exactly them; repeating them invites
+// the two copies to drift apart, which is how a contract test stops testing
+// anything. Scalars and lists in the child replace the parent's; `fixtures`
+// concatenate (parent first, so the child's more specific route wins a lookup
+// only when it is anchored ahead of it).
+function resolvePage(p, seen = new Set()) {
+  if (!p || seen.has(p.name)) return p || {};
+  seen.add(p.name);
+  const parent = resolvePage(
+    (allSpec.pages || []).find((x) => x.name === p.extends), seen);
+  const merged = { ...parent, ...p };
+  merged.fixtures = [...(parent.fixtures || []), ...(p.fixtures || [])];
+  return merged;
+}
+
+const spec = resolvePage((allSpec.pages || []).find((p) => p.name === pageName));
 
 const report = {
   page: pageName,
@@ -577,7 +595,13 @@ async function sweep(phase, answerDialogs, visited, context, budget) {
     // enable it later (the API-key panel does exactly that when its state
     // arrives), and a sweep that wrote it off then reported it at coverage time
     // was a flake waiting for a response to be one tick slow.
-    if (el.disabled) continue;
+    //
+    // Walk past it rather than waiting on its spot. Staying put meant one
+    // locked control (a job bar locking the dashboard for the length of a
+    // build) stopped the pass from ever reaching the rest of the page, and the
+    // coverage gate then reported unrelated controls as never driven. The gate
+    // at the end re-lists everything and drives whatever is usable by then.
+    if (el.disabled) { step++; continue; }
     visited.add(key);
     if (info.type === "file") continue;
     if (!el.isConnected) { step++; continue; } // re-rendered away before we got to it

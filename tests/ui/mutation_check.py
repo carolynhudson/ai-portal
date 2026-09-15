@@ -29,6 +29,53 @@ APP = ROOT           # backend mutations are written "app/..." and relative to h
 # (name, file, old text, new text, page, substring the failure must contain)
 MUTATIONS = [
     (
+        # The bar is the only thing standing between "I started a build" and "I
+        # navigated away and never heard back". It has to name the job.
+        "job bar stops naming the running job (jobbar-names)",
+        "templates/base.html",
+        "txt.innerHTML = '<b>' + esc(run.label) + '</b> ' + esc(run.target || '') +",
+        "txt.innerHTML = '<b>working</b> ' + esc(run.target || '') +",
+        "jobbar",
+        "ComfyUI update",
+    ),
+    (
+        "job bar loses the current step",
+        "templates/base.html",
+        "(run.step ? ' <span class=\"jobbar-step\">— ' + esc(run.step) + '</span>' : '')",
+        "''",
+        "jobbar",
+        "holding 4 machine-specific package(s)",
+    ),
+    (
+        # A bar that locks the machine and never unlocks it is worse than no bar:
+        # after a finished job every update control would sit dead forever.
+        "job bar never unlocks the controls again (jobbar-unlocks)",
+        "templates/base.html",
+        "el.disabled = el.dataset.jobWasDisabled === '1';",
+        "el.disabled = true;",
+        "jobbar-finished",
+        "should be usable but is disabled",
+    ),
+    (
+        "finished job is reported as a success whatever happened",
+        "templates/base.html",
+        "(last.status === 'success' ? 'finished' : 'FAILED')",
+        "'finished'",
+        "jobbar-finished",
+        "FAILED",
+    ),
+    (
+        # The server refuses a second disruptive job whatever the browser does;
+        # the bar locking the controls is the *courtesy*, and the spec claims it
+        # too, so it has to be tested as well.
+        "a running job no longer locks the update controls",
+        "templates/base.html",
+        "      el.disabled = true;",
+        "      el.disabled = el.disabled;",
+        "jobbar",
+        "#comfy-upd-btn",
+    ),
+    (
         "element id renamed (build dropdown)",
         "templates/dashboard.html",
         'id="build-select"',

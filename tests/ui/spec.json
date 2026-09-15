@@ -16,7 +16,8 @@
   "expectInert": [],
   "fixtures": [
     {
-      "path": "^/api/jobs/",
+      "_comment": "per-job polling by id; /api/jobs/active is the global bar and stays real (the jobbar-* pages fixture it)",
+      "path": "^/api/jobs/\\d+$",
       "status": 200,
       "body": {
         "id": 4242,
@@ -287,6 +288,115 @@
           "matches": "\\d"
         }
       ]
+    },
+    {
+      "_comment": [
+        "The global job bar, seen from an ordinary page: an update started on",
+        "Status must stay visible after navigating anywhere, and must lock the",
+        "controls that would clash with it while it runs. The fixture is the",
+        "server's own payload shape, so a rename on either side breaks here."
+      ],
+      "name": "jobbar",
+      "extends": "dashboard",
+      "path": "/",
+      "expectTitle": "Status",
+      "expectEnabled": [".update-tab"],
+      "fixtures": [
+        {
+          "path": "^/api/jobs/active$",
+          "status": 200,
+          "body": {
+            "running": [
+              {
+                "id": 77,
+                "kind": "comfyui",
+                "label": "ComfyUI update",
+                "target": "master",
+                "status": "running",
+                "started_at": 1700000000,
+                "elapsed_s": 125,
+                "step": "holding 4 machine-specific package(s)",
+                "log_tail": "[10:00:01] holding 4 machine-specific package(s)"
+              }
+            ],
+            "blocker": {
+              "id": 77,
+              "kind": "comfyui",
+              "label": "ComfyUI update",
+              "target": "master",
+              "status": "running",
+              "started_at": 1700000000,
+              "elapsed_s": 125,
+              "step": "holding 4 machine-specific package(s)",
+              "log_tail": ""
+            },
+            "last": null
+          }
+        }
+      ],
+      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle"],
+      "expectText": [
+        {
+          "_comment": "names the job, not just 'something is running'",
+          "selector": "#jobbar-text",
+          "contains": "ComfyUI update"
+        },
+        {
+          "_comment": "the current step, so a long silent phase is distinguishable",
+          "selector": "#jobbar-text",
+          "contains": "holding 4 machine-specific package(s)"
+        },
+        {
+          "_comment": "elapsed time is formatted, not a raw second count",
+          "selector": "#jobbar-text",
+          "matches": "2m 05s"
+        },
+        {
+          "_comment": "the log opens from the bar, on any page, without a request",
+          "selector": "#jobbar-toggle",
+          "contains": "view log"
+        }
+      ],
+      "expectDisabled": ["#comfy-upd-btn", "#hf-upd-btn", "#upd-btn"]
+    },
+    {
+      "_comment": [
+        "The other half of the bar: the job finished, possibly while you were",
+        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
+        "controls must be usable again."
+      ],
+      "name": "jobbar-finished",
+      "extends": "dashboard",
+      "path": "/",
+      "expectTitle": "Status",
+      "fixtures": [
+        {
+          "path": "^/api/jobs/active$",
+          "status": 200,
+          "body": {
+            "running": [],
+            "blocker": null,
+            "last": {
+              "id": 78,
+              "kind": "llamacpp",
+              "label": "llama.cpp build",
+              "target": "HEAD",
+              "status": "failed",
+              "started_at": 1700000000,
+              "elapsed_s": 640,
+              "step": "FAILED: cmake exit 1",
+              "log_tail": ""
+            }
+          }
+        }
+      ],
+      "expectVisible": ["#jobbar", "#jobbar-text", "#jobbar-toggle"],
+      "expectText": [
+        {"selector": "#jobbar-text", "contains": "llama.cpp build"},
+        {"selector": "#jobbar-text", "contains": "FAILED"},
+        {"selector": "#jobbar.failed", "_comment": "styled as a failure, not a success", "contains": "after 10m 40s"}
+      ],
+      "expectEnabled": ["#comfy-upd-btn", "#hf-upd-btn"]
     },
     {
       "name": "models",

@@ -35,6 +35,31 @@ button{padding:10px 14px;border-radius:8px;border:0;background:var(--acc);color:
 button.ghost{background:#2a3340;color:var(--fg)}
 .err{color:var(--bad);margin-top:8px}
 canvas{width:100%;height:160px;background:#0b0e13;border-radius:8px}
+/* Global job bar: one long-running action (build, venv sync, model add) is
+   visible on *every* page, because the job runs on the server and does not care
+   which page you are looking at. Fixed to the bottom so it never shifts layout
+   and never overlaps the nav. */
+.jobbar{position:fixed;left:0;right:0;bottom:0;z-index:50;background:#101722;
+  border-top:1px solid var(--acc);font-size:14px;
+  box-shadow:0 -6px 18px rgba(0,0,0,.35)}
+.jobbar .jobbar-row{display:flex;gap:12px;align-items:baseline;padding:10px 20px}
+.jobbar button{padding:3px 10px;font-size:12px;border-radius:6px;background:#2a3340;
+  color:var(--fg);border:1px solid #384353;cursor:pointer}
+.jobbar pre{margin:0;padding:0 20px 12px;max-height:34vh;overflow:auto;color:var(--mut);
+  font-size:12px;white-space:pre-wrap;word-break:break-word}
+.jobbar.done{border-top-color:var(--ok)}
+.jobbar.failed{border-top-color:var(--bad)}
+.jobbar .jobbar-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jobbar .jobbar-step{color:var(--mut)}
+.jobbar .spin{width:11px;height:11px;border-radius:50%;border:2px solid var(--acc);
+  border-top-color:transparent;animation:spin 1s linear infinite;flex:0 0 auto}
+.jobbar.failed .spin,.jobbar.done .spin{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* a fixed bar is only harmless if content can pass under it: reserve its
+   height while it is on screen, finished or not */
+body[data-jobbar="on"] main{padding-bottom:64px}
+@media (max-width:600px){.jobbar .jobbar-row{padding:10px 12px;gap:8px}
+  .jobbar{font-size:13px}}
 </style>
 </head>
 <body>
@@ -52,5 +77,143 @@ canvas{width:100%;height:160px;background:#0b0e13;border-radius:8px}
 <main>
 {% block body %}{% endblock %}
 </main>
+
+{# The global job bar. It lives here, not on the Status page, because a job that
+   keeps running after you navigate away is exactly the thing a UI must not hide:
+   the action was started on the server, so leaving the page never stops it, and
+   "did my update just do nothing?" should never be answerable by guessing. #}
+<div id="jobbar" class="jobbar" hidden role="status" aria-live="polite">
+  <div class="jobbar-row">
+    <span class="spin" aria-hidden="true"></span>
+    <span class="jobbar-text" id="jobbar-text"></span>
+    <button type="button" id="jobbar-toggle" aria-expanded="false" aria-controls="jobbar-log">view log</button>
+  </div>
+  <pre id="jobbar-log" hidden></pre>
+</div>
+<script>
+// Polls /api/jobs/active — one SQL query, no provider probes — and speaks for
+// every long-running action on every page. Fast while something runs, patient
+// when idle. A finished job stays up long enough to be read: an update that
+// completed while you were on another page still has to tell you it worked.
+(function(){
+  const bar = document.getElementById('jobbar');
+  const txt = document.getElementById('jobbar-text');
+  const toggle = document.getElementById('jobbar-toggle');
+  const logBox = document.getElementById('jobbar-log');
+  if (!bar || !txt) return;
+  let logTail = '';   // what the open log shows; refreshed by every paint
+  let timer = null, finishedShownAt = null, lastShownId = null;
+  const FINISHED_VISIBLE_MS = 60000;
+
+  function ago(s){
+    s = Math.max(0, Math.round(s || 0));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+    return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+  }
+
+  function paint(d){
+    const run = (d.running || [])[0];
+    const queued = (d.running || []).slice(1);
+    // every page can ask "is the machine busy?" — and disable what would clash
+    document.body.dataset.jobBusy = run ? '1' : '';
+    document.querySelectorAll('[data-needs-machine]').forEach(el => {
+      if (run) {
+        if (el.dataset.jobWasDisabled === undefined)
+          el.dataset.jobWasDisabled = el.disabled ? '1' : '0';
+        el.disabled = true;
+        el.title = 'busy — ' + run.label + ' running (' + ago(run.elapsed_s) + ')';
+      } else if (el.dataset.jobWasDisabled !== undefined) {
+        el.disabled = el.dataset.jobWasDisabled === '1';
+        delete el.dataset.jobWasDisabled;
+        if (el.title && el.title.indexOf('busy — ') === 0) el.title = '';
+      }
+    });
+    document.dispatchEvent(new CustomEvent('portal:job', {detail: d}));
+
+    if (run) {
+      bar.hidden = false;
+      document.body.dataset.jobbar = 'on';
+      bar.className = 'jobbar running';
+      txt.innerHTML = '<b>' + esc(run.label) + '</b> ' + esc(run.target || '') +
+        ' · job ' + run.id + ' · ' + ago(run.elapsed_s) +
+        (run.step ? ' <span class="jobbar-step">— ' + esc(run.step) + '</span>' : '') +
+        (queued.length ? ' <span class="jobbar-step">(+' + queued.length + ' more)</span>' : '');
+      showLog(run.log_tail);
+      finishedShownAt = null;
+    } else {
+      const last = d.last;
+      if (last && last.id !== lastShownId) {
+        lastShownId = last.id;
+        finishedShownAt = Date.now();
+        bar.hidden = false;
+        document.body.dataset.jobbar = 'on';
+        bar.className = 'jobbar ' + (last.status === 'success' ? 'done' : 'failed');
+        txt.innerHTML = '<b>' + esc(last.label) + '</b> ' + esc(last.target || '') +
+          ' ' + (last.status === 'success' ? 'finished' : 'FAILED') +
+          ' after ' + ago(last.elapsed_s) +
+          (last.step ? ' <span class="jobbar-step">— ' + esc(last.step) + '</span>' : '');
+        showLog(last.log_tail);
+      } else if (finishedShownAt &&
+                 Date.now() - finishedShownAt > FINISHED_VISIBLE_MS) {
+        bar.hidden = true; document.body.dataset.jobbar = ''; finishedShownAt = null;
+      } else if (!finishedShownAt) {
+        bar.hidden = true; document.body.dataset.jobbar = '';
+      }
+    }
+    schedule(run ? 4000 : 15000);
+  }
+
+  function schedule(ms){
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(pump, ms);
+  }
+
+  async function pump(){
+    try {
+      const r = await fetch('/api/jobs/active', {credentials: 'same-origin'});
+      if (r.status === 401) { schedule(30000); return; }   // logged out; stop hammering
+      paint(await r.json());
+    } catch (e) {
+      schedule(15000);   // a network blip is not a reason to go silent or loud
+    }
+  }
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g,
+      c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // "What is it doing?" has to be answerable without leaving the page you are
+  // on — that is the whole point of the bar. The tail travels in the same
+  // payload, so opening it is a DOM change, not a request.
+  function paintLog(){
+    if (!logBox) return;
+    logBox.textContent = logTail.split('\n').slice(-25).join('\n') || '(no output yet)';
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  function showLog(tail){
+    logTail = String(tail || '');
+    if (toggle) toggle.hidden = !logTail;
+    if (logBox && !logBox.hidden) paintLog();
+  }
+
+  if (toggle && logBox) toggle.addEventListener('click', () => {
+    const open = logBox.hidden;
+    logBox.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.textContent = open ? 'hide log' : 'view log';
+    if (open) paintLog();
+  });
+
+  pump();
+  // A panel whose start was just refused (409 "busy") repaints the bar at once
+  // instead of waiting up to 15 s, so the refusal in the dialog matches the bar
+  // the operator looks at next.
+  window.__portalPaintJob = pump;
+})();
+</script>
 </body>
 </html>
