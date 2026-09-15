@@ -415,6 +415,111 @@ abstraction. The three open concerns, and the working answers:
 
 Sequencing: after B (service control) + D (gguf memory math).
 
+### 4.9 The model table — finishing D6 (proposed Phase N)
+
+Two live bugs in one week had the same root cause: nothing in the portal knew
+what a model **is** or what it **costs**.
+
+* The smoke test picked `…-00001-of-00003.gguf` because it was the smallest
+  *file* (11 MB) and failed a healthy build by asking for 37 GB — a shard is a
+  fraction of a model, and the header describes the whole thing.
+* The models page lists names and sizes. It cannot answer "will this run here,
+  at what context, on which backend, and what is it paired with?"
+
+`app/core/modelmeta.py` is already a partial port of `~/ai-projects/gguf-indexer`
+(D6): header-only GGUF KV walk, ~34 ms on a 94 GB file. The indexer's
+`FileEntry` carries ~70 derived fields; the portal keeps 8, and the `models` /
+`model_files` tables have **zero rows**. This is finishing a port, not starting
+one.
+
+**Schema** (sqlite, one row per *loadable model*, not per file):
+
+```sql
+CREATE TABLE model_index (
+  id TEXT PRIMARY KEY,            -- model dir name = router model id
+  path TEXT,                      -- what llama.cpp is pointed at (shard 1 if split)
+  bytes INTEGER,                  -- the WHOLE model: all shards summed
+  shard_total INTEGER, mmproj_bytes INTEGER, draft_bytes INTEGER,
+  arch TEXT, quant TEXT, params_total_b REAL, params_active_b REAL,
+  ctx_trained INTEGER, layers INTEGER, kv_heads INTEGER,
+  kv_key_len INTEGER, kv_value_len INTEGER, full_attention_interval INTEGER,
+  is_moe INTEGER, is_ssm INTEGER, is_vision INTEGER, is_embedding INTEGER,
+  is_draft INTEGER, has_reasoning INTEGER,
+  est_weights INTEGER, est_kv INTEGER, est_runtime INTEGER,  -- memory math
+  est_ctx INTEGER,              -- context that fits this box, 0 = never
+  est_inputs TEXT,              -- JSON: which fields produced the estimate
+  scanned_at REAL, header_hash TEXT
+);
+```
+`est_inputs` is not decoration. A derived number without the inputs that made it
+cannot be re-derived when the formula improves, and cannot be defended when it is
+wrong — which it will be at least sometimes (see the interval trap below).
+`header_hash` makes re-scanning incremental without trusting mtimes.
+
+**The memory math** (the part that was unfinished). Per token, K and V separately:
+
+```
+kv_layers  = ceil(layers / full_attention_interval)      -- hybrid!
+kv_bytes   = kv_layers * kv_heads * (key_len + value_len) * dtype * ctx
+weights    = bytes (all shards) + mmproj + draft
+total(ctx) = weights + kv_bytes + runtime_headroom(compute buffers, graph)
+```
+
+The trap, measured on this machine's own models: `full_attention_interval: 4`
+means only every 4th layer keeps a KV cache. Counting all layers gives —
+
+| model | KV at trained ctx (262K) | naive, all layers |
+|---|---|---|
+| Qwen3.5-0.8B Q4_K_M (0.50 GiB) | **3.50 GiB** | 12.50 GiB (3.6× over) |
+| Qwen3.8-Flash-Next (94 GB, 48 L) | **6.00 GiB** | 24.00 GiB (4.0× over) |
+
+Naive math would have looked at this box's 12 GB free and refused the 0.8 GB
+model — the very model that made today's smoke test pass. Estimates are only
+useful if they are *calibrated*: seed the constants from observed worker RSS
+(this box: a 94 GB MoE resident at 31.5 GB with `--fit on --fit-target 8192`),
+re-measure per model on first load, and keep the discrepancy visible on the
+models page rather than quietly clamping.
+
+**What it unlocks**, in order of value per line:
+
+1. **A smoke test that cannot fail for the wrong reason.** `_model_candidates()`
+   becomes `SELECT path, bytes FROM model_index WHERE bytes + kv(128) + headroom
+   <= ? ORDER BY bytes LIMIT 3` — with the refusal logic it grew today (§6.11)
+   kept exactly as is.
+2. **Models page**: one column set that answers *what is it* (arch, quant,
+   params active/total, MoE, SSM-hybrid, trained ctx), *what is it paired with*
+   (shards, mmproj, draft), and *can it run here* (fits / fits at reduced ctx /
+   never), plus a search that matches on those facts instead of filenames.
+3. **Presets with personalities (§4.7)**: the indexer's `router-presets.py`
+   already contains a *measured* rubric for this box — MoE and small models to
+   Vulkan, large dense and reasoning to ROCm, with the llama-bench numbers
+   written in the comment — and the live `presets.ini` has a single `[*]`
+   section, so none of it is applied. A personality is that rubric plus a model
+   subset, generated, diffed, then applied.
+4. **Health**: models that can never fit (advisory), shard sets that are
+   incomplete (currently unloadable and silent), dangling model symlinks (3 of
+   them right now — one of which crashes the indexer's own scanner).
+
+**Phasing.** N1 reader + table + incremental scan (read-only, no UI).
+N2 memory math + the smoke query + tests. N3 models page.
+N4 presets personalities: generate → **show a diff** → apply through the existing
+gated restart job. N4 is the only step that writes anything the router reads, so
+it ships last and there is exactly one generator: `presets.ini`'s header says
+which tool wrote it, and `tools/phase1_build_model_tree.py` retires at that
+moment rather than continuing to disagree with it.
+
+**Lessons carried over, deliberately:**
+
+* The indexer crashes on `os.stat()` of a dangling symlink — three exist in this
+  library. Any scan of `~/ai/models` must treat "link that goes nowhere" as a
+  first-class, reported state, not an exception.
+* Its parser skips tensor descriptors on purpose: the `gguf` library's per-tensor
+  Python loop costs ~3.5 s/file where this costs 34 ms. Keep that decision.
+* Every rubric constant in it is annotated with *what was measured, when, and
+  under what load*. Copy the habit, not just the numbers.
+* Auxiliary files (`mmproj-`, `mtp-`, `draft-`, `imatrix-`) are not models and
+  always lose a naive size contest. The portal now agrees via one shared regex.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
@@ -798,6 +903,7 @@ restarted", "the pull never happened") rather than only what it printed.
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
 | **L.3 (done, 2026-09-13)** — router pulse | Status page reads the journal instead of showing it: per-slot lanes with real phases, throughput stacked by slot, model-switch banner, collapsed attention pane (§6.9) | "is it working, on what, how fast, anything wrong?" answered without reading a log line; 22 parser + 10 page tests; 6 new mutations; service controls provably untouched |
 | **M (done, 2026-09-14)** — jobs are machine state, not page state | Global job bar on every page (`/api/jobs/active`, step + elapsed + in-place log), machine-wide exclusivity for disruptive updates with named 409 refusals, service controls gated while a job runs, ComfyUI update rebuilt around the service's own venv + generated pip constraints + verify-before-restart (§6.11) | a job stays visible and its machine stays locked from any page; a ComfyUI sync cannot replace this box's ROCm torch, and cannot restart the service on a venv where `torch.version.hip` is missing; 17 job tests + 18 updater tests, 2 jobbar pages, 5 new mutations (33/33 caught) |
+| **N (proposed)** — the model table | Finish the gguf-indexer port: `model_index` with real GGUF metadata, the memory estimate (weights + KV + runtime, hybrid-attention aware), incremental scan; smoke-test selection, models page and router personalities all read it (§4.9) | "smallest full model that fits in 9 GB" is a query, not a heuristic; the smoke test cannot fail on model choice twice; presets gain per-model backends from a diff'd, generated file |
 | **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
