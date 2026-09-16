@@ -717,22 +717,54 @@ def exp_fit_accounting(lab: Lab, models, binpath) -> None:
         rec["data"]["question"] = ("each fits alone, together they do not: does the "
                                    "second load get refused, shrink, or start a "
                                    "memory emergency?")
+        # Unlike every other experiment, the load here is EXPECTED to never reach
+        # 'loaded' — that is the whole question. So we do not wait for loaded (that
+        # would just burn the timeout); we fire the ack, then watch the trajectory
+        # for a bounded window: does it settle to loaded, error out with a fit/OOM
+        # message, or sit at 'loading' while the memory drains toward the floor?
         for i, m in enumerate((a, b), 1):
+            key = f"load{i} {m['name']} ({human(m['bytes'])})"
+            code, body = lab.api(port, "/models/load", {"model": m["name"]}, timeout=60)
+            if code != 200:
+                rec["data"][key] = f"ack http {code}: {body[:140]}"
+                continue
             t0 = time.time()
-            code, body = lab.api(port, "/models/load", {"model": m["name"]}, timeout=1800)
-            secs = round(time.time() - t0, 1)
-            pm = proc_mem(proc.pid)
-            rec["data"][f"load{i} {m['name']} ({human(m['bytes'])})"] = (
-                f"http {code} in {secs}s · rss {pm.get('rss', 0) / GB:.1f} GB "
-                f"(anon {pm.get('anon', 0) / GB:.1f}) · "
-                f"free {meminfo().get('MemAvailable', 0) / GB:.1f} GB"
-                + (f" · {body[:120]}" if code >= 400 else ""))
-            lab.events_from(logp)
-            lab.sample()
+            seen = []                 # (elapsed, status, free_gb, rss_gb) at each change
+            outcome = "still-loading"
+            while time.time() - t0 < lab.args.e1_wait_secs:
+                st = model_status(lab, port, m["name"])
+                free_now = meminfo().get("MemAvailable", 0) / GB
+                rss_now = proc_mem(proc.pid).get("rss", 0) / GB
+                if not seen or seen[-1][1] != st:
+                    seen.append((round(time.time() - t0, 1), st, free_now, rss_now))
+                    lab.say(f"    E1 {m['name']}: {st} · free {free_now:.1f} GB "
+                            f"· rss {rss_now:.1f} GB")
+                if st == "loaded":
+                    outcome = "loaded"
+                    break
+                if st.startswith("error") or st == "not_registered":
+                    outcome = st
+                    break
+                if lab.aborted:
+                    outcome = "guardian-killed-while-loading"
+                    break
+                lab.events_from(logp)
+                lab.sample()
+                time.sleep(5)
+            traj = " -> ".join(f"{s}@{el}s(free {f:.0f})"
+                               for el, s, f, _ in seen) or "(no transition)"
+            rec["data"][key] = f"{outcome}; trajectory: {traj}"
+            # the load-time line llama.cpp prints tells us if fit shrank the ctx
+            fit_lines = [e for e in lab.events[-8:]
+                         if re.search(r"fit|context|kv.*size|alloc|n_ctx", e, re.I)]
+            if fit_lines:
+                rec["data"][key + " · llama.cpp"] = fit_lines[-3:]
             if lab.aborted:
                 rec["data"]["guardian"] = lab.aborted
                 break
-        rec["data"]["model_states"] = models_state(lab, port)
+        rec["data"]["model_states"] = {
+            k: (v.get("value") if isinstance(v, dict) else v)
+            for k, v in models_state(lab, port).items()}
         lab.events_from(logp)
         rec["data"]["events_during"] = lab.events[-6:]
         lab.kill_children("E1 done")
@@ -838,23 +870,25 @@ def exp_unload_frees(lab: Lab, models, binpath) -> None:
         base = proc_mem(proc.pid).get("rss", 0)
         rec["data"]["baseline_rss_gb"] = round(base / GB, 2)
         for m in pick:
-            t0 = time.time()
-            lab.api(port, "/models/load", {"model": m["name"]}, timeout=1800)
-            load_s = round(time.time() - t0, 1)
+            # Wait for each transition for real. The first version timed the /load
+            # ack (0.0s) and read RSS before the weights landed (0.0 GB above
+            # baseline) — the whole point of the experiment was invisible.
+            st, load_s = load_model(lab, port, m["name"], 900, logp)
             loaded = proc_mem(proc.pid).get("rss", 0)
-            t0 = time.time()
-            lab.api(port, "/models/unload", {"model": m["name"]}, timeout=120)
-            time.sleep(8)
+            ust, unload_s = unload_model(lab, port, m["name"], 120, logp)
+            time.sleep(5)                       # let the kernel reclaim
             after = proc_mem(proc.pid).get("rss", 0)
-            t0 = time.time()
-            lab.api(port, "/models/load", {"model": m["name"]}, timeout=1800)
-            reload_s = round(time.time() - t0, 1)
+            rst, reload_s = load_model(lab, port, m["name"], 900, logp)
             rec["data"][m["name"]] = (
-                f"{human(m['bytes'])}: load {load_s}s → rss {(loaded - base) / GB:.1f} GB "
-                f"above baseline; unload {round(time.time() - t0, 1)}s → "
-                f"{(after - base) / GB:.1f} GB still held; reload {reload_s}s")
+                f"{human(m['bytes'])}: load {load_s}s ({st}) → "
+                f"{(loaded - base) / GB:.1f} GB above baseline; unload {unload_s}s "
+                f"({ust}) → {(after - base) / GB:.1f} GB still held; "
+                f"reload {reload_s}s ({rst})")
             lab.events_from(logp)
             lab.sample()
+            if lab.aborted:
+                rec["data"]["guardian"] = lab.aborted
+                break
         lab.kill_children("E4 done")
 
 
@@ -875,6 +909,9 @@ def preflight(args) -> tuple:
         # raising: a stray directory named llama.cpp-something must not crash
         # preflight and strand the caller with no answer at all.
         m = re.search(r"-b(\d+)$", p.parent.name)
+        # int() of a \d+ capture cannot raise ValueError, and `if m else -1`
+        # covers the None case. This call is total.
+        # pi-lens-ignore: unchecked-throwing-call-python
         return int(m.group(1)) if m else -1
     bins = sorted((AI / "releases").glob("llama.cpp-b*/llama-server"), key=build_of)
     if not bins:
@@ -927,6 +964,9 @@ def main() -> int:
     ap.add_argument("--cycles", type=int, default=2, help="E2 request rounds")
     ap.add_argument("--models-n", type=int, default=3, help="E4 model count")
     ap.add_argument("--fit-target", type=int, default=8192, help="MiB, E1")
+    ap.add_argument("--e1-wait-secs", type=int, default=240, dest="e1_wait_secs",
+                    help="E1: how long to watch each oversized load settle or stall "
+                         "before calling the outcome (default 240)")
     ap.add_argument("--sample-secs", type=float, default=1.0)
     ap.add_argument("--countdown", type=int, default=20,
                     help="seconds to abort a full run with Ctrl-C")
@@ -955,6 +995,7 @@ def main() -> int:
         # Safe to let this raise: nothing has been touched yet — the router is
         # still up, no children exist, there is no state to unwind. A failure here
         # is "the experiment did not start", which is the correct and loud outcome.
+        # pi-lens-ignore: unchecked-throwing-call-python
         with open(boot, "ab") as fh:
             p = subprocess.Popen([sys.executable, os.path.abspath(__file__)]
                                  + child_args, stdout=fh, stderr=subprocess.STDOUT,
