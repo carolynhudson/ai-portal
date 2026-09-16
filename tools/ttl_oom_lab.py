@@ -973,10 +973,13 @@ def main() -> int:
     ap.add_argument("--max-minutes", type=int, default=120)
     ap.add_argument("--restore-router-only", action="store_true")
     ap.add_argument("--background", action="store_true",
-                    help="re-exec myself in a new session and return. This is what "
-                         "makes it safe to start a full run from inside the agent "
-                         "whose model the router is hosting: when the router stops, "
-                         "the agent's context goes, but the run does not.")
+                    help="re-exec detached and return. This is what makes it safe to "
+                         "start a full run from inside the agent whose model the "
+                         "router is hosting: when the router stops, the agent's "
+                         "context goes, but the run does not. Uses systemd-run so the "
+                         "run leaves the agent's process tree entirely (a new session "
+                         "alone is NOT enough — the agent harness sweeps descendants "
+                         "by tree, not just by group).")
     ap.add_argument("--list-models", action="store_true")
     args = ap.parse_args()
     if args.full:
@@ -985,24 +988,57 @@ def main() -> int:
         args.mode = "dry-run"
 
     if args.background:
-        # Detach before anything else exists: new session, no controlling terminal,
-        # output to a bootstrap log. The parent returns immediately, so whoever
-        # started it (a terminal, or an agent about to lose its model) is not the
-        # process group the experiment runs in.
+        # Detach so the run survives the caller. start_new_session (a new pgid+sid)
+        # is NOT enough here: an agent harness sweeps its descendant PIDs by tree on
+        # teardown, and a --background run died to SIGTERM that way. systemd-run
+        # places the unit under user@.service, outside the agent's tree entirely,
+        # so nothing that kills the agent can reach it. Fall back to new-session
+        # only where systemd --user is unavailable (a plain terminal run is safe
+        # either way; that path is the one a human babysits).
         LOGROOT.mkdir(parents=True, exist_ok=True)
-        boot = LOGROOT / f"boot-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.log"
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        boot = LOGROOT / f"boot-{stamp}.log"
         child_args = [a for a in sys.argv[1:] if a != "--background"]
-        # Safe to let this raise: nothing has been touched yet — the router is
+        here = os.path.abspath(__file__)
+        cmd = [sys.executable, "-u", here] + child_args
+        unit = f"ttl-oom-{stamp}"
+        # is-system-running: 0 running, 1 degraded (still usable), else no manager.
+        sr = subprocess.run(["systemctl", "--user", "is-system-running"],
+                            capture_output=True, text=True)
+        has_systemd = sr.returncode in (0, 1)
+        # Safe to let these raise: nothing has been touched yet — the router is
         # still up, no children exist, there is no state to unwind. A failure here
         # is "the experiment did not start", which is the correct and loud outcome.
         # pi-lens-ignore: unchecked-throwing-call-python
-        with open(boot, "ab") as fh:
-            p = subprocess.Popen([sys.executable, os.path.abspath(__file__)]
-                                 + child_args, stdout=fh, stderr=subprocess.STDOUT,
+        with open(boot, "a") as fh:
+            fh.write(f"\n===== {ts()} background launch, unit={unit} "
+                     f"systemd={has_systemd}\n")
+            fh.flush()
+            if has_systemd:
+                # --collect: drop the unit once it exits, so finished runs do not
+                # pile up. KillMode=process: when the unit stops, do NOT
+                # signal-kill the llama-server grandchildren out from under
+                # cleanup() — the script kills them itself, then restores the router.
+                subprocess.run(
+                    ["systemd-run", "--user", "--collect", "--unit", unit,
+                     "--property", "KillMode=process", "--property", "Type=simple"]
+                    + cmd,
+                    stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                    check=False)
+            else:
+                subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, start_new_session=True)
-        print(f"running detached as pid {p.pid}\nbootstrap log: {boot}\n"
-              f"results when it finishes: {LOGROOT / 'latest' / 'summary.md'}\n"
-              f"check on it: tail -f {boot}")
+        if has_systemd:
+            print(f"running as systemd unit {unit} (outside the agent process tree)\n"
+                  f"bootstrap log: {boot}\n"
+                  f"follow: journalctl --user -u {unit} -f   (or tail -f {boot})\n"
+                  f"results when it finishes: {LOGROOT / 'latest' / 'summary.md'}")
+        else:
+            print(f"running detached in a new session (no systemd --user found)\n"
+                  f"NOTE: a new session alone is NOT safe against an agent harness "
+                  f"that sweeps process trees — run this from a real terminal.\n"
+                  f"bootstrap log: {boot}\n"
+                  f"results when it finishes: {LOGROOT / 'latest' / 'summary.md'}")
         return 0
     if args.mini:
         args.mode = "mini"
