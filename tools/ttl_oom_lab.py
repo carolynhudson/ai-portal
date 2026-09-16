@@ -295,12 +295,27 @@ class Lab:
         while not self._stop.wait(self.args.sample_secs):
             try:
                 self.sample()
-                avail = meminfo().get("MemAvailable", 0)
+                mi = meminfo()
+                avail = mi.get("MemAvailable", 0)
                 floor = self.args.floor_gb * GB
-                if (avail < floor and not self.args.allow_oom
-                        and self.children and not self.aborted):
+                # Swap is the leading indicator, and it fired before MemAvailable
+                # crossed any floor on the previous runs: free fell 12.9 -> 7.9 GB
+                # in ONE sample while RSS stayed ~0.1 GB, i.e. the pages went to
+                # swap and the box started thrashing rather than failing cleanly.
+                # A big model landing in swap is already the failure we are
+                # studying, so it is a trip condition, not a surprise.
+                swap_used = (mi.get("SwapTotal", 0) - mi.get("SwapFree", 0))
+                swap_lim = self.args.swap_floor_gb * GB
+                if self.args.allow_oom or not self.children or self.aborted:
+                    continue
+                if avail < floor:
                     self.aborted = (f"guardian: MemAvailable {avail / GB:.1f} GB < "
                                     f"--floor-gb {self.args.floor_gb}")
+                elif swap_used > swap_lim:
+                    self.aborted = (f"guardian: {swap_used / GB:.1f} GB of swap in "
+                                    f"use (> --swap-floor-gb "
+                                    f"{self.args.swap_floor_gb}) — thrashing begun")
+                if self.aborted:
                     self.say("ABORTING: " + self.aborted)
                     self.kill_children("guardian")
             except Exception as e:  # a sampler that dies stops the evidence
@@ -309,6 +324,7 @@ class Lab:
     # -------------------------------------------------------------- children
     def spawn(self, cmd, name: str, env=None):
         logpath = self.logs / f"{name}.log"
+        # pi-lens-ignore: unchecked-throwing-call-python
         fh = open(logpath, "a")
         fh.write(f"\n===== {ts()} spawn: {' '.join(cmd)}\n")
         fh.flush()
@@ -384,6 +400,10 @@ class Lab:
         for line in chunk.splitlines():
             if EVENT_RE.search(line):
                 self.events.append(line.strip()[:200])
+        # Swallowing this write would silently lose the evidence this tool exists
+        # to produce; a failed write must reach cleanup() so the run is recorded
+        # as failed rather than clean.
+        # pi-lens-ignore: unchecked-throwing-call-python
         with open(self.dir / "events.log", "a") as f:
             for line in chunk.splitlines():
                 if EVENT_RE.search(line):
@@ -717,28 +737,46 @@ def exp_fit_accounting(lab: Lab, models, binpath) -> None:
         rec["data"]["question"] = ("each fits alone, together they do not: does the "
                                    "second load get refused, shrink, or start a "
                                    "memory emergency?")
-        # Unlike every other experiment, the load here is EXPECTED to never reach
-        # 'loaded' — that is the whole question. So we do not wait for loaded (that
-        # would just burn the timeout); we fire the ack, then watch the trajectory
-        # for a bounded window: does it settle to loaded, error out with a fit/OOM
-        # message, or sit at 'loading' while the memory drains toward the floor?
+        rec["data"]["method"] = (
+            "poll MemAvailable at 1 Hz (meminfo cannot hang; model_status is a "
+            "network call and the server blocks during an allocation, so it is "
+            "sampled at 5 Hz). The second load is the interesting one, and on the "
+            "two previous runs it ended in a kernel OOM that systemd turned into "
+            "SIGTERM on the whole unit — the script never wrote its answer. So the "
+            "guardian also trips on swap use, because swap is what moved first: "
+            "free fell 12.9 -> 7.9 GB in ONE 1 Hz sample with RSS pinned at 0.1 GB.")
+        # The second load is EXPECTED never to reach 'loaded' — that is the question.
+        # So we do not wait for 'loaded' (that only burns the timeout); we watch the
+        # trajectory and let llama.cpp answer first: a refusal (or a fit-shrink) is
+        # the result we want. Only if memory reaches the floor without llama.cpp
+        # refusing do we pull the plug ourselves, above where the OOM killer lives.
         for i, m in enumerate((a, b), 1):
             key = f"load{i} {m['name']} ({human(m['bytes'])})"
+            # Reported alongside the outcome so the reader can tell a refusal from
+            # a plug: how much this load wanted vs what was free when it started.
+            need_gb = m["bytes"] / GB
+            free_at_start = meminfo().get("MemAvailable", 0) / GB
             code, body = lab.api(port, "/models/load", {"model": m["name"]}, timeout=60)
             if code != 200:
                 rec["data"][key] = f"ack http {code}: {body[:140]}"
                 continue
             t0 = time.time()
-            seen = []                 # (elapsed, status, free_gb, rss_gb) at each change
+            seen = []                 # (elapsed, status, free_gb, rss_gb) at changes
             outcome = "still-loading"
+            st = "loading"
+            last_status_check = 0.0
             while time.time() - t0 < lab.args.e1_wait_secs:
-                st = model_status(lab, port, m["name"])
                 free_now = meminfo().get("MemAvailable", 0) / GB
                 rss_now = proc_mem(proc.pid).get("rss", 0) / GB
-                if not seen or seen[-1][1] != st:
-                    seen.append((round(time.time() - t0, 1), st, free_now, rss_now))
-                    lab.say(f"    E1 {m['name']}: {st} · free {free_now:.1f} GB "
-                            f"· rss {rss_now:.1f} GB")
+                # status is a network call: sample it sparingly, memory every 1s
+                if time.time() - last_status_check >= 5.0:
+                    st = model_status(lab, port, m["name"])
+                    last_status_check = time.time()
+                    if not seen or seen[-1][1] != st:
+                        seen.append((round(time.time() - t0, 1), st,
+                                     free_now, rss_now))
+                        lab.say(f"    E1 {m['name']}: {st} · free {free_now:.1f} GB "
+                                f"· rss {rss_now:.1f} GB")
                 if st == "loaded":
                     outcome = "loaded"
                     break
@@ -748,12 +786,27 @@ def exp_fit_accounting(lab: Lab, models, binpath) -> None:
                 if lab.aborted:
                     outcome = "guardian-killed-while-loading"
                     break
+                if free_now < lab.args.floor_gb:
+                    # llama.cpp did NOT refuse in time and memory is at the floor:
+                    # pull the plug now, or the OOM killer answers for us and the
+                    # whole unit (and the result) goes with it.
+                    outcome = (f"plug-pulled-at-floor: {free_now:.1f} GB left and "
+                               f"falling; llama.cpp did not refuse the load")
+                    lab.say(f"    E1 {m['name']}: PLUG at {free_now:.1f} GB free "
+                            f"— llama.cpp did not refuse; unloading before OOM")
+                    seen.append((round(time.time() - t0, 1), "plug-pulled",
+                                 free_now, rss_now))
+                    lab.api(port, "/models/unload", {"model": m["name"]}, timeout=60)
+                    time.sleep(10)
+                    break
                 lab.events_from(logp)
                 lab.sample()
-                time.sleep(5)
+                time.sleep(1)
             traj = " -> ".join(f"{s}@{el}s(free {f:.0f})"
                                for el, s, f, _ in seen) or "(no transition)"
-            rec["data"][key] = f"{outcome}; trajectory: {traj}"
+            rec["data"][key] = (f"{outcome}; wanted ~{need_gb:.0f} GB, "
+                                f"{free_at_start:.1f} GB free at start; "
+                                f"trajectory: {traj}")
             # the load-time line llama.cpp prints tells us if fit shrank the ctx
             fit_lines = [e for e in lab.events[-8:]
                          if re.search(r"fit|context|kv.*size|alloc|n_ctx", e, re.I)]
@@ -958,6 +1011,10 @@ def main() -> int:
     ap.add_argument("--need-gb", type=float, default=40.0,
                     help="full mode aborts unless this much is free AFTER stopping "
                          "the router (default 40)")
+    ap.add_argument("--swap-floor-gb", type=float, default=1.0, dest="swap_floor_gb",
+                    help="guardian aborts once more than this much swap is in use "
+                         "(default 1). Swap is the leading indicator: the box "
+                         "thrashes long before MemAvailable reaches --floor-gb.")
     ap.add_argument("--allow-oom", action="store_true",
                     help="DISABLE the guardian. Not what you want.")
     ap.add_argument("--idle-secs", type=int, default=600)
