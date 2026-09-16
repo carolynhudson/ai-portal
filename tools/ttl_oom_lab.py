@@ -799,10 +799,12 @@ def preflight(args) -> tuple:
     if others:
         notes.append(f"{len(others)} llama-server process(es) running: "
                      + "; ".join(others[:2])[:160])
+    # Deliberately NOT a preflight problem: MemAvailable is low precisely because
+    # the router is up, and full mode stops it. Judging memory here would refuse
+    # every real run. It is checked again after the stop, where it means something.
     avail = meminfo().get("MemAvailable", 0)
-    if args.mode == "full" and avail < 32 * GB:
-        problems.append(f"only {human(avail)} available — stopping the router should "
-                        "free far more; something else is holding memory")
+    notes.append(f"{human(avail)} available before the router is stopped "
+                 f"(full mode needs {args.need_gb:.0f} GB after stopping it)")
     return binpath, models, problems, notes
 
 
@@ -822,6 +824,9 @@ def main() -> int:
     ap.add_argument("--bin", help="llama-server to use (default: newest release)")
     ap.add_argument("--floor-gb", type=float, default=6.0,
                     help="guardian aborts below this MemAvailable (default 6)")
+    ap.add_argument("--need-gb", type=float, default=40.0,
+                    help="full mode aborts unless this much is free AFTER stopping "
+                         "the router (default 40)")
     ap.add_argument("--allow-oom", action="store_true",
                     help="DISABLE the guardian. Not what you want.")
     ap.add_argument("--idle-secs", type=int, default=600)
@@ -939,6 +944,8 @@ def main() -> int:
             "mode": "dry-run",
             "bin": str(binpath),
             "mem_available_gb": round(meminfo().get("MemAvailable", 0) / GB, 1),
+            "mem_note": "measured with the router up; full mode stops it first and "
+                        f"requires {args.need_gb:.0f} GB free afterwards",
             "models": [{"name": m["name"], "gb": round(m["bytes"] / GB, 1),
                         "shards": m["parts"]} for m in models],
             "model_notes": find_models.notes,
@@ -991,6 +998,15 @@ def main() -> int:
             "was a mistake")
     time.sleep(args.countdown)
     lab.stop_router()
+    free = meminfo().get("MemAvailable", 0)
+    if free < args.need_gb * GB:
+        # Something other than the router is holding the memory. Run the
+        # experiment anyway and it becomes an experiment about that.
+        lab.note("aborted_not_enough_memory",
+                 f"{free / GB:.1f} GB free after stopping the router, need "
+                 f"{args.need_gb:.0f} GB (--need-gb); nothing was run")
+        lab.cleanup()
+        return 3
     try:
         for key in [k.strip().upper() for k in args.experiments.split(",") if k.strip()]:
             if key not in EXPERIMENTS:
