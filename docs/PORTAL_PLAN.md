@@ -935,6 +935,57 @@ probably unloads idle models" is how an OOM gets scheduled. All of this was
 measured on this machine on 2026-09-15 with the deployed build
 (`~/ai/releases/llama.cpp-b10964`), not read off a changelog.
 
+#### 6.12.0 First: what "memory" means on this box, and the driver fix it rests on
+
+There is a precondition under every number below, and it was not written down
+until the owner pointed at it. It changes which figures are even about the same
+thing.
+
+**There is no VRAM.** This is an iGPU (Strix Halo, `gfx1151`): `rocm-smi` reports
+`VRAM Total Memory (B): 536870912` — **512 MiB**, a stub. The memory models live
+in is the **GTT aperture**, and that aperture is the whole GPU's view of system
+RAM.
+
+**The aperture was capped at 64 GiB, and that was too small to run the flagship
+model.** `amdgpu` defaults to a 64 GiB GTT limit — under the *kernel* command
+line / the deprecated `gttsize` module parameter. The 88 GiB model this box serves
+crosses it, and the symptom is not a clean failure: **the model loads, and then
+reports only a 4096-token context.** A 4096 ceiling on a model with a 262144-token
+trained context looks like a model defect, not a driver limit, which is what made
+it expensive to find.
+
+The fix the owner worked out was to **move the setting off the kernel command line
+and onto the AMD TTM module itself**, into a dedicated file:
+
+```console
+/etc/modprobe.d/amdttm.conf
+  options ttm    pages_limit=25600000                            #  97.7 GiB
+  options amdttm pages_limit=28311552 page_pool_size=28311552    # 108.0 GiB
+```
+
+`amdttm` (AMD's out-of-tree copy of TTM) is the one that binds: the driver reports
+`mem_info_gtt_total` = **108.0 GiB**, matching `28311552 × 4 KiB`. The value sits
+in the **100–110 GiB band the owner identifies as the highest stable on this OS**
+— above it the box is not reliable, so this is not a knob to push further.
+
+Consequences that follow from this and nothing else:
+
+- **The budget unit is GTT, not `MemAvailable` and not `rocm-smi` VRAM.** They
+  disagree by ~200×: right now `MemAvailable` reads ~20 GB, `rocm-smi` says 512
+  MiB, and GTT is **71 / 108 GiB**. §4.7's budget must be planned against the
+  aperture, and the portal now reads it (`app/metrics.py::_gtt()`, reported as
+  `pool_total` / `pool_used` with `is_igpu`).
+- **`free`/`MemAvailable` is the wrong gauge here**, which is also why the memory
+  guardian in §6.12.2 had to learn to watch swap.
+- **The fix is machine configuration, not repo state.** It lives in
+  `/etc/modprobe.d/amdttm.conf`, is not in git, and a kernel/driver update or a
+  lost modprobe file silently returns the box to 64 GiB — where the flagship model
+  loads and quietly reports 4096. An advisory for "GTT total < expected" is worth
+  adding to the health pane for exactly that reason.
+
+Measured 2026-09-16: `gtt_total` 108.00 GiB, `gtt_used` 71.07 GiB, `vram_total`
+0.50 GiB, `pages_limit` 25600000 (ttm) / 28311552 (amdttm).
+
 **There is no idle TTL.** Two eviction paths exist and both are demand-driven:
 
 * `unload_lru()` runs **inside the load path** — a loaded model is ejected when
