@@ -991,6 +991,63 @@ experiment against a throwaway worker, none against production):
    number a user is actually paying when the portal decides "you haven't used
    Qwen in 20 minutes".
 
+#### 6.12.1 `tools/ttl_oom_lab.py`: the harness for those four
+
+Those experiments load models that together exceed the box, which means they have
+to run while the production router is stopped — and the router hosts whatever is
+driving the experiments. So this is a standalone, stdlib-only script that runs
+alone and reports to disk, not something an agent does with tools.
+
+It exists because of three hard facts about being the model host:
+
+- **The script must not be the OOM victim.** Every `llama-server` it starts runs
+  in its **own session** with `oom_score_adj=900`, so when the kernel needs
+  someone to kill, it is the model process — not the desktop, not the browser, not
+  the script holding the results. (Lowering the parent's own score needs
+  privilege; it tries and honestly reports that it could not.)
+- **The router must come back.** Cleanup runs on success, on error, on Ctrl-C, on
+  signal, and at exit; and *before* starting, the script looks for a previous run
+  that left a `state.json` behind — a run killed with SIGKILL must not leave the
+  box without a router.
+- **A run that dies must still have succeeded.** The parent stays tiny by
+  construction (children write to files, never pipes; memory is read from
+  `/proc`; results are appended and flushed as they happen), so the evidence
+  survives its own crash.
+
+A **memory guardian** samples every second and, unless `--allow-oom` is passed,
+kills the children below `--floor-gb` of `MemAvailable`. That is the point: what
+we want to learn is what llama.cpp does when it cannot allocate, not whether this
+desktop survives a kernel OOM — and an attempt that is allowed to proceed until
+memory actually runs short is the only version of the experiment that answers the
+question honestly.
+
+| | |
+|---|---|
+| `--list-models` | what it can see: shards collapsed to whole size, `mmproj-*`/`imatrix-*`/draft files dropped, dangling symlinks *reported* (two of them, which is what crashed the old indexer) |
+| `--dry-run` | the plan and the memory figure, writes nothing to the results tree (goes to `/tmp`) |
+| `--mini` | ~1 GB, **router untouched**: proves spawn-separation, `oom_score_adj`, sampling, event extraction, cleanup, reporting |
+| `--full --yes` | stops the router and runs E0–E4 |
+| `--background` | re-exec in a new session and return — this is what makes it safe to start a run from inside the agent whose model is about to be stopped |
+| `--restore-router-only` | emergency "put the router back" |
+
+E0 idle model never expires · E1 does `fit` see other residents · E2 LRU thrash
+at `models_max=2` · E3 `POST /models/unload` during generation · E4 does unload
+return the memory, and what does a reload cost.
+
+**Validated (`--mini`, this box):** server up, `/completion` 200 in 0.04 s, RSS
+0.62 GB, `own_session: True`, `oom_score_adj=900`, three llama.cpp events
+extracted, clean SIGTERM, `summary.md` + `results.json` + 1 Hz `samples.csv` all
+written, router never touched. One bug class caught by running it rather than
+reading it: the script joins its argv string into characters when writing the
+summary — the reason the harness gets run before the experiment does.
+
+```
+python3 tools/ttl_oom_lab.py --background --full --yes
+# → runs detached; the agent that launched it dies with the router
+# → results: ~/ai/logs/ttl-oom/latest/{summary.md,results.json,samples.csv,events.log}
+# → the router is restored at the end and verified on :8080; start the agent again
+```
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
