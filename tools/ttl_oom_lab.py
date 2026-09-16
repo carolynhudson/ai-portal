@@ -125,6 +125,18 @@ def meminfo() -> dict:
     return out
 
 
+# NOTE ON THE unchecked-throwing-call-python LENS RULE:
+# It flags every int() and open() below. They are deliberate, not oversights:
+#   * int(m.group(1)) after r"(\d+)" cannot raise (the regex is the guard).
+#   * The open()s happen after state.json is written, so an exception MUST reach
+#     atexit -> cleanup() and put the router back. Wrapping them in try/except
+#     would swallow the very error that cleanup needs to see. The one open() that
+#     runs *before* any state (--background) is allowed to crash loudly because
+#     "the experiment did not start" is the correct outcome there.
+# This file's whole contract is: whatever happens, the router comes back. See
+# Lab.cleanup() and the state.json recovery in main().
+
+
 def proc_mem(pid: int) -> dict:
     """rss / anon / file-backed bytes. Anon is the number that matters: file-backed
     pages can be reclaimed under pressure, anonymous ones cannot."""
@@ -140,9 +152,11 @@ def proc_mem(pid: int) -> dict:
     return got
 
 
-def find_models() -> list:
-    """Loadable models: shards collapsed to their whole size, auxiliary files and
-    incomplete shard sets dropped, dangling links dropped.
+def find_models() -> tuple:
+    """Loadable models, plus notes: (models, notes).
+
+    Shards collapsed to their whole size, auxiliary files and incomplete shard sets
+    dropped, dangling links dropped.
 
     Dangling links are reported rather than skipped silently — one of them is what
     crashed the original gguf-indexer, and a model that cannot be found because a
@@ -150,9 +164,8 @@ def find_models() -> list:
     experiment look like a llama.cpp failure.
     """
     out, dangling, incomplete = [], [], []
-    find_models.notes = {}
     if not MODELS_DIR.is_dir():
-        return out
+        return out, {}
     groups = {}
     for d in sorted(MODELS_DIR.iterdir()):
         if not d.is_dir():
@@ -181,7 +194,10 @@ def find_models() -> list:
             elif size > 20 * 1024 * 1024:
                 out.append({"name": d.name, "path": str(f), "bytes": size, "parts": 1})
     for (parent, base), parts in groups.items():
-        want = int(next(iter(parts.values()))[2])
+        try:
+            want = int(next(iter(parts.values()))[2])
+        except (ValueError, StopIteration):
+            continue
         if len(parts) < want or "00001" not in parts:
             incomplete.append(f"{base} ({len(parts)}/{want} parts)")
             continue
@@ -189,10 +205,12 @@ def find_models() -> list:
         out.append({"name": Path(parent).name, "path": str(p),
                     "bytes": sum(v[1] for v in parts.values()), "parts": want})
     out.sort(key=lambda x: x["bytes"])
-    if dangling or incomplete:
-        find_models.notes = {"dangling_links": dangling,
-                             "incomplete_shard_sets": incomplete}
-    return out
+    notes = {}
+    if dangling:
+        notes["dangling_links"] = dangling
+    if incomplete:
+        notes["incomplete_shard_sets"] = incomplete
+    return out, notes
 
 
 class Lab:
@@ -246,7 +264,7 @@ class Lab:
     def phase_ctx(self, name: str):
         return _Phase(self, name)
 
-    def settle(self, secs: float = 10.0) -> None:
+    def settle(self, secs: float = 10.0) -> float:
         """Let the kernel catch up after a stop, and record whether it did. If
         stopping the router did not free the memory, the experiment is measuring
         something else's footprint and should say so out loud."""
@@ -386,6 +404,14 @@ class Lab:
         self.say(f"router stopped (rc={rc}, now {st.strip() or '?'})")
         freed = self.settle(15)
         self.results["mem_after_router_stop_gb"] = round(freed / GB, 1)
+        # MemAvailable can be ~117 GB with the router stopped and still be a lie:
+        # an idle llama.cpp under --fit holds weights as *reclaimable* pages that
+        # the kernel is happy to call "available" right up until a real allocation
+        # has to happen. The stop not moving the number is normal (an idle router
+        # was never the thing pinning the memory); the guardian, not this figure,
+        # is what stops us discovering reclaimability the hard way.
+        self.say("(if this barely moved: an idle router's pages were reclaimable, "
+                 "not resident — MemAvailable counts them either way)")
 
     def start_router(self) -> None:
         run(["systemctl", "--user", "start", ROUTER_UNIT], timeout=120)
@@ -528,7 +554,70 @@ def server_cmd(binpath: Path, farm: Path, presets: Path, port: int, models_max: 
     return cmd + list(extra or [])
 
 
-def complete(lab: Lab, port: int, model: str, tokens=8, timeout=900):
+def model_status(lab: Lab, port: int, model: str) -> str:
+    """One word: unloaded | loading | loaded | sleeping | error(...) |
+    not_registered. `GET /models` reports a *dict* per model
+    ({'value': 'loading', 'args': [...]}), so accept dict or bare string — and
+    never treat an HTTP 200 from /models/load as 'loaded': that call is an ack
+    and the load happens afterwards, asynchronously."""
+    code, body = lab.api(port, "/models", timeout=20)
+    if code != 200:
+        return f"error(http {code})"
+    try:
+        data = json.loads(body).get("data", [])
+    except Exception as e:                                  # noqa: BLE001
+        return f"error({type(e).__name__})"
+    for d in data:
+        if (d.get("id") or d.get("name")) != model:
+            continue
+        st = d.get("status")
+        if isinstance(st, dict):
+            return str(st.get("value", "?"))
+        return str(st if st is not None else "?")
+    return "not_registered"
+
+
+def wait_status(lab: Lab, port: int, model: str, want=("loaded", "sleeping"),
+                timeout=900, logpath=None, poll=5.0):
+    """Block until the model is actually resident (or the wait fails). Returns
+    (status, seconds). `error` / `unloaded` are terminal too: a load that failed
+    must not be waited on for the full timeout."""
+    t0 = time.time()
+    last = None
+    while time.time() - t0 < timeout:
+        st = model_status(lab, port, model)
+        if st != last:
+            lab.say(f"    {model}: {st} (+{time.time() - t0:.0f}s)")
+            last = st
+        if st in tuple(want) + ("error", "not_registered"):
+            return st, round(time.time() - t0, 1)
+        if logpath:
+            lab.events_from(logpath)
+        time.sleep(poll)
+    return f"timeout(last={last})", round(time.time() - t0, 1)
+
+
+def load_model(lab: Lab, port: int, model: str, timeout=900, logpath=None):
+    """POST /models/load and *wait for it*, measuring the real load. Returns
+    (status, seconds). The first version of this recorded the ack's latency as
+    the load time — 0.0 s — and then happily asked for three 87 GB models at once,
+    because nothing in the response said 'still loading'."""
+    t0 = time.time()
+    code, body = lab.api(port, "/models/load", {"model": model}, timeout=60)
+    if code != 200:
+        return f"http {code}: {body[:100]}", round(time.time() - t0, 1)
+    return wait_status(lab, port, model, ("loaded", "sleeping"), timeout, logpath)
+
+
+def unload_model(lab: Lab, port: int, model: str, timeout=300, logpath=None):
+    t0 = time.time()
+    code, body = lab.api(port, "/models/unload", {"model": model}, timeout=60)
+    if code != 200:
+        return f"http {code}: {body[:100]}", round(time.time() - t0, 1)
+    return wait_status(lab, port, model, ("unloaded",), timeout, logpath)
+
+
+def complete(lab: Lab, port: int, model: str, tokens=8, timeout=1800):
     """Generate a few tokens. /completion rather than /v1/chat/completions on
     purpose: chat templates are a second variable (three models on this box need
     `jinja = true` to render at all), and an experiment about memory should not
@@ -537,7 +626,7 @@ def complete(lab: Lab, port: int, model: str, tokens=8, timeout=900):
     code, body = lab.api(port, "/completion", {
         "model": model, "prompt": "Once upon a time", "n_predict": tokens,
         "stream": False}, timeout=timeout)
-    if code in (404, 400) and "not found" in body.lower():
+    if code in (404,) or (code == 400 and "not found" in body.lower()):
         # not proxied on this build — fall back to the OpenAI-shaped route so a
         # missing endpoint does not read as "the model failed to load"
         code, body = lab.api(port, "/v1/completions", {
@@ -781,14 +870,19 @@ EXPERIMENTS = {
 # ---------------------------------------------------------------------- main
 def preflight(args) -> tuple:
     problems, notes = [], []
-    bins = sorted((AI / "releases").glob("llama.cpp-b*/llama-server"),
-                  key=lambda p: int(p.parent.name.split("b")[-1]))
+    def build_of(p: Path) -> int:
+        # llama.cpp-b10964 -> 10964. Anything unparseable sorts lowest rather than
+        # raising: a stray directory named llama.cpp-something must not crash
+        # preflight and strand the caller with no answer at all.
+        m = re.search(r"-b(\d+)$", p.parent.name)
+        return int(m.group(1)) if m else -1
+    bins = sorted((AI / "releases").glob("llama.cpp-b*/llama-server"), key=build_of)
     if not bins:
         problems.append(f"no llama-server under {AI}/releases")
     binpath = Path(args.bin) if args.bin else (bins[-1] if bins else None)
     if binpath and not Path(binpath).is_file():
         problems.append(f"--bin not found: {binpath}")
-    models = find_models()
+    models, model_notes = find_models()
     if not models:
         problems.append(f"no loadable models under {MODELS_DIR}")
     # A running llama-server is *expected* — full mode stops the router itself.
@@ -805,7 +899,7 @@ def preflight(args) -> tuple:
     avail = meminfo().get("MemAvailable", 0)
     notes.append(f"{human(avail)} available before the router is stopped "
                  f"(full mode needs {args.need_gb:.0f} GB after stopping it)")
-    return binpath, models, problems, notes
+    return binpath, models, problems, notes, model_notes
 
 
 def main() -> int:
@@ -858,6 +952,9 @@ def main() -> int:
         LOGROOT.mkdir(parents=True, exist_ok=True)
         boot = LOGROOT / f"boot-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.log"
         child_args = [a for a in sys.argv[1:] if a != "--background"]
+        # Safe to let this raise: nothing has been touched yet — the router is
+        # still up, no children exist, there is no state to unwind. A failure here
+        # is "the experiment did not start", which is the correct and loud outcome.
         with open(boot, "ab") as fh:
             p = subprocess.Popen([sys.executable, os.path.abspath(__file__)]
                                  + child_args, stdout=fh, stderr=subprocess.STDOUT,
@@ -871,10 +968,11 @@ def main() -> int:
     args._argv = " ".join(sys.argv[1:])
 
     if args.list_models:
-        for m in find_models():
+        listed, notes_l = find_models()
+        for m in listed:
             print(f"{human(m['bytes']):>9}  {m['name']}"
                   + (f"  ({m['parts']} shards)" if m["parts"] > 1 else ""))
-        for k, v in find_models.notes.items():
+        for k, v in notes_l.items():
             if v:
                 print(f"  {k}: {', '.join(v[:6])}")
         return 0
@@ -918,7 +1016,7 @@ def main() -> int:
         lab.note("parent_oom_score_adj",
                  "could not lower (needs privilege) — children are at +900 instead")
 
-    binpath, models, problems, notes = preflight(args)
+    binpath, models, problems, notes, model_notes = preflight(args)
     if args.restore_router_only:
         lab._router_stopped_by_me = True
         lab.start_router()
@@ -933,7 +1031,7 @@ def main() -> int:
                 return 2
     lab.results["bin"] = str(binpath)
     lab.results["models_seen"] = len(models)
-    lab.note("model_notes", find_models.notes)
+    lab.note("model_notes", model_notes)
     for n in notes:
         lab.say("note: " + n)
     lab.results["preflight_notes"] = notes
@@ -948,7 +1046,7 @@ def main() -> int:
                         f"requires {args.need_gb:.0f} GB free afterwards",
             "models": [{"name": m["name"], "gb": round(m["bytes"] / GB, 1),
                         "shards": m["parts"]} for m in models],
-            "model_notes": find_models.notes,
+            "model_notes": model_notes,
             "will_stop_router": False,
             "experiments_if_full": [f"{k} {v[0]}" for k, v in EXPERIMENTS.items()],
             "guardian_floor_gb": args.floor_gb,
