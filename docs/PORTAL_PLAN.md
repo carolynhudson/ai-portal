@@ -378,17 +378,50 @@ lives in `/api/health/detail` until the dashboard's polling is reworked.
 `llama-releases.json` stays as the machine-readable release registry the
 phase-3 tooling already writes; the DB indexes it.
 
-### 4.7 Personalities (named router states) — user direction, 2026-08-31
+### 4.7 Personalities — provisioning, not just presets (user direction 2026-08-31, reframed 2026-09-15)
 
-A *personality* is a named, pre-planned router state for an activity (e.g.
-"coding", "rag-qa"): a generated `presets.ini` plus a models dir (symlink
-farm) exposing **only** the models that state is allowed to load. The memory
-budget is computed from GGUF metadata (weights + ctx KV) up front, so a
-personality can never OOM the box. Target scenario: VSCode-style multi-model
-setups (agentic + autocomplete + RAG loaded at once) — that needs
-`--models-max > 1` planning, so router start/stop (Phase B) and the GGUF
-memory math (Phase D) must land before personalities become switchable from
-the UI.
+A **personality** is a task-shaped allocation of the box: which models are
+loadable at all, how many at once, what each is configured with, and what the
+worst case costs. `presets.ini` is one output of that decision, not the decision
+itself.
+
+A personality is:
+
+| field | meaning |
+|---|---|
+| `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. |
+| `models_max` | how many may be resident simultaneously — a hard router limit, not a hint |
+| per-model preset | backend, context policy, extras (§6.12's rubric) |
+| `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom, because loaded weights here are anonymous and will not be reclaimed (§6.12) |
+| `ttl` | idle seconds after which the portal unloads a model the router would otherwise keep forever |
+
+Two worked shapes, from the user:
+
+* **Coding IDE** — a large model for planning/agentic work, a second for RAG, a
+  third for autocomplete: `models_max = 3`, and the budget is the sum of those
+  three, not of the three biggest files in the library. Autocomplete wants a
+  small model on the fastest-reacting backend; the planner wants context.
+* **Agentic OS management** — one big model, `models_max = 1`, nothing else
+  resident, so the entire budget goes to a single model's context.
+
+**Two personalities always exist and neither is editable in place:**
+
+* **`safe`** — minimal, nearly empty: the smallest known-good model,
+  `models_max = 1`. The thing to fall back to when a personality is misbehaving
+  or a load just failed. If `safe` cannot start, the box is broken and the portal
+  says so.
+* **`default`** — every llama model in the library, `models_max = 1`. Behaviour
+  is inherited from **global** preset values only; the per-model overrides a user
+  can reach are the ones the portal deliberately exposes. Editing a personality
+  must not be possible without going through a personality, because an unlisted
+  edit to `presets.ini` is how the next person debugging an OOM loses their
+  afternoon.
+
+Why this belongs in the portal and not in llama.cpp: the router evicts under its
+own queue pressure and otherwise keeps loaded models indefinitely (§6.12), and
+nothing in it knows about the desktop, the GPU consumer, or the next model
+someone is about to download. Capacity planning that ignores that is a server
+that dies at 3 AM.
 
 ### 4.8 RAG service + MCP interface (planned, later phase H)
 
@@ -883,6 +916,69 @@ not on a substring of the joined command line (the temp dir contains the test's
 own name, and `test_pip_installs…` once turned every command into a pip
 install), and assert what a job *did* to the machine ("the service was not
 restarted", "the pull never happened") rather than only what it printed.
+
+### 6.12 What the router actually does with an idle model (measured, b10964 / v0.4.1)
+
+Written down because the planning rules in §4.7 depend on it and because "it
+probably unloads idle models" is how an OOM gets scheduled. All of this was
+measured on this machine on 2026-09-15 with the deployed build
+(`~/ai/releases/llama.cpp-b10964`), not read off a changelog.
+
+**There is no idle TTL.** Two eviction paths exist and both are demand-driven:
+
+* `unload_lru()` runs **inside the load path** — a loaded model is ejected when
+  *another* model needs the slot (`tools/server/server-models.cpp:1114`);
+* the scheduler's `tick()` evicts idle models **only while the request queue is
+  non-empty** and queued requests outnumber free/freeing slots (`:348-383`).
+
+An idle model with an empty queue is never shed, however much the desktop wants
+its memory.
+
+**`--sleep-idle-seconds` is not an ejection.** Throwaway worker, Qwen3.5-0.8B,
+`--sleep-idle-seconds 4`, RSS sampled from `/proc`:
+
+```
+startup 847 MB → after a completion 851 MB → idle +4s 797 MB → idle +8s 636 MB
+wake on next request: OK, 870 MB          log: entering / exiting sleeping state
+```
+
+It works, it wakes correctly, and it freed ~25% of RSS. `handle_sleeping_state()`
+calls `destroy()` then `load_model()` — the *context* goes (KV cache, compute
+buffers); the weights stay, and the first request after idle pays the reload.
+
+**Loaded weights here are anonymous memory.** Live worker serving the 94 GB MoE
+under `--fit on --fit-target 8192`:
+
+```
+VmRSS 32.7 GB   RssAnon 31.2 GB   RssFile 0.3 GB   RssShmem 1.2 GB   VmLck 0
+MemAvailable 13.5 GB (of 122 GB)   Committed_AS 53.5 GB
+```
+
+0.3 GB file-backed out of 32.7: the weights are not reclaimable page cache. The
+OS cannot take them back; only an unload can. So `models_max` and the §4.7 budget
+are the actual protection, and `--fit` is a **load-time** guard, not a
+steady-state one.
+
+**What the portal can add, and why it should:** the router exposes
+`POST /models/unload` (and `GET /models/sse` for state). A portal-side TTL —
+watch idleness per loaded model, unload past the personality's threshold, show it
+in the job bar — is the missing primitive, implemented where the policy lives
+instead of in a C++ default.
+
+**Still to measure before the rules are written** (each is a half-hour
+experiment against a throwaway worker, none against production):
+
+1. `models_max = 2/3` with three large models — does LRU thrash when two clients
+   alternate? What does a load that does not fit actually do: fail, or fit-shrink
+   the context and disappoint quietly?
+2. Does `--fit-target` account for *other* resident workers, or only itself? If
+   only itself, two models can each individually fit and jointly OOM — which
+   would make the §4.7 budget mandatory rather than advisory.
+3. `POST /models/unload` while a request is in flight: refused, or does it drop
+   the request? A TTL that interrupts generation is not a TTL.
+4. Reload latency per model after an unload (the cost side of every TTL): the
+   number a user is actually paying when the portal decides "you haven't used
+   Qwen in 20 minutes".
 
 ## 7. Build-out roadmap
 
