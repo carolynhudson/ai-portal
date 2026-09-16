@@ -392,7 +392,7 @@ A personality is:
 | `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. |
 | `models_max` | how many may be resident simultaneously — a hard router limit, not a hint |
 | per-model preset | backend, context policy, extras (§6.12's rubric) |
-| `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom, because loaded weights here are anonymous and will not be reclaimed (§6.12) |
+| `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom. This is enforced by *nothing* but the portal: loaded weights are anonymous and unreclaimable (§6.12), `fit` is blind to other residents, and a model's footprint runs ~12 GB above its file size (§6.12.2). Measured, not assumed. |
 | `ttl` | idle seconds after which the portal unloads a model the router would otherwise keep forever |
 
 Two worked shapes, from the user:
@@ -976,20 +976,33 @@ watch idleness per loaded model, unload past the personality's threshold, show i
 in the job bar — is the missing primitive, implemented where the policy lives
 instead of in a C++ default.
 
-**Still to measure before the rules are written** (each is a half-hour
-experiment against a throwaway worker, none against production):
+**Measured (see §6.12.2 for how, and for the tool bugs that had to be fixed
+before any of this could be trusted).** Three of the four answers change what the
+portal has to do, so they are stated as conclusions rather than open questions:
 
-1. `models_max = 2/3` with three large models — does LRU thrash when two clients
-   alternate? What does a load that does not fit actually do: fail, or fit-shrink
-   the context and disappoint quietly?
-2. Does `--fit-target` account for *other* resident workers, or only itself? If
-   only itself, two models can each individually fit and jointly OOM — which
-   would make the §4.7 budget mandatory rather than advisory.
-3. `POST /models/unload` while a request is in flight: refused, or does it drop
-   the request? A TTL that interrupts generation is not a TTL.
-4. Reload latency per model after an unload (the cost side of every TTL): the
-   number a user is actually paying when the portal decides "you haven't used
-   Qwen in 20 minutes".
+1. **LRU eviction works.** At `models_max = 2` with three models in demand,
+   llama.cpp logs `evicting idle LRU … for a queued request` and cycles correctly;
+   a cold call cost 3.0 s against 1.5 s warm on small models. So *evicting* is not
+   the missing piece — deciding *when* is.
+2. **`fit` is blind to other residents.** 18 GB held by another process changed
+   the chosen context not at all (`n_ctx_slot` 16384 either way), with no refusal
+   and no allocation error. It also does not cap a model's own cost: an 87.2 GB
+   model occupied ~98 GB under `--fit-target 8192`. **The §4.7 budget is therefore
+   mandatory, not advisory** — nothing downstream refuses an over-committed set.
+   See `tools/fit_probe.py`.
+3. **Unload during generation is destructive.** `POST /models/unload` returns 200
+   `{"success":true}` and the in-flight generation dies (`http 500 … Failed to read
+   connection`). A TTL built directly on unload will cut users off mid-sentence;
+   the portal must check for in-flight requests first, and the router gives no
+   signal that it did so — the success is a lie by omission.
+4. **Idle models never expire.** RSS flat across 600 s with an empty queue,
+   `still_resident: true`. Confirms the source reading: `unload_lru` runs inside
+   the load path, and `tick()` only evicts while the queue is non-empty. The TTL
+   really does have to live in the portal.
+
+Still open: reload latency per model (the cost side of every TTL — what "you
+haven't used Qwen in 20 minutes" actually charges the user), and whether the
+portal's unload can be sequenced to avoid killing a live request.
 
 #### 6.12.1 `tools/ttl_oom_lab.py`: the harness for those four
 
@@ -1027,7 +1040,7 @@ question honestly.
 | `--dry-run` | the plan and the memory figure, writes nothing to the results tree (goes to `/tmp`) |
 | `--mini` | ~1 GB, **router untouched**: proves spawn-separation, `oom_score_adj`, sampling, event extraction, cleanup, reporting |
 | `--full --yes` | stops the router and runs E0–E4 |
-| `--background` | re-exec in a new session and return — this is what makes it safe to start a run from inside the agent whose model is about to be stopped |
+| `--background` | re-exec via `systemd-run --user` and return, so the run leaves the agent's process tree and survives the agent. A new session alone is **not** enough here — see §6.12.2 |
 | `--restore-router-only` | emergency "put the router back" |
 
 E0 idle model never expires · E1 does `fit` see other residents · E2 LRU thrash
@@ -1040,6 +1053,73 @@ extracted, clean SIGTERM, `summary.md` + `results.json` + 1 Hz `samples.csv` all
 written, router never touched. One bug class caught by running it rather than
 reading it: the script joins its argv string into characters when writing the
 summary — the reason the harness gets run before the experiment does.
+
+#### 6.12.2 What the runs measured, and the four things that were wrong first
+
+Five `--full` runs. Each got further than the last because each exposed a deeper
+cause; recording the causes matters more than the numbers, because they are the
+reason the first numbers must not be trusted.
+
+1. **`POST /models/load` is an ack, not a load.** It answers `200 {"success":true}`
+   immediately and loads in the background. Timing the ack recorded load times of
+   `0.0 s` and sampled RSS before the weights existed, and — because nothing said
+   *still loading* — the script fired three 87 GB loads back to back. The guardian
+   caught the pile-up; the measurement did not survive. Fixed by reading
+   `GET /models` and waiting for `loaded`.
+2. **A new session does not escape an agent harness.** `start_new_session` defeats
+   `killpg`, but the harness sweeps its descendants by *tree*, so a detached run
+   died anyway. `systemd-run --user` places the unit under `user@.service`, outside
+   the tree; verified by watching a unit finish after its launcher was gone.
+3. **The OOM killer is not the interesting failure — swap is.** The samples show
+   why a `--floor-gb` of 6 never had a chance: free memory fell **12.95 → 7.85 GB
+   in a single 1 Hz sample** while the child's RSS stayed at 0.13 GB. The pages
+   were not becoming resident, they were going to swap (journal: *6.3 G swap peak*),
+   and a machine swapping a model does not fail cleanly — it thrashes until the
+   kernel intervenes, and systemd then SIGTERMs the whole unit, result and all. So
+   the guardian trips on **swap used** (`--swap-floor-gb`, default 1), not on RAM.
+   Watching `MemAvailable` alone is watching the wrong gauge.
+4. **`--fit-target` does not bound what a model costs.** From two independent runs,
+   identically: loading `Qwen3.8-Flash-Next-GGUF` (**87.2 GB** on disk) under
+   `--fit on --fit-target 8192` took **55 s** and drove free memory **116 → 18 GB**
+   — a **~98 GB footprint, 12 GB more than the file**. `fit-target` sizes the
+   context against the machine; it is not a memory cap.
+
+**E0/E2/E3 answered correctly despite the broken load timing**, because they never
+depended on it: E0 — RSS flat across 600 s idle, `still_resident: true`, *no idle
+expiry*; E2 — llama.cpp's own `evicting idle LRU … for a queued request` cycling
+through three models at `models_max=2`, so eviction works and `complete()`'s
+cold/warm timings (3.0 s → 1.5 s) are real; E3 — **the one that matters for any
+TTL**: `POST /models/unload` during an in-flight generation returns **200
+`{"success":true}`** and the generation dies, `http 500 … Failed to read
+connection` after 14 s. The router will happily cut off a user mid-sentence. A
+portal TTL must therefore check for in-flight requests before unloading, and
+never treat unload as safe.
+
+**E1 answered properly, and cheaply — by giving up on the big-model approach.**
+`fit` is a *startup* decision, so it does not need 150 GB of models to
+demonstrate: hold R GB of anonymous memory in a helper (the same class of page a
+GGUF weight is, per §6.12), start an identical worker with and without it, compare
+the context it settles on. `tools/fit_probe.py` does this in two minutes with the
+router up and the agent alive.
+
+| | free | `n_ctx_slot` | started? |
+|---|---|---|---|
+| nothing held | 21.9 GB | **16384** | yes, generates |
+| 18 GB held | **3.8 GB** | **16384** | yes, generates |
+
+**`fit` is blind to other residents.** Identical decision with 18 GB less memory,
+no shrink, no refusal, no allocation error. Two models that each individually fit
+can be loaded together, and the machine discovers the truth by swapping. This
+settles the open question in §4.7: **the portal's memory budget is mandatory, not
+advisory** — nothing downstream will refuse an over-committed personality, so the
+portal is the only thing between a personality and a swap-stalled box.
+
+The probe reported *inconclusive* on its first successful run: its context regex
+matched bare `n_ctx`, which llama.cpp does not print (`n_ctx_slot` is the post-fit
+number). And its readiness check had accepted **any** HTTP answer — 200, 400, 404,
+503 — so a port that had merely *bound* counted as healthy and every run looked
+fine. Both fixed; readiness is now "it produced a token". A probe that cannot tell
+loaded from listening is worse than no probe, because it reports success.
 
 ```
 python3 tools/ttl_oom_lab.py --background --full --yes
