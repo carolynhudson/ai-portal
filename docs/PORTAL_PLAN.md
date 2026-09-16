@@ -533,6 +533,17 @@ models page rather than quietly clamping.
    incomplete (currently unloadable and silent), dangling model symlinks (3 of
    them right now — one of which crashes the indexer's own scanner).
 
+**What a personality needs that a file listing cannot answer** (§4.7): to fill
+"planning model / RAG model / autocomplete model" from a library of 16, the table
+has to carry capability-shaped facts, not just sizes — trained context (a 32K
+capable model is a poor RAG embedder), params *active* vs total (agentic work on
+an MoE is a different latency story than on a dense model of the same size),
+modality (vision, embedding), and whether it is a draft sidecar rather than a
+model. Each of those comes out of the GGUF header, so they belong in the table;
+what does *not* belong there is a verdict like "good for coding". The table states
+facts and the personality says what it wants; a score baked into the index is a
+hypothesis nobody will ever re-test.
+
 **Phasing.** N1 reader + table + incremental scan (read-only, no UI).
 N2 memory math + the smoke query + tests. N3 models page.
 N4 presets personalities: generate → **show a diff** → apply through the existing
