@@ -461,8 +461,68 @@ def model_store(refresh: bool = False) -> dict:
 
 # ------------------------------------------------------------------ advisories
 
+# The GTT aperture this box is configured for, and the amdgpu default it was
+# moved off. /etc/modprobe.d/amdttm.conf sets pages_limit=28311552 (108 GiB);
+# the driver default caps the aperture at 64 GiB, which is below the size of the
+# 88 GiB model this machine serves. See PORTAL_PLAN.md §6.12.0.
+EXPECTED_GTT_GIB = 108.0
+AMDGPU_DEFAULT_GTT_GIB = 64.0
+
+
+def aperture_advisory(gpu: dict | None) -> list[dict]:
+    """Warn when the GPU's view of memory is smaller than it was configured to be.
+
+    The 64 GiB ceiling is dangerous precisely because it fails quietly: a model
+    larger than the aperture still *loads* and then reports a 4096-token context,
+    which looks like a bad model rather than lost configuration. A driver update
+    or a dropped /etc/modprobe.d/amdttm.conf returns the box to that state with
+    nothing visible wrong until a model starts lying about its context.
+
+    Pure function of the dict it is given, so it is testable without a GPU.
+    """
+    out: list[dict] = []
+    # `None` means "not probed" and stays quiet; a dict with no gtt_total means
+    # "probed and could not read the aperture", which is the case worth saying.
+    # They must not collapse: the first is normal on a machine without amdgpu,
+    # the second is this box losing its configuration.
+    if gpu is None:
+        return out
+    total = gpu.get("gtt_total") or 0
+    if not total:
+        # No amdgpu aperture readable at all: on this machine that means the
+        # driver is missing or the sysfs node moved, not that memory is fine.
+        out.append({"level": "info",
+                    "text": "GPU memory aperture (GTT) could not be read, so the "
+                            "memory budget cannot be checked against it. On an iGPU "
+                            "rocm-smi's VRAM figure is a ~512 MiB stub and is not "
+                            "the pool models load into.",
+                    "where": "/health", "where_label": "Health", "cmd": ""})
+        return out
+    gib = total / (1 << 30)
+    if gib < AMDGPU_DEFAULT_GTT_GIB + 1:
+        out.append({"level": "bad",
+                    "text": f"GPU aperture is only {gib:.0f} GiB — the amdgpu "
+                            f"default. A model larger than this still loads and then "
+                            f"reports a 4096-token context, so it fails as a “bad "
+                            f"model” rather than as missing configuration. "
+                            f"This box needs ~{EXPECTED_GTT_GIB:.0f} GiB via "
+                            "/etc/modprobe.d/amdttm.conf.",
+                    "where": "/health", "where_label": "Health",
+                    "cmd": "cat /etc/modprobe.d/amdttm.conf"})
+    elif gib < EXPECTED_GTT_GIB - 1:
+        out.append({"level": "warn",
+                    "text": f"GPU aperture is {gib:.0f} GiB, below the {EXPECTED_GTT_GIB:.0f} "
+                            f"GiB this machine is configured for "
+                            f"(/etc/modprobe.d/amdttm.conf pages_limit). Check for a "
+                            f"dropped config or a driver update that reset it.",
+                    "where": "/health", "where_label": "Health",
+                    "cmd": "cat /etc/modprobe.d/amdttm.conf"})
+    return out
+
+
 def advisories(release: dict | None = None, service: dict | None = None,
-               comfy: dict | None = None, builds: dict | None = None) -> list[dict]:
+               comfy: dict | None = None, builds: dict | None = None,
+               aperture: dict | None = None) -> list[dict]:
     """What the pane puts first: the things that need a decision.
 
     ``release`` (the deployed llama.cpp release record) and the two unit states
@@ -476,6 +536,10 @@ def advisories(release: dict | None = None, service: dict | None = None,
         out.append({"level": level, "text": text, "where": where,
                     "where_label": label, "cmd": cmd})
 
+    # First, because a shrunken aperture invalidates every capacity judgement the
+    # rest of the pane makes.
+    out.extend(aperture_advisory(aperture))
+
     rp = systemd.reboot_pending()
     if rp.get("reboot_required"):
         add("warn", "A reboot is pending: the running kernel/driver is older than "
@@ -486,9 +550,10 @@ def advisories(release: dict | None = None, service: dict | None = None,
     if a.get("error"):
         add("warn", f"apt pending-updates check failed: {a['error']}")
     elif a.get("available"):
-        gpu = a.get("gpu_pending") or []
-        if gpu:
-            add("warn", f"{len(gpu)} GPU-stack package(s) pending: {', '.join(gpu[:5])}. "
+        gpu_pkgs = a.get("gpu_pending") or []
+        if gpu_pkgs:
+            add("warn", f"{len(gpu_pkgs)} GPU-stack package(s) pending: "
+                        f"{', '.join(gpu_pkgs[:5])}. "
                         "The portal never applies apt updates. After applying them, "
                         "rebuild llama.cpp if the ROCm series moved.",
                 where="/#update-llamacpp", label="llama.cpp update pane")
@@ -629,10 +694,40 @@ def _human_gb(n: int) -> str:
     return f"{n / 1024 ** 3:.0f} GB"
 
 
+def gpu_aperture(refresh: bool = False) -> dict | None:
+    """The GPU's memory aperture, for the budget check and the health page.
+
+    Wrapped so a missing driver, an unreadable sysfs node, or a crash in the
+    metrics layer degrades to None instead of taking the whole health page down.
+    None means "not read", distinct from a dict with no gtt_total, and
+    aperture_advisory relies on that distinction.
+
+    This is the figure the §4.7 budget is planned against. It is *not* what
+    rocm-smi reports as VRAM: on an iGPU that is a ~512 MiB stub while GTT is
+    ~108 GiB (§6.12.0).
+    """
+    try:
+        from .. import metrics
+    except Exception:  # noqa: BLE001 - metrics is optional to the health pane
+        return None
+    try:
+        # gpu() already honours its own ~5 s cache, so the health page polling it
+        # costs nothing; _GPU_CACHE is only consulted to avoid a second call when
+        # the entry is known-fresh.
+        cache = getattr(metrics, "_GPU_CACHE", (0.0, None))
+        if not refresh and cache[1] is not None and \
+                time.time() - cache[0] < getattr(metrics, "_GPU_TTL", 5):
+            return cache[1]
+        return metrics.gpu()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def summary(release: dict | None = None, service: dict | None = None,
             comfy: dict | None = None, builds: dict | None = None,
             refresh: bool = False) -> dict:
     """Everything, for /api/health and the health page."""
+    aperture = gpu_aperture(refresh)
     body = {
         "generated_at": time.time(),
         "apt": apt(refresh),
@@ -642,7 +737,8 @@ def summary(release: dict | None = None, service: dict | None = None,
         "vulkan": vulkan(refresh),
         "disk": disk(refresh),
         "model_store": model_store(refresh),
+        "gpu": aperture,
     }
     body["advisories"] = advisories(release=release, service=service, comfy=comfy,
-                                     builds=builds)
+                                    builds=builds, aperture=aperture)
     return body

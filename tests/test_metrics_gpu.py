@@ -159,3 +159,80 @@ GPU[0]\t\t: GPU use (%):  12.00
 GPU[0]\t\t: VRAM Total Memory (B): 25769803776
 GPU[0]\t\t: VRAM Total Used Memory (B): 1073741824
 """
+
+
+# ------------------------------------------------------------------ advisory
+# The 64 GiB ceiling fails quietly: a model above the aperture loads and then
+# reports a 4096-token context, so it looks like a bad model rather than lost
+# configuration. These assert the portal notices the regression instead of
+# leaving the owner to rediscover it from a mysteriously small context window.
+
+def test_healthy_aperture_is_silent():
+    from app.core import health
+    assert health.aperture_advisory({"gtt_total": 108 * GiB}) == []
+
+
+def test_regressed_to_the_amdgpu_default_is_bad():
+    from app.core import health
+    a = health.aperture_advisory({"gtt_total": 64 * GiB})
+    assert len(a) == 1
+    assert a[0]["level"] == "bad"
+    # the text must name the symptom, not just the number, or it is not actionable
+    assert "4096" in a[0]["text"]
+    assert "amdttm.conf" in a[0]["text"]
+
+
+def test_partially_regressed_aperture_warns():
+    from app.core import health
+    a = health.aperture_advisory({"gtt_total": 90 * GiB})
+    assert len(a) == 1 and a[0]["level"] == "warn"
+
+
+def test_probed_but_unreadable_says_so():
+    """{} means the probe ran and found nothing — different from not probing."""
+    from app.core import health
+    a = health.aperture_advisory({})
+    assert len(a) == 1
+    assert a[0]["level"] == "info"
+    assert "512 MiB" in a[0]["text"]      # explains why rocm-smi VRAM misleads
+
+
+def test_not_probed_stays_quiet():
+    """None means "not read", which is normal without amdgpu and must not warn.
+    Collapsing this with {} would cry wolf on every non-AMD machine."""
+    from app.core import health
+    assert health.aperture_advisory(None) == []
+
+
+def test_zero_gtt_counts_as_unreadable_not_as_full():
+    from app.core import health
+    a = health.aperture_advisory({"gtt_total": 0, "gtt_used": 0})
+    assert a and a[0]["level"] == "info"
+
+
+def test_aperture_advisory_leads_the_list():
+    """A shrunken aperture invalidates every other capacity judgement on the
+    page, so it is emitted first — before reboot-pending and the rest."""
+    from app.core import health
+    out = health.advisories(aperture={"gtt_total": 64 * GiB})
+    assert out, "expected at least the aperture advisory"
+    assert "4096" in out[0]["text"], "aperture advisory must come first"
+
+
+def test_advisories_accepts_aperture_keyword():
+    from app.core import health
+    out = health.advisories(aperture={"gtt_total": 64 * GiB})
+    assert any("4096" in a["text"] for a in out)
+
+
+def test_gpu_aperture_degrades_to_none(monkeypatch):
+    """A crash in the metrics layer must not take the health page down."""
+    from app.core import health
+
+    def boom(*a, **k):
+        raise RuntimeError("driver exploded")
+
+    import app.metrics as metrics
+    monkeypatch.setattr(metrics, "gpu", boom)
+    monkeypatch.setattr(metrics, "_GPU_CACHE", (0.0, None))
+    assert health.gpu_aperture() is None
