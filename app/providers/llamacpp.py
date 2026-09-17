@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -929,9 +930,12 @@ _MIN_MODEL_BYTES = 20 << 20
 # sits next to real models in the library looking exactly like one. `mmproj`/
 # `mtp`/`draft` is the convention modeladd already uses for the same question —
 # shared, so the two can never disagree about what the library contains.
-_NOT_A_MODEL = re.compile(
-    _AUX_PREFIX_RE.pattern.replace("(?:mmproj|mtp|draft)",
-                                   "(?:mmproj|mtp|draft|imatrix|adapter)"), re.I)
+# This used to derive its own pattern by rewriting _AUX_PREFIX_RE.pattern, which
+# silently matched nothing (the source had `(mmproj|…)` without the `(?:`) and so
+# returned the un-widened original. Two rules that only looked shared, both
+# missing imatrix-*. Import the one opinion instead of re-deriving it, so there is
+# nothing left to drift.
+_NOT_A_MODEL = _AUX_PREFIX_RE
 
 # `name-00001-of-00003.gguf`: one file of one model. llama.cpp reads the header
 # of the first part, which describes the *whole* model — so the cost of a shard
@@ -970,26 +974,50 @@ def _indexed_candidates(avail: int, log) -> list[tuple[Path, int, str]]:
     walking the directory. The index is an optimization here, not a dependency: a
     stale or absent index must not be able to block an update.
     """
+    # The whole body is guarded, not just the query: rows come out of portal.db,
+    # and a row with a null path or a non-numeric byte count is a malformed-row
+    # problem, not a reason to fail a build. The contract is "index or walk", so
+    # anything that is not an answer is treated as the absence of one.
     try:
         need = avail - _SMOKE_HEADROOM
         if need <= 0:
             return []
         rows = modelindex.fits_query(need, limit=_SMOKE_ATTEMPTS * 3)
+        out: list[tuple[Path, int, str]] = []
+        for r in rows:
+            path = r.get("path")
+            size = _as_size(r.get("bytes"))
+            if not path or size is None:
+                continue          # unusable row: skip, do not guess
+            p = Path(path)
+            if not p.is_file():
+                continue          # index is newer than the disk
+            parts = r.get("shard_total") or 1
+            label = f"{r.get('id') or p.stem} (indexed)"
+            if parts > 1:
+                label = f"{r.get('id') or p.stem} ({parts} parts, indexed)"
+            out.append((p, size, label))
+        return out
     except Exception as e:  # noqa: BLE001 — any index problem means: walk instead
         log(f"smoke worker: model index unavailable ({type(e).__name__}: {e}) "
             f"— falling back to scanning the directory")
         return []
-    out: list[tuple[Path, int, str]] = []
-    for r in rows:
-        p = Path(r["path"])
-        if not p.is_file():
-            # Index is newer than the disk. Skip rather than trust it.
-            continue
-        label = f"{r['id']} (indexed)"
-        if r.get("shard_total", 1) > 1:
-            label = f"{r['id']} ({r['shard_total']} parts, indexed)"
-        out.append((p, int(r.get("bytes") or 0), label))
-    return out
+
+
+def _as_size(v) -> int | None:
+    """A byte count from an index row, or None if it is not one.
+
+    int() raises on a string like "87G" and on None; both are plausible in a row
+    written by a different version of the indexer, and neither should be able to
+    take down candidate selection.
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, float) and math.isfinite(v) and v >= 0:
+        return math.floor(v)
+    return None
 
 
 def _model_candidates(models_dir: Path) -> list[tuple[Path, int, str]]:

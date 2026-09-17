@@ -42,7 +42,18 @@ _HF_CLI_RE = re.compile(
     re.IGNORECASE,
 )
 _HF_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]+$")
-_AUX_PREFIX_RE = re.compile(r"^(mmproj|mtp|draft)-")
+# Files that sit beside a model but are not one. Prefix-anchored, because that is
+# how they are actually named (mmproj-X.gguf, imatrix-X.gguf).
+#
+# This list used to be `(mmproj|mtp|draft)` only, and llamacpp.py tried to widen
+# it with `_AUX_PREFIX_RE.pattern.replace("(?:mmproj|mtp|draft)", "…|imatrix|…")`.
+# The source pattern had no `(?:`, so the replace matched nothing and silently
+# returned the original: a no-op that read like a shared rule while both copies
+# missed `imatrix-Qwen3.8-Flash-Next-UD.gguf`, which then reached the smoke-test
+# candidate list as a 0.5 GiB "model" that llama.cpp cannot load.
+# So: widen it here, once, and have importers import it rather than derive it.
+_AUX_PREFIX_RE = re.compile(r"^(?:mmproj|mtp|draft|imatrix|adapter|lora|vocab|tokenizer)-",
+                            re.I)
 _WEIGHT_EXTS = (".safetensors", ".ckpt", ".bin")
 _GGUF_EXTS = (".gguf",)
 
