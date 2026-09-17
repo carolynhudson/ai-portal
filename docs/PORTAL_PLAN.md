@@ -512,10 +512,25 @@ total(ctx) = weights + kv_bytes + runtime_headroom(compute buffers, graph)
 The trap, measured on this machine's own models: `full_attention_interval: 4`
 means only every 4th layer keeps a KV cache. Counting all layers gives —
 
-| model | KV at trained ctx (262K) | naive, all layers |
-| --- | --- | --- |
-| Qwen3.5-0.8B Q4_K_M (0.50 GiB) | **3.50 GiB** | 12.50 GiB (3.6× over) |
-| Qwen3.8-Flash-Next (94 GB, 48 L) | **6.00 GiB** | 24.00 GiB (4.0× over) |
+| model | interval | KV at trained ctx (262K) | naive, all layers |
+| --- | --- | --- | --- |
+| Qwen3.5-0.8B Q4_K_M (0.50 GiB) | 4 | **1.75 GiB** | 6.25 GiB (3.6× over) |
+| Qwen3.8-Flash-Next (94 GB, 48 L) | 4 | **2.48 GiB** | 9.94 GiB (4.0× over) |
+
+**Corrected 2026-09-16; the ratios always were right, the GiB were not.** This
+table first read 3.50 / 6.00 GiB (and 12.50 / 24.00 naive). Those were computed
+at **f32** KV, while llama.cpp's runtime default is **f16** — exactly 2×, which is
+why the mistake survived: every number in the column was wrong by the same factor,
+so nothing looked inconsistent next to anything else. Recomputed from the headers
+this time (`block_count`, `attention.head_count`, `attention.head_count_kv`,
+`embedding_length`, `full_attention_interval`) at f16, which is what the estimator
+in `app/core/modelindex.py` implements and tests.
+
+The lesson is the one §4.9 already states and this is a second instance of: an
+estimate must carry its **inputs and its assumptions**, not just its answer. A
+dtype buried in a formula is invisible; a dtype named in the row would have been
+caught on sight. So `kv_bytes()` takes the dtype as an argument and the index
+stores the dtype it assumed.
 
 Naive math would have looked at this box's 12 GB free and refused the 0.8 GB
 model — the very model that made today's smoke test pass. Estimates are only

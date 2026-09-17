@@ -159,7 +159,11 @@
   <div class="kv"><span class="k">index (INDEX.json)</span>
     <b class="{% if model_store.index.age_h and model_store.index.age_h > 168 %}old{% endif %}">
       {{ "updated " + (model_store.index.age_h|ago) + " ago" if model_store.index.exists else "never built" }}</b></div>
-  {% if model_store.index.files_on_disk is not none %}
+  {# Guard on the pair, not on files_on_disk alone: an index can record a file
+     count without a size, and the old guard rendered "1 (…)" with a dash where
+     the bytes belonged. Showing nothing is truer than showing half a fact. #}
+  {% if model_store.index.files_on_disk is not none and
+        model_store.index.total_bytes is not none %}
   <div class="kv"><span class="k">files in index</span><b>{{ model_store.index.files_on_disk }}
     ({{ model_store.index.total_bytes|sz }})</b></div>
   {% endif %}

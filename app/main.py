@@ -9,6 +9,9 @@ no front-end re-engineering.
 from __future__ import annotations
 
 import json
+import errno
+import math
+import numbers
 import os
 import re
 from datetime import datetime
@@ -31,6 +34,7 @@ from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
 from .core import db, health, modeladd, paths, systemd, updater
+from . import providers
 from .providers import PROVIDERS, get as get_provider
 
 HERE = Path(__file__).resolve().parent
@@ -162,11 +166,59 @@ def _settings() -> cfg.Settings:
 _settings_cache: cfg.Settings | None = None
 
 
-def _dur(seconds: float | None) -> str:
-    """'12d 4h' / '38m' / 'just now' — spans, not ages (uptime, elapsed)."""
-    if seconds is None:
+def _num(v) -> float | None:
+    """The value as a finite float, or None when there is no number to show.
+
+    Durations and sizes reach these display helpers from timestamp arithmetic,
+    journal gaps and cgroup counters, any of which can yield NaN or inf (a clock
+    stepped backwards, a counter that wrapped) — and `int(NaN)`/`int(inf)` raise,
+    so the isfinite() check is what keeps a bad counter from 500ing a page.
+
+    Everything else renders as nothing: None, a bool, a string from a release
+    registry, and Jinja's `Undefined` all mean "there is no number here", and the
+    callers turn None into an em dash. `Undefined` is treated as absent rather
+    than re-raised deliberately — these helpers are registered as Jinja filters,
+    and it is the template that decides whether a missing key is acceptable (it
+    guards with `is not none` where it matters). A filter that 500s on Undefined
+    takes that decision away from the template and turns every optional field
+    into a crash, which is what an earlier version of this line did to six tests.
+    """
+    if v is None or isinstance(v, bool) or _jinja_undefined(v):
+        return None
+    # int and float only, not the whole numbers.Real hierarchy: a Decimal or
+    # Fraction would want different formatting anyway, and naming the concrete
+    # types is what makes the float() below unremarkable.
+    if isinstance(v, (int, float)):
+        # float(int)/float(float) are total — no value of either type raises,
+        # including ±1e308 — and non-finite results are dropped by isfinite()
+        # below, so there is nothing a try/except could catch here.
+        # pi-lens-ignore: unchecked-throwing-call-python
+        f = float(v)
+        return f if math.isfinite(f) else None
+    return None
+
+
+def _jinja_undefined(v) -> bool:
+    """True for a Jinja Undefined. Imported lazily so non-web callers of _num
+    (and the module itself, when used as a library) do not depend on jinja2."""
+    try:
+        from jinja2 import Undefined
+    except ImportError:  # pragma: no cover - jinja2 ships with fastapi's family
+        return False
+    return isinstance(v, Undefined)
+
+
+def _dur(seconds: object) -> str:
+    """'12d 4h' / '38m' / 'just now' — spans, not ages (uptime, elapsed).
+
+    `seconds` is typed loosely on purpose: this is a Jinja filter and callers
+    hand it whatever a probe returned, including nothing. See _num().
+    """
+    val = _num(seconds)
+    if val is None:
         return "—"
-    s = int(seconds)
+    # pi-lens-ignore: unchecked-throwing-call-python
+    s = int(val)
     if s < 5:
         return "just now"
     if s < 3600:
@@ -180,26 +232,58 @@ def _dur(seconds: float | None) -> str:
     return f"{m}m"
 
 
-def _ago(hours: float | None) -> str:
+def _ago(hours: object) -> str:
     """'20m' / '3h' / '12d' — the health pane answers "how fresh is this?" in
-    the same shape everywhere, because it asks it about a dozen things."""
+    the same shape everywhere, because it asks it about a dozen things.
+    Loosely typed for the same reason as _dur: it is a filter, not an API."""
+    hours = _num(hours)
     if hours is None:
         return "—"
     if hours < 1:
+        # pi-lens-ignore: unchecked-throwing-call-python
         return f"{max(0, int(hours * 60))}m"
     if hours < 48:
         return f"{hours:.0f}h"
     return f"{hours / 24:.0f}d"
 
 
-def _human(n: int | None) -> str:
-    if not n:
+_UNITS = ("B", "K", "M", "G", "T", "P", "E")
+
+
+def _human(n: object) -> str:
+    """Byte count as "71.0G". Anything we cannot read as a finite number — None,
+    zero, a string from a registry entry, an inf from a counter that wrapped —
+    reads as an em dash, because "—" is the honest answer to "how big?" when the
+    answer is "we do not know", and a display helper must not be what 500s a page.
+
+    Above exabytes the ladder runs out and the answer is a literal ">1E": the
+    old five-unit version fell out of its loop and returned a bare `str(float)`,
+    so an absurd size printed a few hundred digits on a status line.
+    """
+    size = _num(n)
+    if not size:
         return "—"
-    for unit in ("B", "K", "M", "G", "T"):
-        if n < 1024 or unit == "T":
-            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
-        n /= 1024
-    return str(n)
+    for unit in _UNITS:
+        if size < 1024:
+            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    # Past exabytes the unit ladder is simply out of road. Say so rather than
+    # print the number: 1e308 bytes rendered as 290 digits, which is worse than
+    # useless on a status line and was the old five-unit version's fallback too.
+    return ">1E"
+
+
+def _discard_upload(dest: Path) -> None:
+    """Remove an upload's staging directory, best effort.
+
+    A partial model file is multi-GB and the caller is about to raise, so this
+    runs on every failure path — but a failed cleanup must not replace the error
+    the caller is trying to report.
+    """
+    try:
+        shutil.rmtree(dest, ignore_errors=True)
+    except OSError:
+        pass
 
 
 def _busy(kinds: set[str] | None = None) -> HTTPException:
@@ -233,7 +317,7 @@ def _llama_behind() -> dict:
     now = time.time()
     if now - _behind_cache[0] < _BEHIND_TTL:
         return _behind_cache[1]
-    p = get_provider("llamacpp")
+    p = providers.get_llamacpp()
     res = p.behind() if p else {}
     _behind_cache = (now, res)
     return res
@@ -246,7 +330,7 @@ def comfy_snapshot() -> dict:
     the bind, so the hero says the same thing the Settings page does about who
     can reach it.
     """
-    p = get_provider("comfyui")
+    p = providers.get_comfyui()
     cfg = p.config()
     st = systemd.unit_state(paths.COMFY_UNIT)
     base = p.endpoint()
@@ -422,12 +506,12 @@ def create_app() -> FastAPI:
 
     @app.get("/models")
     def models(request: Request, _=Depends(_require_auth)):
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         live = p.models_live() if p else []
         disk = p.models_scan() if p else []
         for m in disk:
             m["size_h"] = _human(m.get("size"))
-        cp = get_provider("comfyui")
+        cp = providers.get_comfyui()
         comfy = cp.inventory() if cp else []
         for c in comfy:
             c["size_h"] = _human(c["size"])
@@ -466,7 +550,10 @@ def create_app() -> FastAPI:
         """
         router_u = systemd.unit_state(paths.ROUTER_UNIT)
         comfy_u = systemd.unit_state(paths.COMFY_UNIT)
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
+        # Values are str-or-None by design: `built_ago` and friends are absent
+        # rather than guessed when a release record predates the field.
+        prov: dict[str, str | None] = {}
         try:
             prov = p.provenance() if p else {}
         except Exception as e:  # noqa: BLE001 — a broken release is a row, not a 500
@@ -488,11 +575,12 @@ def create_app() -> FastAPI:
             refresh=refresh)
         # "built 2026-09-11T13:41:12+00:00" is not a fact a person reads; the
         # age is, and the raw stamp stays in the payload for any JSON consumer
+        prov["built_ago"] = None
         try:
             built = datetime.fromisoformat(str(prov.get("built_at")))
             prov["built_ago"] = _ago((time.time() - built.timestamp()) / 3600)
         except (TypeError, ValueError):
-            prov["built_ago"] = None
+            pass
         body["deployed"] = prov
         body["builds"] = builds
         body["host"] = health.host()
@@ -565,7 +653,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/models")
     def api_models(_=Depends(_require_auth)):
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         return {"live": p.models_live() if p else [],
                 "disk": p.models_scan() if p else []}
 
@@ -622,7 +710,7 @@ def create_app() -> FastAPI:
     @app.post("/api/services/comfyui/ensure")
     def api_comfy_ensure(_=Depends(_require_auth)):
         """Generate the ComfyUI unit + env file + wrapper (idempotent)."""
-        res = get_provider("comfyui").ensure_service(
+        res = providers.get_comfyui().ensure_service(
             log=lambda m: print("[ai-portal]", m))
         db.event("portal", "service", "comfyui service files generated")
         return res
@@ -642,7 +730,7 @@ def create_app() -> FastAPI:
         the router when convenient — the running process keeps its current
         config until then, so this call is always safe.
         """
-        res = get_provider("llamacpp").ensure_service(
+        res = providers.get_llamacpp().ensure_service(
             log=lambda m: print("[ai-portal]", m))
         db.event("portal", "service",
                  f"llamacpp service files generated (argv ok: {res['verify']['ok']})")
@@ -652,13 +740,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/services/comfyui/config")
     def api_comfy_config(_=Depends(_require_auth)):
-        return get_provider("comfyui").config()
+        return providers.get_comfyui().config()
 
     @app.post("/api/services/comfyui/config")
     def api_comfy_set_config(body: ComfyConfigBody, _=Depends(_require_auth)):
         """Validate + persist config, regenerate the env file; restart if the
         service is running so the new args take effect."""
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         merged = {**p.config(), **body.model_dump(exclude_none=True)}
         try:
             cfg = p.validate_config(merged)
@@ -675,7 +763,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/models/comfyui")
     def api_comfy_models(_=Depends(_require_auth)):
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         return {"root": str(paths.COMFY_MODELS),
                 "categories": p.inventory()}
 
@@ -683,7 +771,7 @@ def create_app() -> FastAPI:
     def api_comfy_download(body: ComfyDownloadBody, _=Depends(_require_auth)):
         """Portal-side download into the right models/<category>/ folder —
         the file never touches the browser."""
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         try:
             dest_dir, dest = p.download_target(body.url, body.category,
                                                body.filename)
@@ -702,18 +790,42 @@ def create_app() -> FastAPI:
                                _=Depends(_require_auth)):
         """Upload a model file to staging, then run it through the same
         sniff → place → index pipeline as any other source."""
+        # One staging directory per request: the pid keeps two portal processes
+        # from sharing a name and the timestamp keeps two requests apart.
+        # time_ns() rather than int(time.time() * 1000) — same uniqueness, and no
+        # float-to-int conversion that a reader has to reason about.
         dest = (paths.STATE / "downloads" /
-                f"upload-{os.getpid()}-{int(time.time() * 1000)}")
-        dest.mkdir(parents=True, exist_ok=True)
-        p = dest / (file.filename or "upload.bin")
-        with open(p, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+                f"upload-{os.getpid()}-{time.time_ns()}")
+        # A multipart body carries a client-supplied filename, and writing an
+        # arbitrarily large model can fail on a full disk. Neither is the app's
+        # fault, and neither should surface as an unhandled 500 — nor leave a
+        # partial multi-GB upload behind in state/downloads, which is why the
+        # staging directory is removed on every failure path.
+        # basename() so a client cannot aim the write outside staging with a
+        # path in its filename field (verified: '../../etc/passwd' -> 'passwd').
+        name = Path(file.filename or "upload.bin").name
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            p = dest / name
+            with open(p, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+        except OSError as e:
+            _discard_upload(dest)
+            # A full disk is a machine condition and deserves its own status;
+            # anything else about the request is the client's to fix.
+            code = 507 if e.errno == errno.ENOSPC else 400
+            raise HTTPException(status_code=code,
+                                detail=f"could not store upload: {e}") from e
+        except ValueError as e:
+            _discard_upload(dest)
+            raise HTTPException(status_code=400,
+                                detail=f"invalid upload: {e}") from e
         job_id = updater.start_job(
             "model-add", p.name,
             lambda log: modeladd.add_model(
                 modeladd.parse_source(path=str(p)), log=log))
         if job_id is None:
-            shutil.rmtree(dest, ignore_errors=True)
+            _discard_upload(dest)
             raise _busy()
         db.event("portal", "model-add", f"upload {p.name}")
         return {"job": job_id, "path": str(p)}
@@ -820,14 +932,14 @@ def create_app() -> FastAPI:
     @app.get("/api/updates/llamacpp")
     def api_updates(_=Depends(_require_auth)):
         """Current release, repo head, known releases, and the last job."""
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         return p.update_status()
 
     @app.post("/api/updates/llamacpp/check")
     def api_update_check(_=Depends(_require_auth)):
         """Force a fresh upstream probe: one git fetch, then local counts of
         how far the deployed release is behind master and the latest tag."""
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         st = p.remote_state(force=True)
         db.event("portal", "update",
                  f"llamacpp: manual upstream check "
@@ -840,7 +952,7 @@ def create_app() -> FastAPI:
         """Start the build→stage→verify→swap→restart pipeline in the
         background; poll /api/jobs/{id} for progress. The click IS the
         confirmation (PORTAL_PLAN §6)."""
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         # busy first, validate second: whether the machine can take this at all
         # is the more useful answer, and preflight costs a git probe
         _refuse_if_busy()
@@ -864,7 +976,7 @@ def create_app() -> FastAPI:
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
         _refuse_if_busy(updater.DISRUPTIVE)
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         try:
             res = p.rollback(body.release, log=lambda m: print("[ai-portal]", m))
         except ValueError as e:
@@ -885,7 +997,7 @@ def create_app() -> FastAPI:
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
         _refuse_if_busy(updater.DISRUPTIVE)
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         if not hasattr(p, "delete_release"):
             raise HTTPException(status_code=501, detail="not supported for this service")
         try:
@@ -914,7 +1026,7 @@ def create_app() -> FastAPI:
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
         _refuse_if_busy(updater.DISRUPTIVE)
-        p = get_provider("llamacpp")
+        p = providers.get_llamacpp()
         try:
             res = p.purge_stray(body.release, log=lambda m: print("[ai-portal]", m))
         except ValueError as e:
@@ -929,13 +1041,13 @@ def create_app() -> FastAPI:
     @app.get("/api/updates/comfyui")
     def api_comfy_updates(_=Depends(_require_auth)):
         """Installed commit, upstream distance, recent commits, last job."""
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         return p.update_status()
 
     @app.post("/api/updates/comfyui/check")
     def api_comfy_update_check(_=Depends(_require_auth)):
         """Force a fresh ``git fetch`` and re-count commits behind master."""
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         st = p.remote_state(force=True)
         db.event("portal", "update",
                  f"comfyui: manual upstream check "
@@ -946,7 +1058,7 @@ def create_app() -> FastAPI:
     def api_comfy_update(body: ComfyUpdateBody, _=Depends(_require_auth)):
         """git pull --ff-only + venv requirements sync + restart, in the
         background; poll /api/jobs/{id} for progress."""
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         if not (paths.COMFY_REPO / ".git").exists():
             raise HTTPException(status_code=400,
                                 detail="ComfyUI repo not found")
@@ -966,7 +1078,7 @@ def create_app() -> FastAPI:
         if not body.confirm:
             raise HTTPException(status_code=400, detail="confirm required")
         _refuse_if_busy(updater.DISRUPTIVE)
-        p = get_provider("comfyui")
+        p = providers.get_comfyui()
         try:
             res = p.rollback(body.commit,
                              log=lambda m: print("[ai-portal]", m))
@@ -1171,10 +1283,17 @@ def create_app() -> FastAPI:
             return None, True
 
     def _ver_tuple(v: str | None) -> tuple:
+        """Version string as a comparable tuple; non-numeric segments sort as 0.
+
+        `int()` is guarded by `isdigit()`, which admits only pure-digit strings —
+        so this cannot raise, and the guard is what makes that true rather than
+        an accident of the inputs seen so far.
+        """
         if not v:
             return ()
         out = []
         for part in re.split(r"[.+-]", v):
+            # pi-lens-ignore: unchecked-throwing-call-python
             out.append(int(part) if part.isdigit() else 0)
         return tuple(out)
 
@@ -1182,7 +1301,7 @@ def create_app() -> FastAPI:
     def api_hf_status(force: bool = False, _=Depends(_require_auth)):
         """Versions of the hf CLI, the hub library (portal venv + OS python),
         cache stats, and whether PyPI has a newer huggingface-cli."""
-        p = get_provider("huggingface")
+        p = providers.get_huggingface()
         st = p.status()
         detail = st.detail or {}
 

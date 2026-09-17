@@ -135,6 +135,23 @@ def sniff_gguf(path) -> dict | None:
                     "tensor_count": tensor_count,
                     "organization": fields.get("general.organization") or None,
                     "quantized_by": fields.get("general.quantized_by") or None,
+                    # Architecture and quant are not enough to predict what a
+                    # model costs — the KV cache is a function of these, and for
+                    # hybrid models getting one number wrong overstates it 4×
+                    # (PORTAL_PLAN §4.9). Picked from the header rather than
+                    # guessed from the arch name, because arch names lie.
+                    "block_count": _as_int(_first(fields, ap, "block_count")),
+                    "embedding_length": _as_int(_first(fields, ap, "embedding_length")),
+                    "rope_dimension_count": _as_int(_first(fields, ap, "rope_dimension_count")),
+                    "full_attention_interval": _as_int(
+                        _first(fields, ap, "full_attention_interval", "attention.interval")),
+                    "attention_count": _as_int(_first(fields, ap, "attention.head_count")),
+                    "attention_kv_count": _as_int(_first(fields, ap, "attention.head_count_kv",
+                                                           "attention.kv_head_count")),
+                    "feed_length": _as_int(_first(fields, ap, "feed_length")),
+                    "is_moe": _as_bool(_first(fields, ap, "expert_count")) or None,
+                    "has_vision": bool(fields.get("mmproj")) or None,
+                    "raw": fields,
                 }
                 return out
             finally:
@@ -145,7 +162,41 @@ def sniff_gguf(path) -> dict | None:
 
 
 def _as_int(v):
-    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    """Coerce a GGUF numeric KV to int, or None if it is not one.
+
+    int() raises on inf/nan floats, and a single malformed header field must not
+    take down the scan of an entire model library."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        return int(v)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _as_bool(v):
+    """GGUF has no portable boolean in practice: some writers use int 0/1.
+    Returns None when absent so callers can tell 'no' from 'not stated'."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    return None
+
+
+def _first(fields: dict, prefix: str, *keys: str):
+    """First present key, each tried both with and without the arch prefix.
+
+    Architectures are inconsistent about namespacing: `qwen3next` writes
+    `full_attention_interval` unprefixed in some exports and prefixed in others,
+    and a missing value silently degrades a memory estimate to nonsense rather
+    than failing loudly. Trying both spellings is cheaper than being wrong.
+    """
+    for k in keys:
+        for cand in (prefix + k, k):
+            if cand in fields:
+                return fields[cand]
+    return None
 
 
 # ------------------------------------------------------------- safetensors

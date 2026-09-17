@@ -382,3 +382,72 @@ def test_ui_spec_pages_are_known(client):
     spec = json.loads((ROOT / "tests" / "ui" / "spec.json").read_text())
     for p in spec["pages"]:
         assert client.get(p["path"]).status_code in (200, 302), f"spec page {p['path']} is not served"
+
+
+def test_display_helpers_survive_the_values_the_machine_actually_sends():
+    """`_human`/`_dur`/`_ago` are Jinja filters over numbers that come from
+    timestamp arithmetic, cgroup counters and a JSON release registry — sources
+    that can produce NaN, inf, a string, or a key that is not there at all.
+
+    A display helper that raises is the worst place for it: one odd counter turns
+    the whole health page into a 500, which is exactly what these did before the
+    _num() guard. And `_human` used to fall out of its unit loop and emit a bare
+    str(float) for absurd sizes — 300 digits where a unit belonged.
+    """
+    from jinja2 import Undefined
+
+    from app.main import _ago, _dur, _human
+
+    for bad in (None, "", "abc", True, float("nan"), float("inf"),
+                Undefined(name="total_bytes")):
+        assert _human(bad) == "—", bad
+        assert _dur(bad) == "—", bad
+        assert _ago(bad) == "—", bad
+
+    # 0 is a real measurement, not a missing one, and the three disagree about
+    # it on purpose: "0 seconds ago" *is* "just now", while 0 bytes and 0 hours
+    # of age have nothing to show.
+    assert _dur(0) == "just now"
+    assert _human(0) == "—"
+
+    assert _human(512) == "512B"
+    assert _human(71 * 1024 ** 3) == "71.0G"
+    # Never a bare float: every answer carries a unit, however large.
+    huge = _human(1e308)
+    assert huge[-1].isalpha(), huge
+    assert len(huge) < 24, f"absurd size must not print {len(huge)} digits"
+    assert _dur(7200) == "2h 00m"
+    assert _ago(3.0) == "3h"
+
+
+def test_provider_accessors_are_typed_and_do_not_shadow_their_submodules():
+    """`providers.comfyui` used to be the accessor's name, which shadowed the
+    `app.providers.comfyui` submodule on the package namespace: `from
+    app.providers import comfyui` handed back a function and
+    `comfyui.ComfyUI` died with an AttributeError at import time. The accessors
+    are `get_*` for exactly that reason, and this pins the shape so a later
+    rename cannot quietly reintroduce it.
+    """
+    import importlib
+
+    from app import providers
+
+    for tool in ("llamacpp", "comfyui", "huggingface"):
+        # The submodule must remain reachable *as a module* — that is what broke
+        # first time: an accessor named `comfyui` replaced it on the package
+        # namespace, so `comfyui.ComfyUI` was an AttributeError on a function.
+        mod = importlib.import_module(f"app.providers.{tool}")
+        assert getattr(providers, tool) is mod, (
+            f"providers.{tool} must be the submodule, not an accessor")
+        accessor = getattr(providers, f"get_{tool}")
+        assert callable(accessor)
+
+    from app.providers.comfyui import ComfyUI
+    from app.providers.huggingface import HuggingFace
+    from app.providers.llamacpp import LlamaCpp
+
+    assert isinstance(providers.get_comfyui(), ComfyUI)
+    assert isinstance(providers.get_llamacpp(), LlamaCpp)
+    assert isinstance(providers.get_huggingface(), HuggingFace)
+    # get() keeps answering with the base type and None for an unknown key.
+    assert providers.get("nope") is None
