@@ -724,3 +724,68 @@ def test_ctxlen_filter_shape():
     # and never raise, whatever a GGUF header claimed
     for junk in ("nonsense", float("inf"), float("nan"), object(), True):
         assert isinstance(_ctxlen(junk), str)
+
+
+# ------------------------------------------- ctx_that_fits on a saturating curve
+def test_ctx_that_fits_uses_the_real_curve_not_a_one_token_slope():
+    """The bug this pins. `avail // kv_bytes_at(meta, 1)` treated KV as linear in
+    ctx. It is not: on a sliding-window model the layers under the window stop
+    growing once ctx passes it, so gemma-4 charges all 60 layers at ctx=1 and only
+    10 of them at ctx=262144. The one-token slope was therefore ~2x the true cost at
+    scale and capped this 31B model at 131072 while 84 GiB sat free and its entire
+    262144 cache costs 7 GiB. The error pointed the safe way, which is exactly why
+    it survived: an estimate that under-promises looks like caution, not a bug."""
+    gemma = {
+        "context_length": 262144, "block_count": 60, "embedding_length": 5376,
+        "attention_count_layers": [64] * 60,
+        "attention_kv_count_layers": [16] * 60,
+        "sliding_window": 1024,
+        "sliding_window_pattern": [True] * 5 + [False] + [True] * 4 + [False] + [True] * 49,
+    }
+    weights = 16 * GiB
+    # per-token cost must fall as ctx grows, or this test's premise is wrong.
+    # kv_bytes_at returns None when it cannot price a model, and a fixture that
+    # cannot be priced would make every assertion below pass vacuously on 0 — so
+    # the None case is a failure of the fixture, stated as one.
+    at_1 = mi.kv_bytes_at(gemma, 1)
+    at_262k = mi.kv_bytes_at(gemma, 262144)
+    assert at_1 and at_262k, "fixture is unpriceable; the estimator cannot see it"
+    assert at_262k / 262144 < at_1 / 1.5, \
+        "KV is not saturating; the fixture is not a window model"
+
+    got = mi.ctx_that_fits(gemma, weights, 108 * GiB)
+    assert got == 262144, f"expected the trained 262144, got {got}"
+
+
+def test_ctx_that_fits_still_respects_memory_on_a_dense_model():
+    """The fix must not become an excuse to be optimistic. A dense model's KV grows
+    linearly, so a small budget still has to produce a small context — and no
+    budget at all may exceed what it was trained for."""
+    dense = {"context_length": 262144, "block_count": 32, "embedding_length": 4096,
+             "attention_count": 32, "attention_kv_count": 8}
+    assert mi.ctx_that_fits(dense, 1 * GiB, 16 * GiB) == 65536
+    assert mi.ctx_that_fits(dense, 1 * GiB, 64 * GiB) == 262144
+    # infinite RAM does not buy context past training
+    assert mi.ctx_that_fits(dense, 1 * GiB, 1 << 50) == 262144
+    assert mi.ctx_that_fits(dense, 500 * GiB, 108 * GiB) == 0
+
+
+def test_ctx_that_fits_priced_at_the_trained_cap_when_it_sits_between_rungs():
+    """A model trained at 1000 tokens is not unloadable just because 1000 is not a
+    power of two. The ladder floors to 512; the direct price at the cap catches the
+    case the ladder would round away."""
+    dense = {"context_length": 1000, "block_count": 4, "embedding_length": 1024,
+             "attention_count": 8, "attention_kv_count": 1}
+    assert mi.ctx_that_fits(dense, 1 * GiB, 108 * GiB) == 512
+
+
+def test_ctx_that_fits_is_monotonic_in_budget():
+    """A budget increase that lowers the answer means two code paths disagree about
+    what fits, and the page would show one model getting worse as the box idled."""
+    dense = {"context_length": 262144, "block_count": 32, "embedding_length": 4096,
+             "attention_count": 32, "attention_kv_count": 8}
+    prev = 0
+    for e in range(30, 44):        # 1 GiB .. 8 TiB
+        got = mi.ctx_that_fits(dense, 1 * GiB, 1 << e)
+        assert got >= prev, f"budget 2^{e} gave {got} < previous {prev}"
+        prev = got

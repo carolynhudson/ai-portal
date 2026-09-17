@@ -207,37 +207,52 @@ def ctx_that_fits(meta: dict, weight_bytes: int, budget_bytes: int,
     personality to configure a context llama.cpp will not honour. The trained
     ceiling is the honest upper bound of what we would ever ask for.
     """
-    per = kv_bytes_at(meta, 1, dtype)
-    if per is None:
-        return 0
     avail = budget_bytes - weight_bytes - HEADROOM_BYTES
     if avail <= 0:
         return 0
-    # Round down to a power of two: contexts are configured in powers of two and
-    # an odd number invites a false "it fits" from an estimate that is only ±10%
-    # accurate. Bit_length avoids float log2, which loses precision on the big
-    # values a 108 GiB aperture produces.
-    ctx = avail // per
-    if ctx < 1 or not math.isfinite(ctx):
-        return 0
-    # ctx is a float whenever the dtype is fractional (q4_0 = 0.5 bytes). Floor it
-    # explicitly so the value handed to bit_length is an int and no conversion can
-    # raise on the way — the guard is the conversion, not a comment about it.
-    tokens = math.floor(ctx)
-    if tokens < 1:
-        return 0
-    fits = 1 << (tokens.bit_length() - 1)
+    trained = modelmeta._as_int(meta.get("context_length")) or 0
     # context_length comes straight out of a GGUF header, so it is attacker-shaped
     # and may be missing, negative, or a float. modelmeta._as_int is the one place
     # that decides what a header number means; reusing it avoids a second, laxer
     # opinion here.
-    trained = modelmeta._as_int(meta.get("context_length")) or 0
-    if trained >= 1:
-        # Round the trained ceiling down to a power of two too, so the answer is
-        # one configured value rather than an odd boundary.
-        cap = 1 << (trained.bit_length() - 1)
-        return min(fits, cap)
-    return fits
+    cap = 1 << (trained.bit_length() - 1) if trained >= 1 else 0
+
+    # Search the power-of-two ladder instead of dividing by a per-token slope.
+    #
+    # The slope is not constant, and the old `avail // kv_bytes_at(meta, 1)` assumed
+    # it was. On a sliding-window model the layers below the window stop growing
+    # once ctx passes it, so the marginal cost per token FALLS as ctx rises: gemma-4
+    # charges all 60 layers at ctx=1 and only 10 of them at ctx=262144, which made
+    # the 1-token slope roughly 2x the true cost at scale. That under-reported the
+    # context this box can address — it capped a 31B model at 131072 when it has
+    # 84 GiB free and needs 7 GiB for the whole 262144. The error was always in the
+    # pessimistic direction, so it looked like caution rather than a bug.
+    #
+    # The ladder is at most ~21 evaluations of kv_bytes_at, which is a closed-form
+    # sum over headers: cheap enough to run per row, and it can never be off by more
+    # than one doubling. `cap` bounds the search so a model cannot be offered more
+    # context than it was trained for.
+    lo = 0
+    hi = cap if cap >= 1 else 1 << 40
+    best = 0
+    ctx = 1
+    while ctx <= hi:
+        kv = kv_bytes_at(meta, ctx, dtype)
+        if kv is None:
+            return 0        # cannot price it at all: claim nothing
+        if kv <= avail:
+            best = ctx
+        else:
+            break           # KV grows with ctx, so nothing larger can fit
+        ctx <<= 1
+    if best == 0 and cap >= 1:
+        # Not even one token at the ladder floor, but the trained cap may itself
+        # sit between two rungs; price it directly so a small-context model is not
+        # reported as unloadable.
+        kv = kv_bytes_at(meta, cap, dtype)
+        if kv is not None and kv <= avail:
+            return cap
+    return best
 
 
 # ------------------------------------------------------------------- discovery
