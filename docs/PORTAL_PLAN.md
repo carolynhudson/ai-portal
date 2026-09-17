@@ -532,6 +532,38 @@ dtype buried in a formula is invisible; a dtype named in the row would have been
 caught on sight. So `kv_bytes()` takes the dtype as an argument and the index
 stores the dtype it assumed.
 
+**The formula above is the easy case, and it is incomplete.** Building N1
+exposed two header shapes the two-line version cannot express, both present on
+this box, and both got wrong before they were got right:
+
+* **Head counts are sometimes a per-layer array, not a scalar.** gemma4 writes
+  `attention.head_count_kv` as 60 entries (16 on full-attention layers, 4 on the
+  rest); laguna writes `head_count` as 48. Reading an array as a scalar yields
+  `None`, which silently drops the model from the estimate and reports it as
+  unknown — the failure is invisible because "unknown" is the honest-looking
+  answer. Laguna is a mixed case: scalar kv heads, per-layer query heads.
+* **Sliding-window layers cache their window, not the context.** gemma4 marks 50
+  of 60 layers sliding with `sliding_window: 1024`. Per-layer cost is therefore
+  `kv_heads(layer) × min(ctx, window(layer)) × head_dim × 2 × dtype`, summed.
+  Treating every layer as full-context priced gemma4's cache at **137.81 GiB for
+  a 16.4 GB model** — pessimistic enough to refuse a model that runs fine, which
+  is the same class of harm as underestimating it. With the window applied: **7.08
+  GiB**.
+
+And the interval still applies *underneath* an array: 48 entries with
+`full_attention_interval: 4` means 12 cached layers, not 48. Ignoring that is a
+4× overstatement, and the test that pins it asserts that a uniform 48-entry array
+prices identically to the scalar `2`.
+
+**One of the fixes for this was wrong in the other direction, and looked like
+progress.** Folding `ctx` out of the sum and dividing back — `kvh × window // ctx
+× …` — integer-divides first, so every sliding term became **0** and deleted 50 of
+60 layers from their own model's estimate. A 137 GiB overestimate became an
+underestimate, both plausible on screen. The only reason it was caught is that the
+expected number was worked out by hand before the code was trusted. Two lessons,
+then: work an example out before believing a fix, and make the test assert the
+number rather than a range, because a range will accommodate either mistake.
+
 Naive math would have looked at this box's 12 GB free and refused the 0.8 GB
 model — the very model that made today's smoke test pass. Estimates are only
 useful if they are *calibrated*: seed the constants from observed worker RSS
@@ -572,6 +604,36 @@ hypothesis nobody will ever re-test.
 
 **Phasing.** N1 reader + table + incremental scan (read-only, no UI).
 N2 memory math + the smoke query + tests. N3 models page.
+N4 presets personalities: generate → **show a diff** → apply through the existing
+gated restart job. N4 is the only step that writes anything the router reads, so
+it ships last and there is exactly one generator: `presets.ini`'s header says
+which tool wrote it, and `tools/phase1_build_model_tree.py` retires at that
+moment rather than continuing to disagree with it.
+
+**N1 + N2 landed 2026-09-16/17** (`bc2d76d`, `117f5a7`): `app/core/modelindex.py`
+with `model_index` in `portal.db`, `scan_library` (shards collapsed to whole
+models, incomplete sets and dangling symlinks reported as problems rather than
+silence), `kv_bytes_at` / `ctx_that_fits` / `est_total`, and `fits_query`.
+**24 tests** in `tests/test_modelindex.py`; full gate 354 passed, 1 skipped.
+Against the real library: **15 models, 0 problems**, Flash-Next correctly
+reported as 3 shards / 87.2 GiB whole (not the 49.8 GB shard), gemma-4-31B at
+27.5 GiB total instead of 158.3, and Laguna estimable for the first time.
+
+Three things worth keeping from N1, because they were not the plan's hard parts:
+
+* **`ctx_that_fits` is capped at the model's trained context.** Uncapped it said
+  8388608 tokens for the 87 GB model — true arithmetic, useless answer, because
+  past its trained context a model is not the model. `est_ctx` is now a power of
+  two at or below the header's `context_length`, so 0 means "never" and cannot be
+  confused with "unknown" (which is `est_total IS NULL`).
+* **An estimate that cannot be computed stays `NULL`, never 0.** `fits_query`
+  filters `est_total IS NOT NULL` precisely so that ignorance cannot win a
+  selection. Zero would sort a model to the front of "what fits".
+* **Only shard 1 carries the architecture.** Shards 2–3 of a split model parse as
+  valid GGUF with `arch=None`. Any probe that takes `glob("*.gguf")[0]` reads the
+  wrong file and concludes the reader is broken — which it did, twice, in this
+  session, at the reader's expense. `model_index.path` pointing at part 1 is
+  load-bearing, not a convention.
 N4 presets personalities: generate → **show a diff** → apply through the existing
 gated restart job. N4 is the only step that writes anything the router reads, so
 it ships last and there is exactly one generator: `presets.ini`'s header says
