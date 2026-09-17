@@ -7,6 +7,7 @@ the portal needs, and a phased build-out with the decision points we still
 need to settle.
 
 Companions:
+
 - `ENVIRONMENT.md` — pre-build audit, findings F1–F11
 - `UPDATES.md` — update matrix, health-pane inputs, download UX, layout rules
 - `PLAN.md` — the cleanup plan this portal builds on (done 2026-08-31)
@@ -37,7 +38,7 @@ all fifteen to be caught, so the suite cannot quietly stop testing.
 **Running right now — none of them loopback-only any more:**
 
 | Service | Unit | Bind | Verified |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Portal | `ai-portal` (installed + enabled, runs from `~/ai/ai-portal`) | `0.0.0.0:8090` | `curl http://192.168.1.228:8090/healthz` → 200 |
 | ComfyUI | `ai-comfyui` | `0.0.0.0:8188` | `curl http://192.168.1.228:8188/system_stats` → 200 |
 | llama.cpp router | `ai-llama-router` | wants `0.0.0.0:8080`, still on `127.0.0.1` **until restarted** | `pending_restart: true` in `/api/exposure` |
@@ -70,6 +71,7 @@ extra args configurable with no unit edits; `install_unit` backs up any unit it
 replaces into `state/rollback/units/`.
 
 **Phase J status:**
+
 1. ✅ `app/core/logsetup.py` — rotating `~/ai/logs/portal.log` (5 MB × 3), level
    via `AI_PORTAL_LOG_LEVEL` (`trace` allowed), `db.event()` mirrored into it.
 2. ⏸ *not done* — split `app/main.py` (~950 lines, 50 routes) into `app/api/`
@@ -102,6 +104,7 @@ and `systemctl --user enable --now` on an already-active unit is a no-op, so a
 deploy did not restart the service it had just replaced.
 
 **Env-file layout (all under `~/ai/config/`, managed by the Settings page):**
+
 - `ai-env.env` — read by **all three** units (ROCm `LD_LIBRARY_PATH` etc.) —
   `app/core/serviceenv.py`
 - `llamacpp.env` / `comfyui.env` / `portal.env` — per-service host/port
@@ -113,7 +116,7 @@ deploy did not restart the service it had just replaced.
 ## 1. Verified current state (post-cleanup)
 
 | Component | Location | State |
-|---|---|---|
+| --- | --- | --- |
 | Runtime root | `~/ai/` | bin, build, comfyui, config, llama.cpp, logs, models, releases, sdk, state |
 | Router service | `ai-llama-router` (systemd **user**) | active; `127.0.0.1:8080`; 14 models (13 local dirs + 1 HF-cache duplicate) |
 | Deployed binary | `~/ai/releases/llama.cpp-b10641` | v0.3.0-dev @ `539f24529`, ROCm + Vulkan, self-contained RPATH; symlink farm `~/ai/bin` (in `PATH`) |
@@ -138,7 +141,7 @@ excluded per your decision.)
 Short form of ENVIRONMENT.md F1–F11; each one pins a design rule:
 
 | Finding | Constraint the portal must respect |
-|---|---|
+| --- | --- |
 | F1/F2 router layout (source-verified) | Model store contract: `--models-dir` scanned **one level deep**; subdir = model id; inside it, flat files only — `mmproj*` → vision sidecar, `mtp-*`/`dspark-*`/`dflash-*` → draft (first wins); loose top-level `.gguf` = standalone model; **sub-subfolders are never scanned** |
 | F4 presets never applied | Per-model tuning *must* flow through `--models-preset`; section names must equal the router-produced model ids; only router-validated keys (`device`, `ctx-size`, `fit*`, `stop-timeout`, `load-on-startup`, `dedup-cache-models`, `model-draft`, `mmproj`, …) |
 | F3/F7 staging baked into RUNPATH | Deploys are atomic: build → stage to `~/ai/releases/<id>` → verify (`--version`, `ldd`, smoke) → swap `~/ai/bin` symlinks → keep previous release; never build in-place or dump into a shared bin dir |
@@ -172,6 +175,7 @@ Short form of ENVIRONMENT.md F1–F11; each one pins a design rule:
 ```
 
 Rules:
+
 - Every path derives from one constant (`AI_ROOT = ~/ai`); the constants in
   `tools/aiportal.py` move to `app/core/paths.py`.
 - Portal runs as a systemd **user** service (`ai-portal`) in its own
@@ -186,6 +190,7 @@ Rules:
 ## 4. Subsystems
 
 ### 4.1 Tool providers (the core abstraction)
+
 Each tool (llama.cpp, ComfyUI, Hugging Face) implements one interface:
 
 ```
@@ -202,6 +207,7 @@ config()   → read/propose validated config (e.g. presets.ini)
   (`huggingface_hub` scan/delete APIs), cache size reporting.
 
 ### 4.2 Model manager (llama)
+
 - **Inventory**: scan `~/ai/models/llama` per the §2 contract; record every
   file with path + size + content hash (incremental); flag orphans (files not
   referenced by any model dir), broken hardlinks, and near-duplicates.
@@ -233,6 +239,7 @@ config()   → read/propose validated config (e.g. presets.ini)
   rollback snapshot in `~/ai/state/rollback/`.
 
 ### 4.3 Service manager
+
 - Owns user units: `ai-llama-router` (exists), `ai-portal`, later `ai-comfyui`
   under `~/.config/systemd/user/`.
 - start / stop / restart / enable / tail (`journalctl --user -u … -f` streamed
@@ -269,6 +276,7 @@ Implementation: `app/core/serviceenv.py` + `ComfyUI.ensure_service()` /
 `GET|POST /api/services/comfyui/config`).
 
 ### 4.4 Update pipeline (productionizes phase-3/4)
+
 - **llama.cpp**: `git fetch` → build at a *pinned* ref in
   `~/ai/build/llama.cpp-<id>` (CMake args + Vulkan SDK auto-select already in
   `aiportal.py`) → `cmake --install` into `~/ai/releases/llama.cpp-<id>`
@@ -321,6 +329,7 @@ Implementation: `app/core/serviceenv.py` + `ComfyUI.ensure_service()` /
   "rebuild llama.cpp" / "sync ComfyUI venv".
 
 ### 4.5 Health & status pane (done 2026-09-14)
+
 Inputs (UPDATES.md §"health pane"): apt pending set, reboot-pending, ROCm
 version vs llama.cpp build vs ComfyUI torch, Vulkan SDK installed + latest,
 llama.cpp local vs `origin` (git ls-remote), deployed release id, router
@@ -370,6 +379,7 @@ apt simulation and a 580 GB `du` on the dashboard's hot path — §6.10); the co
 lives in `/api/health/detail` until the dashboard's polling is reworked.
 
 ### 4.6 State & history (SQLite)
+
 `~/ai/state/portal/portal.db` (WAL mode):
 `tools`, `releases` (tool, id, path, commit, sdk, created, active),
 `jobs` (kind, target, status, log), `downloads` (repo, files, placement),
@@ -388,7 +398,7 @@ itself.
 A personality is:
 
 | field | meaning |
-|---|---|
+| --- | --- |
 | `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. |
 | `models_max` | how many may be resident simultaneously — a hard router limit, not a hint |
 | per-model preset | backend, context policy, extras (§6.12's rubric) |
@@ -397,20 +407,20 @@ A personality is:
 
 Two worked shapes, from the user:
 
-* **Coding IDE** — a large model for planning/agentic work, a second for RAG, a
+- **Coding IDE** — a large model for planning/agentic work, a second for RAG, a
   third for autocomplete: `models_max = 3`, and the budget is the sum of those
   three, not of the three biggest files in the library. Autocomplete wants a
   small model on the fastest-reacting backend; the planner wants context.
-* **Agentic OS management** — one big model, `models_max = 1`, nothing else
+- **Agentic OS management** — one big model, `models_max = 1`, nothing else
   resident, so the entire budget goes to a single model's context.
 
 **Two personalities always exist and neither is editable in place:**
 
-* **`safe`** — minimal, nearly empty: the smallest known-good model,
+- **`safe`** — minimal, nearly empty: the smallest known-good model,
   `models_max = 1`. The thing to fall back to when a personality is misbehaving
   or a load just failed. If `safe` cannot start, the box is broken and the portal
   says so.
-* **`default`** — every llama model in the library, `models_max = 1`. Behaviour
+- **`default`** — every llama model in the library, `models_max = 1`. Behaviour
   is inherited from **global** preset values only; the per-model overrides a user
   can reach are the ones the portal deliberately exposes. Editing a personality
   must not be possible without going through a personality, because an unlisted
@@ -453,10 +463,10 @@ Sequencing: after B (service control) + D (gguf memory math).
 Two live bugs in one week had the same root cause: nothing in the portal knew
 what a model **is** or what it **costs**.
 
-* The smoke test picked `…-00001-of-00003.gguf` because it was the smallest
+- The smoke test picked `…-00001-of-00003.gguf` because it was the smallest
   *file* (11 MB) and failed a healthy build by asking for 37 GB — a shard is a
   fraction of a model, and the header describes the whole thing.
-* The models page lists names and sizes. It cannot answer "will this run here,
+- The models page lists names and sizes. It cannot answer "will this run here,
   at what context, on which backend, and what is it paired with?"
 
 `app/core/modelmeta.py` is already a partial port of `~/ai-projects/gguf-indexer`
@@ -484,6 +494,7 @@ CREATE TABLE model_index (
   scanned_at REAL, header_hash TEXT
 );
 ```
+
 `est_inputs` is not decoration. A derived number without the inputs that made it
 cannot be re-derived when the formula improves, and cannot be defended when it is
 wrong — which it will be at least sometimes (see the interval trap below).
@@ -502,7 +513,7 @@ The trap, measured on this machine's own models: `full_attention_interval: 4`
 means only every 4th layer keeps a KV cache. Counting all layers gives —
 
 | model | KV at trained ctx (262K) | naive, all layers |
-|---|---|---|
+| --- | --- | --- |
 | Qwen3.5-0.8B Q4_K_M (0.50 GiB) | **3.50 GiB** | 12.50 GiB (3.6× over) |
 | Qwen3.8-Flash-Next (94 GB, 48 L) | **6.00 GiB** | 24.00 GiB (4.0× over) |
 
@@ -554,20 +565,20 @@ moment rather than continuing to disagree with it.
 
 **Lessons carried over, deliberately:**
 
-* The indexer crashes on `os.stat()` of a dangling symlink — three exist in this
+- The indexer crashes on `os.stat()` of a dangling symlink — three exist in this
   library. Any scan of `~/ai/models` must treat "link that goes nowhere" as a
   first-class, reported state, not an exception.
-* Its parser skips tensor descriptors on purpose: the `gguf` library's per-tensor
+- Its parser skips tensor descriptors on purpose: the `gguf` library's per-tensor
   Python loop costs ~3.5 s/file where this costs 34 ms. Keep that decision.
-* Every rubric constant in it is annotated with *what was measured, when, and
+- Every rubric constant in it is annotated with *what was measured, when, and
   under what load*. Copy the habit, not just the numbers.
-* Auxiliary files (`mmproj-`, `mtp-`, `draft-`, `imatrix-`) are not models and
+- Auxiliary files (`mmproj-`, `mtp-`, `draft-`, `imatrix-`) are not models and
   always lose a naive size contest. The portal now agrees via one shared regex.
 
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
-|---|---|---|
+| --- | --- | --- |
 | Backend | FastAPI + uvicorn | async (long jobs, SSE log tail), typed, small |
 | Validation | pydantic v2 | request/config models, preset-key validation |
 | HF | `huggingface_hub` | download + cache prune APIs (already on system: 1.2.2 / 1.29.0) |
@@ -695,7 +706,7 @@ mutations are these geometries, one per way each rule can silently regress.
 Two dashboard complaints, one about noise and one about a control that could not
 survive its own success:
 
-* A Vulkan SDK path and a *host metrics* link sat stranded under the ComfyUI
+- A Vulkan SDK path and a *host metrics* link sat stranded under the ComfyUI
   hero card, outside its border. The nav already links Metrics, and the SDK path
   is inventory. The line now carries only the reboot badge, and only when a
   reboot is pending; the SDK inventory (Vulkan, ROCm, HIP) lives in the GPU
@@ -703,7 +714,7 @@ survive its own success:
   was also a row in the llama.cpp panel — it appears once now.
   `test_sdk_inventory_lives_in_the_gpu_tab` asserts it (against the *template*:
   a running ComfyUI log line can legitimately contain the word "vulkan").
-* The llama.cpp panel listed every build as its own row with its own rollback
+- The llama.cpp panel listed every build as its own row with its own rollback
   button — one more row per build, forever, each doing exactly one thing: be
   picked — while a dropdown next to it already did that job.
 
@@ -853,6 +864,7 @@ while the page still feels instant. Three things came out of measuring this one:
    branch. A probe that cannot fail loudly must at least be observed working.
 
 ### 6.11 Long actions, the venv question, and what a machine-specific Python stack
+
 means for `pip install -r requirements.txt` (2026-09-14)
 
 The report was "the ComfyUI update did nothing — no progress, nothing updated".
@@ -968,6 +980,28 @@ and onto the AMD TTM module itself**, into a dedicated file:
 in the **100–110 GiB band the owner identifies as the highest stable on this OS**
 — above it the box is not reliable, so this is not a knob to push further.
 
+**Why the fix was hard to find — and what actually causes the clamp.** The owner
+hit this over a week before it was solved, working Unsloth Desktop, a different
+Qwen model, and their own research. The mechanism they landed on: it appears
+**when there is enough RAM for the weights but not enough for the caches to run
+the model** — precisely a KV/score-cache allocation failing inside a loaded model,
+which is the phase `n_ctx_slot` is printed *before*. Community reports of the same
+clamp came from people on other models and smaller machines, with the same hint
+that it was an issue *during model initialisation under limited RAM*. That is
+corroborating rather than proven here, and it predicts something testable (§6.12.3).
+
+The aperture limit is the lever that *resolved* it: at the 64 GiB default a large
+model could still map its weights while leaving too little of the GPU's view for
+the caches. **The clamp is the useful signal, not the finding** — a model that
+loads and reports a context far below its trained length is a low-memory failure
+mode masquerading as a model defect. That is worth detecting, and it is a shape
+bigger than this one driver: any model, any machine, weights fitting and caches
+not. The portal should look for "context ≪ trained context", not for 64 GiB.
+
+The owner has seen it only on Qwen3.8-Flash-Next, and 64 GiB is **not** claimed to
+be a magic threshold: the same clamp should appear at any aperture where weights
+fit and caches do not.
+
 Consequences that follow from this and nothing else:
 
 - **The budget unit is GTT, not `MemAvailable` and not `rocm-smi` VRAM.** They
@@ -980,17 +1014,19 @@ Consequences that follow from this and nothing else:
 - **The fix is machine configuration, not repo state.** It lives in
   `/etc/modprobe.d/amdttm.conf`, is not in git, and a kernel/driver update or a
   lost modprobe file silently returns the box to 64 GiB — where the flagship model
-  loads and quietly reports 4096. An advisory for "GTT total < expected" is worth
-  adding to the health pane for exactly that reason.
+  loads and quietly reports 4096. `health.aperture_advisory()` now checks it: `bad`
+  at the 64 GiB default, `warn` below the expected 108 GiB, and `info` when the
+  aperture was probed but could not be read — three states deliberately not
+  collapsed, because "unknown" and "empty" are different answers.
 
 Measured 2026-09-16: `gtt_total` 108.00 GiB, `gtt_used` 71.07 GiB, `vram_total`
 0.50 GiB, `pages_limit` 25600000 (ttm) / 28311552 (amdttm).
 
 **There is no idle TTL.** Two eviction paths exist and both are demand-driven:
 
-* `unload_lru()` runs **inside the load path** — a loaded model is ejected when
+- `unload_lru()` runs **inside the load path** — a loaded model is ejected when
   *another* model needs the slot (`tools/server/server-models.cpp:1114`);
-* the scheduler's `tick()` evicts idle models **only while the request queue is
+- the scheduler's `tick()` evicts idle models **only while the request queue is
   non-empty** and queued requests outnumber free/freeing slots (`:348-383`).
 
 An idle model with an empty queue is never shed, however much the desktop wants
@@ -1086,7 +1122,7 @@ memory actually runs short is the only version of the experiment that answers th
 question honestly.
 
 | | |
-|---|---|
+| --- | --- |
 | `--list-models` | what it can see: shards collapsed to whole size, `mmproj-*`/`imatrix-*`/draft files dropped, dangling symlinks *reported* (two of them, which is what crashed the old indexer) |
 | `--dry-run` | the plan and the memory figure, writes nothing to the results tree (goes to `/tmp`) |
 | `--mini` | ~1 GB, **router untouched**: proves spawn-separation, `oom_score_adj`, sampling, event extraction, cleanup, reporting |
@@ -1154,7 +1190,7 @@ the context it settles on. `tools/fit_probe.py` does this in two minutes with th
 router up and the agent alive.
 
 | | free | `n_ctx_slot` | started? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | nothing held | 21.9 GB | **16384** | yes, generates |
 | 18 GB held | **3.8 GB** | **16384** | yes, generates |
 
@@ -1182,7 +1218,7 @@ python3 tools/ttl_oom_lab.py --background --full --yes
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
-|---|---|---|
+| --- | --- | --- |
 | A | Skeleton: uv project, `app/core/paths.py`, FastAPI, `portal.db`, read-only status page for all three providers | `systemctl --user start ai-portal`; status page shows router/models/releases |
 | B | Service manager: start/stop/restart for router + ComfyUI with confirm dialog, rollback note, audit event, per-bubble controls | stop/restart router from UI with confirm; rollback note written; ComfyUI controllable once its unit is installed |
 | C (done, 2026-09-03) | llama.cpp updater: full build→stage→verify→swap→restart pipeline + rollback button | one click bumps a release (no-op path proven by `tools/live_smoke.sh`); old release restorable |
