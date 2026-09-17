@@ -274,8 +274,15 @@ def test_a_kernel_that_wont_say_falls_back_to_assuming_modest():
 # when it exists, and it can never block an update when it does not.
 
 def _index_rows(monkeypatch, rows):
-    monkeypatch.setattr(L.modelindex, "fits_query",
-                        lambda need, limit=3: rows[:limit])
+    """Make modelindex.fits_query return `rows`.
+
+    Imported by name rather than reached through `L.modelindex`: same module object
+    (sys.modules identity), but the target of the patch is legible in one line
+    instead of depending on a re-export being visible to a static reader.
+    """
+    from app.core import modelindex
+    assert modelindex is L.modelindex, "patching a different module than the SUT"
+    monkeypatch.setattr(modelindex, "fits_query", lambda need, limit=3: rows[:limit])
 
 
 def test_index_order_beats_file_size_order(monkeypatch, library, tmp_path):

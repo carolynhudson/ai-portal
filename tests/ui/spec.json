@@ -479,6 +479,9 @@
       "expectStylesheets": [
         "/static/tabs.css"
       ],
+      "expectScrollContainers": [
+        "#library-table"
+      ],
       "tabGroups": [
         {
           "tabs": ".model-tab",

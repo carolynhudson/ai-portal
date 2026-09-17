@@ -330,6 +330,31 @@ for (const sel of spec.expectVisible || [])
 for (const sel of spec.expectAbsent || [])
   if (win.document.querySelector(sel)) fail(`element should not exist: ${sel}`);
 
+// A wide table on a narrow screen is only safe if something scrolls it. Without
+// this check a page can grow a fifth, sixth, seventh column and every existing
+// assertion still passes, because they all ask about elements and none asks about
+// width — and the failure only appears on a phone. The models library table is the
+// case that motivated it: arch, quant, size, trained ctx, layers, MoE and pairing
+// in one row. jsdom performs no layout, so the check is structural — the named
+// tables must sit directly inside an element the stylesheet makes scrollable, by
+// inline overflow or by the project's `scroll` class convention.
+for (const sel of spec.expectScrollContainers || []) {
+  const els = [...win.document.querySelectorAll(sel)];
+  if (!els.length) fail(`expected at least one scrollable table: ${sel}`);
+  for (const el of els) {
+    const wrap = el.parentElement;
+    if (!wrap) { fail(`table has no container to scroll it: ${sel}`); continue; }
+    const css = wrap.getAttribute("style") || "";
+    const cls = wrap.className || "";
+    const scrolls = /overflow(-x)?\s*:\s*(auto|scroll)/.test(css) || /\bscroll\b/.test(cls);
+    if (!scrolls) {
+        fail(`table is not inside a scroll container (would widen the page on a `
+           + `narrow viewport): ${sel} → <${wrap.tagName.toLowerCase()} `
+             + `class="${cls}">`);
+    }
+  }
+}
+
 // "Present but not showing" is a state of its own, and the one that matters for
 // a panel that only appears when there is something to act on: a row that never
 // hides is noise on every load, and a row that hides by never rendering takes
