@@ -16,7 +16,8 @@ from pathlib import Path
 import httpx
 
 from .base import Provider, ToolStatus
-from ..core import db, health, llamakey, paths, serviceconf, systemd, units, updater
+from ..core import (db, health, llamakey, modelindex, paths, serviceconf, systemd,
+                    units, updater)
 from ..core.modeladd import _AUX_PREFIX_RE   # what counts as a model: one opinion
 
 
@@ -866,11 +867,13 @@ class LlamaCpp(Provider):
         actually available, and a failure that says "could not allocate" is
         reported as the environment problem it is instead of blaming the build.
         """
-        cands = _model_candidates(paths.LLAMA_MODELS)
+        avail = _mem_available()
+        # Prefer the index: it orders by weights + estimated KV, not by file size,
+        # so the model it picks has room for the cache it is about to allocate.
+        cands = _indexed_candidates(avail, log) or _model_candidates(paths.LLAMA_MODELS)
         if not cands:
             log("no models on disk — skipping smoke worker")
             return
-        avail = _mem_available()
         fits = [c for c in cands if c[1] + _SMOKE_HEADROOM <= avail]
         too_big = cands[len(fits):]
         if too_big:
@@ -949,6 +952,44 @@ def _sz(n: float) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} TB"
+
+
+def _indexed_candidates(avail: int, log) -> list[tuple[Path, int, str]]:
+    """Candidates from the model index (§4.9 N2), ordered by what the model
+    actually costs rather than the size of its files.
+
+    The difference is the KV cache. A file-size gate asks whether the weights fit;
+    a worker also allocates a cache, and on a hybrid model at full context that is
+    a few GiB, which is exactly the margin a smoke test runs with. N1 measured
+    gemma-4-31B at 16.4 GiB of files and 27.5 GiB of total — a gate on the first
+    number picks a model that dies allocating cache, and the 4096-token clamp the
+    owner diagnosed is the same class of failure: enough for weights, not for
+    caches.
+
+    Returns [] when the index is empty or unreadable, so the caller falls back to
+    walking the directory. The index is an optimization here, not a dependency: a
+    stale or absent index must not be able to block an update.
+    """
+    try:
+        need = avail - _SMOKE_HEADROOM
+        if need <= 0:
+            return []
+        rows = modelindex.fits_query(need, limit=_SMOKE_ATTEMPTS * 3)
+    except Exception as e:  # noqa: BLE001 — any index problem means: walk instead
+        log(f"smoke worker: model index unavailable ({type(e).__name__}: {e}) "
+            f"— falling back to scanning the directory")
+        return []
+    out: list[tuple[Path, int, str]] = []
+    for r in rows:
+        p = Path(r["path"])
+        if not p.is_file():
+            # Index is newer than the disk. Skip rather than trust it.
+            continue
+        label = f"{r['id']} (indexed)"
+        if r.get("shard_total", 1) > 1:
+            label = f"{r['id']} ({r['shard_total']} parts, indexed)"
+        out.append((p, int(r.get("bytes") or 0), label))
+    return out
 
 
 def _model_candidates(models_dir: Path) -> list[tuple[Path, int, str]]:
