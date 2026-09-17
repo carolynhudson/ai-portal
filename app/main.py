@@ -18,6 +18,7 @@ from datetime import datetime
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -33,7 +34,7 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, modeladd, paths, systemd, updater
+from .core import db, health, modeladd, modelindex, paths, systemd, updater
 from . import providers
 from .providers import PROVIDERS, get as get_provider
 
@@ -368,6 +369,30 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     log.info("AI Portal %s: home=%s ai_root=%s state=%s",
              app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)
+
+    # The model index (§4.9 N1) has to actually exist for anything that reads it
+    # to work, and it must not be a table someone remembers to build by hand. It is
+    # created here and populated off the request path: a scan of ~15 headers is
+    # sub-second, but a scan of a library on a cold mount or a slow disk must not
+    # be able to stall a page load. Failures are logged and leave the index empty,
+    # which every reader already treats as "fall back to walking the disk".
+    def _index_startup() -> None:
+        try:
+            # _settings() is what runs db.init() (schema + first-run password),
+            # and it is idempotent. rescan() writes an `events` row, so it needs
+            # the base schema to exist first — calling it before the first request
+            # used to fail with "no such table: events", which silently left the
+            # index empty forever.
+            _settings()
+            modelindex.init()
+            r = modelindex.rescan()
+            log.info("model index: %s model(s), %s problem(s)",
+                     r["models"], len(r["problems"]))
+        except Exception:  # noqa: BLE001 — index absence is survivable by design
+            log.exception("model index scan failed; readers fall back to disk")
+
+    threading.Thread(target=_index_startup, daemon=True,
+                     name="model-index-startup").start()
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):

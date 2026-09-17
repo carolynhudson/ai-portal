@@ -282,6 +282,21 @@ def _write_fake_gguf(path: Path, kv: dict, *, pad: int = 0) -> None:
     path.write_bytes(hdr + bytes(out) + b"\0" * pad)
 
 
+def _append_kv_key(path: Path, key: str, value) -> None:
+    """Append one top-level (unprefixed) KV entry to a fixture GGUF.
+
+    _write_fake_gguf namespaces every key under the architecture, but some fields
+    GGUF defines are top-level — `mmproj` among them — and the reader looks those
+    up without a prefix. Bumping kv_count keeps the file parseable.
+    """
+    # Header is magic(4) version(4) tensor_count(8) kv_count(8) = 24 bytes, with
+    # kv_count at offset 16. Append "name + value" and bump the count by one.
+    raw = bytearray(path.read_bytes())
+    n = struct.unpack_from("<Q", raw, 16)[0]
+    struct.pack_into("<Q", raw, 16, n + 1)
+    path.write_bytes(bytes(raw) + _enc_str(key) + _enc_value(bool(value)))
+
+
 def test_scan_collapses_shards_to_one_model_with_total_size(tmp_path):
     """The smoke test once picked shard 1 of a 94 GB model because it was the
     smallest *file*. A shard is a fraction; the index stores the whole."""
@@ -431,3 +446,142 @@ def test_fits_query_prefers_the_smallest(tmp_path):
     mi.rescan(models_dir=root, budget_bytes=100 * GiB)
     fits = mi.fits_query(100 * GiB)
     assert [m["id"] for m in fits][:1] == ["Tiny"]
+
+
+# --------------------------------------------------- capability facts (N3)
+def test_moe_is_a_header_fact_with_its_active_count(tmp_path):
+    """`expert_used_count` is what turns MoE from a size fact into a latency fact:
+    8 active experts in a 256-expert model is a different machine than 256 dense."""
+    d = tmp_path / "llama" / "Moe"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "Moe.gguf", {
+        "block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+        "embedding_length": 256, "context_length": 4096,
+        "expert_count": 256, "expert_used_count": 8})
+    m = modelmeta.sniff_gguf(d / "Moe.gguf") or {}
+    assert m["expert_count"] == 256
+    assert m["expert_used_count"] == 8
+    assert m["is_moe"] is True
+
+
+def test_dense_model_is_not_moe(tmp_path):
+    d = tmp_path / "llama" / "Dense"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "Dense.gguf", {
+        "block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+        "embedding_length": 256, "context_length": 4096})
+    m = modelmeta.sniff_gguf(d / "Dense.gguf") or {}
+    assert m["expert_count"] is None
+    assert not m["is_moe"]
+
+
+def test_ssm_is_reported_as_state_not_as_a_verdict(tmp_path):
+    """Every qwen35 export carries ssm.* keys, including the dense ones, and none
+    carries ssm.count. So the field says "this header declares recurrent state" —
+    naming it `is_ssm` would invite reading it as "is a Mamba model", which is
+    wrong about half the qwen35 family on this box."""
+    d = tmp_path / "llama" / "Hybrid"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "Hybrid.gguf", {
+        "block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+        "embedding_length": 256, "context_length": 4096,
+        "ssm.conv_kernel": 4})
+    m = modelmeta.sniff_gguf(d / "Hybrid.gguf") or {}
+    assert m["has_ssm_state"] is True
+    assert "is_ssm" not in m, "the field is a fact, not a classification"
+
+
+def test_mmproj_and_claimed_vision_are_separate_facts(tmp_path):
+    """A model can claim vision and have lost its projector. Collapsing the header's
+    claim and the disk's reality into one column makes that invisible, and it is a
+    model that will behave differently from what the page says."""
+    # scan_library() takes the library root and treats each subdirectory as one
+    # model, so the model dir goes directly under tmp_path.
+    d = tmp_path / "Blind"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "Blind.gguf", {
+        "block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+        "embedding_length": 256, "context_length": 4096})
+    # `mmproj` is a top-level GGUF key, not an arch-prefixed one. Written through
+    # the fixture it would come out as `testarch.mmproj`, which the scanner does not
+    # recognise and the file stops being a model at all — so append it unprefixed.
+    _append_kv_key(d / "Blind.gguf", "mmproj", True)
+    models, problems = mi.scan_library(tmp_path)
+    assert problems == [], problems
+    assert len(models) == 1
+    m = models[0]
+    assert m.get("has_vision"), "the header claims it"
+    assert not m.get("has_mmproj"), "and the disk disagrees — recorded, not resolved"
+
+
+def test_a_real_projector_file_sets_has_mmproj(tmp_path):
+    """The other half: when the mmproj file is actually present, the disk agrees
+    with the header and the bytes are counted as a sidecar rather than as a second
+    model."""
+    d = tmp_path / "Vision"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "Vision.gguf", {
+        "block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+        "embedding_length": 256, "context_length": 4096})
+    (d / "mmproj-Vision.gguf").write_bytes(b"\0" * 4096)
+    models, problems = mi.scan_library(tmp_path)
+    assert len(models) == 1
+    m = models[0]
+    assert m["has_mmproj"]
+    assert m["mmproj_bytes"] == 4096
+    # and the projector is not added to the model's own weight size
+    assert m["bytes"] == (d / "Vision.gguf").stat().st_size
+
+
+def test_write_columns_and_schema_cannot_drift(tmp_path):
+    """The whole reason this table has a derived write list: a column added to the
+    row dict and forgotten in the schema stores NULL forever and reads as "this
+    model has no value for that". Adding a new fact must fail loudly instead."""
+    db.init()
+    conn = db._conn()
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    missing = [c for c in mi._WRITE_COLUMNS if c not in cols]
+    assert missing == [], f"_WRITE_COLUMNS has no table column for: {missing}"
+
+
+def test_an_old_table_is_migrated_not_fatal(tmp_path):
+    """CREATE TABLE IF NOT EXISTS does not widen a table that is already on disk,
+    so every column added since first deploy needs an ALTER. An upgrade must not
+    require deleting portal.db."""
+    db.init()
+    conn = db._conn()
+    conn.execute("DROP TABLE model_index")
+    conn.execute("""CREATE TABLE model_index (
+        id TEXT PRIMARY KEY, path TEXT, bytes INTEGER, shard_total INTEGER,
+        mmproj_bytes INTEGER, arch TEXT, name TEXT, quant TEXT,
+        ctx_trained INTEGER, layers INTEGER, kv_heads INTEGER,
+        attention_heads INTEGER, embedding_length INTEGER,
+        full_attention_interval INTEGER, rope_dimension_count INTEGER,
+        est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
+        est_inputs TEXT, scanned_at REAL, header_hash TEXT)""")
+    conn.commit()
+    before = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    assert "is_moe" not in before
+    mi.init()                       # must migrate, not raise
+    after = {r[1] for r in db._conn().execute("PRAGMA table_info(model_index)")}
+    assert set(mi._WRITE_COLUMNS) <= after, sorted(set(mi._WRITE_COLUMNS) - after)
+
+
+def test_a_column_name_that_cannot_exist_fails(tmp_path):
+    """The migration path adds what it can; what it cannot add is a bug in the
+    column list (typo, or absent from SCHEMA too). That must not become a NULL."""
+    db.init()
+    # ALTER TABLE will happily add a missing-but-legal column (that is the
+    # migration path), so the "cannot exist" case has to be a name ALTER rejects.
+    monkey_col = mi._WRITE_COLUMNS + ("not a valid column name",)
+    original = mi._WRITE_COLUMNS
+    try:
+        mi._WRITE_COLUMNS = monkey_col
+        try:
+            mi.init()
+        except RuntimeError as e:
+            assert "not a valid column name" in str(e)
+        else:
+            raise AssertionError("a bogus column name must fail the scan")
+    finally:
+        mi._WRITE_COLUMNS = original

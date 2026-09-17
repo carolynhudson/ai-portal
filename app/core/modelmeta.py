@@ -169,8 +169,43 @@ def sniff_gguf(path) -> dict | None:
                     "sliding_window_pattern": _as_boollist(
                         _first(fields, ap, "attention.sliding_window_pattern")),
                     "feed_length": _as_int(_first(fields, ap, "feed_length")),
+                    # Capability facts, all read from the header. §4.9 is explicit
+                    # that the table states facts and a personality states what it
+                    # wants — so nothing here is a verdict like "good for coding",
+                    # only things that are true of the weights.
+                    # Capability facts, read from the header rather than guessed
+                    # from the arch name or the filename. §4.9: the table states
+                    # facts and a personality says what it wants, so nothing here
+                    # is a verdict like "good for coding".
+                    #
+                    # MoE is `expert_count` > 1 (this box: 256 experts with
+                    # expert_used_count 8 on qwen35moe/qwen3next/qwen4exp/laguna).
+                    # `expert_used_count` is what makes an MoE a *latency* fact
+                    # rather than a size fact — 3B active in a 35B model is a
+                    # different machine than 35B dense at the same footprint.
+                    "expert_count": _as_int(_first(fields, ap, "expert_count")),
+                    "expert_used_count": _as_int(_first(fields, ap,
+                                                        "expert_used_count")),
                     "is_moe": _as_bool(_first(fields, ap, "expert_count")) or None,
+                    # SSM/recurrent: every qwen35-family export here carries
+                    # ssm.conv_kernel and ssm.state_size, including the dense ones,
+                    # and none carries ssm.count. So the honest statement is "this
+                    # header declares recurrent state", not "this is an SSM model";
+                    # the name says which. A future reader that treats True as
+                    # "is Mamba" will be wrong about qwen35.
+                    "has_ssm_state": bool(_first(fields, ap, "ssm.conv_kernel",
+                                                 "ssm.state_size")) or None,
+                    # Trained context is above. Vision is a property of the export,
+                    # not the arch — a vision model ships an mmproj beside it, which
+                    # is why the scanner (not the reader) is the one that can truly
+                    # set it. This field is the header's own claim, kept separate so
+                    # the two are not confused when they disagree.
                     "has_vision": bool(fields.get("mmproj")) or None,
+                    # Params are not stated by any header on this box. Left None
+                    # rather than back-computed from file size / quant, because that
+                    # would be a quiet second opinion baked into a fact column — and
+                    # a quant-aware size estimate is accurate to a factor of ~1.2,
+                    # which is not a parameter count. The page renders "—".
                     "raw": fields,
                 }
                 return out

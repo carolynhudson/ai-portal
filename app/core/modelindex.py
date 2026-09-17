@@ -375,6 +375,16 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
             "embedding_length": meta.get("embedding_length"),
             "full_attention_interval": meta.get("full_attention_interval"),
             "rope_dimension_count": meta.get("rope_dimension_count"),
+            "expert_count": meta.get("expert_count"),
+            "expert_used_count": meta.get("expert_used_count"),
+            "is_moe": meta.get("is_moe"),
+            "has_ssm_state": meta.get("has_ssm_state"),
+            # Vision is decided by what sits beside the model, not by the header:
+            # the mmproj is a separate file. `has_vision` is the header's own claim
+            # and `has_mmproj` is the disk's, so a model that claims vision but lost
+            # its projector shows up as the mismatch it is.
+            "has_vision": meta.get("has_vision"),
+            "has_mmproj": bool(side_bytes),
             "is_aux": False,
             "header_hash": _header_hash(head),
             "scanned_at": time.time(),
@@ -402,16 +412,127 @@ CREATE TABLE IF NOT EXISTS model_index (
   layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
   embedding_length INTEGER, full_attention_interval INTEGER,
   rope_dimension_count INTEGER,
+  expert_count INTEGER, expert_used_count INTEGER, is_moe INTEGER,
+  has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
   est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
   est_inputs TEXT,
   scanned_at REAL, header_hash TEXT
 );
 """
 
+# Columns written from a scan row, in INSERT order. Derived from one list rather
+# than maintained as three (schema, column list, value tuple): the last time that
+# was split up, a widening step silently matched nothing and the divergence hid
+# inside the abstraction written to prevent it (§ the imatrix regex). Adding a
+# fact now means adding it here and to SCHEMA; the row dict is checked against
+# this on every write, so a name that exists in one and not the other fails loudly
+# at scan time instead of storing NULL forever.
+_SCAN_COLUMNS = (
+    "id", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
+    "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
+    "embedding_length", "full_attention_interval", "rope_dimension_count",
+    "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
+    "has_vision", "has_mmproj", "scanned_at", "header_hash",
+)
+
+
+def _est_row(m: dict, est: dict, ctx: int) -> dict:
+    """A scan row plus its estimate, in column form."""
+    row = dict(m)
+    row.update({
+        "est_weights": est["weights"], "est_kv": est["kv"],
+        "est_total": est["total"], "est_ctx": ctx,
+        # Stored as JSON text so the inputs survive; parsed back by rows().
+        "est_inputs": json.dumps(est["est_inputs"]),
+    })
+    return row
+
+
+# Columns written on every scan, in INSERT order. Derived from one list rather
+# than maintained as three (schema / column list / value tuple) with nothing
+# checking that they agree: the last time that happened, a widening step matched
+# nothing, silently did nothing, and the divergence hid inside the abstraction
+# that was written to prevent it (the imatrix regex, §4.9 notes).
+_WRITE_COLUMNS = (
+    "id", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
+    "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
+    "embedding_length", "full_attention_interval", "rope_dimension_count",
+    "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
+    "has_vision", "has_mmproj",
+    "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs",
+    "scanned_at", "header_hash",
+)
+_EST_COLS = {"est_weights", "est_kv", "est_total", "est_ctx", "est_inputs"}
+
+
+def _safe_columns(cols: tuple[str, ...]) -> str:
+    """Join column names into a SQL fragment, rejecting anything but an identifier.
+
+    This is the only place table/column names are interpolated into SQL, and it
+    fails closed: a name that is not a bare identifier raises instead of being
+    embedded. Values never come through here — they are always `?` parameters — so
+    the dynamic surface of every statement in this module is a list of names this
+    function has already vouched for.
+    """
+    for c in cols:
+        if not (isinstance(c, str) and c.isidentifier() and not c.startswith("_")):
+            raise RuntimeError(f"model_index: unsafe column name {c!r}")
+    return ", ".join(cols)
+
+
+def _insert_sql() -> str:
+    """The INSERT, built once from _WRITE_COLUMNS via the allowlist above."""
+    return (f"INSERT OR REPLACE INTO model_index ({_safe_columns(_WRITE_COLUMNS)})"
+            f" VALUES ({', '.join('?' * len(_WRITE_COLUMNS))})")
+
+
+def _row_values(row: dict) -> list:
+    """Values for _insert_sql, positionally.
+
+    Raises on a column this row cannot fill. That is deliberate: a name present in
+    _WRITE_COLUMNS but absent from the scan row would otherwise store NULL forever
+    and look like "the model has no value for that", which is the exact silent
+    failure this function exists to prevent. Better a loud scan than a quiet NULL.
+    """
+    missing = [c for c in _WRITE_COLUMNS if c not in row]
+    if missing:
+        raise KeyError(f"model_index write: row is missing column(s): "
+                       f"{', '.join(missing)}")
+    return [row[c] for c in _WRITE_COLUMNS]
+
 
 def init() -> None:
     conn = db._conn()
     conn.executescript(SCHEMA)
+    # Column drift: SCHEMA gains a column, _WRITE_COLUMNS does not notice, and the
+    # write silently drops the field forever. Fail at startup instead.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    if not cols:  # first init before executescript committed the table
+        conn.executescript(SCHEMA)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    # A table already on disk keeps its old shape: CREATE TABLE IF NOT EXISTS does
+    # not widen it, so every column added after the first deploy needs an ALTER.
+    # Adding it here rather than raising means an upgrade just works; the columns
+    # are nullable and the next rescan fills them.
+    gap = [c for c in _WRITE_COLUMNS if c not in cols]
+    # _safe_columns() validates and joins; splitting its own output back apart
+    # would be silly, so validate each name with the same helper and use it raw.
+    # A name in _WRITE_COLUMNS that is not an identifier cannot reach ALTER.
+    for c in gap:
+        _safe_columns((c,))
+        conn.execute(f"ALTER TABLE model_index ADD COLUMN {c} INTEGER")
+    if gap:
+        conn.commit()
+    # Anything still missing is a name in _WRITE_COLUMNS that is not a column at
+    # all (typo, or not in SCHEMA either) — that is a bug, not an upgrade, and it
+    # would otherwise store NULL forever and read as "this model has no value".
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    still = [c for c in _WRITE_COLUMNS if c not in cols]
+    if still:
+        raise RuntimeError(
+            "model_index: _WRITE_COLUMNS names column(s) that are not in the "
+            f"table and could not be added: {', '.join(still)}. Add them to "
+            "SCHEMA, or remove them from _WRITE_COLUMNS.")
     conn.commit()
 
 
@@ -428,23 +549,16 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None) -> d
     budget = budget_bytes or _pool_bytes()
     conn = db._conn()
     conn.execute("DELETE FROM model_index")
+    # Built once, outside the loop. The string interpolation inside is over
+    # _WRITE_COLUMNS — a module-level tuple of literal identifiers, validated by
+    # _insert_sql() itself — and every value goes in as a `?` parameter. Hoisting
+    # it also makes the shape obvious here: no model data reaches the SQL text.
+    insert = _insert_sql()
     for m in models:
         meta = m.pop("_meta")
         est = est_total(meta, m["bytes"], m.get("ctx_trained") or 4096)
         fits = ctx_that_fits(meta, m["bytes"] + m.get("mmproj_bytes", 0), budget)
-        conn.execute(
-            "INSERT OR REPLACE INTO model_index (id, path, bytes, shard_total,"
-            " mmproj_bytes, arch, name, quant, ctx_trained, layers, kv_heads,"
-            " attention_heads, embedding_length, full_attention_interval,"
-            " rope_dimension_count, est_weights, est_kv, est_total, est_ctx,"
-            " est_inputs, scanned_at, header_hash)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (m["id"], m["path"], m["bytes"], m["shard_total"], m["mmproj_bytes"],
-             m["arch"], m["name"], m["quant"], m["ctx_trained"], m["layers"],
-             m["kv_heads"], m["attention_heads"], m["embedding_length"],
-             m["full_attention_interval"], m["rope_dimension_count"],
-             est["weights"], est["kv"], est["total"], fits,
-             json.dumps(est["est_inputs"]), m["scanned_at"], m["header_hash"]))
+        conn.execute(insert, _row_values(_est_row(m, est, fits)))
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM model_index").fetchone()[0]
     db.event("portal", "model-index",
