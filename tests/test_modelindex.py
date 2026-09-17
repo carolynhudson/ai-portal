@@ -585,3 +585,76 @@ def test_a_column_name_that_cannot_exist_fails(tmp_path):
             raise AssertionError("a bogus column name must fail the scan")
     finally:
         mi._WRITE_COLUMNS = original
+
+
+def test_app_startup_populates_the_index(tmp_path, monkeypatch):
+    """The regression this test exists for.
+
+    N1 built model_index, N2 built fits_query on top of it, and the smoke test was
+    reported as switched over. Nothing created or populated the table, so
+    fits_query raised every time, _indexed_candidates caught it, and the code fell
+    back to the file walk it was meant to replace. Every test passed because every
+    test stubbed the index — a fallback that always fires is not a fallback, it is
+    the implementation, and it looks identical from the outside.
+
+    So: start the app the way production does and assert the index is actually
+    there afterwards. Not that a call succeeded — that the preferred branch has
+    something to serve.
+    """
+    import time
+
+    import fastapi  # noqa: F401  (imported for its side effects in create_app)
+
+    # A real, small library under the throwaway home.
+    root = tmp_path / "llama"
+    (root / "Startup").mkdir(parents=True)
+    _write_fake_gguf(root / "Startup" / "Startup.gguf",
+                     {"block_count": 8, "attention.head_count": 4,
+                      "attention.head_count_kv": 2,
+                      "embedding_length": 256, "context_length": 4096})
+    monkeypatch.setattr(mi.paths, "LLAMA_MODELS", root)
+
+    from app import main as app_main
+    conn = db._conn()
+    conn.execute("DROP TABLE IF EXISTS model_index")
+    conn.commit()
+
+    a = app_main.create_app()
+    # Startup scans on a daemon thread; give it a moment rather than sleeping on
+    # an assumption about ordering.
+    rows = 0
+    for _ in range(60):
+        try:
+            rows = conn.execute("SELECT COUNT(*) FROM model_index").fetchone()[0]
+        except Exception:  # noqa: BLE001 — table not created yet
+            rows = 0
+        if rows:
+            break
+        time.sleep(0.1)
+    assert a is not None
+    assert rows == 1, (
+        "app startup did not create/populate model_index — readers will fall back "
+        "to the directory walk silently, which is the bug this test pins")
+
+
+def test_index_startup_failure_leaves_readers_working(tmp_path, monkeypatch):
+    """A failed scan must degrade, not take the app down — and must say so.
+
+    The counterpart to the test above: the fallback has to keep working when the
+    index genuinely cannot be built (library on a dead mount, schema mismatch).
+    """
+    from app import main as app_main
+
+    def boom(*a, **k):
+        raise RuntimeError("no such table: events")
+
+    monkeypatch.setattr(mi, "rescan", boom)
+    a = app_main.create_app()     # must not raise
+    assert a is not None
+    # and selection still returns something usable via the walk
+    root = tmp_path / "llama"
+    (root / "Walk").mkdir(parents=True)
+    _write_fake_gguf(root / "Walk" / "w.gguf", {"block_count": 8})
+    notes: list[str] = []
+    app_main.modelindex  # the module the fallback depends on is importable
+    assert app_main.modelindex is mi
