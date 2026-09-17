@@ -634,11 +634,44 @@ Three things worth keeping from N1, because they were not the plan's hard parts:
   wrong file and concludes the reader is broken — which it did, twice, in this
   session, at the reader's expense. `model_index.path` pointing at part 1 is
   load-bearing, not a convention.
-N4 presets personalities: generate → **show a diff** → apply through the existing
-gated restart job. N4 is the only step that writes anything the router reads, so
-it ships last and there is exactly one generator: `presets.ini`'s header says
-which tool wrote it, and `tools/phase1_build_model_tree.py` retires at that
-moment rather than continuing to disagree with it.
+
+**Unlock #1 was reported as shipped before it could run** (`5d6e57b` corrects
+this). N1 created the table and N2 created `fits_query` on top of it, and I called
+that the smoke test being fixed. Nothing created or populated `model_index`: on the
+deployed database it was absent from `sqlite_master`, so `_indexed_candidates`
+threw on every call, hit its own `except`, and fell back to the file walk it was
+meant to replace. The improvement was dead code behind a fallback that always
+fired, and it passed every test I had — because those tests stubbed the index.
+
+**A fallback that always fires is not a fallback, it is the implementation.**
+Graceful degradation is precisely the mechanism that makes "silently does nothing"
+indistinguishable from "working", so anything with a fallback needs a check on
+*which branch ran*, not just that the call returned. Wiring the index into app
+startup (a daemon thread, off the request path) immediately exposed a second bug
+the old code would have swallowed: `rescan()` writes an `events` row, and the base
+schema is created lazily by `_settings()`, so before the first request it failed
+with `no such table: events`. Now: `journalctl --user -u ai-portal` shows
+`model index: 15 model(s), 0 problem(s)`, and the production DB has 15 rows.
+
+**Capability facts added for N3**, all read from headers rather than guessed from
+arch or filename: `expert_count`, `expert_used_count`, `is_moe`, `has_ssm_state`,
+`has_vision`, `has_mmproj`. Three of those carry a decision worth keeping:
+
+* **`expert_used_count` is what makes MoE a latency fact instead of a size fact.**
+  8 active experts in a 256-expert model is a different machine than 256 dense at
+  the same footprint. This box: 6 MoE models, 256–512 experts, 8–10 active.
+* **The SSM column is `has_ssm_state`, not `is_ssm`.** Every qwen35-family export
+  here carries `ssm.conv_kernel` and `ssm.state_size` — *including the dense ones*
+  — and none carries `ssm.count`. A column named `is_ssm` would be read as "is a
+  Mamba model", which is false about half the qwen35 family. The field states what
+  the header states and nothing more.
+* **`has_vision` (the header's claim) and `has_mmproj` (the disk's) are separate
+  columns.** "Claims vision, lost its projector" is a real state; collapsing the
+  two would report it as one or the other and hide the mismatch.
+
+Params are absent from every header on this box and stay `NULL`. Back-computing
+them from file size and quant would bake a ~1.2× guess into a column that reads
+like a fact — the exact category error §4.9 warns about. The page renders "—".
 
 **Lessons carried over, deliberately:**
 
