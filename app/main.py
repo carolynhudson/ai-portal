@@ -517,6 +517,12 @@ def create_app() -> FastAPI:
         rp = systemd.reboot_pending()
         behind = _llama_behind()
         disk = metrics.disk()
+        # The aperture, not rocm-smi's VRAM: on an iGPU the latter is a ~512 MiB
+        # stub while the models live in ~108 GiB of GTT (§6.12.0). This is the
+        # pool a model either fits into or does not.
+        g = health.gpu_aperture()
+        gpu_mem = (f"{_human(g.get('pool_used'))} / {_human(g.get('pool_total'))}"
+                   if g and g.get("pool_total") else "—")
         bundle = {
             "reboot_required": rp.get("reboot_required", False),
             "vulkan_sdk": str(paths.VULKAN_SDK).replace(str(paths.HOME), "~"),
@@ -525,6 +531,7 @@ def create_app() -> FastAPI:
             "llama_behind": behind.get("behind", "—"),
             "ai_disk": f"{_human(disk.get('ai', {}).get('used'))} / {_human(disk.get('ai', {}).get('total'))}" if disk.get("ai") else "—",
             "root_disk": f"{_human(disk.get('root', {}).get('used'))} / {_human(disk.get('root', {}).get('total'))}" if disk.get("root") else "—",
+            "gpu_mem": gpu_mem,
         }
         return bundle
 
