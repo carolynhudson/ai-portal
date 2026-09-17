@@ -145,9 +145,29 @@ def sniff_gguf(path) -> dict | None:
                     "rope_dimension_count": _as_int(_first(fields, ap, "rope_dimension_count")),
                     "full_attention_interval": _as_int(
                         _first(fields, ap, "full_attention_interval", "attention.interval")),
+                    # Head counts are sometimes a per-layer ARRAY rather than a
+                    # scalar: gemma4 writes head_count_kv as 64 entries (16 or 4,
+                    # sliding-window vs full-attention layers) and laguna writes
+                    # head_count as 48. That is real hardware diversity, not missing
+                    # data, and reading it as None silently drops the model from the
+                    # memory estimate. kv_heads_total is the sum across layers —
+                    # exactly the quantity the KV cache is proportional to — so the
+                    # estimator adds one term per layer instead of assuming they match.
                     "attention_count": _as_int(_first(fields, ap, "attention.head_count")),
                     "attention_kv_count": _as_int(_first(fields, ap, "attention.head_count_kv",
                                                            "attention.kv_head_count")),
+                    "attention_kv_count_layers": _as_intlist(
+                        _first(fields, ap, "attention.head_count_kv",
+                               "attention.kv_head_count")),
+                    "attention_count_layers": _as_intlist(
+                        _first(fields, ap, "attention.head_count")),
+                    # Sliding-window layers cache their window, not the whole
+                    # context. Without these two the per-layer sum treats 50 of
+                    # gemma4's 60 layers as full-context and reports 137 GiB of KV
+                    # for a 16 GB model.
+                    "sliding_window": _as_int(_first(fields, ap, "attention.sliding_window")),
+                    "sliding_window_pattern": _as_boollist(
+                        _first(fields, ap, "attention.sliding_window_pattern")),
                     "feed_length": _as_int(_first(fields, ap, "feed_length")),
                     "is_moe": _as_bool(_first(fields, ap, "expert_count")) or None,
                     "has_vision": bool(fields.get("mmproj")) or None,
@@ -172,6 +192,40 @@ def _as_int(v):
         return int(v)
     except (ValueError, OverflowError):
         return None
+
+
+def _as_boollist(v) -> list[bool] | None:
+    """A GGUF array of booleans, else None. GGUF writers differ on whether a
+    boolean array arrives as Python bools or as 0/1 ints, so both are accepted."""
+    if not isinstance(v, (list, tuple)) or not v:
+        return None
+    out = []
+    for item in v:
+        if isinstance(item, bool):
+            out.append(item)
+        elif isinstance(item, int) and item in (0, 1):
+            out.append(bool(item))
+        else:
+            return None
+    return out
+
+
+def _as_intlist(v) -> list[int] | None:
+    """A GGUF array of numbers as a list of ints, else None.
+
+    Returns None (not []) when the value is a scalar or absent, so callers can
+    tell "this arch declares a per-layer value" from "this arch declares one
+    number for every layer" — the two need different arithmetic.
+    """
+    if not isinstance(v, (list, tuple)) or not v:
+        return None
+    out = []
+    for item in v:
+        n = _as_int(item)
+        if n is None:
+            return None
+        out.append(n)
+    return out
 
 
 def _as_bool(v):

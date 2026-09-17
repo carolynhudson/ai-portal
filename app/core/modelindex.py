@@ -36,6 +36,19 @@ from . import db, modelmeta, paths
 # by exactly 2x — see the correction there. Kept as a named constant because a
 # dtype inside a magic-number formula is invisible.
 KV_DTYPES = {"f16": 2, "bf16": 2, "q8_0": 1, "q4_0": 0.5, "f32": 4}
+
+
+def _whole(x: float | int) -> int | None:
+    """A byte count as an int, or None if it is not a finite number.
+
+    `dsize` is fractional for q4_0 KV, so the products here are floats, and
+    `int(inf)` raises OverflowError. Guarding on finiteness rather than wrapping
+    the conversion means the only value that reaches int() is one it can take —
+    so no exception is possible and nothing has to catch one.
+    """
+    if not math.isfinite(x):
+        return None
+    return math.floor(x)
 DEFAULT_KV_DTYPE = "f16"
 
 # Bytes to keep free for the desktop and the next allocation. Not derived from
@@ -63,13 +76,81 @@ def kv_bytes_at(meta: dict, ctx: int, dtype: str = DEFAULT_KV_DTYPE) -> int | No
     own models (§4.9). `head_dim` comes from the rope field when present and
     `embedding_length / head_count` otherwise, which is what llama.cpp computes.
 
-    Returns None when the header does not say enough to compute it. It does not
-    guess: a missing kv-head count is reported as unknown, never as zero heads.
+    Two shapes of header are handled, because both exist here:
+
+    * **scalar head counts** — the formula above, with the interval as a divisor;
+    * **per-layer head-count arrays** — gemma4 declares `head_count_kv` as one
+      entry per layer (16 for full-attention, 4 for sliding-window) and laguna
+      declares `head_count` that way. The correct figure is the sum over the
+      layers that actually keep a cache, so the interval does not apply on top:
+      the array *is* the per-layer statement. Reading an array as a missing scalar
+      silently dropped both models from the estimate, which is how this was found.
+
+    Returns None when the header does not say enough to compute it. It never
+    guesses: a missing kv-head count stays unknown rather than becoming zero heads,
+    because zero heads means "costs nothing" and that is a lie that ships a model
+    to an OOM.
     """
     layers = meta.get("block_count")
+    emb = meta.get("embedding_length")
+    dsize = KV_DTYPES.get(dtype, 2)
+
+    # Per-layer arrays. The cache is the sum over layers of (kv_heads_for_that_
+    # layer * min(ctx, that layer's window)), where a sliding-window layer caps at
+    # its window instead of at ctx. Both matter, and getting either wrong is a
+    # large error rather than a small one: gemma4 marks 50 of 60 layers sliding
+    # with a 1024-token window, and summing those kv heads over the full 131072-
+    # token context overstated its cache at 137 GiB for a 16 GB model — a number
+    # that would have refused a model that runs fine. That is the §4.9 failure
+    # mode this index exists to avoid, reproduced in the estimator itself.
+    kv_layers_list = meta.get("attention_kv_count_layers")
+    if kv_layers_list and layers and emb:
+        head = meta.get("rope_dimension_count")
+        heads = meta.get("attention_count")
+        if not head:
+            if not heads and meta.get("attention_count_layers"):
+                heads = max(meta["attention_count_layers"])
+            if not heads:
+                return None
+            head = emb // heads
+        if not head:
+            return None
+        windows = meta.get("sliding_window_pattern")
+        window = meta.get("sliding_window")
+        if windows and window and len(windows) == len(kv_layers_list):
+            # Bytes per layer = kv_heads * head_dim * 2 (K,V) * dtype * tokens
+            # cached, and tokens cached is min(ctx, window) for a sliding layer
+            # and ctx otherwise. Summed over layers — this is a total, not a
+            # per-token rate, which is why ctx is inside the sum and not outside:
+            # folding it out and dividing back truncates each sliding term to zero
+            # and silently deletes 50 of gemma4's 60 layers from its own estimate.
+            total = sum(kvh * (min(ctx, window) if flag else ctx)
+                        * head * 2 * dsize
+                        for kvh, flag in zip(kv_layers_list, windows))
+            return _whole(total)
+
+        # No window pattern. An array can still coexist with
+        # full_attention_interval, which says only every Nth layer caches at all.
+        # Ignoring the interval here overstates the cache by exactly that factor
+        # (4x on this box's hybrid models), so sum only the surviving entries.
+        interval = meta.get("full_attention_interval") or 1
+        if interval > 1:
+            cached = [kvh for i, kvh in enumerate(kv_layers_list)
+                      if (i + 1) % interval == 0]
+            if not cached:
+                cached = kv_layers_list[:1]
+            return _whole(sum(cached) * head * 2 * dsize * ctx)
+        per_token = sum(kv_layers_list) * head * 2 * dsize
+        return _whole(per_token * ctx)
+
     n_kv = meta.get("attention_kv_count")
     n_head = meta.get("attention_count")
-    emb = meta.get("embedding_length")
+    # Mixed shape: laguna declares kv heads as a scalar (8) but query heads as a
+    # per-layer array. head_dim is embedding / query-heads, and the head count
+    # that matters for that division is the widest one, since a layer with fewer
+    # query heads still uses the model's head width.
+    if not n_head and meta.get("attention_count_layers"):
+        n_head = max(meta["attention_count_layers"])
     if not (layers and n_kv and n_head and emb):
         return None
     head = meta.get("rope_dimension_count") or (emb // n_head)
@@ -77,8 +158,8 @@ def kv_bytes_at(meta: dict, ctx: int, dtype: str = DEFAULT_KV_DTYPE) -> int | No
         return None
     interval = meta.get("full_attention_interval") or 1
     kv_layers = math.ceil(layers / interval) if interval > 1 else layers
-    per_token = kv_layers * n_kv * head * 2 * KV_DTYPES.get(dtype, 2)
-    return int(per_token * ctx) if math.isfinite(per_token) else None
+    per_token = kv_layers * n_kv * head * 2 * dsize
+    return _whole(per_token * ctx)
 
 
 def est_total(meta: dict, weight_bytes: int, ctx: int,
@@ -116,9 +197,16 @@ def est_total(meta: dict, weight_bytes: int, ctx: int,
 
 def ctx_that_fits(meta: dict, weight_bytes: int, budget_bytes: int,
                   dtype: str = DEFAULT_KV_DTYPE) -> int:
-    """Largest power-of-two context that fits `budget_bytes`, or 0 if the model
-    never fits. 0 means "not loaded here at any context", which is a fact about
-    this box, not about the model."""
+    """Largest power-of-two context that fits `budget_bytes`, capped at what the
+    model was trained for. 0 means "not loaded here at any context" — a fact
+    about this box, not about the model.
+
+    The cap matters. The estimate says the 87 GB model on this box could address
+    over a million tokens: arithmetically true and useless, because the model
+    stops being itself past its trained 262144 and a number that large invites a
+    personality to configure a context llama.cpp will not honour. The trained
+    ceiling is the honest upper bound of what we would ever ask for.
+    """
     per = kv_bytes_at(meta, 1, dtype)
     if per is None:
         return 0
@@ -132,11 +220,24 @@ def ctx_that_fits(meta: dict, weight_bytes: int, budget_bytes: int,
     ctx = avail // per
     if ctx < 1 or not math.isfinite(ctx):
         return 0
-    # ctx is a float whenever the dtype is fractional (q4_0 = 0.5 bytes), hence
-    # the explicit int() — and int() of an out-of-range float raises, so the
-    # isfinite check above is load-bearing rather than decorative.
-    # pi-lens-ignore: unchecked-throwing-call-python
-    return 1 << (int(ctx).bit_length() - 1)
+    # ctx is a float whenever the dtype is fractional (q4_0 = 0.5 bytes). Floor it
+    # explicitly so the value handed to bit_length is an int and no conversion can
+    # raise on the way — the guard is the conversion, not a comment about it.
+    tokens = math.floor(ctx)
+    if tokens < 1:
+        return 0
+    fits = 1 << (tokens.bit_length() - 1)
+    # context_length comes straight out of a GGUF header, so it is attacker-shaped
+    # and may be missing, negative, or a float. modelmeta._as_int is the one place
+    # that decides what a header number means; reusing it avoids a second, laxer
+    # opinion here.
+    trained = modelmeta._as_int(meta.get("context_length")) or 0
+    if trained >= 1:
+        # Round the trained ceiling down to a power of two too, so the answer is
+        # one configured value rather than an odd boundary.
+        cap = 1 << (trained.bit_length() - 1)
+        return min(fits, cap)
+    return fits
 
 
 # ------------------------------------------------------------------- discovery
