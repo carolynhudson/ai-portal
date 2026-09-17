@@ -86,13 +86,49 @@
 </div>
 
 <div class="card">
-  <h3>Disk store — {{ diskroot }} ({{ disk|length }} dirs)</h3>
+  <h3>Library — {{ diskroot }} ({{ indexed|length }} model{{ "" if indexed|length == 1 else "s" }})</h3>
+  {# Facts from the GGUF header, not the filename (§4.9 Phase N). One row per
+     loadable model: shards are collapsed and `size` is the whole set, because a
+     shard is a fraction and the old listing said otherwise. The last column is
+     the one the old page could not answer — can it run *here* — and it reads off
+     the GPU aperture, not free RAM (§6.12.0). #}
+  <p class="mut" style="margin:.2rem 0 .8rem">one row per model · size is all shards summed ·
+    “fits” is against the {{ pool_h }} GPU aperture at the model’s trained context</p>
+  <div class="scroll">
   <table>
-    <tr><th>dir (model id)</th><th>.gguf files</th><th>size</th></tr>
-    {% for m in disk %}
-    <tr><td class="mono">{{ m.id }}</td><td>{{ m.files }}</td><td class="mono">{{ m.size_h }}</td></tr>
+    <tr>
+      <th>model id</th><th>arch</th><th>quant</th><th>size</th>
+      <th>ctx (trained)</th><th>layers</th><th>MoE</th><th>paired</th>
+      <th>fits here</th>
+    </tr>
+    {% for m in indexed %}
+    <tr>
+      <td class="mono">{{ m.id }}</td>
+      <td class="mono">{{ m.arch or "—" }}</td>
+      <td class="mono">{{ m.quant or "—" }}</td>
+      <td class="mono">{{ m.bytes | sz }}{% if m.shard_total > 1 %} <span class="mut">({{ m.shard_total }} shards)</span>{% endif %}</td>
+      <td class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</td>
+      <td class="mono">{{ m.layers if m.layers is not none else "—" }}{% if m.full_attention_interval %}<span class="mut">/​{{ m.full_attention_interval }}</span>{% endif %}</td>
+      <td class="mono">{% if m.is_moe %}{{ m.expert_used_count }}<span class="mut">/{{ m.expert_count }} active</span>{% else %}dense{% endif %}</td>
+      <td class="mono">{% if m.has_mmproj %}mmproj{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}ssm{% endif %}{% if not m.has_mmproj and not m.has_ssm_state %}<span class="mut">—</span>{% endif %}</td>
+      <td>
+        {% if m.verdict == "yes" %}<span class="tag ok">fits</span>
+        {% elif m.verdict == "reduced" %}<span class="tag warn">reduced</span>
+        {% elif m.verdict == "never" %}<span class="tag bad">never</span>
+        {% else %}<span class="tag mut">unknown</span>{% endif %}
+        {% if m.verdict == "reduced" and m.est_ctx %}<div class="mut">max {{ m.est_ctx | ctxlen }}</div>{% endif %}
+      </td>
+    </tr>
     {% endfor %}
   </table>
+  </div>
+  {% if unknown_n %}
+  <p class="mut" style="margin:.7rem 0 0">{{ unknown_n }} model(s) show <span class="tag mut">unknown</span>:
+     their header does not say enough to price the cache. That is deliberately not
+     “never” — and an unknown model is never auto-selected for a smoke test.</p>
+  {% endif %}
+  <p class="mut" style="margin:.7rem 0 0">Incomplete shard sets and dead symlinks are reported on
+     <a href="/health">health</a>; a model that cannot load never reaches this table.</p>
 </div>
 
 {% if comfy %}

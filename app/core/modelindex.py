@@ -589,6 +589,48 @@ def _pool_bytes() -> int:
     return 0
 
 
+def verdict(row: dict, budget_bytes: int | None = None) -> str:
+    """Can this model run here: 'yes' | 'reduced' | 'never' | 'unknown'.
+
+    Four states, not three, because two of them must not be merged:
+
+      yes      weights + KV at full trained context fit the aperture
+      reduced  it fits, but not at its trained context — `est_ctx` is the cap
+      never    the weights alone do not fit, whatever the context
+      unknown  the header did not say enough to compute an estimate
+
+    `unknown` is separate from `never` on purpose. "I could not tell" and "this
+    cannot work" produce the same blank cell and opposite actions; collapsing them
+    is how a reader learns to distrust the whole column. It is also the case that
+    a model whose estimate is missing must never be auto-selected (§ fits_query).
+
+    Note this is a statement about the *aperture*, not free RAM: on this box GTT
+    is the pool and MemAvailable is a different, misleading number (§6.12.0).
+    """
+    total = row.get("est_total")
+    if total is None:
+        return "unknown"
+    budget = budget_bytes if budget_bytes is not None else _pool_bytes()
+    if not budget:
+        return "unknown"          # no readable pool: we cannot make a claim
+    if total <= budget:
+        # Compare against the same power-of-two ceiling ctx_that_fits() reports,
+        # not the raw trained length. A model trained at 40960 tokens can never
+        # show est_ctx >= 40960 under a power-of-two cap — even with unlimited
+        # memory — so the raw comparison called it "reduced" on this box's own
+        # embedding model, advising a smaller context than the hardware supports.
+        # `total <= budget` already means it fits at its trained context; this
+        # only decides whether to say so.
+        trained = row.get("ctx_trained") or 0
+        ceiling = 1 << (trained.bit_length() - 1) if trained >= 1 else 0
+        return "yes" if (row.get("est_ctx") or 0) >= ceiling else "reduced"
+    # Over budget at full context — does it fit at any context at all?
+    weights = row.get("est_weights")
+    if weights is None:
+        return "unknown"
+    return "reduced" if weights <= budget else "never"
+
+
 def rows() -> list[dict]:
     init()
     conn = db._conn()

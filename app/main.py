@@ -251,6 +251,29 @@ def _ago(hours: object) -> str:
 _UNITS = ("B", "K", "M", "G", "T", "P", "E")
 
 
+def _ctxlen(n: object) -> str:
+    """A token count as "131K" / "1.0M". Context lengths cluster at powers of two
+    in the tens of thousands to millions, where bytes formatting happens to give
+    the right shape but the wrong unit name — `_human(131072)` says "128K", which
+    reads like a size and not like a context window.
+
+    0 renders as "0", not an em dash: a zero trained context is absent data in the
+    header and worth seeing as odd, whereas `est_ctx == 0` means "never fits" and
+    must not disappear into the same glyph as unknown. Callers distinguish those;
+    the formatter does not invent a distinction it cannot see.
+    """
+    v = _num(n)
+    if v is None:
+        return "—"
+    if v == 0:
+        return "0"
+    if v >= 1048576:
+        return f"{v / 1048576:.1f}M"
+    if v >= 1024:
+        return f"{v / 1024:.0f}K"
+    return f"{v:.0f}"
+
+
 def _human(n: object) -> str:
     """Byte count as "71.0G". Anything we cannot read as a finite number — None,
     zero, a string from a registry entry, an inf from a counter that wrapped —
@@ -366,6 +389,7 @@ def create_app() -> FastAPI:
     templates.env.filters["ago"] = _ago
     templates.env.filters["dur"] = _dur
     templates.env.filters["sz"] = _human
+    templates.env.filters["ctxlen"] = _ctxlen
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     log.info("AI Portal %s: home=%s ai_root=%s state=%s",
              app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)
@@ -536,6 +560,25 @@ def create_app() -> FastAPI:
         disk = p.models_scan() if p else []
         for m in disk:
             m["size_h"] = _human(m.get("size"))
+        # The header index (§4.9 Phase N) is what answers "can it run here"; the
+        # directory listing above cannot, because it only knows filenames. Read
+        # only — a page load must never be able to change what is on disk — and it
+        # reads the table, it does not rescan: a scan belongs on startup and on
+        # explicit action, not on every render of a listing.
+        budget = modelindex._pool_bytes()
+        try:
+            indexed = modelindex.rows()
+        except Exception:  # noqa: BLE001 — the page still renders without the index
+            indexed = []
+        for m in indexed:
+            m["verdict"] = modelindex.verdict(m, budget)
+        pool_h = _human(budget)
+        g = metrics.gpu() if hasattr(metrics, "gpu") else None
+        if g and g.get("is_igpu"):
+            pool_h = f"{pool_h} GTT"
+        # Scan problems are not persisted (rescan returns them, the health pane
+        # recomputes them), so this page does not claim a count it does not have.
+        # The health page is where incomplete shard sets and dead symlinks live.
         cp = providers.get_comfyui()
         comfy = cp.inventory() if cp else []
         for c in comfy:
@@ -544,6 +587,11 @@ def create_app() -> FastAPI:
                 f["size_h"] = _human(f["size"])
         return templates.TemplateResponse(request, "models.html",
                                           {"live": live, "disk": disk,
+                                           "indexed": indexed,
+                                           "pool_h": pool_h,
+                                           "unknown_n": sum(
+                                               1 for m in indexed
+                                               if m["verdict"] == "unknown"),
                                            "diskroot": str(paths.LLAMA_MODELS),
                                            "comfy": comfy,
                                            "comfy_categories": cp.categories() if cp else [],

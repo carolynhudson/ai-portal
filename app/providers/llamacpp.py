@@ -22,7 +22,12 @@ from ..core import (db, health, llamakey, modelindex, paths, serviceconf, system
 from ..core.modeladd import _AUX_PREFIX_RE   # what counts as a model: one opinion
 
 
-def _git_head(repo: str) -> str | None:
+def _git_head(repo: str | Path) -> str | None:
+    """HEAD of a repo, or None if git cannot answer.
+
+    Accepts str or Path: every call site holds a `Path` from `paths`, and the body
+    stringifies for argv anyway, so the narrower annotation described no caller.
+    """
     try:
         out = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                              capture_output=True, text=True, timeout=10)

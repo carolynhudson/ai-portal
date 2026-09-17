@@ -658,3 +658,69 @@ def test_index_startup_failure_leaves_readers_working(tmp_path, monkeypatch):
     notes: list[str] = []
     app_main.modelindex  # the module the fallback depends on is importable
     assert app_main.modelindex is mi
+
+
+# ------------------------------------------------------------ verdicts (N3)
+def test_verdict_yes_when_it_fits_at_full_context():
+    row = {"est_total": 50 * GiB, "est_weights": 49 * GiB,
+           "est_ctx": 262144, "ctx_trained": 262144}
+    assert mi.verdict(row, 108 * GiB) == "yes"
+
+
+def test_verdict_never_when_the_weights_alone_do_not_fit():
+    row = {"est_total": 200 * GiB, "est_weights": 200 * GiB,
+           "est_ctx": 0, "ctx_trained": 4096}
+    assert mi.verdict(row, 108 * GiB) == "never"
+
+
+def test_verdict_reduced_when_only_a_shorter_context_fits():
+    row = {"est_total": 60 * GiB, "est_weights": 49 * GiB,
+           "est_ctx": 8192, "ctx_trained": 262144}
+    assert mi.verdict(row, 55 * GiB) == "reduced"
+
+
+def test_unknown_is_not_never():
+    """"I could not price it" and "this cannot run" produce the same blank cell and
+    opposite actions. Merging them teaches a reader to distrust the column, and an
+    unknown model must never be auto-selected."""
+    assert mi.verdict({"est_total": None, "est_weights": None}, 108 * GiB) == "unknown"
+    assert mi.verdict({"est_total": 200 * GiB, "est_weights": 200 * GiB},
+                      108 * GiB) == "never"
+
+
+def test_verdict_is_unknown_when_the_pool_cannot_be_read():
+    """No readable aperture means no claim, not "it fits" and not "it does not"."""
+    row = {"est_total": 10 * GiB, "est_weights": 9 * GiB,
+           "est_ctx": 32768, "ctx_trained": 32768}
+    assert mi.verdict(row, 0) == "unknown"
+
+
+def test_reduced_is_not_a_power_of_two_rounding_artifact():
+    """The bug this pins. ctx_that_fits() rounds DOWN to a power of two, so a model
+    trained at 40960 tokens can never report est_ctx >= 40960 — comparing against
+    the raw trained length called it "reduced" on this box's own 8B embedding model
+    and told the user to run at 32K when the hardware fits it at 40K. The page
+    recommending a smaller context than the box supports is worse than no page."""
+    non_pow2 = {"est_total": 10 * GiB, "est_weights": 9 * GiB,
+                "est_ctx": 32768,          # 40960 rounded down: this is the ceiling
+                "ctx_trained": 40960}
+    assert mi.verdict(non_pow2, 108 * GiB) == "yes"
+    # and a genuinely shorter cap on the same model is still reported
+    genuinely_short = dict(non_pow2, est_ctx=8192)
+    assert mi.verdict(genuinely_short, 108 * GiB) == "reduced"
+
+
+def test_ctxlen_filter_shape():
+    """131072 must read as a context length, not a file size: _human() would print
+    "128K" and a reader would take it for bytes."""
+    from app.main import _ctxlen
+    assert _ctxlen(4096) == "4K"
+    assert _ctxlen(131072) == "128K"
+    assert _ctxlen(1048576) == "1.0M"
+    assert _ctxlen(512) == "512"
+    assert _ctxlen(None) == "—"
+    # 0 is a real value here ("never fits") and must not vanish into the em dash
+    assert _ctxlen(0) == "0"
+    # and never raise, whatever a GGUF header claimed
+    for junk in ("nonsense", float("inf"), float("nan"), object(), True):
+        assert isinstance(_ctxlen(junk), str)
