@@ -400,6 +400,18 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
             # its projector shows up as the mismatch it is.
             "has_vision": meta.get("has_vision"),
             "has_mmproj": bool(side_bytes),
+            # What the file says it can speak, read from the chat template it ships
+            # with. Stored as a comma-joined string because it is a set of short
+            # labels, not a flag: "chat,system,tool-results,tools" is one fact per
+            # protocol and a column per protocol would be a schema change every time
+            # a new arch invents a new delimiter.
+            #
+            # Empty string means the template declares none of the tracked protocols —
+            # which for a base model is the expected value, not missing data. The
+            # template itself being absent is a different state and is carried by
+            # has_chat_template so the two are not conflated.
+            "has_chat_template": bool(meta.get("has_chat_template")),
+            "template_markers": ",".join(meta.get("template_markers") or []),
             "is_aux": False,
             "header_hash": _header_hash(head),
             "scanned_at": time.time(),
@@ -429,6 +441,7 @@ CREATE TABLE IF NOT EXISTS model_index (
   rope_dimension_count INTEGER,
   expert_count INTEGER, expert_used_count INTEGER, is_moe INTEGER,
   has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
+  has_chat_template INTEGER, template_markers TEXT,
   est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
   est_inputs TEXT,
   scanned_at REAL, header_hash TEXT
@@ -473,11 +486,41 @@ _WRITE_COLUMNS = (
     "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
-    "has_vision", "has_mmproj",
+    "has_vision", "has_mmproj", "has_chat_template", "template_markers",
     "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs",
     "scanned_at", "header_hash",
 )
 _EST_COLS = {"est_weights", "est_kv", "est_total", "est_ctx", "est_inputs"}
+
+
+def _declared_type(name: str) -> str:
+    """The SQL type SCHEMA declares for `name`, read from SCHEMA itself.
+
+    SCHEMA is already the statement of what a column is, so a migration that guesses
+    "INTEGER" for everything is a second, weaker opinion that can disagree with it.
+    It did: `template_markers` is TEXT in SCHEMA and would have been ALTERed in as
+    INTEGER. SQLite stores a string in an INTEGER column without complaining, so a
+    fresh install and an upgraded one would have the same column name with different
+    sort behaviour and nothing would ever report it.
+
+    Falls back to TEXT for a name SCHEMA does not mention: TEXT can hold any value, so
+    an unlisted column cannot silently lose data.
+    """
+    for line in SCHEMA.splitlines():
+        if not re.search(rf"(^|[ ,]){re.escape(name)}\b", line):
+            continue
+        # SCHEMA puts several columns on one line, so the token after the name is
+        # `INTEGER,` — type plus separator. Strip the punctuation before comparing,
+        # or every declared type fails the membership test and the whole function
+        # silently returns its TEXT fallback for every column, which is exactly the
+        # "second opinion that disagrees with SCHEMA" this function exists to avoid.
+        after = line.split(name, 1)[1].strip().lstrip(",").split()
+        if after:
+            declared = after[0].strip(",;() ").upper()
+            if declared in ("TEXT", "INTEGER", "REAL", "BLOB"):
+                return declared
+        return "TEXT"
+    return "TEXT"
 
 
 def _safe_columns(cols: tuple[str, ...]) -> str:
@@ -535,7 +578,12 @@ def init() -> None:
     # A name in _WRITE_COLUMNS that is not an identifier cannot reach ALTER.
     for c in gap:
         _safe_columns((c,))
-        conn.execute(f"ALTER TABLE model_index ADD COLUMN {c} INTEGER")
+        # The declared type comes from SCHEMA rather than a hardcoded INTEGER.
+        # Assuming INTEGER here would migrate `template_markers` as an integer
+        # column while a fresh install creates it as TEXT — two boxes, same column
+        # name, different type, and SQLite happily stores a string in an INTEGER
+        # column, so the disagreement would only show up as surprising sort order.
+        conn.execute(f"ALTER TABLE model_index ADD COLUMN {c} {_declared_type(c)}")
     if gap:
         conn.commit()
     # Anything still missing is a name in _WRITE_COLUMNS that is not a column at
@@ -602,6 +650,107 @@ def _pool_bytes() -> int:
     except OSError:
         pass
     return 0
+
+
+def peak_bytes(row: dict, ctx: int | None = None,
+               dtype: str = DEFAULT_KV_DTYPE) -> int | None:
+    """What this model costs resident at `ctx`, including headroom — the number a
+    loader needs before it decides a model is safe to bring up.
+
+    `est_total` is weights + cache at the context the estimate chose. That is fine
+    for a table and wrong for a scheduler, which asks a different question: *if I
+    load this now, at context X, how much of the aperture goes away*. This answers
+    that, and returns None rather than a guess when the cache cannot be priced — a
+    scheduler that receives None must refuse, one that receives 0 will not.
+
+    Headroom is included because the aperture is not the only consumer of RAM and a
+    plan that accounts for exactly the model is a plan that swaps. It is the same
+    HEADROOM_BYTES ctx_that_fits uses, so "peak fits in budget" and "ctx_that_fits
+    said >= ctx" cannot disagree.
+    """
+    # Header-derived numbers reach here as-is, and a GGUF that declared an
+    # absurd block_count or embedding_length can carry inf/NaN through the estimate.
+    # `_whole` is the estimator's own opinion about turning a float cost into bytes;
+    # using it means an unpriceable input becomes None ("cannot plan") rather than
+    # an OverflowError escaping into a page render or a scheduler's arithmetic.
+    weights = _whole(row.get("est_weights") or 0)
+    if not weights:
+        return None
+    # `modelmeta._as_int` is the one place that decides what a number from a header
+    # or a caller means: it returns None for garbage instead of raising, so a str or
+    # an object passed as ctx becomes "cannot plan" rather than a TypeError from the
+    # comparison below escaping into a page render.
+    ctx = modelmeta._as_int(row.get("est_ctx") if ctx is None else ctx) or 0
+    if ctx < 1:
+        # No context to price at. Weights plus headroom is a floor, not a peak, and
+        # the difference is the cache — the part that swaps a box. Report that we
+        # cannot plan rather than hand a scheduler a number it will treat as a peak.
+        return None
+    if ctx == row.get("est_ctx"):
+        kv = row.get("est_kv")
+    else:
+        priced = kv_bytes_at(row, ctx, dtype)
+        kv = priced if priced is not None else None
+    if kv is None:
+        return None
+    kv_whole = _whole(kv)
+    if kv_whole is None:
+        return None
+    return weights + kv_whole + HEADROOM_BYTES
+
+
+def headroom_after(row: dict, budget_bytes: int | None = None,
+                   ctx: int | None = None) -> int | None:
+    """What the aperture still has for the *next* model if this one is loaded.
+
+    Router planning is a sequence of these, not one decision: `--models-max 1` today
+    but a policy that keeps two warm needs to know what a load leaves behind. None
+    propagates — an unpriced model has unknown consequences, which is not the same
+    as no consequences.
+    """
+    budget = budget_bytes if budget_bytes is not None else _pool_bytes()
+    if not budget:
+        return None
+    peak = peak_bytes(row, ctx)
+    if peak is None:
+        return None
+    return budget - peak
+
+
+def router_key(name: str) -> str:
+    """Key a library directory and a router model id agree on.
+
+    The router registers some models under a HuggingFace-style alias — `unsloth/
+    Qwen3.8-27B-GGUF:Q8_K_XL` — while the library knows the directory name. Matching
+    on the raw strings left that model looking unloaded while it was serving traffic,
+    which is the failure mode a "live" indicator must never have: a wrong "not
+    running" invites the user to load a second copy of a model that is already up.
+
+    Lowercase, strip namespace and `:tag`, drop quant and separator noise. Two
+    different quants of one architecture stay distinct (they are different files);
+    one file under two spellings collapses.
+    """
+    s = (name or "").strip().lower()
+    s = s.rsplit("/", 1)[-1]        # drop `org/`
+    s = s.split(":", 1)[0]          # drop `:quant`
+    s = re.sub(r"[ ._-]+", "", s)
+    return s
+
+
+def live_keys(live: list[dict]) -> dict[str, dict]:
+    """Router models keyed for lookup by library row.
+
+    Returns a map rather than a set so the caller can show *what the router calls it*
+    when that differs — a model reachable under an alias is a fact worth surfacing,
+    not something to hide behind an identical-looking name.
+    """
+    out: dict[str, dict] = {}
+    for m in live or []:
+        rid = m.get("id") or ""
+        if not rid or rid.startswith("(router unreachable"):
+            continue
+        out.setdefault(router_key(rid), {"id": rid, "created": m.get("created")})
+    return out
 
 
 def verdict(row: dict, budget_bytes: int | None = None) -> str:

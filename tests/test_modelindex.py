@@ -789,3 +789,292 @@ def test_ctx_that_fits_is_monotonic_in_budget():
         got = mi.ctx_that_fits(dense, 1 * GiB, 1 << e)
         assert got >= prev, f"budget 2^{e} gave {got} < previous {prev}"
         prev = got
+
+
+# ------------------------------------------------ peak estimate + live identity
+def test_peak_bytes_is_the_number_a_loader_needs():
+    row = {"est_weights": 16 * GiB, "est_kv": 7 * GiB, "est_ctx": 262144}
+    peak = mi.peak_bytes(row)
+    assert peak == 16 * GiB + 7 * GiB + mi.HEADROOM_BYTES
+
+
+def test_peak_is_stricter_than_the_displayed_verdict_by_exactly_headroom():
+    """The two numbers measure different questions, and the difference is load-bearing.
+
+    `verdict()` answers "is weights+cache within the aperture" — a display fact.
+    `peak_bytes()` answers "what is resident if this loads", and adds HEADROOM_BYTES
+    because the aperture is not the only consumer of RAM. So a model can be labelled
+    "fits" at a budget that peak_bytes says is not enough to actually load it.
+
+    That gap is the point, and it must be exactly HEADROOM_BYTES: if the two ever
+    drift further apart, either the page is advertising models the loader refuses, or
+    the loader refuses models that genuinely fit. Pinning the difference is what makes
+    a future change to either one an explicit decision instead of a silent one.
+    """
+    weights, kv = 16 * GiB, 7 * GiB
+    row = {"est_weights": weights, "est_kv": kv, "est_total": weights + kv,
+           "est_ctx": 262144, "ctx_trained": 262144}
+    peak = mi.peak_bytes(row)
+    # State the None case as a failure of the fixture, then arithmetic on `peak` is
+    # both safe at runtime and provably safe to a reader of this file.
+    assert peak is not None, "peak_bytes refused to price a fully-specified row"
+    assert peak - (weights + kv) == mi.HEADROOM_BYTES
+
+    # verdict's own boundary is est_total, one headroom below the loader's boundary.
+    assert mi.verdict(row, weights + kv) == "yes"
+    assert mi.verdict(row, weights + kv - 1) == "reduced"
+    # and the loader's boundary is affordable by the display rule too, which is the
+    # only direction that is safe: peak being affordable implies est_total is.
+    assert mi.verdict(row, peak) == "yes"
+
+
+def test_peak_bytes_refuses_to_guess():
+    """A scheduler given 0 will load; given None it must refuse. Returning a number
+    for a model we cannot price is the difference between a refusal and a swap."""
+    assert mi.peak_bytes({"est_weights": 0}) is None
+    assert mi.peak_bytes({"est_weights": 8 * GiB, "est_kv": None, "est_ctx": 4096}) is None
+    assert mi.peak_bytes({"est_weights": 8 * GiB, "est_kv": 10**9, "est_ctx": 0}) is None
+
+
+def test_peak_bytes_survives_hostile_numbers():
+    """Header-derived values arrive unfiltered. inf/NaN must become None, not an
+    OverflowError that escapes into a page render or a scheduler's arithmetic."""
+    for junk in (float("inf"), float("nan")):
+        assert mi.peak_bytes({"est_weights": junk, "est_kv": 1, "est_ctx": 1024}) is None
+    # a ctx that is not a number at all must not raise on comparison either
+    for junk in ("1024", object(), None):
+        assert mi.peak_bytes({"est_weights": 10**10, "est_kv": 10**9, "est_ctx": junk}) is None
+
+
+def test_headroom_after_is_what_a_load_leaves_behind():
+    """Router planning is a sequence. `--models-max 1` today; a policy that keeps two
+    warm needs to know what a load costs the next one."""
+    row = {"est_weights": 10 * GiB, "est_kv": 5 * GiB, "est_ctx": 8192}
+    budget = 100 * GiB
+    peak = mi.peak_bytes(row)
+    assert peak is not None
+    assert mi.headroom_after(row, budget) == budget - peak
+    # unknown consequences, not zero consequences
+    assert mi.headroom_after({"est_weights": 10 * GiB}, budget) is None
+
+
+def test_router_key_matches_a_library_dir_to_a_router_alias():
+    """The router registers some models under a HuggingFace-style alias. Matching on
+    raw strings left a live model looking not-running, which is the one thing a "live"
+    indicator must never do: a wrong "not running" invites loading a second copy of a
+    model that is already serving traffic."""
+    assert mi.router_key("gemma-4-31B-it-QAT-Q4_0") == mi.router_key("gemma-4-31B-it-QAT-Q4_0")
+    assert mi.router_key("unsloth/Qwen3.8-27B-GGUF:Q8_K_XL") == mi.router_key("Qwen3.8-27B-GGUF")
+    assert mi.router_key("Qwen3.8-27B-GGUF:Q8_K_XL") == mi.router_key("qwen3.8.27b.gguf")
+
+
+def test_router_key_keeps_different_quants_apart():
+    """One file under two spellings collapses; two different files must not. Q4 and Q8
+    of one architecture are different weights with different costs."""
+    assert mi.router_key("Model-Q4_K_M") != mi.router_key("Model-Q8_0")
+
+
+def test_live_keys_ignores_the_unreachable_router_placeholder():
+    """`models_live()` returns a synthetic row carrying an error message when the
+    router is down. Treating that as a model id would show an error string as live."""
+    keys = mi.live_keys([{"id": "(router unreachable: boom)"}, {"id": "Real-Model"}])
+    assert list(keys) == [mi.router_key("Real-Model")]
+
+
+def test_declared_type_agrees_with_schema():
+    """The migration used to ALTER every missing column in as INTEGER. template_markers
+    is TEXT in SCHEMA, so a fresh install and an upgraded one would have carried the
+    same column with different declared types — and SQLite stores a string in an
+    INTEGER column without complaining, so nothing would ever report it."""
+    for col, want in (("template_markers", "TEXT"), ("has_chat_template", "INTEGER"),
+                      ("bytes", "INTEGER"), ("scanned_at", "REAL"),
+                      ("est_inputs", "TEXT")):
+        assert mi._declared_type(col) == want, col
+    # a column SCHEMA does not mention falls back to the type that can hold anything
+    assert mi._declared_type("invented_column") == "TEXT"
+
+
+def test_init_migrates_a_table_that_predates_the_new_columns():
+    """CREATE TABLE IF NOT EXISTS does not widen a table already on disk. A deployed
+    database from before these columns existed has to gain them, with the type SCHEMA
+    declares, or the capability facts read as NULL forever."""
+    import sqlite3
+    db.init()
+    old_shape = """CREATE TABLE model_index (
+      id TEXT PRIMARY KEY, path TEXT, bytes INTEGER, shard_total INTEGER,
+      mmproj_bytes INTEGER, arch TEXT, name TEXT, quant TEXT, ctx_trained INTEGER,
+      layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
+      embedding_length INTEGER, full_attention_interval INTEGER,
+      rope_dimension_count INTEGER, expert_count INTEGER, expert_used_count INTEGER,
+      is_moe INTEGER, has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
+      est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
+      est_inputs TEXT, scanned_at REAL, header_hash TEXT);"""
+    conn = sqlite3.connect(str(db.DB))
+    conn.execute("DROP TABLE IF EXISTS model_index")
+    conn.execute(old_shape)
+    conn.commit()
+    before = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    conn.close()
+    assert "template_markers" not in before
+
+    mi.init()
+
+    conn = sqlite3.connect(str(db.DB))
+    info = {r[1]: r[2] for r in conn.execute("PRAGMA table_info(model_index)")}
+    conn.close()
+    assert info.get("template_markers") == "TEXT"
+    assert info.get("has_chat_template") == "INTEGER"
+
+
+# ------------------------------------------------------- the live light (N3 merge)
+def _fake_provider(monkeypatch, live):
+    """Make models_live() return `live`, on the real provider object.
+
+    Patched on the class, not by substituting a stub: the /models page and the page it
+    redirects through reach for behind(), provenance(), jobs() and status(). A stub
+    with only the two methods wanted fails inside an unrelated panel and the failure
+    looks like a bug in the route under test.
+    """
+    from app import providers
+    from app.providers.llamacpp import LlamaCpp
+
+    monkeypatch.setattr(LlamaCpp, "models_live", lambda self: list(live))
+    monkeypatch.setattr(LlamaCpp, "models_scan", lambda self: [])
+    providers.get_llamacpp()   # ensure the accessor is warm and the same object
+
+
+def _seed_library(monkeypatch, names):
+    """Put real GGUFs where the portal already looks, then rescan.
+
+    Two reasons this seeds the *existing* library path rather than a fresh tmp_path:
+
+    * create_app() starts a daemon thread that calls rescan() with no argument, which
+      scans paths.LLAMA_MODELS and DELETEs every row first. A test that seeds a
+      different directory, or inserts rows by hand, has its fixture erased by the very
+      startup path it is testing — and races it, which is how these tests first failed
+      with "database is locked".
+    * Seeding the path the app will scan means the test passes whether the rows arrive
+      from the test's rescan or the startup thread's, which is the honest ordering.
+    """
+    root = mi.paths.LLAMA_MODELS
+    root.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (root / name).mkdir(parents=True, exist_ok=True)
+        _write_fake_gguf(root / name / f"{name}.gguf",
+                         {"block_count": 8, "attention.head_count": 4,
+                          "attention.head_count_kv": 2,
+                          "embedding_length": 256, "context_length": 4096})
+    return root
+
+
+def test_live_light_matches_a_library_row_through_the_alias_rule(monkeypatch):
+    """The merged table's one risky column.
+
+    A model the router registers under a HuggingFace-style alias must still light up
+    its library row. A light that says "not running" about a model that is serving
+    traffic invites loading a second copy of it, which is precisely how you double the
+    memory cost of a model that is already up.
+
+    Goes through the real route with a real rescanned index, not a helper: the claim
+    under test is that the page and the router agree, and a unit test of router_key()
+    alone cannot show the page used it.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+
+    _seed_library(monkeypatch, ["Gemma-4-31B"])
+    _fake_provider(monkeypatch, [{"id": "org/Gemma-4-31B:Q4_0", "object": "model"}])
+
+    c = TestClient(app_main.create_app())
+    c.post("/login", data={"password": os.environ["AI_PORTAL_PASSWORD"]})
+    body = c.get("/models").text
+    assert "registered with the router" in body, "no live light rendered at all"
+    assert "as org/Gemma-4-31B:Q4_0" in body, "the alias was hidden instead of shown"
+    assert "Live but not in the library" not in body, \
+        "a model that matches a library row was filed as unaccounted"
+
+
+def test_live_models_outside_the_library_are_listed_not_dropped(monkeypatch):
+    """The merge must not quietly become a filter.
+
+    A model the router serves with no matching directory is a fact an operator needs.
+    Dropping it makes the merged table look complete when it is not, and the omission
+    is invisible precisely because everything else on the page is correct.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+
+    _seed_library(monkeypatch, ["Known-Model"])
+    _fake_provider(monkeypatch, [{"id": "Known-Model", "object": "model"},
+                                 {"id": "stranger/outside-weights:Q8", "object": "model"}])
+
+    c = TestClient(app_main.create_app())
+    c.post("/login", data={"password": os.environ["AI_PORTAL_PASSWORD"]})
+    body = c.get("/models").text
+    assert "stranger/outside-weights:Q8" in body, "an unaccounted live model vanished"
+    assert "Live but not in the library (1)" in body
+
+def test_declared_type_agrees_with_schema():
+    """The migration used to ALTER every missing column in as INTEGER. template_markers
+    is TEXT in SCHEMA, so a fresh install and an upgraded one would have carried the
+    same column with different declared types — and SQLite stores a string in an
+    INTEGER column without complaining, so nothing would ever report it."""
+    for col, want in (("template_markers", "TEXT"), ("has_chat_template", "INTEGER"),
+                      ("bytes", "INTEGER"), ("scanned_at", "REAL"),
+                      ("est_inputs", "TEXT")):
+        assert mi._declared_type(col) == want, col
+    # a column SCHEMA does not mention falls back to the type that can hold anything
+    assert mi._declared_type("invented_column") == "TEXT"
+
+
+def test_init_migrates_a_table_that_predates_the_new_columns():
+    """CREATE TABLE IF NOT EXISTS does not widen a table already on disk. A deployed
+    database from before these columns existed has to gain them, with the type SCHEMA
+    declares, or the capability facts read as NULL forever."""
+    import sqlite3
+    db.init()
+    old_shape = """CREATE TABLE model_index (
+      id TEXT PRIMARY KEY, path TEXT, bytes INTEGER, shard_total INTEGER,
+      mmproj_bytes INTEGER, arch TEXT, name TEXT, quant TEXT, ctx_trained INTEGER,
+      layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
+      embedding_length INTEGER, full_attention_interval INTEGER,
+      rope_dimension_count INTEGER, expert_count INTEGER, expert_used_count INTEGER,
+      is_moe INTEGER, has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
+      est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
+      est_inputs TEXT, scanned_at REAL, header_hash TEXT);"""
+    conn = sqlite3.connect(str(db.DB))
+    conn.execute("DROP TABLE IF EXISTS model_index")
+    conn.execute(old_shape)
+    conn.commit()
+    before = {r[1] for r in conn.execute("PRAGMA table_info(model_index)")}
+    conn.close()
+    assert "template_markers" not in before
+
+    mi.init()
+
+    conn = sqlite3.connect(str(db.DB))
+    info = {r[1]: r[2] for r in conn.execute("PRAGMA table_info(model_index)")}
+    conn.close()
+    assert info.get("template_markers") == "TEXT"
+    assert info.get("has_chat_template") == "INTEGER"
+
+
+# ------------------------------------------------------- the live light (N3 merge)
+def _fake_provider(monkeypatch, live):
+    """Make models_live() return `live`, on the real provider object.
+
+    Patched on the class, not by substituting a stub: the /models page and the page it
+    redirects through reach for behind(), provenance(), jobs() and status(). A stub
+    with only the two methods wanted fails inside an unrelated panel and the failure
+    looks like a bug in the route under test.
+    """
+    from app import providers
+    from app.providers.llamacpp import LlamaCpp
+
+    monkeypatch.setattr(LlamaCpp, "models_live", lambda self: list(live))
+    monkeypatch.setattr(LlamaCpp, "models_scan", lambda self: [])
+    providers.get_llamacpp()   # ensure the accessor is warm and the same object
+
+

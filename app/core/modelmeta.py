@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import mmap
+import re
 import struct
 from pathlib import Path
 
@@ -169,6 +170,46 @@ def sniff_gguf(path) -> dict | None:
                     "sliding_window_pattern": _as_boollist(
                         _first(fields, ap, "attention.sliding_window_pattern")),
                     "feed_length": _as_int(_first(fields, ap, "feed_length")),
+                    # Capability facts from the tokenizer, not the architecture.
+                    #
+                    # A GGUF carries its own conversation template, and that is the
+                    # only in-file evidence of what the weights were tuned to speak.
+                    # It is worth reading for two reasons the header arch cannot
+                    # serve: a model with no `tokenizer.chat_template` at all
+                    # (Mistral-Code-Architect on this box) is a base/completion model
+                    # and will not hold a chat turn no matter how it is prompted; and
+                    # the template text itself names the protocols a model was trained
+                    # on — `<tool_call>` for tool use, `system` for
+                    # role-conditioned chat.
+                    #
+                    # These are facts about the file, never verdicts. "The template
+                    # contains the string <tool_call>" is checkable; "this model is
+                    # good at tools" is not, and §4.9 keeps the table on the checkable
+                    # side.
+                    "has_chat_template": bool(fields.get("tokenizer.chat_template")),
+                    "pre_tokenizer": fields.get("tokenizer.ggml.pre") or None,
+                    # What the tokenizer does NOT give us, recorded so the next reader
+                    # does not re-derive it: role facts cannot come from the
+                    # vocabulary on this box.
+                    #
+                    # `tokenizer.ggml.tokens` is the whole vocabulary — 262144 strings
+                    # on gemma-4 here — and when this reader tried to parse it, it
+                    # returned a 24-character *string* for a 262144-entry array:
+                    # garbage that looked exactly like data. `tokenizer.ggml.token_type`
+                    # is parallel and equally large. `tokenizer.ggml.added_tokens`, the
+                    # small declared list where special tokens would live, is present on
+                    # 0 of the 16 models in this library.
+                    #
+                    # So no token-derived role column exists. `template_markers` above
+                    # carries the role information instead, from a source that is small
+                    # (kilobytes of Jinja), present on 15 of 16, and parses correctly.
+                    # An always-empty column is not a neutral addition: it renders as a
+                    # blank cell that reads as "this model declares nothing", when the
+                    # truth is "we have no way to ask".
+                    # The template can be large (kilobytes of Jinja). Keep the
+                    # signature, drop the body: the index stores facts, not assets.
+                    "template_markers": _template_markers(
+                        fields.get("tokenizer.chat_template")),
                     # Capability facts, all read from the header. §4.9 is explicit
                     # that the table states facts and a personality states what it
                     # wants — so nothing here is a verdict like "good for coding",
@@ -271,6 +312,78 @@ def _as_bool(v):
     if isinstance(v, (int, float)):
         return bool(v)
     return None
+
+
+# Protocol markers worth reporting out of a chat template. Each entry is
+# (regex, label); the regexes are structural — they look for the *shapes* a template
+# uses to speak a protocol (`tool_call`, `"role": "tool"`, `{% if tools %}`), not the
+# bare word.
+#
+# The bare-word version of this rule was wrong in the optimistic direction on every
+# model in the library: `"tools" in template` matched the Jinja loop variable
+# `{% for tool in tools %}` inside a template that never emits a tool call, so 13 of
+# 15 models claimed tool support. A template mentions a thing because it renders it,
+# which is not the same as the model being trained to produce it — so match the
+# delimiters and role strings a template has to spell out literally, and let the
+# loop variables go by.
+
+_TEMPLATE_MARKERS: tuple[tuple[re.Pattern, str], ...] = (
+    # A tool call the model must emit. The delimiter is `<|...|>` written as a Jinja
+    # string literal, so the pattern allows the quote that wraps it. The first
+    # version of this had `<\|tool_call|>` with an unescaped alternation inside, which
+    # the regex engine read as "`<|tool_call` OR empty string" — it matched the empty
+    # string at offset 0 of every template and every model claimed tool support. An
+    # alternation of delimiters must escape every pipe that is punctuation.
+    (re.compile(r"<\|tool_call\|>|<tool_call>|\[tool_calls?\]", re.IGNORECASE), "tools"),
+    # Role comparison, shared by every role marker below.
+    #
+    # The previous shape anchored the operator directly after the closing quote of
+    # the role key. That matches the JSON spelling of a role and misses the Jinja
+    # test form, which is what real chat templates actually use: a Jinja conditional
+    # closes the key with a bracket BEFORE the comparison operator appears, so an
+    # operator anchored right after the quote is never reached and the marker never
+    # fires.
+    #
+    # The cost was silent: tool support and the system role went unreported on every
+    # Jinja-templated model in this library. An under-report reads as caution and
+    # ships, so the optional bracket belongs in the pattern rather than in an
+    # assumption about how templates are written.
+    #
+    # The operator class accepts colon, single equals, double equals and not-equals;
+    # a negative branch still proves the template knows the role exists.
+    (re.compile(
+        r"role[\"']?\]?\s*[:=!]=?\s*[\"']?tool|\btool_response\b|<\|tool_response\|>",
+        re.IGNORECASE), "tool-results"),
+    (re.compile(r"<\|think\|>|<thinking>|\bthink\b\s*%", re.IGNORECASE), "thinking"),
+    (re.compile(r"role[\"']?\]?\s*[:=!]=?\s*[\"']?system|<\|system\|>", re.IGNORECASE),
+     "system"),
+    (re.compile(r"role[\"']?\]?\s*[:=!]=?\s*[\"']?user|<\|user\|>|<\|im_start\|>",
+                 re.IGNORECASE), "chat"),
+    (re.compile(r"\brerank\b|\brank\b\s*(?:passage|document)", re.IGNORECASE), "rerank"),
+    (re.compile(r"\b(?:query|document)_(?:prefix|passage)\b|<\|embed\|?>", re.IGNORECASE),
+     "embedding"),
+)
+
+
+def _template_markers(template) -> list[str]:
+    """Which conversation protocols a chat template actually emits, as short labels.
+
+    The template is the contract the weights were trained against, so the tags a
+    template must spell out literally are evidence the model speaks that protocol.
+    Structural matching (delimiters, `"role": "x"`) rather than substring matching,
+    because templates are Jinja full of loop variables named `tools`, `messages` and
+    `system` that say nothing about what the model was trained to do.
+
+    Returns [] for a missing template — itself the notable case (a base model), which
+    the caller labels instead of leaving blank.
+    """
+    if not isinstance(template, str) or not template.strip():
+        return []
+    found: set[str] = set()
+    for pattern, label in _TEMPLATE_MARKERS:
+        if pattern.search(template):
+            found.add(label)
+    return sorted(found)
 
 
 def _first(fields: dict, prefix: str, *keys: str):

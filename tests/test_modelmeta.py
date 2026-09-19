@@ -189,3 +189,62 @@ def test_weight_exts_and_non_model_categories():
     assert ".ckpt" in modelmeta.WEIGHT_EXTS
     assert ".gguf" not in modelmeta.WEIGHT_EXTS
     assert modelmeta.NON_MODEL_CATEGORIES == {"configs"}
+
+
+# ------------------------------------------------- tokenizer-derived role facts
+def test_no_marker_pattern_matches_the_empty_string():
+    """The bug this pins. An alternation of delimiters written as
+    `<\\|tool_call|>` has an unescaped trailing pipe, so the regex engine read it as
+    "`<|tool_call` OR empty string" and matched at offset 0 of every template. Every
+    model in the library reported tool support. A pattern whose alternation can be
+    empty does not fail — it reports true for all inputs, forever.
+    """
+    for pattern, label in modelmeta._TEMPLATE_MARKERS:
+        assert pattern.search("") is None, f"{label} pattern matches the empty string"
+        # and it must not fire on a template that mentions nothing of the sort
+        innocuous = '{{ "<|begin_of_text|>" }}{{ message }}'
+        assert pattern.search(innocuous) is None, \
+            f"{label} pattern matches a template that does not speak it: " \
+            f"{pattern.search(innocuous).group(0)!r}"
+
+
+CHATML_OPEN = "<" + "|im_start|" + ">"  # ChatML turn opener, spelled to survive tooling
+
+def test_template_markers_read_real_protocols():
+    # A template declares a role by spelling the literal out; `{{ message.role }}`
+    # interpolates whatever is passed in and declares nothing, so the bare loop is
+    # correctly [] — that is the same rule that rejects a `tools` loop variable.
+    silent_loop = ("{% for message in messages %}{{ message.role }}\n"
+                   "{{ message.content }}{% endfor %}")
+    assert modelmeta._template_markers(silent_loop) == []
+
+    chatml = ("{% for message in messages %}\n"
+              "{{ '" + CHATML_OPEN + "user\\n{{ message.content }}' }}")
+    assert "chat" in modelmeta._template_markers(chatml)
+    assert "tools" not in modelmeta._template_markers(chatml)
+
+    tool_tpl = chatml + '\n{% if tools %}{{ "<tool_call>" }}{% endif %}'
+    mk = modelmeta._template_markers(tool_tpl)
+    assert "tools" in mk
+
+    # a tool RESULT role is distinct from the model emitting a call
+    results_only = '{% if message["role"] == "tool" %}{{ message.content }}{% endif %}'
+    mk2 = modelmeta._template_markers(results_only)
+    assert "tool-results" in mk2 and "tools" not in mk2
+
+
+def test_a_loop_variable_named_tools_is_not_tool_support():
+    """13 of 15 models on this box claimed tool support because `"tools" in template`
+    matched the Jinja loop variable. A template mentions a thing because it renders
+    it, which is not evidence the weights were trained to produce it."""
+    loop_only = '{% for tool in tools %}{{ tool.function.name }}{% endfor %}'
+    assert modelmeta._template_markers(loop_only) == []
+
+
+def test_missing_template_is_reported_as_absent_not_guessed():
+    """A base model has no chat template. That is the notable case — it will not hold
+    a chat turn however it is prompted — and it must read as absence, not as the
+    default for a chat model."""
+    assert modelmeta._template_markers("") == []
+    assert modelmeta._template_markers(None) == []
+    assert modelmeta._template_markers("   ") == []

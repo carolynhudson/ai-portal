@@ -75,16 +75,18 @@
 
 <h2>llama.cpp models</h2>
 
-<div class="card" style="margin-bottom:14px">
-  <h3>Router live list ({{ live|length }})</h3>
-  <table>
-    <tr><th>model id</th><th>object</th></tr>
-    {% for m in live %}
-    <tr><td class="mono">{{ m.get('id') }}</td><td class="mono">{{ m.get('object','') }}</td></tr>
-    {% endfor %}
-  </table>
-</div>
+{# The Router live list used to be its own table beside this one, listing ids the
+   library table already listed. Two tables of the same model names, one with the
+   loading facts and one without, is noise that also invites the wrong reading: a
+   model present in one and not the other looked like a discrepancy when it was only
+   a second view of the same thing. "Live" is a property of a model, so it moved onto
+   the model's row as a light, and the separate table is gone.
 
+   Live models the library has no row for are still listed — served from outside the
+   scanned tree, or under an alias whose weights sit under a different name — because
+   "the router is serving something my library does not describe" is a fact an
+   operator needs, and dropping it would make the merged table incomplete in a way
+   that looks complete. #}
 <div class="card">
   <h3>Library — {{ diskroot }} ({{ indexed|length }} model{{ "" if indexed|length == 1 else "s" }})</h3>
   {# Facts from the GGUF header, not the filename (§4.9 Phase N). One row per
@@ -97,20 +99,34 @@
   <div class="scroll">
   <table id="library-table">
     <tr>
-      <th>model id</th><th>arch</th><th>quant</th><th>size</th>
+      <th></th><th>model id</th><th>arch</th><th>quant</th><th>size</th>
       <th>ctx (trained)</th><th>layers</th><th>MoE</th><th>paired</th>
-      <th>fits here</th>
+      <th>capabilities</th><th>peak RAM</th><th>fits here</th>
     </tr>
     {% for m in indexed %}
     <tr>
-      <td class="mono">{{ m.id }}</td>
+      {# The light, not a second table. Filled when the router has this model
+         registered; hollow when it does not. Matched through modelindex.router_key,
+         because the router registers some models under a HuggingFace-style alias and
+         a raw string compare would show a serving model as idle — the one wrong
+         answer this column can give, since "not running" invites loading a second
+         copy of a model that is already taking traffic. #}
+      <td>{% if m.live %}<span class="tag ok" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% else %}<span class="tag mut" title="on disk, not loaded">·</span>{% endif %}</td>
+      <td class="mono">{{ m.id }}{% if m.live_as and m.live_as != m.id %} <span class="mut">(as {{ m.live_as }})</span>{% endif %}</td>
       <td class="mono">{{ m.arch or "—" }}</td>
       <td class="mono">{{ m.quant or "—" }}</td>
       <td class="mono">{{ m.bytes | sz }}{% if m.shard_total > 1 %} <span class="mut">({{ m.shard_total }} shards)</span>{% endif %}</td>
       <td class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</td>
       <td class="mono">{{ m.layers if m.layers is not none else "—" }}{% if m.full_attention_interval %}<span class="mut">/​{{ m.full_attention_interval }}</span>{% endif %}</td>
       <td class="mono">{% if m.is_moe %}{{ m.expert_used_count }}<span class="mut">/{{ m.expert_count }} active</span>{% else %}dense{% endif %}</td>
-      <td class="mono">{% if m.has_mmproj %}mmproj{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}ssm{% endif %}{% if not m.has_mmproj and not m.has_ssm_state %}<span class="mut">—</span>{% endif %}</td>
+      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector — accepts images">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if m.shard_total > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and m.shard_total <= 1 %}<span class="mut">none</span>{% endif %}</td>
+      {# What the file says it can speak, read from the chat template it ships with
+         (§4.9: facts from the file, never a verdict). A missing marker means the
+         template does not declare that protocol — not that the model cannot do it.
+         "no template" is a different state and is labelled as one: a model with no
+         chat template will not hold a chat turn however it is prompted. #}
+      <td class="mono">{% if not m.has_chat_template %}<span class="tag warn" title="the GGUF carries no tokenizer.chat_template — a base/completion model">no template</span>{% else %}{% for k in m.template_markers.split(',') if m.template_markers %}<span class="tag info">{{ k }}</span> {% endfor %}{% if not m.template_markers %}<span class="mut">template, no roles</span>{% endif %}{% endif %}</td>
+      <td class="mono">{{ m.peak_h }} <span class="mut">@{{ (m.est_ctx or 0) | ctxlen }}</span></td>
       <td>
         {% if m.verdict == "yes" %}<span class="tag ok">fits</span>
         {% elif m.verdict == "reduced" %}<span class="tag warn">reduced</span>
@@ -129,8 +145,31 @@
   {% endif %}
   <p class="mut" style="margin:.7rem 0 0">Incomplete shard sets and dead symlinks are reported on
      <a href="/health">health</a>; a model that cannot load never reaches this table.</p>
+  {# Models the router is serving that this table has no row for. They exist: a model
+     loaded from outside the scanned tree, or registered under an alias whose weights
+     sit under a name the library does not contain. Showing "16 models, all accounted
+     for" when the router is serving something unaccounted for is the failure this
+     section exists to prevent — and the reason the merge kept them instead of
+     filtering them out. #}
+  {% if extra_live %}
+  <h4 style="margin:.9rem 0 .3rem">Live but not in the library ({{ extra_live|length }})</h4>
+  <table>
+    <tr><th>router id</th><th>note</th></tr>
+    {% for m in extra_live %}
+    <tr><td class="mono">{{ m.get('id') }}</td>
+        <td class="mut">registered with the router; no matching directory under {{ diskroot }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 </div>
 
+<h2>ComfyUI models</h2>
+{# These cards used to sit directly under the llama.cpp library table with no heading
+   of their own, so the page read as one long list and the safetensors categories
+   looked like more entries in the GGUF table. They are a different store, a different
+   format and a different service, and they say so now. #}
+<p class="mut" style="margin:0 0 .8rem">{{ comfyroot }} — safetensors, grouped by ComfyUI category;
+  these are image/video models and the router does not serve them</p>
 {% if comfy %}
 {% for cat in comfy %}
 <div class="card" style="margin-bottom:10px">

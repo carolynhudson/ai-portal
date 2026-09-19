@@ -570,8 +570,30 @@ def create_app() -> FastAPI:
             indexed = modelindex.rows()
         except Exception:  # noqa: BLE001 — the page still renders without the index
             indexed = []
+        # Which library rows are also live right now, matched on a key both sides
+        # agree on. The router registers some models under a HuggingFace-style alias
+        # (`unsloth/X-GGUF:Q8_K_XL`) that no directory name resembles, so raw string
+        # comparison left a serving model looking idle — the one error a "live" light
+        # must not make, because a wrong "not running" invites loading a second copy
+        # of a model that is already taking traffic.
+        try:
+            live_by_key = modelindex.live_keys(live)
+        except Exception:  # noqa: BLE001 — the light is a convenience; the page is not
+            live_by_key = {}
+        library_ids = set()
         for m in indexed:
             m["verdict"] = modelindex.verdict(m, budget)
+            hit = live_by_key.get(modelindex.router_key(m["id"]))
+            m["live"] = bool(hit)
+            m["live_as"] = (hit or {}).get("id") or ""
+            m["peak_h"] = _human(modelindex.peak_bytes(m))
+            library_ids.add(modelindex.router_key(m["id"]))
+        # Live models the library does not know: served from outside the scanned tree,
+        # or an alias whose weights live under a different name. Listed rather than
+        # dropped, because "the router is serving something I cannot see in my library"
+        # is a fact an operator needs, and hiding it makes the merged table a lie.
+        extra_live = [m for m in live
+                      if modelindex.router_key(m.get("id") or "") not in library_ids]
         pool_h = _human(budget)
         g = metrics.gpu() if hasattr(metrics, "gpu") else None
         if g and g.get("is_igpu"):
@@ -588,6 +610,8 @@ def create_app() -> FastAPI:
         return templates.TemplateResponse(request, "models.html",
                                           {"live": live, "disk": disk,
                                            "indexed": indexed,
+                                           "extra_live": extra_live,
+                                           "live_n": sum(1 for m in indexed if m["live"]),
                                            "pool_h": pool_h,
                                            "unknown_n": sum(
                                                1 for m in indexed
