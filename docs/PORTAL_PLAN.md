@@ -707,12 +707,12 @@ chat 15, system 14, tool-results 14, tools 12, thinking 1.
 
 Two traps in getting there, both worth the length of their write-up:
 
-* **An alternation of delimiters must escape every pipe that is punctuation.**
+- **An alternation of delimiters must escape every pipe that is punctuation.**
   `<\|tool_call|>` was read by the regex engine as "`<|tool_call` OR the empty string",
   matched at offset 0 of every template, and reported tool support on 13 of 15 models.
   A pattern whose alternation can be empty does not fail — it reports true for every
   input, forever.
-* **Substrings lie about Jinja.** `"tools" in template` matched the loop variable
+- **Substrings lie about Jinja.** `"tools" in template` matched the loop variable
   `{% for tool in tools %}`, which proves nothing about what the model emits. Matching
   is structural now. The correction in the other direction also mattered: anchoring the
   comparison operator right after the closing quote matched JSON `{"role": "tool"}` but
