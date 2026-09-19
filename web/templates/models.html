@@ -115,11 +115,11 @@
       <td class="mono">{{ m.id }}{% if m.live_as and m.live_as != m.id %} <span class="mut">(as {{ m.live_as }})</span>{% endif %}</td>
       <td class="mono">{{ m.arch or "—" }}</td>
       <td class="mono">{{ m.quant or "—" }}</td>
-      <td class="mono">{{ m.bytes | sz }}{% if m.shard_total > 1 %} <span class="mut">({{ m.shard_total }} shards)</span>{% endif %}</td>
+      <td class="mono">{{ m.bytes | sz }}{% if (m.shard_total or 1) > 1 %} <span class="mut">({{ m.shard_total }} shards)</span>{% endif %}</td>
       <td class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</td>
       <td class="mono">{{ m.layers if m.layers is not none else "—" }}{% if m.full_attention_interval %}<span class="mut">/​{{ m.full_attention_interval }}</span>{% endif %}</td>
       <td class="mono">{% if m.is_moe %}{{ m.expert_used_count }}<span class="mut">/{{ m.expert_count }} active</span>{% else %}dense{% endif %}</td>
-      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector — accepts images">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if m.shard_total > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and m.shard_total <= 1 %}<span class="mut">none</span>{% endif %}</td>
+      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector — accepts images">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if (m.shard_total or 1) > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and (m.shard_total or 1) <= 1 %}<span class="mut">none</span>{% endif %}</td>
       {# What the file says it can speak, read from the chat template it ships with
          (§4.9: facts from the file, never a verdict). A missing marker means the
          template does not declare that protocol — not that the model cannot do it.
@@ -270,14 +270,18 @@ function renderSearchResults(results, service){
   }
   let html = '';
   for (const m of results){
-    const tags = (m.tags || []).slice(0, 5).join(', ');
-    const type = service === 'llamacpp' ? (m.has_gguf ? 'GGUF (llama.cpp)' : 'Not GGUF') 
+    // Every field here comes from the Hugging Face search API, so every one of them is
+    // data from a remote response. `id` and `pipeline_tag` were already escaped; `tags`,
+    // `downloads` and `likes` were not, and a tag like "</div><img src=x onerror=...>"
+    // closes the div and injects. `type` is built from our own booleans and stays raw.
+    const tags = (m.tags || []).slice(0, 5).map(esc).join(', ');
+    const type = service === 'llamacpp' ? (m.has_gguf ? 'GGUF (llama.cpp)' : 'Not GGUF')
              : (m.has_safetensors ? 'Safetensors (ComfyUI)' : 'Not Safetensors');
     html += `<div class="search-result-item" onclick="selectModel('${esc(m.id)}')">
       <h4>${esc(m.id)}</h4>
       <div class="meta">
-        <span>📥 ${m.downloads || 0} downloads</span>
-        <span>❤️ ${m.likes || 0} likes</span>
+        <span>📥 ${esc(m.downloads || 0)} downloads</span>
+        <span>❤️ ${esc(m.likes || 0)} likes</span>
         <span>${type}</span>
         ${m.pipeline_tag ? `<span>🎯 ${esc(m.pipeline_tag)}</span>` : ''}
       </div>

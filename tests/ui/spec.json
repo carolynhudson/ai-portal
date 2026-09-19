@@ -6,7 +6,7 @@
     "for every page automatically; this file only adds what cannot be derived:",
     "which endpoints a page must have called, which tabs form a group, which",
     "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app — test_ui_integration",
+    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
     "fails if the app serves an HTML page with no spec."
   ],
   "blockMutations": [
@@ -261,7 +261,7 @@
         },
         {
           "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok · \\d+\\.\\d t/s"
+          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
         },
         {
           "selector": "#pulse-lanes .lane",
@@ -374,7 +374,7 @@
       "_disabled_comment": [
         "These three are enabled by the dashboard's own fixtures and locked only",
         "by the bar: this is the bar's doing, not the page's. The restore path is",
-        "asserted by mutation \"job bar never unlocks the controls again\" — a",
+        "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
         "static spec cannot see a lock that was never released, so it has to be",
         "broken in the template to know it is tested."
       ],
@@ -400,7 +400,7 @@
     {
       "_comment": [
         "The other half of the bar: the job finished, possibly while you were",
-        "elsewhere, and said it failed. The bar must still say so — and the",
+        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
         "controls must be usable again."
       ],
       "name": "jobbar-finished",
@@ -495,7 +495,7 @@
           "path": "^/api/models/search$",
           "status": 200,
           "body": {
-            "count": 2,
+            "count": 3,
             "results": [
               {
                 "id": "TheBloke/UiT-Huge-GGUF",
@@ -517,12 +517,60 @@
                   "safetensors"
                 ],
                 "has_safetensors": true
+              },
+              {
+                "id": "evil/Injected-Model",
+                "downloads": 1,
+                "likes": 1,
+                "pipeline_tag": "text-generation",
+                "tags": [
+                  "</div><img id=xss-probe src=x onerror=alert(1)>",
+                  "<script>bad</script>"
+                ],
+                "has_gguf": true
               }
             ]
-          }
+          },
+          "methods": [
+            "POST"
+          ]
         }
       ],
-      "requireConfirmFor": []
+      "requireConfirmFor": [],
+      "expectNoInjectedMarkup": [
+        {
+          "selectors": "#search-results",
+          "mustContainEscaped": [
+            "&lt;/div&gt;&lt;img id=xss-probe"
+          ],
+          "triggerForm": "form[onsubmit^=\"searchModels\"]",
+          "triggerFill": [
+            {
+              "select": "#search-query",
+              "value": "inject-probe"
+            }
+          ],
+          "mustNotCreate": [
+            "#xss-probe",
+            "img[onerror]",
+            "script"
+          ],
+          "mustNotHaveAttr": [
+            {
+              "select": "[onclick]",
+              "attr": "onclick",
+              "forbidden": [
+                "'><",
+                "\"><img",
+                "alert("
+              ]
+            }
+          ]
+        }
+      ],
+      "expectInert": [
+        "selectModel\\('evil/Injected-Model"
+      ]
     },
     {
       "name": "metrics",
@@ -574,7 +622,7 @@
           "contains": "amdrocm-base9.9"
         },
         {
-          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."
+          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
         },
         {
           "selector": "#gpu-stack .kv",
@@ -697,7 +745,7 @@
                 "pids": [],
                 "proc_read": true,
                 "purgeable": false,
-                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) — this build is what the router is configured to run"
+                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
               },
               {
                 "name": "llama.cpp-b10796",

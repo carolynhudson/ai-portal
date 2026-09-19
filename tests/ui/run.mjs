@@ -378,6 +378,7 @@ for (const sel of spec.expectShown || []) {
     fail(`element should be showing but is hidden: ${sel}`);
 }
 
+
 // A live region must show *data*, not merely exist: a panel that renders "—"
 // forever passes a visibility check and tells the user nothing. `contains` is
 // matched against any element of the selector; `minCount` pins how many there
@@ -675,7 +676,13 @@ function judgeControl(info, r, phase, { toleratedNoop = false } = {}) {
         fail(`${info.selector} sent ${req.method} ${req.path} without asking for confirmation first (${phase} pass)`);
     }
 
-    if (r.effect === "none" && !toleratedNoop && !expectInert.some((p) => new RegExp(p).test(info.selector))) {
+    // expectInert is matched against the selector, which for a row the harness injected
+    // via a fixture is positional (div[nth=16]) and changes whenever the fixture order
+    // changes. A fixture row is data invented to test something else (escaping), not a
+    // control the page offers, so its handler is the stable identity to exempt on.
+    const inertHaystack = `${info.selector} ${info.handler || ""} ${info.text || ""}`;
+    if (r.effect === "none" && !toleratedNoop
+        && !expectInert.some((p) => new RegExp(p).test(inertHaystack))) {
       const what = [info.text && `text=${JSON.stringify(info.text)}`, info.handler && `handler=${JSON.stringify(info.handler)}`]
         .filter(Boolean)
         .join(" ");
@@ -847,6 +854,79 @@ if (uniqueMisses.length)
 
 phase = "job-bar";
 checkBodyAttr(" after every control was driven");
+
+// Escaping is a property of the rendered DOM, not of the source you can eyeball, so a
+// page that fetches JSON and builds markup with template literals needs this assertion.
+// It runs here rather than at load time on purpose: on /models the hostile fixture is a
+// /api/models/search response, and that request only happens when the search form is
+// submitted. Asserting at load time measured an empty container and reported "no
+// injection" for a page that had never rendered a search result at all.
+phase = "markup";
+for (const probe of spec.expectNoInjectedMarkup || []) {
+  // Drive whatever the page needs to make the hostile fixture land. A probe that only
+  // inspects is a probe on a page that has not done the thing being tested.
+  if (probe.triggerForm) {
+    const form = win.document.querySelector(probe.triggerForm);
+    if (!form) { fail(`xss probe triggerForm matched nothing: ${probe.triggerForm}`); continue }
+    // Fill the inputs first. The page's own guard is `if (!query) return`, so a
+    // submitted-but-empty form silently does nothing and the fixture never lands.
+    for (const fill of probe.triggerFill || []) {
+      const el = win.document.querySelector(fill.select);
+      if (!el) { fail(`xss probe triggerFill matched nothing: ${fill.select}`); continue }
+      el.value = fill.value;
+      try { el.dispatchEvent(new win.Event("input", { bubbles: true })); } catch {}
+    }
+    try { form.dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true })); }
+    catch { /* jsdom version differences; the assertion below still reports the gap */ }
+  }
+}
+await new Promise((r) => setTimeout(r, 400));   // let the triggered fetch settle
+for (const probe of spec.expectNoInjectedMarkup || []) {
+  const container = probe.selectors
+    ? win.document.querySelector(probe.selectors)
+    : win.document.body;
+  if (!container) { fail(`xss probe found no container: ${probe.selectors}`); continue }
+  const html = container.innerHTML || "";
+
+  // Ask the DOM, not the string. A substring test on innerHTML cannot tell escaped text
+  // from executed markup: esc() turns `<img onerror=...>` into
+  // `&lt;img onerror=...&gt;`, and the characters `onerror=alert(1)` are still in there
+  // as harmless displayed text. Asserting on the substring reports a vulnerability in a
+  // page that is correctly escaping, which is worse than no assertion because it teaches
+  // everyone to ignore the harness. The security property is what the parser built.
+  for (const sel of probe.mustNotCreate || []) {
+    const bad = container.querySelector(sel);
+    if (bad) {
+      fail(`rendered DOM contains an element ${JSON.stringify(sel)} built from a remote `
+           + `response value in ${probe.selectors} — markup was interpolated without `
+           + `escaping. innerHTML was: ${html.slice(0, 200)}`);
+    }
+  }
+  // Attribute-level check too: escaping a value that lands inside an attribute is a
+  // different failure from escaping one that lands in text, and the template has both.
+  for (const rule of probe.mustNotHaveAttr || []) {
+    for (const el of container.querySelectorAll(rule.select)) {
+      const v = el.getAttribute(rule.attr) || "";
+      if (rule.forbidden.some((f) => v.includes(f))) {
+        fail(`attribute ${rule.attr} on ${rule.select} in ${probe.selectors} contains `
+             + `${JSON.stringify(rule.forbidden.join("|"))} from a remote value: `
+             + `${JSON.stringify(v.slice(0, 120))}`);
+      }
+    }
+  }
+  // Positive half, and the half that actually caught a broken harness here: if the
+  // hostile fixture never reached the DOM, every mustNotContain above passes for the
+  // wrong reason and the green means nothing.
+  if (probe.mustContainEscaped) {
+    for (const marker of probe.mustContainEscaped) {
+      if (!html.includes(marker)) {
+        fail(`xss fixture never reached the DOM (expected to see the escaped form `
+             + `${JSON.stringify(marker)} in ${probe.selectors}), so "no injection" `
+             + `proves nothing`);
+      }
+    }
+  }
+}
 
 const orphanHttp = trace.httpErrors.filter((m) => !httpAttributed.has(m));
 if (orphanHttp.length) {
