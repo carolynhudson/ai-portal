@@ -159,11 +159,6 @@ ctx-size = 8192
 ; small -> Vulkan (measured) | trained=262144 -> capped 8192
 device   = Vulkan0
 ctx-size = 8192
-ctx
--size
- 
-=
- 8192
 """
 
 
