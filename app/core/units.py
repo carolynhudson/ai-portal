@@ -76,16 +76,23 @@ WantedBy=default.target
 
 
 def render_unit(unit: str, service: str, description: str,
-                working_dir: str) -> str:
+                working_dir: str | Path) -> str:
     """The unit text install_unit would write (one source of truth, also used
-    by ``python -m app.deploy --print-units``)."""
+    by ``python -m app.deploy --print-units``).
+
+    working_dir is Path | str because that is what callers actually pass:
+    deploy.py --print-units hands in paths.COMFY_REPO and paths.AI_ROOT, both PosixPath.
+    format() stringifies it, so this was never a runtime fault -- but the annotation
+    claimed str, which made every one of those call sites look wrong to a type checker
+    and hid that two different types genuinely flow through this function.
+    """
     return UNIT_TEMPLATE.format(description=description, shared=paths.AI_ENV_FILE,
                                env=env_path(service), wrapper=wrapper_path(service),
                                workdir=working_dir)
 
 
 def install_unit(unit: str, service: str, description: str,
-                 working_dir: str, log=print) -> dict:
+                 working_dir: str | Path, log=print) -> dict:
     """Write the static unit (shared ai-env.env + per-service env file) and
     daemon-reload so systemd sees it.
 

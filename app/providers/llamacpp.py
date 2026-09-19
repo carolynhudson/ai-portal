@@ -86,8 +86,10 @@ def _binary_version() -> str | None:
         return None
     try:
         out = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=15)
-        line = ((out.stdout or "") + (out.stderr or "")).strip().splitlines()
-        return line[0] if line else None
+        lines = _version_lines((out.stdout or "") + (out.stderr or ""))
+        # The version line, not the first line: a logger preamble is not this box's
+        # llama.cpp version and showing it in the UI is how a wrong number gets trusted.
+        return lines[0] if lines else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -514,10 +516,15 @@ class LlamaCpp(Provider):
         server = build_dir / "bin" / "llama-server"
         if not server.exists():
             raise RuntimeError(f"build finished but {server} is missing")
-        ver_line = _run(log, [str(server), "--version"]).splitlines()[0]
+        ver_out = _run(log, [str(server), "--version"])
+        ver_lines = _version_lines(ver_out)
+        ver_line = " | ".join(ver_lines)
         m = _VER_RE.search(ver_line)
         if not m:
-            raise RuntimeError(f"unexpected --version output: {ver_line}")
+            # Keep the whole output in the message. The failure mode this replaces said
+            # only the first line, which was a logger line and told the operator nothing
+            # about what the binary actually reported.
+            raise RuntimeError(f"unexpected --version output: {ver_line or ver_out.strip()[:300]}")
         log(f"built: {ver_line}")
         # 6. stage a self-contained release (flat: binaries + libs together,
         #    RPATH=$ORIGIN — same layout as the phase-3 release)
@@ -538,7 +545,8 @@ class LlamaCpp(Provider):
                 n += 1
         log(f"staged {n} files -> {rel_dir}")
         # 7. verify the staged release before anything touches production
-        staged = _run(log, [str(rel_dir / "llama-server"), "--version"]).splitlines()[0]
+        staged_lines = _version_lines(_run(log, [str(rel_dir / "llama-server"), "--version"]))
+        staged = " | ".join(staged_lines)
         if m.group(2) not in staged:
             raise RuntimeError(f"staged version mismatch: {staged}")
         ldd = _run(log, ["ldd", str(rel_dir / "llama-server")])
@@ -750,8 +758,8 @@ class LlamaCpp(Provider):
             try:
                 r = subprocess.run([str(exe), "--version"], capture_output=True,
                                    text=True, timeout=20)
-                version = (r.stdout or r.stderr or "").strip().splitlines()[0] \
-                    if (r.stdout or r.stderr) else ""
+                lines = _version_lines((r.stdout or r.stderr or ""))
+                version = lines[0] if lines else ""
             except Exception as e:  # noqa: BLE001 — a stray build need not cooperate
                 version = f"(version check failed: {type(e).__name__}: {e})"
 
@@ -1128,6 +1136,42 @@ def _run_worker(rel_dir: Path, model: Path, log, label: str, size: int) -> tuple
 # ------------------------------------------------------------------ helpers
 
 _VER_RE = re.compile(r"build (\d+), commit ([0-9a-f]{7,40})")
+
+
+def _version_lines(output: str) -> list[str]:
+    """Lines of a `llama-server --version` run that actually look like version info.
+
+    Do not take the first line of the output. Upstream changed what --version prints:
+    b11028 printed only the version, so `splitlines()[0]` worked. b11056 emits a
+    logger line first —
+
+        0.00.000.734 I srv  llama_server: initializing ...
+        version: 0.4.1-dev (build 11056, commit e613ef2c8)
+        built with GNU 15.2.0 for Linux x86_64
+
+    — and line 0 is that log line. The two call sites that *gate* on the result
+    (the post-build identity check and the staged-release verification) then failed
+    with "unexpected --version output", killing an update job after a 10-20 minute
+    build had already succeeded. A probe that breaks because the tool it probes got
+    a new first line is a probe reading position instead of content.
+
+    Filtering is by the shape of a version line, and the filter is deliberately not
+    `_VER_RE` itself: the human-facing sites (the binary's reported version, the
+    purge record) want the version text even when the build/commit pair is absent,
+    e.g. a release build or a different upstream format.
+    """
+    lines = [ln.strip() for ln in (output or "").splitlines() if ln.strip()]
+    keep = [ln for ln in lines if _VERSIONISH_RE.search(ln)]
+    # Nothing matched: return everything rather than []. Callers decide whether an
+    # unrecognised version string is fatal; silently returning [] would turn "I could
+    # not read this" into "this binary reported nothing", which reads as a broken
+    # binary rather than an unreadable one.
+    return keep or lines
+
+
+_VERSIONISH_RE = re.compile(
+    r"\bversion:\s|\bbuild \d+|\bbuilt with \S|\bllama\.cpp\b|\bcommit [0-9a-f]{7,}",
+    re.IGNORECASE)
 
 
 def _link_target(link: Path) -> Path | None:
