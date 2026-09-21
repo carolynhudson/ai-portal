@@ -14,11 +14,30 @@ import tempfile
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-route-"))
 os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.core import paths  # noqa: E402
 from app.main import app  # noqa: E402
 
 GENERIC = "/api/services/{key}/{action}"
+
+
+@pytest.fixture()
+def router_launchable():
+    """Seed the one thing /ensure verifies: an executable at the launcher path.
+
+    This test used to pass only because tests/test_stray_builds.py had already symlinked
+    ~/ai/bin/llama-server into the same throwaway home. Run test_routing.py on its own and it
+    fails with "no executable at ... (deploy a release first)". A route test that depends on
+    another file's fixtures is a latent flake: renaming or reordering that file breaks this
+    one with an error that points at neither.
+    """
+    paths.AI_BIN.mkdir(parents=True, exist_ok=True)
+    exe = paths.AI_BIN / "llama-server"
+    exe.write_text("#!/bin/sh\necho 'b99999'\n")
+    exe.chmod(0o755)
+    return exe
 
 
 def _order() -> list[str]:
@@ -50,8 +69,13 @@ def test_specific_settings_routes_are_not_templates_only():
         assert path in order
 
 
-def test_ensure_endpoint_answers_rather_than_asking_for_a_body():
-    """The shadowing bug surfaced as a 422 'Field required: body'."""
+def test_ensure_endpoint_answers_rather_than_asking_for_a_body(router_launchable):
+    """The shadowing bug surfaced as a 422 'Field required: body'.
+
+    `verify.ok is True` is the assertion that matters here: it is what proves the specific
+    route answered rather than the generic matcher. So the launcher executable has to exist,
+    which is what the fixture provides.
+    """
     c = TestClient(app)
     c.post("/login", data={"password": "test-password-123"})
     r = c.post("/api/services/llamacpp/ensure")

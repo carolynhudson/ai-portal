@@ -303,9 +303,18 @@ def _discard_upload(dest: Path) -> None:
     A partial model file is multi-GB and the caller is about to raise, so this
     runs on every failure path — but a failed cleanup must not replace the error
     the caller is trying to report.
+
+    Both halves of that are explicit rather than inherited from the flag: `ignore_errors=True`
+    swallows the errors rmtree collects internally (verified on 3.14.4 — a missing path does
+    not raise, an unreadable directory returns None), and the `except` below is the backstop
+    for anything rmtree itself can raise before it gets to that point, such as a bad argument.
+    Discarding it is deliberate: this runs while the caller is already raising, and a cleanup
+    traceback must not replace the error being reported.
     """
-    with contextlib.suppress(OSError):
+    try:
         shutil.rmtree(dest, ignore_errors=True)
+    except OSError as exc:
+        logsetup.get().debug("upload cleanup skipped for %s: %s", dest, exc)
 
 
 def _busy(kinds: set[str] | None = None) -> HTTPException:
