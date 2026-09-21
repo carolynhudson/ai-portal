@@ -829,6 +829,91 @@
         "#stray-select",
         "#purge-stray-btn"
       ]
+    },
+    {
+      "_comment": [
+        "Personalities (plan section 4.7, phase N4). Server-rendered and read-only by",
+        "decision (D7): the page shows a diff, a human approves it. So the assertions here",
+        "are not 'does it work' but 'can it change anything' -- expectRequests is empty and",
+        "expectNoRequests names the write-shaped routes, because a view that quietly POSTs",
+        "on load is the exact accident this phase is built to prevent."
+      ],
+      "name": "personalities",
+      "path": "/personalities",
+      "expectTitle": "Personalities",
+      "expectRequests": [],
+      "expectNoRequests": [
+        "/api/personalities/apply",
+        "/api/personalities/write",
+        "/api/services/llamacpp/restart",
+        "/api/updates/llamacpp"
+      ],
+      "expectVisible": [
+        "#pers-safe",
+        "#pers-default",
+        "#keys-table",
+        "#keys-wrap"
+      ],
+      "expectText": [
+        {
+          "_comment": [
+            "The budget figure, asserted as a formatted number rather than a selector.",
+            "The template once read b.get('worst_bytes') while Budget.as_dict() calls it",
+            "worst_case_bytes; Jinja answered the missing key with undefined, the {% if %}",
+            "never fired, and the page rendered both cards with no budget at all -- 200 OK,",
+            "correct markup, no number. A selector check would have passed."
+          ],
+          "selector": "#pers-default",
+          "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB \\([-\\d.]+ spare\\)"
+        },
+        {
+          "_comment": "a diff is a proposal, and the page has to say which",
+          "selector": "#pers-safe",
+          "contains": "presets.ini it would write"
+        },
+        {
+          "_comment": [
+            "the settings table is the definition a future editor renders; an empty",
+            "table would mean the page explains nothing about what a key does"
+          ],
+          "selector": "#keys-table tbody tr",
+          "minCount": 10
+        },
+        {
+          "selector": "#keys-table",
+          "contains": "stop-timeout"
+        }
+      ],
+      "expectNoInjectedMarkup": [
+        {
+          "_comment": [
+            "A personality name and a model id reach this page from the index and from",
+            "personality definitions, and model directory names are the one part of that",
+            "chain a download can influence. The hostile fixture below is a library row,",
+            "so this proves the page escapes index-derived text rather than trusting it."
+          ],
+          "selectors": [
+            "#pers-default"
+          ],
+          "mustNotCreate": [
+            "#pers-xss",
+            "img[onerror]",
+            "script"
+          ],
+          "mustNotHaveAttr": [
+            {
+              "select": "[onclick]",
+              "attr": "onclick",
+              "forbidden": [
+                "'><",
+                "\"><img",
+                "alert("
+              ]
+            }
+          ]
+        }
+      ],
+      "tabGroups": []
     }
   ]
 }

@@ -1,0 +1,150 @@
+{# Personalities (PORTAL_PLAN §4.7, phase N4): which models this box may load, how
+   many at once, and what the worst case costs.
+
+   Read-only. There is no Apply button because there is no write path yet (D7): the page
+   generates presets.ini and shows the diff. Applying it is a separate gated decision, and
+   a page that can only show things cannot accidentally change the router. #}
+{% extends "base.html" %}
+{% block title %}Personalities · AI Portal{% endblock %}
+{% block body %}
+<style>
+/* page-local only. No tab geometry here — that lives in web/static/tabs.css and a page
+   redeclaring it is a contract violation (test_ui_contract). */
+.pers{display:grid;gap:14px}
+.pers-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.pers-card h3{margin:0 0 2px}
+.pers-note{color:var(--mut);font-size:.85rem;margin:0 0 10px}
+.pers-facts{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0 0 10px;font-size:.85rem}
+.pers-facts b{font-weight:600}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;border:1px solid var(--line)}
+.badge.yes{background:rgba(40,160,90,.14);border-color:rgba(40,160,90,.5)}
+.badge.no{background:rgba(200,70,70,.14);border-color:rgba(200,70,70,.5)}
+.badge.unknown{background:rgba(150,150,150,.14)}
+.adv{list-style:none;margin:0;padding:0}
+.adv li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
+.adv li:last-child{border-bottom:0}
+.sev{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;min-width:46px}
+.sev.bad{color:#c04a4a}
+.sev.warn{color:#b07a1a}
+.sev.info{color:var(--mut)}
+.models{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0}
+.models .tag{font-size:.75rem;padding:2px 7px;border:1px solid var(--line);border-radius:5px}
+pre.diff{background:#0f1116;color:#d7dce3;border-radius:6px;padding:10px 12px;font-size:.78rem;
+  overflow:auto;max-height:340px;margin:8px 0 0;white-space:pre}
+pre.diff .add{color:#7fd695}
+pre.diff .del{color:#e88b8b}
+pre.diff .hunk{color:#8fb4ff}
+table.keys{border-collapse:collapse;width:100%;font-size:.82rem}
+table.keys th,table.keys td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+table.keys th{background:var(--panel2);position:sticky;top:0}
+table.keys td.k{font-family:var(--mono,monospace);white-space:nowrap}
+table.keys td.h{color:var(--mut)}
+.wrap{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:6px}
+h2{margin:18px 0 6px}
+</style>
+
+<h2>Personalities</h2>
+<p class="mut">
+  A personality is a task-shaped allocation of this box: the models the router may see at
+  all, how many may be resident at once, and what the heaviest combination costs.
+  <span class="mut">`presets.ini` is an output of that decision, not the decision.</span>
+</p>
+<p class="mut">
+  Memory budget from the GPU aperture: <b>{{ pool_h }}</b>. Presets file:
+  <span class="mono">{{ presets_path }}</span>
+</p>
+
+<div class="pers">
+{% for c in cards %}
+  {% set g = generated[loop.index0] %}
+  <div class="pers-card" id="pers-{{ c.name }}">
+    <h3>{{ c.name }}</h3>
+    <p class="pers-note">{{ c.note }}</p>
+    <div class="pers-facts">
+      <span><b>models_max</b> {{ c.models_max }}</span>
+      <span><b>models</b> {{ (c.models or [])|length }}</span>
+      {% set b = g.get('budget') or {} %}
+      {% if b.get('fits') is true %}
+        <span class="badge yes">worst case fits</span>
+      {% elif b.get('fits') is false %}
+        <span class="badge no">worst case does not fit</span>
+      {% else %}
+        <span class="badge unknown">budget unknown</span>
+      {% endif %}
+      {# Field names must match Budget.as_dict() exactly. A typo here does not raise:
+         Jinja returns undefined for a missing key, so the clause just never renders and
+         the card looks like a personality with no budget instead of a page reading the
+         wrong field. Asserted in tests/test_personality_routes.py. #}
+      {% if b.get('worst_case_bytes') is not none %}
+        {# Built as one variable rather than wrapped across source lines: the rendered text
+           keeps the newline and indentation of the template, so a figure split over three
+           source lines arrives as "4.0 GiB of\n              108.0 GiB" and nothing that
+           matches it on one line can work. #}
+        {% set worst = (b.get('worst_case_bytes') / 1073741824)|round(1) %}
+        {% set total = (b.get('budget_bytes') / 1073741824)|round(1) %}
+        {% set spare = (b.get('headroom_bytes') / 1073741824)|round(1) %}
+        <span>heaviest {{ worst }} GiB of {{ total }} GiB ({{ spare }} spare)</span>
+      {% endif %}
+      <span class="mut">{% if c.editable %}custom{% else %}built-in, not editable in place{% endif %}</span>
+    </div>
+
+    {% if c.findings %}
+      <ul class="adv">
+      {% for f in c.findings %}
+        <li><span class="sev {{ f.severity }}">{{ f.severity }}</span>
+            <span>{{ f.message }}</span></li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if c.models %}
+      <div class="models">
+        {% for m in c.models %}<span class="tag mono">{{ m }}</span>{% endfor %}
+      </div>
+    {% endif %}
+
+    <h4>presets.ini it would write</h4>
+    {% if g.get('error') %}
+      <p class="sev bad">cannot be generated: {{ g.error }}</p>
+    {% elif not g.get('changed') %}
+      <p class="mut">no change — what it would write is what is on disk.</p>
+    {% else %}
+      <p class="mut">proposed only. Nothing here writes {{ presets_path }}.</p>
+      <pre class="diff">{% for ln in g.get('diff') or [] %}{% if ln.startswith('+') %}<span class="add">{{ ln }}</span>
+{% elif ln.startswith('-') %}<span class="del">{{ ln }}</span>
+{% elif ln.startswith('@@') %}<span class="hunk">{{ ln }}</span>
+{% else %}{{ ln }}
+{% endif %}{% endfor %}</pre>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+<h2 id="settings-keys">Settings a personality can set</h2>
+<p class="mut">
+  The keys the portal has a definition for, and therefore the keys a settings editor can
+  offer. Each row is the same definition the generator validates against, so what the page
+  explains and what the file is checked against cannot drift apart.
+  Keys the router controls (<span class="mono">host</span>, <span class="mono">port</span>,
+  <span class="mono">alias</span>, <span class="mono">model</span>,
+  <span class="mono">hf-repo</span>) are absent: it removes or overwrites them at launch, so
+  setting one would look like a setting and do nothing.
+</p>
+<div class="wrap" id="keys-wrap">
+<table class="keys" id="keys-table">
+  <thead><tr><th>key</th><th>type</th><th>where</th><th>default</th><th>what it does</th></tr></thead>
+  <tbody>
+  {% for k in setting_names %}
+    {% set s = settings[k] %}
+    <tr>
+      <td class="k mono">{{ k }}</td>
+      <td>{{ s.kind }}{% if s.choices %} ({{ s.choices|join(' | ') }}){% endif %}</td>
+      <td>{{ 'model only' if s.section == 'model' else 'global and per-model' }}</td>
+      <td class="mono">{{ s.default if s.default is not none else '—' }}</td>
+      <td class="h">{{ s.help }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

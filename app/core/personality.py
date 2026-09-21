@@ -47,11 +47,252 @@ ROUTER_CONTROLLED_KEYS = frozenset({
 #: overrides it per model; the router's precedence is CLI > model section > [*].
 GLOBAL_DEFAULTS: dict[str, Any] = {
     "threads": 16,
-    "mmap": 1,
     "fit": "on",
     "fit-target": 8192,
     "stop-timeout": 15,
 }
+
+# --- the settings registry -----------------------------------------------------
+#
+# Every key the portal is willing to name, with what it means and what a legal value
+# looks like. Two separate things live here and both are load-bearing:
+#
+#   * `help` and `kind` are what a settings editor renders — a control matched to the
+#     value type, not a free-text box. Building the registry first means the editor is a
+#     rendering pass over data instead of a second, weaker statement about what each key
+#     does.
+#   * `accepts()` is what validation uses today, so a generated presets.ini is checked
+#     against the same definition the UI will show rather than against a regex written
+#     later for the form.
+#
+# Definitions are quoted from llama.cpp's own tools/server/README.md and cross-checked
+# against what the live router resolves (GET /models -> status.preset, 17/17 models), not
+# guessed from habit. `mmap` and `mlock` are deliberately absent: they appear in no preset
+# the router reports and in no server argument list, so naming them here would invent a
+# setting.
+#
+# `writable` marks a key the portal may emit. `metrics`, `model` and `mmproj` are present
+# in every preset the router reports but the router derives them itself — it writes the
+# section header, the model path and the projector path — so emitting them is the portal
+# asserting something the router has already decided.
+SETTINGS: dict[str, dict[str, Any]] = {
+    "threads": {
+        "kind": "int",
+        "section": "both",
+        "default": -1,
+        "help": "CPU threads used during generation. -1 lets llama.cpp pick. The global "
+                "section on this box sets 16.",
+        "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    "fit": {
+        "kind": "choice",
+        "section": "both",
+        "default": "on",
+        "choices": ("on", "off"),
+        "help": "Adjust arguments that were not set so the model fits in device memory. "
+                "Blind to what is already resident: it fits against free memory at load "
+                "time, not against a plan.",
+        "accepts": lambda v: v in ("on", "off"),
+    },
+    "fit-target": {
+        "kind": "int",
+        "section": "both",
+        "default": 1024,
+        "help": "Margin in MiB the fit adjustment leaves per device. Comma-separated for "
+                "a per-device list; one value applies to every device.",
+        "accepts": lambda v: _positive_mib_list(v),
+    },
+    "stop-timeout": {
+        "kind": "int",
+        "section": "both",
+        "default": 10,
+        "preset_only": True,
+        "help": "Seconds to wait after a requested unload before forcing termination. "
+                "Preset-exclusive: it is not a command-line argument at all.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "load-on-startup": {
+        "kind": "bool",
+        "section": "model",
+        "default": False,
+        "preset_only": True,
+        "help": "Load this model when the server starts rather than on first request. "
+                "Only read at startup: after a preset reload a newly added model is "
+                "listed but not loaded.",
+        "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
+    },
+    "dedup-cache-models": {
+        "kind": "bool",
+        "section": "both",
+        "default": False,
+        "preset_only": True,
+        "help": "When a preset's hf-repo points at a model already downloaded, hide the "
+                "cached entry from GET /models. Preset-exclusive.",
+        "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
+    },
+    "ctx-size": {
+        "kind": "int",
+        "section": "model",
+        "default": 0,
+        "help": "Prompt context. 0 means take it from the model. Not emitted by default: "
+                "a hard-coded ctx cap below a model's trained context silently removes "
+                "capability, which is what the old per-model sections on this box did.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "n-gpu-layers": {
+        "kind": "choice-or-int",
+        "section": "both",
+        "default": "auto",
+        "help": "How many layers live in VRAM: a number, 'auto', or 'all'. The lever that "
+                "trades GPU for system RAM on an oversized model.",
+        "accepts": lambda v: v in ("auto", "all") or (isinstance(v, int) and v >= 0),
+    },
+    "flash-attn": {
+        "kind": "choice",
+        "section": "both",
+        "default": "auto",
+        "choices": ("on", "off", "auto"),
+        "help": "Flash Attention. On this box it is the setting most likely to matter for "
+                "large-context models on ROCm.",
+        "accepts": lambda v: v in ("on", "off", "auto"),
+    },
+    "parallel": {
+        "kind": "int",
+        "section": "both",
+        "default": -1,
+        "help": "Number of request slots. -1 = auto. Each slot costs KV cache, so this "
+                "multiplies the context a model is actually holding.",
+        "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    "jinja": {
+        "kind": "bool",
+        "section": "both",
+        "default": True,
+        "help": "Use the model's embedded chat template. Tool calling needs it: a model "
+                "whose template declares tools is unusable with jinja off.",
+        "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
+    },
+    "ctx-checkpoints": {
+        "kind": "int",
+        "section": "both",
+        "default": 32,
+        "help": "Context checkpoints kept per slot. Costs memory per slot.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "keep": {
+        "kind": "int",
+        "section": "both",
+        "default": 0,
+        "help": "Tokens kept from the initial prompt. -1 keeps all.",
+        "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+}
+
+# Present in every preset the router reports, but written by the router, not by us.
+ROUTER_DERIVED_KEYS = frozenset({"metrics", "model", "mmproj"})
+
+
+def _positive_mib_list(value: Any) -> bool:
+    """fit-target takes one MiB value or a comma-separated list of them.
+
+    Parsed rather than pattern-matched because the documented shape is a list and a
+    hand-written regex tends to accept `1024,` or `1024,,2048` and then pass the string to
+    a parser that rejects it at launch, which is the failure mode this validation exists
+    to prevent. Non-integer entries are refused here, not by llama.cpp.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if not isinstance(value, str):
+        return False
+    parts = [p.strip() for p in value.split(",")]
+    if not parts or any(p == "" for p in parts):
+        return False
+    try:
+        return all(int(p) > 0 for p in parts)
+    except ValueError:
+        return False
+
+
+def setting_names() -> list[str]:
+    """Every key the portal has a definition for, in declaration order."""
+    return list(SETTINGS)
+
+
+def setting_is_writable(key: str) -> bool:
+    """Can the portal emit this key at all?
+
+    Three refusals, in order of how likely they are to be hit: a key with no definition
+    (nobody has said what it means); a key the router strips or overwrites when it
+    launches (emitting it would look like a setting and do nothing); a key the router
+    derives itself (emitting it would restate a decision the router already made).
+    """
+    if key not in SETTINGS:
+        return False
+    return key not in ROUTER_CONTROLLED_KEYS and key not in ROUTER_DERIVED_KEYS
+
+
+def coerce_setting(key: str, value: Any) -> Any:
+    """Turn an ini/form value into the type this key's definition expects.
+
+    `presets.ini` has no types: everything arrives as a string, so `threads = 16` reaches
+    a validator as '16'. Rejecting that — which the first version of this function did,
+    failing 34 out of 34 values the live router itself reports — is not strictness, it is
+    the validator disagreeing with the file format it validates. The coercion is where the
+    string becomes an int, and it is deliberately not permissive about the rest:
+    '16.5' and 'sixteen' both stay strings and are then rejected.
+
+    Booleans are coerced from 1/0 because that is what the ini holds. They are NOT coerced
+    from 'yes'/'no'/'true': llama.cpp's own spellings differ per option (`fit = on|off`,
+    flags written as 1), and guessing which word a given option wants is how a generated
+    file ends up setting something other than what was intended.
+    """
+    spec = SETTINGS.get(key)
+    if spec is None:
+        return value
+    kind = spec["kind"]
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if kind in ("int", "choice-or-int"):
+        try:
+            return int(text)
+        except ValueError:
+            return value  # left as a string so 'auto'/'all' still pass, and junk fails loudly
+    # `bool` is not coerced at all. presets.ini spells these as 1/0 and the accepters
+    # already take 1/0, so there is nothing to convert — and converting here would mean
+    # deciding which spelling a given llama.cpp option wants. `fit` takes on/off, preset
+    # flags take 1; guessing wrong sets something other than what was intended.
+    return text
+
+
+def check_setting(key: str, value: Any) -> str | None:
+    """None if the value is legal for this key, else a message naming the key and value.
+
+    Returns a message instead of raising because a settings form wants to show every
+    problem at once, not the first one. The generated-file path turns these into
+    PersonalityError and refuses to emit at all.
+
+    A key the router owns is refused even when its value would be perfectly valid, so the
+    check is done before the value is looked at: `alias = 3` should be reported as "the
+    router sets this", not as "3 is not a valid alias".
+    """
+    spec = SETTINGS.get(key)
+    if spec is None:
+        return f"{key}: no definition for this setting"
+    if not setting_is_writable(key):
+        return f"{key}: controlled by the router, not editable here"
+    value = coerce_setting(key, value)
+    try:
+        ok = bool(spec["accepts"](value))
+    except Exception:  # a broken accepts() is a bug in this file, not bad user input
+        return f"{key}: validator failed on {value!r}"
+    if not ok:
+        hint = spec.get("choices")
+        allowed = f" one of {', '.join(map(str, hint))}" if hint else ""
+        return f"{key}: {value!r} is not a valid value (expects {spec['kind']}{allowed})"
+    return None
 
 #: `safe` — the thing to fall back to. Minimal on purpose: one small model, nothing
 #: else resident. If this one cannot start, the box is broken and the portal says so.

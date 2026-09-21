@@ -755,6 +755,82 @@ had become a no-op. Verify a new helper returns different answers for different 
 
 
 
+**N4 shipped 2026-09-20 (read-only half): `app/core/personality.py` generates, `/personalities`
+shows, and nothing writes.** `render()` returns text, a unified diff, and the budget with its
+inputs; `describe()` returns the card the page renders; `parse_current()` reads what is already
+on disk so the diff is against reality rather than against an assumption. `safe` and `default`
+exist and are not editable in place. Router-controlled keys are refused, not emitted.
+
+**D7 is answered: show the diff, a human approves.** A settings-style editor for global and
+per-model values is the agreed shape of the next step, and it is why the key definitions were
+written as a registry first. `personality.SETTINGS` gives each writable key a `kind`, a
+`section`, a `default`, `choices`, a `help` line, and an `accepts` predicate. The generator
+validates against that table and the page renders the same table, so the text a person reads
+and the rule a generated file is checked against cannot drift apart. `ctx-size` is in the
+registry and deliberately **not** in `GLOBAL_DEFAULTS`: a hard-coded context cap is what the
+old per-model sections on this box did, and it removed capability silently.
+
+Two things the registry had to be corrected for, both found by comparing it against the live
+router rather than against the README:
+
+- **ini values are all strings, and a validator that forgets that validates nothing.** The
+  first `check_setting` required `isinstance(v, int)`, and it rejected **34 of 34 values the
+  router itself reports** — `threads = 16`, `stop-timeout = 15`. That reads as strictness and
+  is the validator disagreeing with the file format it is validating. `coerce_setting` is where
+  '16' becomes 16; it stays strict about the rest ('16.5' and 'sixteen' remain strings and are
+  then refused). Cross-checked against `GET /models` → `status.preset` on all 17 models: 68
+  values checked, 0 rejected.
+- **`mmap` and `mlock` were removed from `GLOBAL_DEFAULTS`, not added to it.** They appear in
+  no preset the live router resolves and in no `llama-server` argument list this box documents.
+  A settings page that offers a key nobody implements is worse than one that omits it.
+
+**`GET /models` exposes the resolved preset, but only in `status`, and only for a loaded
+model.** `args` and `preset` are not top-level keys on a model entry — they live inside
+`status`, the same dict that carries `value`. A probe that reads `m["args"]` gets `None` and
+reports "the router exposes nothing", which is how this session initially concluded 0/17 models
+had launch arguments. Fourth time this endpoint has produced a wrong answer through a
+dict-vs-string or wrong-key mistake; the shape is now asserted in tests.
+
+**Three bugs the new tests introduced, each found before committing:**
+
+- **A read-only guard that only guards in the right test order.** The obvious version —
+  snapshot `presets.ini`, make the requests, compare — **passed while `render()` was mutated to
+  write the file**, because an earlier test in the same run had already written it: `before` and
+  `after` were both the mutated output and equalled each other. The guard now plants a sentinel
+  no personality could ever generate, so any write is observable from whatever state the run is
+  in. A guard that only catches a change when nothing has changed yet is a guard against test
+  order, not against the bug.
+- **A Jinja typo that rendered a blank instead of an error.** The template read
+  `b.get('worst_bytes')`; `Budget.as_dict()` calls it `worst_case_bytes`. Jinja answers a
+  missing key with undefined, the `{% if %}` never fires, and the page renders both cards with
+  no budget at all — 200 OK, correct markup, no number. Asserting a selector would have passed;
+  the tests and the UI spec assert the formatted figure (`heaviest 4.1 GiB of 108.0 GiB (103.9
+  spare)`) instead. Fixing the name exposed a second, subtler version of the same class: the
+  figure was wrapped across three template lines, so `textContent` contained the newline and
+  fourteen spaces of indentation and nothing matching it on one line could work. The figure is
+  now built into one variable.
+- **A fixture that could not be parsed.** The UI sandbox's "model" was 2048 null bytes: valid
+  enough to list as a file, not valid enough to sniff, so `model_index` stayed empty after the
+  startup rescan and every index-backed page rendered its empty state forever. It now writes a
+  real GGUF through the indexer test's own writer — one fixture definition, so the reader cannot
+  drift from the fixture without one of the two suites noticing — and seeds `safe`'s named model
+  too, because a fallback the sandbox lacks makes the `safe` card legitimately budget-less, and
+  an assertion that only ever describes `default` passes even if the fallback card stops
+  computing one.
+
+**Rewriting the job bar to nodes, and the two traps in doing it.** Removing `innerHTML` from
+`base.html` sounds mechanical and produced two bugs of its own. Escaping a value *before*
+putting it in a text node double-escapes: a job target of `a<b>c` renders to the user as the
+literal characters `a&lt;b&gt;c`, because a text node is never parsed as markup and therefore
+needs no escaping. And `Element.append()` takes nodes as separate arguments — `' ' + text(x)`
+concatenates, which coerces the node and yields `" [object Text]"` in the bar. Both were caught
+by running the real harness rather than a reproduction; the mutation check (replacing the step
+text) confirms the harness reads the rendered string and not merely the element's existence.
+
+**Deferred, deliberately:** the apply path. `presets.ini` on this box still holds only the
+validated `[*]` globals; N4 has not changed what the router reads. Writing is a separate,
+gated decision that goes through the restart job and records a snapshot first.
+
 **Lessons carried over, deliberately:**
 
 - The indexer crashes on `os.stat()` of a dangling symlink — three exist in this
@@ -1466,8 +1542,11 @@ Remaining open (can proceed without them):
 - **D6 — gguf-indexer.** Port its working code into the portal (my
   recommendation — one codebase to maintain), or keep it as a sidecar tool the
   portal shells out to?
-- **D7 — Presets.** Portal edits `presets.ini` directly (validated + snapshotted),
-  or only shows proposed diffs for you to approve?
+- **D7 — Presets (DECIDED 2026-09-20).** Show the diff, a human approves it. The portal
+  generates and displays; it does not write. Next step is a settings-style editor for the
+  global and per-model keys, with help text and a control matched to each value type — which
+  is why the key definitions live in `personality.SETTINGS` (kind, section, default, choices,
+  help, validator) rather than being re-derived by a form.
 - **D8 — Compat symlinks.** Keep `~/llama.cpp`, `~/ComfyUI`, `~/comfyui`,
   `~/vulkan` forever, or remove once the portal has been stable for a while?
 - **D9 — Personalities.** See §4.7: named states = generated presets +

@@ -38,6 +38,32 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 UIDIR = ROOT / "tests" / "ui"
+sys.path.insert(0, str(ROOT))
+
+from app.core import personality as _personality  # noqa: E402
+from tests.test_modelindex import _write_fake_gguf  # noqa: E402
+
+# Read from the module instead of copying the string: `safe` names one model by hand, and a
+# fixture that repeats that string keeps passing when the two disagree.
+SAFE_MODEL = _personality.SAFE["models"][0]
+
+
+def _seed_gguf(path: Path, *, pad: int = 0) -> None:
+    """A GGUF the portal's reader can parse, for the sandbox's model library.
+
+    The harness needs index-backed pages (models table, personality budgets) to render
+    populated states, and b"\\0" * N is not a GGUF: sniff_gguf rejects it, the row never
+    lands in model_index, and the page renders its empty state forever. Reusing the indexer
+    test's writer means one fixture definition, so the reader cannot drift from the fixture
+    without one of the two suites noticing.
+    """
+    _write_fake_gguf(path, {
+        "block_count": 8,
+        "attention.head_count": 4,
+        "attention.head_count_kv": 2,
+        "embedding_length": 256,
+        "context_length": 4096,
+    }, pad=pad)
 SPEC = json.loads((UIDIR / "spec.json").read_text())
 NODE = shutil.which("node")
 PASSWORD = "ui-test-password-123"
@@ -63,9 +89,20 @@ def ui_server():
     # cache to scan, a llama model dir, a ComfyUI category.
     (home / ".cache" / "huggingface" / "hub" / "models--x--y").mkdir(parents=True)
     (home / ".cache" / "huggingface" / "hub" / "models--x--y" / "blob").write_bytes(b"x" * 1024)
+    # A GGUF the portal's own reader can actually parse. The previous fixture here was 2048
+    # null bytes: valid enough to list as a file, not valid enough to sniff, so model_index
+    # stayed empty after the startup rescan and any page that reads the index rendered its
+    # empty state. That is honest behaviour and a useless UI fixture — a budget figure that
+    # is never produced cannot be asserted to appear.
     mdir = home / "ai" / "models" / "llama" / "ui-test-model"
     mdir.mkdir(parents=True)
-    (mdir / "ui-test-model-Q4_K_M.gguf").write_bytes(b"\0" * 2048)
+    _seed_gguf(mdir / "ui-test-model-Q4_K_M.gguf", pad=2048)
+    # `safe` names one specific model as the fallback. A sandbox without it is not broken —
+    # the page correctly reports that the fallback cannot start — but it renders `safe` with
+    # no budget, so a UI assertion about the budget figure would be describing only `default`
+    # and would pass even if the fallback card stopped computing one.
+    (home / "ai" / "models" / "llama" / SAFE_MODEL).mkdir(parents=True)
+    _seed_gguf(home / "ai" / "models" / "llama" / SAFE_MODEL / f"{SAFE_MODEL}.gguf", pad=1024)
 
     env = dict(os.environ)
     env.update(
@@ -278,8 +315,8 @@ def test_destructive_requests_carry_what_the_backend_needs(ui_server):
                 if missing:
                     problems.append(
                         f"{page} {req['method']} {req['path']}: body missing {missing}: {req['body'][:200]}")
-    never_exercised = sorted(k for k in set(
-        f"{p}:{pat}" for p, rules in contracts.items() for pat, _ in rules) - seen)
+    never_exercised = sorted({
+        f"{p}:{pat}" for p, rules in contracts.items() for pat, _ in rules} - seen)
     assert not problems, "destructive request contract broken:\n" + "\n".join(problems)
     assert not never_exercised, (
         "these destructive paths were never exercised by the UI (button removed, "

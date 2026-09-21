@@ -8,18 +8,18 @@ no front-end re-engineering.
 """
 from __future__ import annotations
 
-import json
+import contextlib
 import errno
+import json
 import math
-import numbers
 import os
 import re
-from datetime import datetime
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import (Depends, FastAPI, File, Form, HTTPException, Request,
@@ -34,7 +34,7 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, modeladd, modelindex, paths, systemd, updater
+from .core import db, health, modeladd, modelindex, paths, personality, systemd, updater
 from . import providers
 from .providers import PROVIDERS, get as get_provider
 
@@ -304,10 +304,8 @@ def _discard_upload(dest: Path) -> None:
     runs on every failure path — but a failed cleanup must not replace the error
     the caller is trying to report.
     """
-    try:
+    with contextlib.suppress(OSError):
         shutil.rmtree(dest, ignore_errors=True)
-    except OSError:
-        pass
 
 
 def _busy(kinds: set[str] | None = None) -> HTTPException:
@@ -361,11 +359,9 @@ def comfy_snapshot() -> dict:
     web = router_mod.probe(f"{base}/system_stats")
     version = None
     if web["ok"]:
-        try:
+        with contextlib.suppress(Exception):
             version = httpx.get(f"{base}/system_stats",
                                 timeout=3).json()["system"]["comfyui_version"]
-        except Exception:  # noqa: BLE001
-            pass
     return {
         "host": base,
         "port": cfg["port"],
@@ -541,7 +537,6 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def index(request: Request, _=Depends(_require_auth)):
-        s = _settings()
         providers = {p.key: _provider_card(p.status()) for p in PROVIDERS}
         # local named hb, not health: `health` is the probe module (Phase F), and
         # shadowing a module with a dict in one route is how the next person's
@@ -698,7 +693,6 @@ def create_app() -> FastAPI:
 
     # ----------------------------------------------------------------- JSON
     def _health_bundle() -> dict:
-        s = _settings()
         rp = systemd.reboot_pending()
         behind = _llama_behind()
         disk = metrics.disk()
@@ -747,6 +741,47 @@ def create_app() -> FastAPI:
         if not p:
             raise HTTPException(status_code=404, detail="unknown provider")
         return p.status().to_dict()
+
+    @app.get("/personalities")
+    def personalities_page(request: Request, _=Depends(_require_auth)):
+        """Personalities (§4.7) as a read-only view: what each one allows, what the worst
+        case costs, and what presets.ini would look like if it were applied.
+
+        No write path exists here on purpose (D7). The pane shows a diff; applying it is a
+        separate, gated decision, so nothing on this page can change what the router reads.
+        """
+        budget = modelindex._pool_bytes()
+        cards = [personality.describe(p, budget) for p in personality.builtins()]
+        generated = []
+        for p in personality.builtins():
+            try:
+                generated.append(personality.render(p, budget))
+            except personality.PersonalityError as exc:
+                # A personality that cannot be rendered is reported as such on its own
+                # card. Dropping the card would make the page look like the personality
+                # does not exist, which is a different and worse lie.
+                generated.append({"name": p.get("name"), "error": str(exc), "diff": [],
+                                  "text": "", "changed": False, "models": [], "budget": {}})
+        return templates.TemplateResponse(request, "personalities.html",
+                                          {"cards": cards, "generated": generated,
+                                           "settings": personality.SETTINGS,
+                                           "setting_names": personality.setting_names(),
+                                           "pool_h": _human(budget),
+                                           "presets_path": str(paths.PRESETS_INI),
+                                           "home": str(paths.HOME)})
+
+    @app.get("/api/personalities")
+    def api_personalities(_=Depends(_require_auth)):
+        """JSON for the same view (D1: every read is also an endpoint)."""
+        budget = modelindex._pool_bytes()
+        return {
+            "budget_bytes": budget,
+            "personalities": [personality.describe(p, budget) for p in personality.builtins()],
+            "settings": [
+                {"key": k, **{f: v for f, v in spec.items() if f != "accepts"}}
+                for k, spec in personality.SETTINGS.items()
+            ],
+        }
 
     @app.get("/api/models")
     def api_models(_=Depends(_require_auth)):
@@ -848,7 +883,7 @@ def create_app() -> FastAPI:
         try:
             cfg = p.validate_config(merged)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from None
         p.set_config(cfg)
         st = systemd.unit_state(paths.COMFY_UNIT)
         restarted = False
@@ -873,7 +908,7 @@ def create_app() -> FastAPI:
             dest_dir, dest = p.download_target(body.url, body.category,
                                                body.filename)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from None
         jid = updater.start_job(
             "comfyui-download", body.url,
             lambda log: p.download_file(body.url, dest_dir, dest, log))
@@ -938,7 +973,7 @@ def create_app() -> FastAPI:
                                         hf_cli=body.hf_cli,
                                         hf_repo=body.hf_repo)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from None
         jid = updater.start_job("model-add", src["label"],
                                 lambda log: modeladd.add_model(
                                     src, filename=body.filename,
@@ -1001,7 +1036,7 @@ def create_app() -> FastAPI:
 
             return {"results": results, "count": len(results)}
         except Exception as e:
-            raise HTTPException(500, f"search failed: {str(e)}")
+            raise HTTPException(500, f"search failed: {str(e)}") from None
 
     @app.post("/api/services/{key}/{action}")
     def api_service_action(key: str, action: str, body: ServiceActionBody,
@@ -1056,7 +1091,7 @@ def create_app() -> FastAPI:
         try:
             plan = p.preflight()
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from None
         job_id = updater.start_job("llamacpp", body.target,
                                    lambda log: p.update(
                                        body.target, restart=body.restart,
@@ -1077,9 +1112,9 @@ def create_app() -> FastAPI:
         try:
             res = p.rollback(body.release, log=lambda m: print("[ai-portal]", m))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from None
         db.event("portal", "update", f"llamacpp: rollback -> {body.release}")
         return res
 
@@ -1100,9 +1135,9 @@ def create_app() -> FastAPI:
         try:
             res = p.delete_release(body.release, log=lambda m: print("[ai-portal]", m))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from None
         db.event("portal", "update",
                  f"llamacpp: deleted build {body.release} "
                  f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB freed, "
@@ -1127,7 +1162,7 @@ def create_app() -> FastAPI:
         try:
             res = p.purge_stray(body.release, log=lambda m: print("[ai-portal]", m))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from None
         db.event("portal", "update",
                  f"llamacpp: purged UNREGISTERED build {body.release} "
                  f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB, "
@@ -1180,7 +1215,7 @@ def create_app() -> FastAPI:
             res = p.rollback(body.commit,
                              log=lambda m: print("[ai-portal]", m))
         except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from None
         db.event("portal", "update", f"comfyui: rollback -> {body.commit[:12]}")
         return res
 
@@ -1305,7 +1340,7 @@ def create_app() -> FastAPI:
         try:
             res = serviceconf.set_bind(service, mode, body.address)
         except ValueError as e:
-            raise HTTPException(400, {"ok": False, "errors": [str(e)]})
+            raise HTTPException(400, {"ok": False, "errors": [str(e)]}) from None
         if not res.get("ok"):
             raise HTTPException(422, res)
         db.event("portal", "network",
@@ -1412,8 +1447,8 @@ def create_app() -> FastAPI:
                      "print(m.version('huggingface_hub'))"],
                     capture_output=True, text=True, timeout=20)
                 cli_version = out.stdout.strip() or None
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:
+                cli_version = None  # no hf CLI, or it will not answer: that is the finding
 
         os_hub: str | None = None
         try:
@@ -1422,8 +1457,8 @@ def create_app() -> FastAPI:
                  "import huggingface_hub; print(huggingface_hub.__version__)"],
                 capture_output=True, text=True, timeout=20)
             os_hub = out.stdout.strip() or None
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:
+            os_hub = None  # system python has no huggingface_hub: that is the finding
 
         # the `hf` CLI ships inside huggingface_hub; that's what we compare
         latest, stale = _pypi_latest("huggingface_hub")
@@ -1494,7 +1529,7 @@ def create_app() -> FastAPI:
             try:
                 out = subprocess.run(["dpkg-query", "-W", pat],
                                      capture_output=True, text=True, timeout=15)
-                pkg_counts[pat] = len([l for l in out.stdout.splitlines() if l.strip()])
+                pkg_counts[pat] = len([line for line in out.stdout.splitlines() if line.strip()])
             except Exception:  # noqa: BLE001
                 pkg_counts[pat] = None
         return {
