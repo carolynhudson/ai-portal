@@ -12,6 +12,41 @@
 .service-radio{display:flex;gap:16px;margin-bottom:12px;align-items:center}
 .service-radio label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px}
 .service-radio input[type="radio"]{cursor:pointer}
+
+/* The library table.
+   Twelve columns do not fit a screen, so the table scrolls sideways — and a scrolling
+   table without pinned columns loses the one thing you need while scrolling: which row
+   you are looking at. The first two cells (the live light, then the model id) are sticky
+   on the left, so the row identity survives a horizontal scroll.
+
+   Auto-sizing caveat, stated because it is the trap in this layout: `table-layout:auto`
+   sizes columns from content, which is what makes columns autosize at all — but a sticky
+   cell's width comes from the column, not from the cell, so the pinned pair needs an
+   explicit min-width or the id column can collapse to the width of the light column when
+   a long model id is ellipsised. Both pinned columns get a floor for that reason.
+
+   Borders are per-cell on purpose: a `border-collapse:collapse` table with sticky cells
+   loses the border under the pinned column when it scrolls over the rest, because the
+   collapsed border belongs to the table grid and the sticky cell is painted above it.
+   `border-collapse:separate` with 0 spacing keeps each cell's own border sticky-safe. */
+.grid-wrap{overflow:auto;max-width:100%;border:1px solid var(--line);border-radius:8px}
+.grid-wrap table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+.grid-wrap th,.grid-wrap td{padding:7px 10px;border-bottom:1px solid var(--line);
+  border-right:1px solid var(--line-soft,rgba(255,255,255,.05));font-size:13px;
+  text-align:left;white-space:nowrap;vertical-align:middle}
+.grid-wrap th{background:#1b222c;position:sticky;top:0;z-index:3;
+  border-bottom-color:var(--line);font-weight:600}
+.grid-wrap td:last-child,.grid-wrap th:last-child{border-right:none}
+.grid-wrap tr:nth-child(even) td{background:#121821}
+.grid-wrap tr:nth-child(odd) td{background:transparent}
+.grid-wrap tr:hover td{background:#1a2028}
+/* Pinned pair: first cell is the light (narrow), second is the model id (wide). */
+.grid-wrap th:first-child,.grid-wrap td:first-child{position:sticky;left:0;z-index:4;
+  min-width:2.5rem;background:#121821}
+.grid-wrap th:nth-child(2),.grid-wrap td:nth-child(2){position:sticky;left:2.5rem;z-index:4;
+  min-width:15rem;max-width:22rem;background:#121821;box-shadow:1px 0 0 var(--line)}
+.grid-wrap tr:nth-child(odd) td:first-child,.grid-wrap tr:nth-child(odd) td:nth-child(2){background:#121821}
+.grid-wrap th:first-child,.grid-wrap th:nth-child(2){background:#1b222c}
 </style>
 
 <h2>Models</h2>
@@ -96,7 +131,11 @@
      the GPU aperture, not free RAM (§6.12.0). #}
   <p class="mut" style="margin:.2rem 0 .8rem">one row per model · size is all shards summed ·
     “fits” is against the {{ pool_h }} GPU aperture at the model’s trained context</p>
-  <div class="scroll">
+  {# `scroll` is kept as well as `grid-wrap`: the UI harness checks that every named
+     table sits in a scroll container (tests/ui/run.mjs), and it recognises either an
+     inline overflow style or the project's `scroll` class. Dropping `scroll` here would
+     break that contract while the visual change still looked fine in a browser. #}
+  <div class="scroll grid-wrap">
   <table id="library-table">
     <tr>
       <th></th><th>model id</th><th>arch</th><th>quant</th><th>size</th>
@@ -119,7 +158,12 @@
       <td class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</td>
       <td class="mono">{{ m.layers if m.layers is not none else "—" }}{% if m.full_attention_interval %}<span class="mut">/​{{ m.full_attention_interval }}</span>{% endif %}</td>
       <td class="mono">{% if m.is_moe %}{{ m.expert_used_count }}<span class="mut">/{{ m.expert_count }} active</span>{% else %}dense{% endif %}</td>
-      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector — accepts images">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if (m.shard_total or 1) > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and (m.shard_total or 1) <= 1 %}<span class="mut">none</span>{% endif %}</td>
+      {# `vision` is not inferred from the filename. The sidecar is sniffed and its own
+         `clip.has_vision_encoder` / `general.type` decide the label (modelindex.sidecar_type
+         records what the file said it is), so a projector declaring something other than
+         vision would not be mislabelled as vision. All 8 projectors on this box declare a
+         vision encoder; none declares an audio one, so no audio column is invented. #}
+      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector ({{ m.sidecar_type or 'mmproj' }} declares clip.has_vision_encoder) — accepts image input">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if (m.shard_total or 1) > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and (m.shard_total or 1) <= 1 %}<span class="mut">none</span>{% endif %}</td>
       {# What the file says it can speak, read from the chat template it ships with
          (§4.9: facts from the file, never a verdict). A missing marker means the
          template does not declare that protocol — not that the model cannot do it.

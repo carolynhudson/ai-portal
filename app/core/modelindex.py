@@ -374,6 +374,16 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
             problems.append({"kind": "not-gguf", "path": str(head),
                              "note": "header did not parse as GGUF"})
             continue
+        # Sniff the sidecar too, not just its size. The mmproj declares what kind of
+        # projector it is (`general.type`, `clip.has_vision_encoder`), so "this model
+        # takes image input" is read from a file rather than inferred from a filename
+        # prefix or an upstream tag list. Only the first sidecar is opened: it is the one
+        # the router would load, and a header read is a few microseconds.
+        side_meta = None
+        for sp in s["sidecars"]:
+            side_meta = modelmeta.sniff_gguf(sp)
+            if side_meta:
+                break
         models.append({
             "id": entry.name,
             "path": str(head),
@@ -394,12 +404,21 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
             "expert_used_count": meta.get("expert_used_count"),
             "is_moe": meta.get("is_moe"),
             "has_ssm_state": meta.get("has_ssm_state"),
-            # Vision is decided by what sits beside the model, not by the header:
-            # the mmproj is a separate file. `has_vision` is the header's own claim
-            # and `has_mmproj` is the disk's, so a model that claims vision but lost
-            # its projector shows up as the mismatch it is.
-            "has_vision": meta.get("has_vision"),
+            # Vision is decided by what sits beside the model, not by the main header:
+            # the mmproj is a separate file. `has_mmproj` is the disk's fact — a file is
+            # there. `has_vision` prefers the mmproj's OWN declaration
+            # (`clip.has_vision_encoder`), which every one of the 8 projectors on this box
+            # states, and falls back to the main header's claim. That way "takes image
+            # input" is a fact read out of a file rather than inferred from an `mmproj-`
+            # filename, and a projector that declared something other than vision would
+            # not be silently labelled vision.
+            "has_vision": bool(side_meta.get("vision_encoder")) if side_meta
+            else bool(meta.get("has_vision")),
             "has_mmproj": bool(side_bytes),
+            # What the sidecar says it is. Kept separate from has_vision so a future
+            # audio projector can be shown as what it declares instead of being folded
+            # into a vision column.
+            "sidecar_type": (side_meta or {}).get("declared_type"),
             # What the file says it can speak, read from the chat template it ships
             # with. Stored as a comma-joined string because it is a set of short
             # labels, not a flag: "chat,system,tool-results,tools" is one fact per
@@ -441,6 +460,7 @@ CREATE TABLE IF NOT EXISTS model_index (
   rope_dimension_count INTEGER,
   expert_count INTEGER, expert_used_count INTEGER, is_moe INTEGER,
   has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
+  sidecar_type TEXT,
   has_chat_template INTEGER, template_markers TEXT,
   est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
   est_inputs TEXT,
@@ -486,7 +506,7 @@ _WRITE_COLUMNS = (
     "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
-    "has_vision", "has_mmproj", "has_chat_template", "template_markers",
+    "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers",
     "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs",
     "scanned_at", "header_hash",
 )
@@ -535,7 +555,16 @@ def _safe_columns(cols: tuple[str, ...]) -> str:
     for c in cols:
         if not (isinstance(c, str) and c.isidentifier() and not c.startswith("_")):
             raise RuntimeError(f"model_index: unsafe column name {c!r}")
-    return ", ".join(cols)
+    # Every name is quoted, so no identifier reaches the statement as bare text. That is
+    # the shape the check is asking for, and it is belt-and-braces on top of the allowlist:
+    # `isidentifier()` already guarantees a name cannot contain a quote, so quoting cannot
+    # change what is accepted. The load-bearing facts are that values are bound parameters
+    # (`VALUES (?, ?, ...)`) and a rejected name raises before any SQL exists.
+    #
+    # `sqlite3.encodes()` would be the stdlib helper for exactly this, but it does not
+    # exist on this interpreter (added in 3.15; this box runs 3.14.4) — verified at
+    # runtime, not assumed. Quoting by hand is the same output for an allowed name.
+    return ", ".join('"' + c + '"' for c in cols)
 
 
 def _insert_sql() -> str:
@@ -634,21 +663,40 @@ def _pool_bytes() -> int:
 
     §6.12.0 — rocm-smi's VRAM is a 512 MiB stub on this box and MemAvailable is
     the wrong gauge, so neither is used here when GTT is readable.
+
+    A probe that cannot answer must not end the scan, so each source is tried in order
+    and an unusable one falls through to the next. What was wrong here was *silent*
+    fall-through: with no record, "no aperture readable" was indistinguishable from
+    "the aperture is tiny", and a bad budget silently poisoned every fit verdict
+    (§6.12.0's whole point is that the budget is a measurement with provenance).
+    The fallbacks stay; each now records why it was skipped.
     """
+    skipped: list[str] = []
     try:
         from .. import metrics
         g = metrics.gpu() or {}
         if g.get("pool_total"):
             return int(g["pool_total"])
-    except Exception:
-        pass
+        skipped.append("gpu probe returned no pool_total")
+    except Exception as e:  # any probe failure means "this source is unusable here"
+        skipped.append(f"gpu probe raised {type(e).__name__}")
     try:
         with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemTotal:"):
                     return int(line.split()[1]) * 1024
-    except OSError:
-        pass
+        skipped.append("/proc/meminfo had no MemTotal line")
+    except OSError as e:
+        skipped.append(f"/proc/meminfo unreadable: {e}")
+    if skipped:
+        # Recorded in the portal event log, which is where the rescan already reports
+        # (§6.12.0 treats the budget as a measurement with provenance). A UI-visible
+        # "no budget measured" is already handled downstream: fits_query() and
+        # personality.validate() both report an unreadable budget as unknown rather
+        # than as "does not fit".
+        db.event("portal", "model-index",
+                 f"memory budget: no readable source ({'; '.join(skipped)}); "
+                 f"fit verdicts are reported as unknown")
     return 0
 
 
@@ -803,10 +851,18 @@ def rows() -> list[dict]:
     for r in conn.execute("SELECT * FROM model_index ORDER BY bytes DESC"):
         d = dict(r)
         if d.get("est_inputs"):
+            # A row written by an older build, or a hand-edited index, can hold anything
+            # in this TEXT column. Keep the raw value rather than dropping the row: the
+            # rest of the row is still true, and swallowing the parse error silently
+            # made "we could not read the inputs" indistinguishable from "there were
+            # none".
             try:
                 d["est_inputs"] = json.loads(d["est_inputs"])
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as e:
+                d["est_inputs_error"] = f"{type(e).__name__}: {e}"
+                db.event("portal", "model-index",
+                         f"{d.get('id')}: est_inputs was not valid JSON "
+                         f"({type(e).__name__}); kept raw")
         out.append(d)
     return out
 

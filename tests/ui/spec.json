@@ -482,6 +482,9 @@
       "expectScrollContainers": [
         "#library-table"
       ],
+      "expectStickyColumns": [
+        "#library-table"
+      ],
       "tabGroups": [
         {
           "tabs": ".model-tab",

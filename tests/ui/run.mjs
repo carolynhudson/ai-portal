@@ -355,6 +355,7 @@ for (const sel of spec.expectScrollContainers || []) {
   }
 }
 
+
 // "Present but not showing" is a state of its own, and the one that matters for
 // a panel that only appears when there is something to act on: a row that never
 // hides is noise on every load, and a row that hides by never rendering takes
@@ -479,6 +480,63 @@ for (const g of spec.tabGroups || []) {
 }
 
 collectStylesheets();
+
+// A pinned column is a CSS claim, and jsdom performs no layout, so this cannot prove
+// the column sticks on screen. What it *can* prove is the two things that make pinning
+// possible at all, and which a later edit can quietly break: the stylesheet declares a
+// sticky position for the table's first two cell positions, and the table is inside a
+// container that actually scrolls (a sticky cell in a non-scrolling box does nothing).
+// Asserting the rule exists is not asserting the layout works — it is asserting that the
+// layout has not been deleted while the markup still looks like it should work.
+for (const sel of spec.expectStickyColumns || []) {
+  const els = [...win.document.querySelectorAll(sel)];
+  if (!els.length) fail(`expected a table with pinned columns: ${sel}`);
+  // Read the parsed rules, the same way the tab-geometry checks above do. The page's
+  // table CSS lives in an inline <style>, which jsdom exposes as a sheet in
+  // document.styleSheets; reading `style` textContent instead would work only if the
+  // element were still in the DOM and would silently miss a linked stylesheet.
+  const sheets = realSheets.map((sheet) => {
+    try {
+      return Array.from(sheet.cssRules || []).map((r) => r.cssText).join("\n");
+    } catch {
+      return "";
+    }
+  }).join("\n");
+  if (!sheets) { fail("no parsed CSS to verify pinned columns against"); continue; }
+  for (const el of els) {
+    const wrap = el.parentElement;
+    const wrapCls = (wrap && wrap.className) || "";
+    // The CSS scopes these rules by the CONTAINER class (`.grid-wrap th:first-child`),
+    // not by the table's own id. Deriving the scope from the selector (`#library-table`
+    // -> `library-table`) looked plausible and matched nothing, so every assertion failed
+    // on correct CSS. Take the scope from the container's actual class list.
+    const classes = wrapCls.split(/\s+/).filter(Boolean);
+    if (!classes.length) { fail(`pinned-column table has no classed container: ${sel}`); continue; }
+    const hasStickyFor = (pseudo) => classes.some((cls) => {
+      // `[^{}]*` between the class and the pseudo-class: the real selectors are
+      // `.grid-wrap th:first-child` and `.grid-wrap td:nth-child(2)`, so a tag name
+      // sits between them. Joining the class straight to the pseudo-class matched
+      // nothing and failed on correct CSS.
+      const mid = pseudo
+        ? `[^{}]*${pseudo.replace(/[(){}]/g, (m) => "\\" + m)}`
+        : "";
+      const re = new RegExp(`\\.${cls}${mid}[^{}]*\\{[\s\S]*?position:\\s*sticky`, "i");
+      return re.test(sheets);
+    });
+    // Selector shapes in this stylesheet are `.grid-wrap th{...}`, `.grid-wrap
+    // th:first-child,...{...}` and `.grid-wrap td:nth-child(2){...}`. An earlier version
+    // of these patterns put `[^{]*` between the class and `:first-child`, which cannot
+    // match `.grid-wrap th:first-child` because `th` is in the way — the assertion then
+    // failed on correct CSS. `[^{}]*` stays inside one selector list, and [\s\S] crosses
+    // the newlines in a multi-line rule body.
+    if (!hasStickyFor("")) fail(`table has no sticky header rule: ${sel}`);
+    if (!hasStickyFor(":first-child")) fail(`table's first column is not pinned: ${sel}`);
+    if (!hasStickyFor(":nth-child(2)")) fail(`table's second column is not pinned: ${sel}`);
+    if (!/\bscroll\b/.test(wrapCls)) {
+      fail(`pinned columns need a scrolling container to be meaningful: ${sel}`);
+    }
+  }
+}
 checkTabGeometry();
 
 // Stop the pollers before the sweep.

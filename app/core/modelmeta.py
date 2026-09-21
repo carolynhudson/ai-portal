@@ -130,6 +130,15 @@ def sniff_gguf(path) -> dict | None:
                 out = {
                     "format": "gguf",
                     "arch": fields.get("general.architecture"),
+                    # What the file declares itself to BE, and what encoder it carries.
+                    # Read from the file rather than inferred from the filename: every
+                    # mmproj on this box declares `general.type = mmproj` and
+                    # `clip.has_vision_encoder = True`, so "this projector is a vision
+                    # projector" is a fact the file states, not a guess from `mmproj-`.
+                    # Audio projectors would declare a different encoder; none of the 8
+                    # here do, and nothing here invents one that is not declared.
+                    "declared_type": fields.get("general.type") or None,
+                    "vision_encoder": fields.get("clip.has_vision_encoder"),
                     "name": fields.get("general.name") or None,
                     "size_label": fields.get("general.size_label") or None,
                     "context_length": _as_int(fields.get(ap + "context_length")),
