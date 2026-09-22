@@ -82,6 +82,19 @@ def tree(tmp_path, monkeypatch):
     (rocm / "core").mkdir(parents=True)
     monkeypatch.setenv("AI_PORTAL_ROCM_ROOT", str(rocm))
     monkeypatch.setenv("AI_PORTAL_APT_STAMP", str(tmp_path / "apt-stamp"))
+    # Pin the disk probe. `health.disk()` calls `shutil.disk_usage(paths.AI_ROOT)`, and AI_ROOT
+    # lives under /tmp — a tmpfs whose free space depends on how many multi-gigabyte fake models
+    # earlier test runs left behind, so "a quiet machine has nothing to report" was reading this
+    # machine's tmpfs occupancy rather than a fixture. It passed while /tmp was roomy and failed
+    # once enough test runs had filled it.
+    #
+    # A test that wants a scarce disk still overrides this locally (see
+    # test_a_scarce_disk_is_a_warning); what the default has to guarantee is that the ordinary
+    # "nothing to report" assertion is about the fixture, not about the box running pytest.
+    monkeypatch.setattr(health.shutil, "disk_usage",
+                        lambda p: type("u", (), {"total": 2_000 * 1024**3,
+                                                 "free": 900 * 1024**3,
+                                                 "used": 1100 * 1024**3})())
     yield paths.AI_ROOT
     if env_before is None:
         env_file.unlink(missing_ok=True)

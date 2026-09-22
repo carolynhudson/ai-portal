@@ -47,7 +47,11 @@ KIND_LABEL = {
 #: may be started, stopped or restarted while it runs. Downloads are not in this
 #: set: they move files, they do not disturb what is running (but they will not
 #: start on top of a disruptive job either).
-DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python"}
+# `presets-apply` is here because it restarts ai-llama-router as its final step. Without this
+# entry an update job could swap the llama.cpp release out from under a presets apply that is
+# mid-restart, or an apply could restart a router whose binary a build is currently replacing.
+# The write itself is cheap; the restart is what makes it machine-wide.
+DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python", "presets-apply"}
 
 _TAIL = 300                # log lines kept in the DB for the API
 _STALE_AFTER = 6 * 3600    # backstop for rows whose writer cannot be identified

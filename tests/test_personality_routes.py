@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -40,10 +41,19 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.core import config as cfg  # noqa: E402
 from app.core import db, modelindex as mi, paths  # noqa: E402
 from app.core import personality as P  # noqa: E402
+from app.core import presets_store, systemd, updater  # noqa: E402
 from app.main import app  # noqa: E402
 from tests.test_modelindex import _write_fake_gguf  # noqa: E402
 
 GiB = 1 << 30
+
+
+def _presets_text() -> str:
+    """The sandbox presets.ini exactly as it is on disk, or a marker if it is absent."""
+    try:
+        return paths.PRESETS_INI.read_text()
+    except OSError:
+        return "<absent>"
 
 
 @pytest.fixture()
@@ -239,18 +249,25 @@ def test_page_offers_no_write_control(client):
     assert not posts, f"this page renders its own form(s): {posts[:1]}"
 
 
-def test_api_exposes_no_write_route(client):
-    """The JSON mirror must be read-only too: a JSON endpoint is the one a script calls.
+def test_get_personality_paths_stay_read_only(client):
+    """The read side must not acquire side effects now that a write endpoint exists.
 
-    405 (method not allowed) and 404 (no such route) are both refusals; 401 is not, because
-    it means the route exists and merely wants credentials. Accepting 401 here would let a
-    real POST endpoint pass this test while looking unauthenticated.
+    This replaces `test_api_exposes_no_write_route`, which asserted that no write route existed
+    at all. That invariant was the N4 read-only half; the apply path intentionally breaks it.
+    Keeping the old assertion would have meant keeping a test that describes a phase the code has
+    left behind, and a stale invariant test is worse than none: it teaches the next reader that a
+    gated write is a bug.
+
+    What still has to hold is that GETs are inert. `/api/personalities` answers GET only, so a
+    POST to it must be a method refusal rather than an action.
     """
-    for path in ("/api/personalities/apply", "/api/personalities/write", "/api/personalities"):
-        code = client.post(path, json={}).status_code
-        assert code in (404, 405), f"{path} answered {code} — a write route exists"
-        code_anon = client.post(path, json={})  # same answer without a session
-        assert code_anon.status_code in (401, 403, 404, 405), code_anon.status_code
+    code = client.post("/api/personalities", json={}).status_code
+    assert code in (404, 405), f"/api/personalities answered {code} — the read endpoint gained a POST"
+
+    before = _presets_text()
+    assert client.get("/api/personalities").status_code == 200
+    assert client.get("/api/personalities/snapshots").status_code == 200
+    assert _presets_text() == before, "a GET must not write or snapshot presets.ini"
 
 
 def test_diff_is_shown_as_proposed_not_applied(client):
@@ -328,3 +345,250 @@ def test_check_setting_agrees_with_the_registry_it_documents(client):
         if choices:
             assert P.check_setting(key, choices[0]) is None, f"{key} rejects a documented choice"
             assert P.check_setting(key, "definitely-not-a-choice") is not None, key
+
+
+# ------------------------------------------------------------- the gated write half
+
+def _settle(timeout: float = 20.0) -> None:
+    """Wait for job rows to leave 'running' (same shape as tests/test_jobs.py::settle)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not updater.running():
+            return
+        time.sleep(0.02)
+    raise AssertionError("presets jobs still running")
+
+
+@pytest.fixture()
+def presets_file(library):
+    """A presets.ini with the shape the live file has today, so a diff has something to change."""
+    paths.PRESETS_INI.parent.mkdir(parents=True, exist_ok=True)
+    paths.PRESETS_INI.write_text(
+        "[*]\nthreads = 16\nfit = on\nfit-target = 8192\nstop-timeout = 15\n")
+    for existing in presets_store.list_snapshots():
+        shutil.rmtree(existing["path"], ignore_errors=True)
+    return paths.PRESETS_INI.read_text()
+
+
+def test_preview_is_read_only(client, presets_file):
+    """Preview is the button an operator presses before Apply, so it must be inert.
+
+    Asserted against snapshots as well as the file: apply() takes a snapshot as its first write
+    step, and a preview that snapshotted would fill the rollback history with entries that
+    correspond to nothing anyone applied.
+    """
+    before = presets_file
+    r = client.post("/api/personalities/preview", json={"name": "safe"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["diff"], "a preview with no diff cannot inform the decision it is gating"
+    assert "would_refuse" in body and body["would_refuse"] == []
+    assert paths.PRESETS_INI.read_text() == before, "preview must not write"
+    assert presets_store.list_snapshots() == [], "preview must not snapshot"
+
+
+def test_preview_reports_a_refusal_before_anyone_clicks_apply(client, presets_file, monkeypatch):
+    """A refusal discovered at apply time is a failed job; discovered in preview it is a message.
+
+    Mutated via check_generated so the refusal is real without editing a personality definition
+    into something invalid.
+    """
+    monkeypatch.setattr(P, "check_generated",
+                        lambda text, known: ["[*] injected: fabricated refusal"])
+    r = client.post("/api/personalities/preview", json={"name": "safe"})
+    assert r.status_code == 200, r.text
+    assert r.json()["would_refuse"] == ["[*] injected: fabricated refusal"]
+    assert paths.PRESETS_INI.read_text() == presets_file
+
+
+def test_preview_404s_for_an_unknown_personality(client, presets_file):
+    r = client.post("/api/personalities/preview", json={"name": "no-such-personality"})
+    assert r.status_code == 404, r.text
+    assert "no-such-personality" in r.text
+
+
+def test_apply_requires_confirm(client, presets_file, monkeypatch):
+    """confirm defaults to False, so omitting it is a refusal rather than an apply.
+
+    Same rule as a router stop and a release delete. The assertion that matters is that nothing
+    happened: no job row, no snapshot, no write.
+    """
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: {"ok": True, "state": {}})
+    before = presets_file
+    r = client.post("/api/personalities/apply", json={"name": "safe"})
+    assert r.status_code == 400, r.text
+    assert "confirm required" in r.text
+    assert paths.PRESETS_INI.read_text() == before
+    assert presets_store.list_snapshots() == []
+    assert updater.running() == []
+
+
+def test_apply_runs_as_a_job_and_writes_through_the_snapshot(client, presets_file, monkeypatch):
+    restarts: list[tuple[str, str]] = []
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: restarts.append((k, a)) or {"ok": True, "state": {}})
+    before = presets_file
+
+    r = client.post("/api/personalities/apply", json={"name": "safe", "confirm": True})
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job"]
+    _settle()
+
+    row = updater.job(job_id)
+    assert row["status"] == "success", row["log"]
+    assert "snapshotted presets.ini" in row["log"]
+    assert "wrote" in row["log"]
+    assert paths.PRESETS_INI.read_text() != before, "the apply must have changed the file"
+    assert restarts == [("llamacpp", "restart")]
+
+    snaps = presets_store.list_snapshots()
+    assert snaps, "apply must leave a snapshot"
+    newest = presets_store.snapshot_dir(snaps[0]["stamp"]) / "presets.ini"
+    assert newest.read_text() == before, "the snapshot must hold the pre-apply file"
+
+
+def test_apply_refusal_surfaces_as_a_failed_job_not_a_500(client, presets_file, monkeypatch):
+    """The budget refusal must be visible in the job log rather than as an unhandled crash.
+
+    Patches `budget_for` to return a Budget-shaped object whose `as_dict()` is the impossible
+    budget, because render() calls `budget_for(...).as_dict()`. An earlier version returned the
+    dict directly and the job died with `AttributeError: 'dict' object has no attribute 'as_dict'`
+    — a failed job either way, but for a reason invented by the fixture, so the assertion on the
+    refusal message would have been reading a traceback that had nothing to do with the refusal.
+    """
+    monkeypatch.setattr(P, "budget_for",
+                        lambda persona, budget_bytes=None: _ImpossibleBudgetHolder())
+    r = client.post("/api/personalities/apply", json={"name": "safe", "confirm": True})
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job"]
+    _settle()
+    row = updater.job(job_id)
+    assert row["status"] == "failed", row["log"]
+    assert "refusing to write" in row["log"]
+    assert paths.PRESETS_INI.read_text() == presets_file, "a refused apply must not write"
+
+
+class _ImpossibleBudgetHolder:
+    """Stand-in for a Budget that says "measured, and over budget".
+
+    render() calls `budget_for(...).as_dict()` and apply() then indexes the result, so the thing
+    being injected has to be an object with `as_dict()` returning a dict. Both halves matter and
+    an earlier version of this fixture got only one of them right.
+    """
+
+    def as_dict(self) -> dict:
+        return {
+            "models_max": 1,
+            "priced": [{"id": "m", "peak": 512 << 30}],
+            "unpriced": [],
+            "worst_case_bytes": 512 << 30,
+            "heaviest": ["m"],
+            "budget_bytes": 1 << 20,
+            "headroom_bytes": None,
+            "fits": P.FITS_NO,
+        }
+
+
+def test_apply_is_refused_while_another_job_owns_the_machine(client, presets_file, monkeypatch):
+    """presets-apply restarts the router, so it must not start on top of anything else."""
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: {"ok": True, "state": {}})
+    hold = updater.start_job("llamacpp", "HEAD", lambda log: time.sleep(2.0))
+    assert hold, "could not start the blocking job"
+    try:
+        r = client.post("/api/personalities/apply",
+                       json={"name": "safe", "confirm": True})
+        assert r.status_code == 409, r.text
+        assert paths.PRESETS_INI.read_text() == presets_file, "a refusal must not write"
+    finally:
+        _settle()
+
+
+def test_presets_apply_kind_is_disruptive(client, presets_file):
+    """The exclusivity rule lives in one set; if the kind is not in it, the rule is not real."""
+    assert "presets-apply" in updater.DISRUPTIVE
+
+
+def test_snapshots_endpoint_lists_what_can_be_rolled_back(client, presets_file, monkeypatch):
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: {"ok": True, "state": {}})
+    client.post("/api/personalities/apply", json={"name": "safe", "confirm": True})
+    _settle()
+    r = client.get("/api/personalities/snapshots")
+    assert r.status_code == 200, r.text
+    snaps = r.json()["snapshots"]
+    assert len(snaps) >= 1
+    first = snaps[0]
+    for field in ("stamp", "path", "readable", "bytes", "note"):
+        assert field in first, first
+    assert first["readable"] is True
+
+
+def test_rollback_requires_confirm_and_restores_the_file(client, presets_file, monkeypatch):
+    restarts: list[tuple[str, str]] = []
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: restarts.append((k, a)) or {"ok": True, "state": {}})
+    before = presets_file
+
+    client.post("/api/personalities/apply", json={"name": "safe", "confirm": True})
+    _settle()
+    assert paths.PRESETS_INI.read_text() != before
+
+    stamp = presets_store.list_snapshots()[0]["stamp"]
+
+    # confirm-less first: the same gate as apply, asserted at the same point.
+    r = client.post("/api/personalities/rollback", json={"stamp": stamp})
+    assert r.status_code == 400, r.text
+    assert "confirm required" in r.text
+    assert paths.PRESETS_INI.read_text() != before, "a refusal must not restore anything"
+
+    r = client.post("/api/personalities/rollback",
+                    json={"stamp": stamp, "confirm": True})
+    assert r.status_code == 200, r.text
+    _settle()
+    assert paths.PRESETS_INI.read_text() == before, "rollback must restore the original bytes"
+    assert restarts and ("llamacpp", "restart") in restarts, \
+        "restoring the file without restarting leaves the router on the old config"
+
+
+def test_rollback_of_an_unknown_stamp_fails_the_job_without_touching_the_file(
+        client, presets_file, monkeypatch):
+    monkeypatch.setattr(systemd, "service_action",
+                        lambda k, a: {"ok": True, "state": {}})
+    before = presets_file
+    r = client.post("/api/personalities/rollback",
+                    json={"stamp": "19700101-000000", "confirm": True})
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job"]
+    _settle()
+    row = updater.job(job_id)
+    assert row["status"] == "failed", row["log"]
+    assert "nothing to restore" in row["log"]
+    assert paths.PRESETS_INI.read_text() == before
+
+
+# ------------------------------------------------ registry coverage from live evidence
+def test_lazy_mode_is_registered_but_not_emitted(client, library):
+    """`lazy-mode` was found by reading what the running router actually resolved, not from a
+    wish list — and the registry still had no definition for it.
+
+    The two halves of the decision are both asserted, because they are the kind of thing that
+    rots silently in opposite directions:
+
+      * it must be registered, or the editor cannot offer it and check_generated() would refuse
+        a perfectly legal `lazy-mode = on` as "no definition in the settings registry";
+      * it must NOT be in GLOBAL_DEFAULTS, because a router started by hand can set `--lazy-mode`
+        on the command line, CLI beats presets.ini, and emitting a default here would look like a
+        change while being overridden.
+    """
+    assert "lazy-mode" in P.SETTINGS
+    assert P.check_setting("lazy-mode", "auto") is None
+    assert P.check_setting("lazy-mode", "sometimes") is not None
+    assert "lazy-mode" not in P.GLOBAL_DEFAULTS
+
+    r = client.post("/api/personalities/preview", json={"name": "safe"})
+    assert r.status_code == 200, r.text
+    diff_text = "\n".join(r.json()["diff"])
+    assert "lazy-mode" not in diff_text, \
+        "a registered key must not leak into the generated file just because it is registered"

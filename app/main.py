@@ -34,7 +34,8 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, modeladd, modelindex, paths, personality, systemd, updater
+from .core import db, health, modeladd, modelindex, paths, personality, presets_store
+from .core import systemd, updater
 from . import providers
 from .providers import PROVIDERS, get as get_provider
 
@@ -82,6 +83,23 @@ class UpdateBody(BaseModel):
 
 class RollbackBody(BaseModel):
     release: str            # a name from /api/updates/llamacpp releases
+    confirm: bool = False
+
+
+class PersonalityApplyBody(BaseModel):
+    """Which personality to write, and explicit consent to write it.
+
+    `confirm` defaults to False so a request that omits it is a refusal rather than an apply —
+    the same rule as a router stop or a release delete (see PORTAL_PLAN §6).
+    """
+    name: str
+    confirm: bool = False
+
+
+class PresetsRollbackBody(BaseModel):
+    """Restore a named presets.ini snapshot. `confirm` for the same reason as above: this
+    replaces a file the router reads and restarts the router."""
+    stamp: str
     confirm: bool = False
 
 
@@ -753,11 +771,14 @@ def create_app() -> FastAPI:
 
     @app.get("/personalities")
     def personalities_page(request: Request, _=Depends(_require_auth)):
-        """Personalities (§4.7) as a read-only view: what each one allows, what the worst
-        case costs, and what presets.ini would look like if it were applied.
+        """Personalities (§4.7): what each one allows, what the worst case costs, and what
+        presets.ini would look like if it were applied.
 
-        No write path exists here on purpose (D7). The pane shows a diff; applying it is a
-        separate, gated decision, so nothing on this page can change what the router reads.
+        This page is read-only even though the write path now exists (D7). Applying is a separate
+        endpoint — POST /api/personalities/apply — gated on an explicit confirm and on the machine
+        being otherwise idle, so the page a person looks at while deciding cannot also be the thing
+        that decides for them. Rendering here has no side effects: it does not write, snapshot, or
+        restart.
         """
         budget = modelindex._pool_bytes()
         cards = [personality.describe(p, budget) for p in personality.builtins()]
@@ -791,6 +812,124 @@ def create_app() -> FastAPI:
                 for k, spec in personality.SETTINGS.items()
             ],
         }
+
+    @app.post("/api/personalities/preview")
+    def api_personality_preview(body: PersonalityApplyBody,
+                               _=Depends(_require_auth)):
+        """What applying a personality would do, without doing any of it.
+
+        Returns the diff, the budget verdict, and the reasons it would refuse. The UI calls this
+        before it enables an Apply button, so an operator sees the exact file and the exact cost
+        before anything is gated. Nothing here writes or snapshots. `check_generated()` runs so a
+        refusal is reported here rather than discovered at apply time.
+        """
+        try:
+            persona = _personality_by_name(body.name)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from None
+        budget = modelindex._pool_bytes()
+        try:
+            rendered = personality.render(persona, budget)
+        except personality.PersonalityError as e:
+            raise HTTPException(400, str(e)) from None
+        known = {r["id"] for r in modelindex.rows()}
+        return {
+            "name": rendered["name"],
+            "models": rendered["models"],
+            "models_max": rendered["models_max"],
+            "diff": rendered["diff"],
+            "changed": rendered["changed"],
+            "budget": rendered["budget"],
+            "would_refuse": personality.check_generated(rendered["text"], known),
+        }
+
+    @app.post("/api/personalities/apply")
+    def api_personality_apply(body: PersonalityApplyBody, _=Depends(_require_auth)):
+        """Apply a personality to presets.ini, through the gated job system.
+
+        Gated three ways, because this is the only write in the portal that changes what the
+        router loads:
+
+          * `confirm` must be true — same rule as a router stop or a release delete;
+          * the machine must be otherwise idle (the job kind is in updater.DISRUPTIVE, since the
+            apply restarts ai-llama-router);
+          * personality.apply() refuses on its own before touching disk if the plan does not fit,
+            cannot be priced, or contains a key the registry rejects.
+
+        Runs as a job rather than inline: the restart takes longer than a request should hold a
+        connection, and progress must survive the browser going away.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        try:
+            persona = _personality_by_name(body.name)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from None
+        jid = updater.start_job("presets-apply", body.name,
+                                lambda log: personality.apply(
+                                    persona, modelindex._pool_bytes(), log=log))
+        if jid is None:
+            raise _busy()
+        db.event("portal", "presets-apply-started", f"personality={body.name} job={jid}")
+        return {"job": jid, "personality": body.name}
+
+    @app.get("/api/personalities/snapshots")
+    def api_presets_snapshots(_=Depends(_require_auth)):
+        """Every presets.ini that can be rolled back to, newest first.
+
+        Read-only and deliberately free of any diff body: the page needs to show what exists and
+        how big it is. `readable: false` is surfaced rather than filtered out, because a backup
+        that exists and cannot be read is the one an operator most needs to know about.
+        """
+        return {"snapshots": presets_store.list_snapshots(),
+                "path": str(paths.PRESETS_INI)}
+
+    @app.post("/api/personalities/rollback")
+    def api_presets_rollback(body: PresetsRollbackBody, _=Depends(_require_auth)):
+        """Restore a snapshot, then restart the router so it actually re-reads the file.
+
+        Restoring the file without restarting would leave the router running the configuration the
+        rollback was meant to undo, which is the failure mode a rollback must not have.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        jid = updater.start_job("presets-apply", f"rollback {body.stamp}",
+                                lambda log: _rollback_presets(body.stamp, log))
+        if jid is None:
+            raise _busy()
+        db.event("portal", "presets-rollback-started",
+                 f"stamp={body.stamp} job={jid}")
+        return {"job": jid, "stamp": body.stamp}
+
+    def _rollback_presets(stamp: str, log) -> dict:
+        """Job body: restore a snapshot, verify it landed, restart the router."""
+        try:
+            before = presets_store.snapshot(reason=f"before rollback {stamp}",
+                                            personality="(rollback)")
+            restored = presets_store.restore(stamp)
+        except presets_store.PresetsSnapshotError as e:
+            raise RuntimeError(str(e)) from e
+        log(f"restored presets.ini from snapshot {stamp} ({restored['bytes']} bytes)")
+        db.event("portal", "presets-rollback",
+                 f"stamp={stamp} undo={before['stamp']} bytes={restored['bytes']}")
+        state = systemd.service_action("llamacpp", "restart")
+        if not state.get("ok"):
+            log(f"router restart FAILED: {state.get('error')}; presets.ini is restored and "
+                f"snapshot {before['stamp']} can undo this rollback")
+        else:
+            log(f"restarted {paths.ROUTER_UNIT}")
+        return {**restored, "restart": state}
+
+    def _personality_by_name(name: str) -> dict:
+        """Resolve a personality name to the definition the generator will use.
+
+        Only built-ins are resolvable today; custom personalities are future work. An unknown
+        name raises so the route answers 404 rather than silently applying something else.
+        """
+        for p in personality.builtins():
+            if p.get("name") == name:
+                return dict(p)
+        raise ValueError(f"no personality named {name!r}")
 
     @app.get("/api/models")
     def api_models(_=Depends(_require_auth)):

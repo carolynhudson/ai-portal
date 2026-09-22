@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core import modelindex, paths
+from app.core import db, modelindex, paths
 
 # The router's own preset-exclusive options, from llama.cpp tools/server/README.md.
 # These are NOT command-line arguments and only exist inside a preset file, so they are
@@ -186,10 +186,29 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Tokens kept from the initial prompt. -1 keeps all.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
+    "lazy-mode": {
+        "kind": "choice",
+        "section": "both",
+        "default": "auto",
+        "choices": ("on", "off", "auto"),
+        "help": "Read large tensors from disk on demand instead of keeping them resident. "
+                "`auto` (the server default) applies it only above 4 GiB; `on` applies it to "
+                "every such tensor and requires mmap. On this box it is the key most likely to "
+                "matter for the multi-hundred-GiB models: keeping weights resident is what "
+                "competes with the GTT aperture. Not emitted by default, because a router started "
+                "by hand can already set it on the command line, and CLI beats presets.ini.",
+        "accepts": lambda v: v in ("on", "off", "auto"),
+    },
 }
 
 # Present in every preset the router reports, but written by the router, not by us.
 ROUTER_DERIVED_KEYS = frozenset({"metrics", "model", "mmproj"})
+
+
+# `lazy-mode` is deliberately registered but absent from GLOBAL_DEFAULTS: registering it is what
+# lets the editor offer it and what lets check_generated() validate it, while keeping it out of
+# the defaults is what keeps apply() from silently changing a value a hand-started router may
+# already be setting on the command line, where it would win anyway.
 
 
 def _positive_mib_list(value: Any) -> bool:
@@ -507,7 +526,8 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
     """Generate presets.ini text for a personality, plus the budget it implies.
 
     Read-only. Returns the text, the diff against what is on disk, and the budget with
-    its inputs. Writing is `apply()`'s job and does not exist yet.
+    its inputs. Writing is `apply()`'s job; this function never touches disk, and `apply()`
+    validates the text this returns before it writes it.
     """
     name = personality.get("name")
     if not name:
@@ -571,6 +591,207 @@ def parse_current() -> dict[str, dict[str, str]]:
 def builtins() -> list[dict]:
     """The two personalities that always exist and are never edited in place."""
     return [dict(SAFE), dict(DEFAULT)]
+
+
+# ------------------------------------------------------------------- writing (N4 apply)
+def _rollback(presets_store, stamp: str, expected: str, log) -> None:
+    """Restore a snapshot and prove the file on disk matches it.
+
+    A rollback that is only *attempted* is not a rollback. The failure this guards against is
+    specific: the same I/O fault that truncated or corrupted the apply can also defeat the
+    restore, and an error message that says "restored snapshot <stamp>" while the file is still
+    broken is worse than no message at all — the operator stops reading and assumes the box is
+    back to rights.
+
+    If the restore itself failed, the snapshot is still on disk and the message says so with the
+    exact command, because at that point the only truthful statement is where the good bytes are.
+    """
+    try:
+        presets_store.restore(stamp)
+    except presets_store.PresetsSnapshotError as exc:
+        log(f"ROLLBACK FAILED: {exc}")
+        raise PersonalityError(
+            f"could not restore snapshot {stamp}: {exc}; the previous presets.ini is still "
+            f"available at {presets_store.snapshot_dir(stamp) / presets_store.SNAPSHOT_NAME}"
+        ) from exc
+
+    restored = _current_text()
+    if restored != expected:
+        log(f"rollback left a file that does not match the snapshot ({len(restored)} bytes, "
+            f"expected {len(expected)})")
+        raise PersonalityError(
+            f"rollback to snapshot {stamp} did not reproduce the previous file "
+            f"({len(restored)} bytes on disk, {len(expected)} in the snapshot); "
+            f"restore by hand from "
+            f"{presets_store.snapshot_dir(stamp) / presets_store.SNAPSHOT_NAME}")
+    log(f"rollback verified: {paths.PRESETS_INI} matches snapshot {stamp}")
+
+
+def _reparse(text: str) -> dict[str, dict[str, str]]:
+    """Parse generated text the way the router would read it, before it is on disk.
+
+    This is the step that turns "the generator produced something" into "the generator produced
+    something the router can load". It is deliberately a separate parse of the emitted string
+    rather than a check of the `sections` dict: the thing that gets loaded is the file, so the
+    thing that gets validated has to be the file.
+    """
+    cp = configparser.ConfigParser(allow_no_value=True, strict=True,
+                                   comment_prefixes=("#", ";"))
+    cp.read_string(text)
+    return {s: dict(cp[s]) for s in cp.sections()}
+
+
+def check_generated(text: str, known_models: set[str]) -> list[str]:
+    """Every reason this text must not be written, as messages. [] means safe to write.
+
+    Checked in the order that catches the likeliest mistakes first:
+      * it must parse at all (the retired generator emitted a file configparser rejected);
+      * no key the router strips or derives, and no key nobody has defined a meaning for;
+      * every value must satisfy its registry `accepts()` after coercion, because ini values
+        arrive as strings and `threads = 16` is not an int until something says so;
+      * every section name must be `*` or a real library directory, because a section that
+        matches nothing is a silent no-op that looks like a setting.
+    """
+    problems: list[str] = []
+    try:
+        sections = _reparse(text)
+    except configparser.Error as exc:
+        return [f"generated presets.ini does not parse: {exc}"]
+
+    if not sections:
+        return ["generated presets.ini has no sections"]
+
+    for section, body in sections.items():
+        where = "[*]" if section == "*" else f"[{section}]"
+        if section != "*" and section not in known_models:
+            problems.append(
+                f"{where} is not a model in the library: the router matches sections to "
+                f"directory names, so this section would be ignored")
+        for key, value in body.items():
+            if key in ROUTER_CONTROLLED_KEYS:
+                problems.append(f"{where} {key}: the router overwrites this key at launch")
+                continue
+            if key in ROUTER_DERIVED_KEYS:
+                problems.append(f"{where} {key}: the router derives this value itself")
+                continue
+            if key not in SETTINGS:
+                problems.append(f"{where} {key}: no definition in the settings registry")
+                continue
+            try:
+                coerced = coerce_setting(key, value)
+            except PersonalityError as exc:
+                problems.append(f"{where} {key}: {exc}")
+                continue
+            reason = check_setting(key, coerced)
+            if reason:
+                problems.append(f"{where} {key} = {value}: {reason}")
+    return problems
+
+
+def apply(personality: dict, budget_bytes: int | None = None,
+          log=print, restart: bool = True) -> dict:
+    """Write presets.ini for a personality: check, snapshot, write, verify, restart.
+
+    Order is the safety property, and every step is a refusal point:
+
+      1. render() the text (raises on router-controlled overrides);
+      2. check_generated() re-parses the emitted text and validates every key and value against
+         SETTINGS and the live library — a file that fails here never touches disk;
+      3. snapshot the file that is currently on disk, read from disk, before replacing it;
+      4. write, then read the file back and re-check it: if what landed on disk is not what was
+         validated, restore the snapshot and raise. A partial or truncated write is the failure
+         mode that would otherwise be discovered by the router at load time;
+      5. restart the router only if the file on disk verified.
+
+    If the budget does not fit, this refuses rather than writing. `fit = on` is in the file as a
+    backstop, but the portal already knows the heaviest combination this personality can load;
+    writing a plan that provably does not fit would just relocate the failure to load time.
+    """
+    from . import presets_store
+
+    rendered = render(personality, budget_bytes)
+    budget = rendered["budget"]
+
+    if budget["fits"] is FITS_NO:
+        raise PersonalityError(
+            f"refusing to write personality {rendered['name']!r}: its heaviest "
+            f"{rendered['models_max']}-model combination costs "
+            f"{_gib(budget['worst_case_bytes'])} against a "
+            f"{_gib(budget['budget_bytes'])} budget"
+        )
+    if budget["fits"] is FITS_UNKNOWN:
+        raise PersonalityError(
+            f"refusing to write personality {rendered['name']!r}: its cost cannot be priced "
+            f"({', '.join(budget['unpriced']) or 'no memory budget readable'}); an unpriced "
+            f"plan is not a plan"
+        )
+
+    known = {r["id"] for r in _rows()}
+    problems = check_generated(rendered["text"], known)
+    if problems:
+        raise PersonalityError(
+            f"refusing to write personality {rendered['name']!r}:\n  "
+            + "\n  ".join(problems))
+
+    snap = presets_store.snapshot(reason=f"apply personality {rendered['name']}",
+                                  personality=rendered["name"])
+    log(f"snapshotted presets.ini -> {snap['path']}")
+
+    before = _current_text()
+    try:
+        paths.PRESETS_INI.parent.mkdir(parents=True, exist_ok=True)
+        paths.PRESETS_INI.write_text(rendered["text"])
+    except OSError as exc:
+        raise PersonalityError(f"could not write {paths.PRESETS_INI}: {exc}") from exc
+
+    # Verify what is actually on disk, not what the write call reported.
+    landed = _current_text()
+    if landed != rendered["text"]:
+        _rollback(presets_store, snap["stamp"], before, log)
+        raise PersonalityError(
+            f"{paths.PRESETS_INI} does not match what was validated "
+            f"({len(landed)} bytes written, {len(rendered['text'])} validated); "
+            f"restored snapshot {snap['stamp']}")
+    post = check_generated(landed, known)
+    if post:
+        _rollback(presets_store, snap["stamp"], before, log)
+        raise PersonalityError(
+            f"{paths.PRESETS_INI} failed validation after writing:\n  "
+            + "\n  ".join(post) + f"\n  restored snapshot {snap['stamp']}")
+
+    db.event("portal", "presets-apply",
+             f"personality={rendered['name']} models={len(rendered['models'])} "
+             f"models_max={rendered['models_max']} snapshot={snap['stamp']}")
+    log(f"wrote {paths.PRESETS_INI} ({len(landed)} bytes) for personality "
+        f"{rendered['name']}")
+    presets_store.prune()
+
+    result = {
+        "name": rendered["name"],
+        "models": rendered["models"],
+        "models_max": rendered["models_max"],
+        "snapshot": snap["stamp"],
+        "bytes": len(landed),
+        "changed": before != rendered["text"],
+        "budget": budget,
+        "restart": None,
+    }
+    if not restart:
+        return result
+
+    from . import systemd
+    state = systemd.service_action("llamacpp", "restart")
+    result["restart"] = state
+    if not state.get("ok"):
+        # The file is valid and the snapshot exists. Rolling back automatically here would be a
+        # guess: the restart may have failed for a reason nothing to do with presets.ini, and
+        # silently reverting a config the operator just asked for is worse than telling them the
+        # restart failed and what to roll back to.
+        log(f"router restart FAILED: {state.get('error')}; presets.ini is written and "
+            f"snapshot {snap['stamp']} can restore the previous file")
+    else:
+        log(f"restarted {paths.ROUTER_UNIT}")
+    return result
 
 
 def validate(personality: dict, budget_bytes: int | None = None) -> list[dict]:

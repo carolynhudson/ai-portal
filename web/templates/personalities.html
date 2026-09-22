@@ -1,9 +1,11 @@
 {# Personalities (PORTAL_PLAN §4.7, phase N4): which models this box may load, how
    many at once, and what the worst case costs.
 
-   Read-only. There is no Apply button because there is no write path yet (D7): the page
-   generates presets.ini and shows the diff. Applying it is a separate gated decision, and
-   a page that can only show things cannot accidentally change the router. #}
+   This page is read-only: it generates presets.ini and shows the diff, and rendering it has no
+   side effects. There is deliberately no Apply button (D7) — applying is a separate endpoint,
+   POST /api/personalities/apply, gated on an explicit confirm and on the machine being idle.
+   Keeping the decision surface off the page is the point: the view a person consults is not the
+   control that acts, so reading the page cannot be the moment something changes. #}
 {% extends "base.html" %}
 {% block title %}Personalities · AI Portal{% endblock %}
 {% block body %}
