@@ -827,9 +827,10 @@ concatenates, which coerces the node and yields `" [object Text]"` in the bar. B
 by running the real harness rather than a reproduction; the mutation check (replacing the step
 text) confirms the harness reads the rendered string and not merely the element's existence.
 
-**Deferred, deliberately:** the apply path. `presets.ini` on this box still holds only the
-validated `[*]` globals; N4 has not changed what the router reads. Writing is a separate,
-gated decision that goes through the restart job and records a snapshot first.
+**The apply path landed 2026-09-22** (`2eb70e1`, `46aa65c`). It has not changed what this box's
+router reads: `presets.ini` is still the file it was, and nothing in the test suite can reach it.
+What exists now is `app/core/presets_store.py` — snapshot from disk before every write, restore by
+bytes, prune to the newest 20 — plus the gated write path and settings editor in §4.10.
 
 **Lessons carried over, deliberately:**
 
@@ -842,6 +843,98 @@ gated decision that goes through the restart job and records a snapshot first.
   under what load*. Copy the habit, not just the numbers.
 - Auxiliary files (`mmproj-`, `mtp-`, `draft-`, `imatrix-`) are not models and
   always lose a naive size contest. The portal now agrees via one shared regex.
+
+### 4.10 Writing presets.ini — the apply path and the settings editor (landed 2026-09-22)
+
+N4 is the first step in this project that writes a file the router reads at load time, so the
+interesting part is not the write, it is everything arranged around it.
+
+**Order is the safety property.** `personality.apply()` refuses at four points before anything
+touches disk — plan does not fit, plan cannot be priced, a router-controlled override, a key with no
+registry definition — then snapshots from disk, writes, **re-reads the file** and re-checks it. If
+what landed is not what was validated it rolls back. A partial write discovered by the router at
+load time is the worst possible place to find out.
+
+**A snapshot is taken from disk, never from memory.** If `apply()` snapshotted the text it was about
+to write, a bug in the writer would corrupt the backup too and rollback would restore the damage.
+
+**A rollback that is only attempted is not a rollback.** The first version called
+`presets_store.restore()` and then reported "restored snapshot `<stamp>`" without looking at the
+file. The same I/O fault that corrupts an apply can defeat the restore, and a message that says
+"restored" while the file is still broken is worse than no message: the operator stops reading.
+`_rollback()` now compares the restored bytes against what was there and says so either way. It was
+mutation-proven by reverting both call sites to the unverified form, which fails with *"apply must
+prove the rollback, not assume it"*.
+
+**Gating, three layers.** `confirm` must be true (same rule as a router stop or a release delete);
+the job kind `presets-apply` is in `updater.DISRUPTIVE` because its last step restarts
+`ai-llama-router`, so it will not start on top of a build; and `apply()` refuses on its own when the
+budget says no. A refusal surfaces as a failed job with the reason in its log, never as a 500.
+
+**`check_generated()` validates the emitted text, not the sections dict.** It re-parses the file the
+router would read. The retired generator emitted a file `configparser` rejected; that is now a
+refusal here rather than a router that starts with half a configuration.
+
+**`lazy-mode` was missing from the registry, and it was found by reading live state.** The running
+router resolved `lazy-mode = on` for every model and `--lazy-mode` was in the worker argv; the
+registry had no definition for it, so a perfectly legal `lazy-mode = on` would have been refused as
+"no definition in the settings registry". It is registered but deliberately **absent from
+`GLOBAL_DEFAULTS`**: registering it is what lets the editor offer it and the validator accept it;
+keeping it out of the defaults is what stops `apply()` emitting a value a hand-started router
+already sets on a command line that outranks `presets.ini` anyway.
+
+**The editor's controls come from the registry.** Fields are rendered from `SETTINGS`, so the page
+cannot offer a control for a key the validator would refuse — the form and the rule are one table.
+`normalize_proposed()` coerces before validating, because a form submits strings and `threads = 16`
+arrives as `"16"`; a validator that demands an int rejected every value the live router itself
+reports.
+
+**A silent no-op found while building it.** A per-model edit for a model the personality does not
+cover returned 200 and was discarded: `render()` builds sections by iterating `resolve_models()`, so
+the editor showed the value, preview approved it, and the generated file did not contain it. Refused
+now, with the two causes kept distinct — no library entry, versus in the library but outside this
+personality's model set — because "the router will ignore this section" and "this personality does
+not cover that model" need different fixes.
+
+**Tests that asserted fictions, corrected rather than worked around:**
+
+- `apply(personality, None)` was expected to refuse. It does not: `personality.py:437` treats
+  `None` as *go measure it* and calls `modelindex._pool_bytes()`, which answers 108 GiB here.
+  `FITS_UNKNOWN` is reached by an unpriceable model, which is what the test now constructs, and a
+  second test pins the `None` behaviour so the mistake is not re-made.
+- A test for "post-write revalidation restores the file" poisoned `render()`, which the **pre**-write
+  check catches — so it was a test of the pre-write gate wearing the name of a test about the
+  post-write one. It now poisons `check_generated()` on its second call.
+- `budget_for()` was monkeypatched to return a dict; `render()` calls `budget_for(...).as_dict()`, so
+  the job died with `AttributeError` — a failure either way, but for a reason the fixture invented.
+- A fixture whose injected budget was a `Budget` object while `apply()` indexes a dict.
+
+**The invariant test changed with the code.** `test_page_offers_no_write_control` forbade the string
+`/api/personalities/apply` anywhere in the page — correct for the read-only half of N4, wrong once
+the route shipped. `test_the_pages_write_control_cannot_fire_by_itself` asserts what actually has to
+hold: Apply starts disabled, no control is `type=submit`, and no `action=` or `href=` points at a
+write route.
+
+**Harness findings.** `tests/ui/spec.json` field counts were first written as 10 and 13; a mutation
+that dropped one key **passed**. Pinned to the registry (12 global-eligible, 14 per-model), the same
+mutation fails with *"13 element(s), expected at least 14"*. And the harness caught a dead control I
+had written: "clear this model's edits" did nothing observable when the model had no edits — exactly
+when an operator presses it, because they believe they changed something and cannot remember what.
+
+**Two suite-level defects this exposed, both about the machine running the tests:**
+
+- `test_a_quiet_machine_has_nothing_to_report` was reading **this box's tmpfs occupancy**.
+  `health.disk()` calls `shutil.disk_usage(paths.AI_ROOT)` and `AI_ROOT` lives under `/tmp`, a 62 GiB
+  tmpfs; the test passed while `/tmp` was roomy and failed once enough test runs had filled it. The
+  `tree` fixture now pins the probe. Mutating the pin to 20 GiB makes the test fail with the real
+  advisory, which is what proves the pin is doing work rather than hiding a bug.
+- `/tmp` was at 49 GiB because repeated `AI_PORTAL_HOME=$(mktemp -d)` runs left four 13 GiB homes
+  behind, and a fixture reached model sizes by writing gigabytes of zeros. Homes were removed and the
+  fixture now reaches size by `truncate()`: a 4 GiB model fixture allocates 4 KiB.
+
+**Still deferred:** persisting custom personalities (the editor proposes, previews and applies; it
+does not save), the §4.7 `models` symlink farm, and using `presets_history` — the table exists in
+`portal.db` with zero rows, while snapshots live on disk under `state/rollback/`.
 
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
@@ -1502,7 +1595,7 @@ python3 tools/ttl_oom_lab.py --background --full --yes
 | **L.1 (done, 2026-09-13)** — tab geometry contract | Tab/panel junction defined once in `web/static/tabs.css`, asserted as CSS text and measured through jsdom's cascade | tabs sit on the panel's top edge with one baseline that opens only under the active tab; 6 geometry mutations prove it; §6.7 |
 | **L.3 (done, 2026-09-13)** — router pulse | Status page reads the journal instead of showing it: per-slot lanes with real phases, throughput stacked by slot, model-switch banner, collapsed attention pane (§6.9) | "is it working, on what, how fast, anything wrong?" answered without reading a log line; 22 parser + 10 page tests; 6 new mutations; service controls provably untouched |
 | **M (done, 2026-09-14)** — jobs are machine state, not page state | Global job bar on every page (`/api/jobs/active`, step + elapsed + in-place log), machine-wide exclusivity for disruptive updates with named 409 refusals, service controls gated while a job runs, ComfyUI update rebuilt around the service's own venv + generated pip constraints + verify-before-restart (§6.11) | a job stays visible and its machine stays locked from any page; a ComfyUI sync cannot replace this box's ROCm torch, and cannot restart the service on a venv where `torch.version.hip` is missing; 17 job tests + 18 updater tests, 2 jobbar pages, 5 new mutations (33/33 caught) |
-| **N (proposed)** — the model table | Finish the gguf-indexer port: `model_index` with real GGUF metadata, the memory estimate (weights + KV + runtime, hybrid-attention aware), incremental scan; smoke-test selection, models page and router personalities all read it (§4.9) | "smallest full model that fits in 9 GB" is a query, not a heuristic; the smoke test cannot fail on model choice twice; presets gain per-model backends from a diff'd, generated file |
+| **N (done 2026-09-16 → 2026-09-22)** — the model table and personalities | N1 index + incremental scan, N2 memory estimate (weights + KV + runtime, sliding-window and per-layer-head aware), N3 models page (one table, live light, capability facts parsed from the chat template rather than pattern-matched, peak RAM), N4 presets: generate → diff → gated apply through the job system with a snapshot before every write, plus a settings editor whose controls are rendered from the registry it validates (§4.9, §4.10) | "smallest full model that fits in 9 GB" is a query, not a heuristic; the smoke test cannot fail on model choice twice; presets gain per-model settings from a generated, diff'd, validated file — and **every apply is undoable from a snapshot taken off disk** |
 | **L.2 (done, 2026-09-13)** — dashboard de-noise + build manager | Hero cards carry service state only (SDK inventory → GPU tab, duplicate Metrics link gone); stored builds become one dropdown with Switch/Delete, build-detail confirms, build count, and server-side refusals | the running build is undeletable and unswitchable-to at both ends; 6 backend tests + selectCases/then_click; 17/17 mutations; §6.8 |
 
 Each phase ships behind the same safety model (§6) and keeps the `tools/`
