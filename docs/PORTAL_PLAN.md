@@ -1576,6 +1576,87 @@ python3 tools/ttl_oom_lab.py --background --full --yes
 # → the router is restored at the end and verified on :8080; start the agent again
 ```
 
+#### 6.12.3 Does the aperture come back? Measured — and the answer is yes
+
+The owner's report was specific: after an OOM mid-task, no `llama-server` was visible in the
+process list and total-used-vs-available still showed the memory gone, requiring a reboot before
+the model would load again. That is the signature of driver-side retention, and it is the one
+thing §6.12 had never tested. It now has.
+
+Three unload/reload cycles of `Qwen3.8-Flash-Next-GSQ-RCO` through `POST /models/unload` and
+`/models/load`, GTT read from driver sysfs after each:
+
+```
+cycle      baseline   after unload   after reload
+  1         54.46G        0.40G        54.15G
+  2         54.46G        0.40G        54.15G
+  3         54.46G        0.40G        54.15G
+unload returned 54.06 GiB; reload cost 53.75 GiB; net vs previous reload +0.00 GiB
+```
+
+0.40 GiB is the 512 MiB stub the iGPU always holds. `MemAvailable` went 63 → 118.5 GiB. **No
+ratchet, three cycles running.**
+
+Then the failure the owner actually described, reproduced: a generation started, then the worker
+**SIGKILLed mid-task**, router parent left alive.
+
+```
+loaded, idle        GTT 54.42 GiB   avail  62.17 GiB   llamaRSS  8.84 GiB
+mid-generation      GTT 54.42 GiB   avail  58.16 GiB   llamaRSS 12.52 GiB
+after SIGKILL +15s  GTT  0.40 GiB   avail 118.38 GiB   llamaRSS  0.69 GiB
+after SIGKILL +40s  GTT  0.40 GiB   avail 118.53 GiB   llamaRSS  0.69 GiB
+```
+
+Nothing is retained — not even across a hard kill during generation. Worth noting why this was
+worth testing rather than assuming: the router **parent** holds `/dev/dri/renderD128` on three
+fds and `/dev/kfd` on one, so an inherited open file description keeping the child's buffer
+objects alive was a live hypothesis with the right shape. It is not what happens here.
+
+**What the remaining memory behaviour therefore is:** the two mechanisms §6.12 already recorded —
+idle models never expire, and idle *allocates* (prompt cache + checkpoints, upstream saw a 2.6 GiB
+idle-slot save followed by an OOM kill five seconds later). Not a leak.
+
+**What is still unexplained:** the "no process visible, memory still gone" observation. Two
+remaining candidates, and the discriminator for both is to read `MemAvailable` rather than a GUI's
+used bar: a worker orphaned when its router parent died (orphans are not zombies and are easy to
+miss in a unit-grouped process list), or page-cache accounting — a loaded Flash-Next model leaves
+~53 GiB in `Inactive(file)`, which several monitors render as "used" while `MemAvailable` stays
+high.
+
+**lazy-mode, measured against the managed router's own settings.** Same model, same build (b10964):
+
+| configuration | GTT aperture used |
+|---|---|
+| managed unit, `LLAMA_ARGS=""` → no `--lazy-mode` | **80.5 GiB** |
+| `--lazy-mode on` | **54.5 GiB** |
+
+`on` reads tensor rows from disk on demand instead of keeping them resident, which keeps weights
+in reclaimable page cache rather than pinned anonymous buffers. Every `llama-server` OOM kill in
+the journal — 26 across five boots — carries `file-rss: 8 kB` with `anon-rss: 21–32 GiB`: never
+page-cache backed, in the 27–35 B era and the Flash-Next era alike. That is why `GLOBAL_DEFAULTS`
+now emits it.
+
+**Confound stated so it is not read as a clean A/B:** kernel `7.0.0-31 → 7.0.0-34` was installed
+09:25 and booted 09:30 the same morning `--lazy-mode on` started. The amdgpu DKMS build (7.1.3,
+`7.1.3.31500000` in dmesg) is identical across all six boots and rebuilt for the new kernel, so
+the driver is not the variable; the kernel is, and it was not isolated.
+
+**Two config landmines found while doing this, both silent:**
+
+- `--models-max` defaults to **4**. The managed unit forces 1; a hand-started router with
+  `--models-dir` and no `--models-max` reports `max_instances: 4` with `models_autoload` on — four
+  concurrent models on a 108 GiB aperture.
+- `-c/--ctx-size` defaults to **0 = loaded from model**, so an unset context is 262144 for this
+  model whether anyone meant it or not.
+
+**Known gap in the portal's own estimate, unfixed.** `kv_bytes_at()` prices one slot and ignores
+`--ctx-checkpoints` and prompt caching. The slot part is *not* a factor of four: `server.cpp`
+resolves `--parallel -1` to **4 slots with `kv_unified = true`**, a shared pool rather than four
+copies. The unpriced part is idle-time allocation, against `HEADROOM_BYTES` of 4 GiB when §6.12.2
+measured a footprint ~12 GiB above file size. Fixing it means deciding whether the allowance
+belongs in `peak_bytes` (which tests pin at exactly `HEADROOM_BYTES`) or in a separate resident
+cost the budget checks and the models page both read.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
