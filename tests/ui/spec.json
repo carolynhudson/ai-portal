@@ -832,11 +832,12 @@
     },
     {
       "_comment": [
-        "Personalities (plan section 4.7, phase N4). Server-rendered and read-only by",
-        "decision (D7): the page shows a diff, a human approves it. So the assertions here",
-        "are not 'does it work' but 'can it change anything' -- expectRequests is empty and",
-        "expectNoRequests names the write-shaped routes, because a view that quietly POSTs",
-        "on load is the exact accident this phase is built to prevent."
+        "Personalities (plan section 4.7, phase N4). The page itself is still inert: it fetches",
+        "nothing on load and the write routes stay unrequested. What changed is that the page now",
+        "contains an editor, so the invariant is no longer 'there is no write control' but 'the",
+        "write control cannot fire by itself' -- Apply starts disabled, no control is a submit",
+        "button, and no action= or href= points at a write route. expectRequests stays empty",
+        "because a view that quietly POSTs on load is still the exact accident this phase prevents."
       ],
       "name": "personalities",
       "path": "/personalities",
@@ -852,7 +853,15 @@
         "#pers-safe",
         "#pers-default",
         "#keys-table",
-        "#keys-wrap"
+        "#keys-wrap",
+        "#editor",
+        "#pers-editor",
+        "#ed-persona",
+        "#ed-global",
+        "#ed-model",
+        "#ed-preview",
+        "#ed-apply",
+        "#ed-summary"
       ],
       "expectText": [
         {
@@ -882,6 +891,36 @@
         {
           "selector": "#keys-table",
           "contains": "stop-timeout"
+        },
+        {
+          "_comment": [
+            "Apply must start disabled. The button is only reachable from a preview that came",
+            "back clean, which is what makes 'the write is always preceded by a diff the operator",
+            "saw' a property of the page rather than a habit of the operator."
+          ],
+          "selector": "#ed-apply",
+          "contains": "Apply"
+        },
+        {
+          "_comment": [
+            "Controls are generated from the settings registry, not hand-listed, so the editor",
+            "cannot offer a key the validator would refuse. Field count tracks the registry: if a",
+            "key is added to SETTINGS and the editor stops showing it, this is what notices."
+          ],
+          "selector": "#ed-global .ed-field",
+          "minCount": 12
+        },
+        {
+          "_comment": [
+            "Every per-model key is offerable per model, including the model-only ones, so a",
+            "load-on-startup or ctx-size can be set where it belongs."
+          ],
+          "selector": "#ed-model-fields .ed-field",
+          "minCount": 14
+        },
+        {
+          "selector": "#ed-summary",
+          "contains": "no edits proposed"
         }
       ],
       "expectNoInjectedMarkup": [

@@ -230,23 +230,53 @@ def test_rendering_the_page_never_writes_presets_ini(client, library):
     assert paths.PRESETS_INI.read_text() == sentinel, "presets.ini was rewritten"
 
 
-def test_page_offers_no_write_control(client):
-    """No Apply button, no write form, no fetch to a write endpoint. The page cannot change
-    the router because it contains nothing that could ask it to.
+def test_the_pages_write_control_cannot_fire_by_itself(client):
+    """The editor can write, so the invariant is no longer "there is no write control" — it is
+    "the write control cannot act without an operator".
 
-    Scoped to this page's own body block: base.html contributes the logout form, which is
-    a POST and is not this page's doing. Asserting "no form anywhere" would either fail on
-    correct code or force this test to ignore every inherited element — and a test that
-    ignores inherited markup is not looking at the page it claims to check.
+    This replaces test_page_offers_no_write_control, which forbade the string
+    `/api/personalities/apply` anywhere in the page. That assertion was correct for the read-only
+    half of N4 and became wrong the moment the apply route shipped; keeping it would have meant
+    either a failing gate or a test that ignores the exact code it is supposed to be watching.
+
+    What still has to be true, and what is asserted here:
+
+      * Apply starts disabled. A preview has to come back clean before the button can be pressed,
+        so the write is always preceded by a diff the operator saw for the payload being sent.
+      * There is no form. A button that is `type="button"` cannot submit anything, and a form with
+        an action pointing at the write endpoint would fire on Enter in any field.
+      * The write endpoint appears nowhere as an `action=` or `href=`. It exists only inside a
+        click handler.
+      * Nothing is submitted automatically: no `onsubmit`, no `autofocus`, no inline `on*=`
+        attribute wired to the write path.
+
+    "Nothing is requested on load" is checked for real by the UI harness (tests/ui/spec.json,
+    expectRequests) which loads this page in jsdom; asserting it from the HTML here would only
+    restate a string pattern.
     """
     r = client.get("/personalities")
+    assert r.status_code == 200
     body = r.text.split("<main", 1)[1] if "<main" in r.text else r.text
-    for forbidden in ("/api/personalities/apply", "presets/write", "applyPersonality",
-                      "apply(", "writePresets"):
-        assert forbidden not in body, forbidden
-    # The only POST the page can produce is the inherited logout form.
+
+    assert 'id="ed-apply" disabled' in body, \
+        "Apply must begin disabled; a preview is what enables it"
+
     posts = list(body.split("<form")[1:])
     assert not posts, f"this page renders its own form(s): {posts[:1]}"
+
+    for forbidden in ('action="/api/personalities/apply', 'href="/api/personalities/apply',
+                      'action="/api/personalities/rollback', 'onsubmit=', 'autofocus'):
+        assert forbidden not in body, forbidden
+
+    # Every control in the editor is type="button": the default for a <button> is type="submit",
+    # and a submit button inside any future wrapper would send the page to a write endpoint on
+    # Enter while someone was typing a number.
+    editor = body.split('id="pers-editor"', 1)[1] if 'id="pers-editor"' in body else ""
+    assert editor, "the editor section is missing"
+    buttons = [b for b in editor.split("<button")[1:]]
+    assert buttons, "the editor renders no buttons"
+    untyped = [b.split(">", 1)[0] for b in buttons if 'type="button"' not in b.split(">", 1)[0]]
+    assert not untyped, f"buttons without type=button: {untyped}"
 
 
 def test_get_personality_paths_stay_read_only(client):

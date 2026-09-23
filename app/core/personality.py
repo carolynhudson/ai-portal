@@ -537,7 +537,19 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
     models = resolve_models(personality)
     overrides = personality.get("overrides") or {}
 
+    # `global` sits on top of GLOBAL_DEFAULTS rather than replacing them, so an editor that
+    # changes one key still emits the rest. GLOBAL_DEFAULTS is the safety net; the router's own
+    # precedence is CLI > model section > [*], so what lands in [*] is the floor, not the ceiling.
     sections: dict[str, dict[str, Any]] = {"*": dict(GLOBAL_DEFAULTS)}
+    glob = dict(personality.get("global") or {})
+    hostile = sorted(k for k in glob if k.lower() in ROUTER_CONTROLLED_KEYS)
+    if hostile:
+        raise PersonalityError(
+            f"personality {name!r} sets router-controlled key(s) {hostile} in [*]; "
+            f"the router overwrites them"
+        )
+    sections["*"].update(glob)
+
     for mid in models:
         per = dict(overrides.get(mid) or {})
         hostile = sorted(k for k in per if k.lower() in ROUTER_CONTROLLED_KEYS)
@@ -686,6 +698,95 @@ def check_generated(text: str, known_models: set[str]) -> list[str]:
             if reason:
                 problems.append(f"{where} {key} = {value}: {reason}")
     return problems
+
+
+def normalize_proposed(base: dict, global_edits: dict | None,
+                       model_edits: dict | None) -> dict:
+    """Turn an editor payload into a personality dict, refusing anything the registry rejects.
+
+    This is the boundary between "a value in a form field" and "a value the generator may emit",
+    and it does three things the generator alone does not:
+
+      * coerces first. A form submits strings and ini values are strings too, so `threads = 16`
+        arrives at `accepts()` as `"16"`; a validator that demands an int rejected every value the
+        live router itself reports.
+      * refuses a key with no definition, a key the router strips, and a key the router derives —
+        each with its own reason, because a form that silently drops a field is how an operator
+        ends up believing a setting they can see is a setting that exists.
+      * collects every problem instead of stopping at the first, so a form is not cleared one
+        field at a time.
+
+    Returns a personality dict carrying validated `global` and `overrides`. It never writes.
+    """
+    errors: list[str] = []
+    out = dict(base)
+
+    def clean(where: str, raw: dict | None) -> dict:
+        cleaned: dict[str, Any] = {}
+        for key, value in (raw or {}).items():
+            if key in ROUTER_CONTROLLED_KEYS:
+                errors.append(f"{where} {key}: the router overwrites this key at launch")
+                continue
+            if key in ROUTER_DERIVED_KEYS:
+                errors.append(f"{where} {key}: the router derives this value itself")
+                continue
+            if key not in SETTINGS:
+                errors.append(f"{where} {key}: no definition in the settings registry")
+                continue
+            try:
+                coerced = coerce_setting(key, value)
+            except PersonalityError as exc:
+                errors.append(f"{where} {key}: {exc}")
+                continue
+            reason = check_setting(key, coerced)
+            if reason:
+                errors.append(f"{where} {key}: {reason}")
+                continue
+            cleaned[key] = coerced
+        return cleaned
+
+    glob = clean("[*]", global_edits)
+
+    # A per-model edit has to land on a model this personality actually covers. render() builds
+    # sections by iterating resolve_models(), so an override for any other name is dropped on the
+    # floor: the editor would show the value, preview would answer 200, and the generated file
+    # would not contain it. That is the silent no-op this module keeps running into, so the two
+    # ways it happens are named separately rather than merged into one vague refusal.
+    covered: list[str] = []
+    try:
+        covered = resolve_models(out)
+    except PersonalityError as exc:
+        errors.append(str(exc))
+    library = {r["id"] for r in _rows()}
+
+    per_model: dict[str, dict[str, Any]] = {}
+    for mid, raw in (model_edits or {}).items():
+        cleaned = clean(f"[{mid}]", raw)
+        if raw and not cleaned:
+            per_model[mid] = cleaned      # every field was refused; the refusal is already logged
+            continue
+        if mid not in library:
+            errors.append(f"[{mid}]: no library entry, so the router would ignore this section")
+            continue
+        if mid not in covered:
+            errors.append(f"[{mid}]: not part of personality {out.get('name')!r}'s model set, "
+                          f"so this edit would be discarded rather than written")
+            continue
+        per_model[mid] = cleaned
+
+    if errors:
+        raise PersonalityError("the proposed settings were refused:\n  "
+                               + "\n  ".join(errors))
+
+    if glob:
+        out["global"] = glob
+    merged = dict(out.get("overrides") or {})
+    for mid, body in per_model.items():
+        if body:
+            merged[mid] = body
+    if merged:
+        out["overrides"] = merged
+    return out
 
 
 def apply(personality: dict, budget_bytes: int | None = None,

@@ -111,7 +111,8 @@ h2{margin:18px 0 6px}
     {% elif not g.get('changed') %}
       <p class="mut">no change — what it would write is what is on disk.</p>
     {% else %}
-      <p class="mut">proposed only. Nothing here writes {{ presets_path }}.</p>
+      <p class="mut">proposed only — this card writes nothing. The editor below can write
+      {{ presets_path }}, and only after a preview and an explicit confirm.</p>
       <pre class="diff">{% for ln in g.get('diff') or [] %}{% if ln.startswith('+') %}<span class="add">{{ ln }}</span>
 {% elif ln.startswith('-') %}<span class="del">{{ ln }}</span>
 {% elif ln.startswith('@@') %}<span class="hunk">{{ ln }}</span>
@@ -149,4 +150,284 @@ h2{margin:18px 0 6px}
   </tbody>
 </table>
 </div>
+
+{# ------------------------------------------------------------------ the editor
+   Controls are rendered from SETTINGS on the server, so the page cannot offer a control for a
+   key the registry has no definition for — the form and the validator are the same table. The
+   page fetches nothing until the operator presses Preview, which is what keeps the UI contract's
+   expectRequests empty and keeps the forbidden write routes unrequested. #}
+<h2 id="editor">Settings editor</h2>
+<p class="mut">
+  Propose changes, preview the exact file and the exact cost, then apply. Nothing is written and
+  nothing is snapshotted until Apply, and Apply restarts {{ router_unit }} so the router actually
+  re-reads the file. Values left at “leave as is” are not sent at all: an omitted key keeps the
+  personality's own default rather than being guessed at from a form field.
+</p>
+<div class="pers-editor" id="pers-editor">
+  <div class="ed-row">
+    <label for="ed-persona">personality</label>
+    <select id="ed-persona">
+      {% for c in cards %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}
+    </select>
+    <span class="mut" id="ed-model-count"></span>
+  </div>
+
+  <h3>Global ([*])</h3>
+  <div class="ed-grid" id="ed-global">
+    {% for k in setting_names %}
+      {% set s = settings[k] %}
+      {% if s.section != 'model' %}
+      <div class="ed-field" data-key="{{ k }}">
+        <label for="ed-g-{{ k }}" class="mono">{{ k }}</label>
+        {% if s.choices %}
+        <select id="ed-g-{{ k }}">
+          <option value="">leave as is</option>
+          {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+        </select>
+        {% elif s.kind == 'bool' %}
+        <select id="ed-g-{{ k }}">
+          <option value="">leave as is</option>
+          <option value="1">on</option>
+          <option value="0">off</option>
+        </select>
+        {% else %}
+        <input id="ed-g-{{ k }}" type="text" inputmode="numeric"
+               placeholder="leave as is (default {{ s.default }})">
+        {% endif %}
+        <span class="mut h">{{ s.help }}</span>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <h3>Per model</h3>
+  <div class="ed-row">
+    <label for="ed-model">model</label>
+    <select id="ed-model">
+      {% for m in model_ids %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+    </select>
+    <button type="button" id="ed-clear-model">clear this model's edits</button>
+  </div>
+  <div class="ed-grid" id="ed-model-fields">
+    {% for k in setting_names %}
+      {% set s = settings[k] %}
+      <div class="ed-field" data-key="{{ k }}">
+        <label for="ed-m-{{ k }}" class="mono">{{ k }}</label>
+        {% if s.choices %}
+        <select id="ed-m-{{ k }}">
+          <option value="">unset</option>
+          {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+        </select>
+        {% elif s.kind == 'bool' %}
+        <select id="ed-m-{{ k }}">
+          <option value="">unset</option>
+          <option value="1">on</option>
+          <option value="0">off</option>
+        </select>
+        {% else %}
+        <input id="ed-m-{{ k }}" type="text" inputmode="numeric" placeholder="unset">
+        {% endif %}
+        <span class="mut h">{{ s.help }}</span>
+      </div>
+    {% endfor %}
+  </div>
+
+  <p class="mut" id="ed-summary">no edits proposed</p>
+
+  <div class="ed-row">
+    <button type="button" id="ed-preview">Preview the diff</button>
+    <button type="button" id="ed-apply" disabled>Apply</button>
+  </div>
+
+  <div id="ed-refuse" class="sev bad" hidden></div>
+  <p id="ed-budget" class="mut"></p>
+  <pre id="ed-diff" class="diff"></pre>
+  <p class="mut" id="ed-note">
+    Refused keys are listed before the diff: a key the router strips, a key the router derives, a
+    key with no definition here, a value its own registry rule rejects, and a model section this
+    personality does not cover. The last one matters because a section the router ignores looks
+    exactly like a setting that took effect.
+  </p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // Built without innerHTML: diff text, job logs and refusal messages all originate from server
+  // responses, and a diff line is the least likely thing in this app to need escaping but the
+  // worst place to learn that lesson late.
+  const $ = (id) => document.getElementById(id);
+  const node = (tag, cls, text) => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+
+  const globalFields = [...$('ed-global').querySelectorAll('.ed-field')];
+  const modelFields = [...$('ed-model-fields').querySelectorAll('.ed-field')];
+  // Edits are held per model rather than read off the inputs on submit: the inputs are reused as
+  // the model selector changes, and a model whose fields were never touched must contribute no
+  // section at all rather than an empty one.
+  const modelEdits = new Map();
+  let captured = null;   // the model whose values are currently shown in the shared inputs
+
+  function captureCurrent() {
+    if (!captured) return;
+    const body = {};
+    for (const f of modelFields) {
+      const key = f.dataset.key;
+      const control = f.querySelector('select, input');
+      if (control && control.value !== '') body[key] = control.value;
+    }
+    if (Object.keys(body).length) modelEdits.set(captured, body);
+    else modelEdits.delete(captured);
+  }
+
+  function loadModel(name) {
+    captured = name;
+    const saved = modelEdits.get(name) || {};
+    for (const f of modelFields) {
+      const control = f.querySelector('select, input');
+      if (control) control.value = saved[f.dataset.key] || '';
+    }
+    summarize();
+  }
+
+  function summarize() {
+    const globals = [];
+    for (const f of globalFields) {
+      const control = f.querySelector('select, input');
+      if (control && control.value !== '') globals.push(f.dataset.key);
+    }
+    const parts = [];
+    if (globals.length) parts.push(`[*]: ${globals.join(', ')}`);
+    for (const [mid, body] of modelEdits) parts.push(`[${mid}]: ${Object.keys(body).join(', ')}`);
+    $('ed-summary').textContent = parts.length
+      ? `proposed — ${parts.join(' · ')}`
+      : 'no edits proposed';
+    // Apply is only reachable from a preview that came back clean, so a click here always follows
+    // a diff the operator has seen for exactly the payload being sent.
+    setApply(false);
+  }
+
+  function payload() {
+    captureCurrent();
+    const globalEdits = {};
+    for (const f of globalFields) {
+      const control = f.querySelector('select, input');
+      if (control && control.value !== '') globalEdits[f.dataset.key] = control.value;
+    }
+    const modelEditsOut = {};
+    for (const [mid, body] of modelEdits) modelEditsOut[mid] = body;
+    return {name: $('ed-persona').value, global_edits: globalEdits, model_edits: modelEditsOut};
+  }
+
+  function setApply(on) {
+    $('ed-apply').disabled = !on;
+  }
+
+  function renderDiff(lines) {
+    const pre = $('ed-diff');
+    pre.textContent = '';
+    for (const ln of lines) pre.appendChild(node('span', ln.startsWith('+') ? 'add'
+      : ln.startsWith('-') ? 'del' : ln.startsWith('@@') ? 'hunk' : null, ln));
+    pre.appendChild(node('span', null, ''));
+  }
+
+  function renderBudget(b) {
+    const el = $('ed-budget');
+    el.textContent = '';
+    if (!b) return;
+    const gib = (n) => (n === null || n === undefined) ? 'unknown' : `${(n / 1073741824).toFixed(1)} GiB`;
+    const verdict = b.fits === true ? 'fits'
+      : b.fits === false ? 'DOES NOT FIT'
+      : 'cannot be priced';
+    el.appendChild(node('span', null,
+      `worst case ${gib(b.worst_case_bytes)} of ${gib(b.budget_bytes)} — ${verdict}`));
+    if (b.heaviest && b.heaviest.length) {
+      el.appendChild(node('span', null, ` · heaviest ${b.heaviest.join(', ')}`));
+    }
+    el.appendChild(node('span', null, ` · models_max ${b.models_max}`));
+  }
+
+  function renderRefuse(list) {
+    const el = $('ed-refuse');
+    el.textContent = '';
+    if (!list || !list.length) { el.hidden = true; return; }
+    el.hidden = false;
+    for (const line of list) el.appendChild(node('div', null, line));
+  }
+
+  async function preview() {
+    setApply(false);
+    const r = await fetch('/api/personalities/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload()),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      renderRefuse([String(data.detail || `preview failed (${r.status})`)]);
+      renderBudget(null); renderDiff([]);
+      return;
+    }
+    renderRefuse(data.would_refuse || []);
+    renderBudget(data.budget);
+    renderDiff(data.diff || []);
+    setApply(Boolean((data.would_refuse || []).length === 0));
+  }
+
+  async function applyIt() {
+    if (!confirm('Write presets.ini and restart the router? The current file is snapshotted first.')) return;
+    const body = Object.assign(payload(), {confirm: true});
+    const r = await fetch('/api/personalities/apply', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      renderRefuse([String(data.detail || `apply failed (${r.status})`)]);
+      return;
+    }
+    setApply(false);
+    const job = data.job;
+    $('ed-note').textContent = `apply started as job ${job}; watching…`;
+    const timer = setInterval(async () => {
+      const jr = await fetch(`/api/jobs/${job}`).then((x) => x.json()).catch(() => ({}));
+      const row = jr.job || jr;
+      if (row.status === 'running') return;
+      clearInterval(timer);
+      $('ed-note').textContent = `${row.status}: ${row.log || ''}`;
+    }, 1500);
+  }
+
+  $('ed-model').addEventListener('change', () => loadModel($('ed-model').value));
+  $('ed-clear-model').addEventListener('click', () => {
+    // Always say what happened. Without this the button is inert whenever the model happens to
+    // have no edits — which is the state the harness finds it in, and the state an operator is
+    // most likely to be in when they reach for it because they think they changed something and
+    // cannot remember what. A control that silently does nothing is how someone ends up certain
+    // a value is set when it never was.
+    const name = captured || $('ed-model').value;
+    const had = Boolean(name && modelEdits.has(name));
+    if (name) modelEdits.delete(name);
+    loadModel(name);
+    $('ed-summary').textContent = had
+      ? `cleared the edits proposed for ${name}`
+      : `no edits proposed for ${name}`;
+  });
+  for (const f of globalFields.concat(modelFields)) {
+    const control = f.querySelector('select, input');
+    if (control) control.addEventListener('change', summarize);
+  }
+  $('ed-persona').addEventListener('change', summarize);
+  $('ed-preview').addEventListener('click', preview);
+  $('ed-apply').addEventListener('click', applyIt);
+
+  const first = $('ed-model').value;
+  if (first) loadModel(first);
+  const n = $('ed-model').options.length;
+  $('ed-model-count').textContent = `${n} model${n === 1 ? '' : 's'} in the library`;
+})();
+</script>
 {% endblock %}

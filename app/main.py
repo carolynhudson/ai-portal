@@ -87,12 +87,18 @@ class RollbackBody(BaseModel):
 
 
 class PersonalityApplyBody(BaseModel):
-    """Which personality to write, and explicit consent to write it.
+    """Which personality to write, optional edits on top of it, and explicit consent to write it.
 
     `confirm` defaults to False so a request that omits it is a refusal rather than an apply —
     the same rule as a router stop or a release delete (see PORTAL_PLAN §6).
+
+    `global_edits` and `model_edits` are what the settings editor sends. They are raw on purpose:
+    a form field is a string, and coercing strings into registry types is `personality`'s job with
+    rules the same page documents, not something pydantic should decide by inferring a type here.
     """
     name: str
+    global_edits: dict[str, str] = {}
+    model_edits: dict[str, dict[str, str]] = {}
     confirm: bool = False
 
 
@@ -797,6 +803,12 @@ def create_app() -> FastAPI:
                                            "settings": personality.SETTINGS,
                                            "setting_names": personality.setting_names(),
                                            "pool_h": _human(budget),
+                                           # The editor's model list comes from the index rather than
+                                           # from the personality cards: a per-model section only means
+                                           # something if it names a directory the router can see, and
+                                           # normalize_proposed() refuses any name that does not.
+                                           "model_ids": [r["id"] for r in modelindex.rows()],
+                                           "router_unit": paths.ROUTER_UNIT,
                                            "presets_path": str(paths.PRESETS_INI),
                                            "home": str(paths.HOME)})
 
@@ -829,6 +841,9 @@ def create_app() -> FastAPI:
             raise HTTPException(404, str(e)) from None
         budget = modelindex._pool_bytes()
         try:
+            # Editor edits are validated before anything is rendered, so a bad value is reported
+            # as a refused field here rather than as a file that would not generate.
+            persona = personality.normalize_proposed(persona, body.global_edits, body.model_edits)
             rendered = personality.render(persona, budget)
         except personality.PersonalityError as e:
             raise HTTPException(400, str(e)) from None
@@ -865,6 +880,10 @@ def create_app() -> FastAPI:
             persona = _personality_by_name(body.name)
         except ValueError as e:
             raise HTTPException(404, str(e)) from None
+        try:
+            persona = personality.normalize_proposed(persona, body.global_edits, body.model_edits)
+        except personality.PersonalityError as e:
+            raise HTTPException(400, str(e)) from None
         jid = updater.start_job("presets-apply", body.name,
                                 lambda log: personality.apply(
                                     persona, modelindex._pool_bytes(), log=log))
