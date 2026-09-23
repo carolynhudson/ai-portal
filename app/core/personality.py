@@ -45,10 +45,17 @@ ROUTER_CONTROLLED_KEYS = frozenset({
 
 #: Global section. Values here are what every model inherits unless a personality
 #: overrides it per model; the router's precedence is CLI > model section > [*].
+# `fit` and `fit-target` were here and are gone, on measurement rather than preference.
+# `fit_probe.py` (§6.12.2) showed `fit` is blind to memory other processes already hold —
+# 18 GB held elsewhere changed the context it chose by nothing at all — and that it does
+# not cap the model's own cost either: an 87.2 GB model occupied ~98 GB under
+# `--fit-target 8192`. A guard that neither refuses an over-committed set nor bounds the
+# model it is applied to is not a safety net, and the owner had already deleted both keys
+# from the live file by hand. Re-adding them here would have been the portal silently
+# undoing a decision made with better evidence than the registry had.
 GLOBAL_DEFAULTS: dict[str, Any] = {
     "threads": 16,
-    "fit": "on",
-    "fit-target": 8192,
+    "lazy-mode": "on",
     "stop-timeout": 15,
 }
 
@@ -160,9 +167,50 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": -1,
-        "help": "Number of request slots. -1 = auto. Each slot costs KV cache, so this "
-                "multiplies the context a model is actually holding.",
+        "help": "Number of request slots. -1 = auto, and auto resolves to 4 slots with a "
+                "unified KV pool (server.cpp), so the pool is shared rather than copied per "
+                "slot. Set it explicitly, or price KV per slot only when KV is not unified.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    "ctx-checkpoints": {
+        "kind": "int",
+        "section": "both",
+        "default": 32,
+        "help": "Context checkpoints kept per slot (server default 32). Each one holds a "
+                "saved slice of the cache, so this is memory that shows up *after* a request "
+                "finishes, not at load time — which is why RSS climbs when a model looks idle.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "cache-prompt": {
+        "kind": "bool",
+        "section": "both",
+        "default": True,
+        "help": "Keep finished slot states in the prompt cache so a similar next request is "
+                "faster. This is where the OOM usually lands on this box: upstream reported an "
+                "idle slot saving a 2.6 GiB state and the kernel killing the worker five "
+                "seconds later (llama.cpp discussion #22372), on the same machine class.",
+        "accepts": lambda v: isinstance(v, bool),
+    },
+    "reasoning-budget": {
+        "kind": "int",
+        "section": "both",
+        "default": -1,
+        "help": "Token budget for thinking: -1 unrestricted (the default), 0 stops thinking "
+                "immediately. Reasoning tokens are the largest source of prompt growth in a "
+                "long session, and prompt growth is what makes checkpoints and prompt-cache "
+                "saves expensive. It changes what a session costs, not what a model costs to "
+                "load.",
+        "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    "reasoning-effort": {
+        "kind": "choice",
+        "section": "both",
+        "default": "default",
+        "choices": ("default", "minimal", "low", "medium", "high", "xhigh", "max"),
+        "help": "Reasoning level handed to the chat template. This is the knob Qwen3.8-Flash-"
+                "Next actually obeys: its template reads `reasoning_effort` and branches on "
+                "'low' / 'medium' / 'high' / 'xhigh'.",
+        "accepts": lambda v: v in ("default", "minimal", "low", "medium", "high", "xhigh", "max"),
     },
     "jinja": {
         "kind": "bool",
@@ -205,10 +253,18 @@ SETTINGS: dict[str, dict[str, Any]] = {
 ROUTER_DERIVED_KEYS = frozenset({"metrics", "model", "mmproj"})
 
 
-# `lazy-mode` is deliberately registered but absent from GLOBAL_DEFAULTS: registering it is what
-# lets the editor offer it and what lets check_generated() validate it, while keeping it out of
-# the defaults is what keeps apply() from silently changing a value a hand-started router may
-# already be setting on the command line, where it would win anyway.
+# `lazy-mode` was registered but withheld from the defaults, on the reasoning that a
+# hand-started router may already pass `--lazy-mode` on the CLI — where it outranks
+# presets.ini anyway — so emitting it would look like a change while being overridden.
+# That reasoning was sound about precedence and wrong about the managed router, which is
+# the only router the portal controls and which passes no `--lazy-mode` at all
+# (LLAMA_ARGS is empty in llamacpp.env). Measured on the same model and build (b10964):
+# aperture used 80.5 GiB with lazy-mode unset against 54.5 GiB with it on, because `on`
+# reads tensor rows from disk on demand instead of keeping them resident, which keeps the
+# weights in reclaimable page cache instead of pinned anonymous buffers. The OOM kills in
+# the journal all carry `file-rss: 8 kB` — never page-cache backed. Emitting it is the
+# point; the CLI-overrides-preset fact is why the preview diff must be read as a plan for
+# the managed router, not as a claim about whatever is running right now.
 
 
 def _positive_mib_list(value: Any) -> bool:
@@ -804,9 +860,11 @@ def apply(personality: dict, budget_bytes: int | None = None,
          mode that would otherwise be discovered by the router at load time;
       5. restart the router only if the file on disk verified.
 
-    If the budget does not fit, this refuses rather than writing. `fit = on` is in the file as a
-    backstop, but the portal already knows the heaviest combination this personality can load;
-    writing a plan that provably does not fit would just relocate the failure to load time.
+    If the budget does not fit, this refuses rather than writing, because the portal already
+    priced the heaviest combination this personality can load and writing a plan that provably
+    does not fit would just relocate the failure to load time. `fit` is not the backstop it once
+    was claimed to be: §6.12.2 measured it blind to memory other processes hold and unable to
+    bound the model it is applied to, which is why it is no longer emitted.
     """
     from . import presets_store
 

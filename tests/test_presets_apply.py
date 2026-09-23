@@ -29,7 +29,9 @@ from app.core import modelindex as mi  # noqa: E402
 from app.core import personality as P  # noqa: E402
 from tests.test_modelindex import _write_fake_gguf  # noqa: E402
 
-ORIGINAL = "[*]\nthreads = 16\nfit = on\nfit-target = 8192\nstop-timeout = 15\n"
+# Mirrors the live presets.ini as it actually stands: the owner removed `fit` and
+# `fit-target` by hand, and personality.GLOBAL_DEFAULTS now agrees with that removal.
+ORIGINAL = "[*]\nthreads = 16\nstop-timeout = 15\n"
 
 # An explicit budget rather than modelindex._pool_bytes(). _pool_bytes() reads the real GTT
 # aperture off this machine, so a test that uses it asserts against whatever GPU state happens
@@ -238,8 +240,9 @@ def test_apply_writes_and_snapshots_and_does_not_restart(home, monkeypatch):
 
 
 def test_apply_refuses_to_write_a_plan_that_does_not_fit(home):
-    """`fit = on` is in the file, but the portal already priced the worst case; writing a plan
-    that provably does not fit moves the failure to load time instead of preventing it."""
+    """The portal prices the worst case before it writes; a plan that provably does not fit moves
+    the failure to load time instead of preventing it. `fit = on` would not have helped: it is
+    blind to other residents and does not bound the model it is applied to (§6.12.2)."""
     tiny = 1 << 20  # 1 MiB: nothing in this library fits
     with pytest.raises(P.PersonalityError) as exc:
         P.apply(PERSONA, tiny, log=_quiet, restart=False)

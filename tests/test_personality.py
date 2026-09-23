@@ -272,13 +272,54 @@ def test_router_controlled_keys_are_refused_not_ignored(library):
 # ---------------------------------------------------------------- generated text
 
 def test_generated_file_parses_the_way_the_router_reads_it(library):
+    """Round-trip through the same parser family the router uses, and assert on the keys that
+    are actually in the file.
+
+    Values must come back as strings — `on` stays `on` rather than turning into a Python bool,
+    because llama.cpp parses the token itself. `lazy-mode` is asserted because it is the key
+    this box's memory behaviour depends on; `fit` is asserted *absent* because it was removed
+    by hand and by measurement, and a generator that quietly re-adds it is the bug this test
+    exists to catch.
+    """
     import configparser
     text = P.render(P.builtins()[1])["text"]
     cp = configparser.ConfigParser(allow_no_value=True, strict=True,
                                    comment_prefixes=("#", ";"))
     cp.read_string(text)
     assert "*" in cp.sections()
-    assert cp["*"]["fit"] == "on"
+    assert cp["*"]["lazy-mode"] == "on"
+    assert cp["*"]["threads"] == "16"
+    assert cp["*"]["stop-timeout"] == "15"
+    assert "fit" not in cp["*"] and "fit-target" not in cp["*"]
+
+
+def test_fit_keys_stay_out_of_every_generated_file(library):
+    """`fit` is registered — the editor should be able to talk about it — but no builtin emits it.
+
+    `fit_probe.py` measured two things that make it unsafe as a default: `fit` is blind to memory
+    other processes already hold (18 GB held elsewhere changed the context it chose by nothing at
+    all), and it does not bound the model it is applied to (an 87.2 GB model occupied ~98 GB under
+    `--fit-target 8192`). The owner had already deleted both keys from the live file by hand.
+
+    Written against `render()` rather than the preview route on purpose: the route needs an
+    authenticated client and a library the shared model index agrees about, and this assertion is
+    about the generator's own output. Cheaper to run and it cannot be contaminated by another
+    file's fixture.
+    """
+    assert "fit" in P.SETTINGS and "fit-target" in P.SETTINGS
+    assert "fit" not in P.GLOBAL_DEFAULTS, \
+        "re-adding a hand-removed key is the portal overriding a better-evidenced decision"
+    assert "fit-target" not in P.GLOBAL_DEFAULTS
+
+    # Rendered from an explicit personality, not from a builtin: the builtins name models from
+    # the real library, and this file's `library` fixture is a synthetic three-model tmp tree,
+    # so render(safe) raises "no library entry" here for a reason that has nothing to do with
+    # what this test is about.
+    text = P.render({"name": "x", "models_max": 1, "models": ["small"]})["text"]
+    assert "fit-target" not in text
+    assert "\nfit = " not in text
+    assert "lazy-mode = on" in text, \
+        "the managed router gets --lazy-mode from nowhere else, so the generated file is its only source"
 
 
 def test_global_section_comes_first_because_the_router_applies_it_as_the_base(library):

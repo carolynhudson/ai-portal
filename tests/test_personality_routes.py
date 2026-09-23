@@ -391,10 +391,12 @@ def _settle(timeout: float = 20.0) -> None:
 
 @pytest.fixture()
 def presets_file(library):
-    """A presets.ini with the shape the live file has today, so a diff has something to change."""
+    """A presets.ini with the shape the live file has today, so a diff has something to change.
+
+    `fit` / `fit-target` are absent because the owner deleted them by hand; see
+    GLOBAL_DEFAULTS in app/core/personality.py for why the portal agrees."""
     paths.PRESETS_INI.parent.mkdir(parents=True, exist_ok=True)
-    paths.PRESETS_INI.write_text(
-        "[*]\nthreads = 16\nfit = on\nfit-target = 8192\nstop-timeout = 15\n")
+    paths.PRESETS_INI.write_text("[*]\nthreads = 16\nstop-timeout = 15\n")
     for existing in presets_store.list_snapshots():
         shutil.rmtree(existing["path"], ignore_errors=True)
     return paths.PRESETS_INI.read_text()
@@ -599,26 +601,29 @@ def test_rollback_of_an_unknown_stamp_fails_the_job_without_touching_the_file(
 
 
 # ------------------------------------------------ registry coverage from live evidence
-def test_lazy_mode_is_registered_but_not_emitted(client, library):
+def test_lazy_mode_is_registered_and_emitted(client, library):
     """`lazy-mode` was found by reading what the running router actually resolved, not from a
     wish list — and the registry still had no definition for it.
 
-    The two halves of the decision are both asserted, because they are the kind of thing that
-    rots silently in opposite directions:
-
-      * it must be registered, or the editor cannot offer it and check_generated() would refuse
-        a perfectly legal `lazy-mode = on` as "no definition in the settings registry";
-      * it must NOT be in GLOBAL_DEFAULTS, because a router started by hand can set `--lazy-mode`
-        on the command line, CLI beats presets.ini, and emitting a default here would look like a
-        change while being overridden.
+    It used to be registered-but-withheld, on the grounds that a hand-started router may set
+    `--lazy-mode` on the command line, where it outranks presets.ini. That is correct about
+    precedence and wrong about the managed router, which is the only router the portal controls
+    and which passes no `--lazy-mode` at all (LLAMA_ARGS is empty in llamacpp.env). Measured on
+    one model and one build (b10964): 80.5 GiB of aperture with lazy-mode unset against 54.5 GiB
+    with it on, and every llama-server OOM kill in the journal carries `file-rss: 8 kB` — never
+    page-cache backed. Withholding it protected a case the portal does not manage while leaving
+    the case it does manage unprotected.
     """
     assert "lazy-mode" in P.SETTINGS
     assert P.check_setting("lazy-mode", "auto") is None
     assert P.check_setting("lazy-mode", "sometimes") is not None
-    assert "lazy-mode" not in P.GLOBAL_DEFAULTS
+    assert P.GLOBAL_DEFAULTS.get("lazy-mode") == "on", \
+        "the managed router gets no --lazy-mode from anywhere else, so this is its only source"
 
     r = client.post("/api/personalities/preview", json={"name": "safe"})
     assert r.status_code == 200, r.text
     diff_text = "\n".join(r.json()["diff"])
-    assert "lazy-mode" not in diff_text, \
-        "a registered key must not leak into the generated file just because it is registered"
+    assert "lazy-mode" in diff_text, \
+        "a key this box needs must reach the generated file, not just the registry"
+
+
