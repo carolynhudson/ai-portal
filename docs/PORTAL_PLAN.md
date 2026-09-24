@@ -965,16 +965,11 @@ cannot be paid for in the aperture. Verified against the live library rather tha
 `524288` refused for a `262144`-trained model, `32768` accepted, `262144` omitted with its reason,
 and the shipped `default` personality still renders byte-identical to the file on disk.
 
-**A limitation found while doing this and named rather than papered over:** `model_index` stores
-`layers`, `kv_heads` and `attention_heads`, but not the **head width** the estimate used, so
-`kv_bytes_at(row, other_ctx)` returns `None` and `peak_bytes()` has only ever priced a stored row
-when the requested context equals `est_ctx`. Repricing at a different context is exactly what an
-explicit `ctx-size` needs. `_conservative_peak()` scales the stored `est_kv` linearly, and its
-error points the safe way: sliding-window models cache sublinearly, so it can refuse a context that
-would have fitted and cannot bless one that would not. An unpriceable model is still a refusal —
-`kv == 0` and `kv is None` are kept distinct, because conflating them turns "could not measure"
-into "costs nothing". Properly fixing this means storing the head width in the index, which is a
-schema widening, not a helper.
+**The capacity check exposed two defects in the index it was built on, and one claim in this
+document.** `peak_bytes()` had a branch for "price this model at another context" that had never
+once run — it passed the scan row to an estimator speaking a different vocabulary, and returned
+`None` for all 16 models on this box. Repricing is exactly what an explicit `ctx-size` needs, so
+§6.12.5 is about making it real, and about the direction a fallback is allowed to be wrong in.
 
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
@@ -1714,6 +1709,67 @@ So `--metrics` is not the difference between the managed router and a manual one
 difference is `--lazy-mode` (80.5 vs 54.5 GiB, §6.12.3), and the direction that matters is the
 opposite of the intuitive one: the managed unit is the *more* constrained of the two, because it
 forces `--models-max 1` where a hand-started router takes the default 4.
+
+### 6.12.5 Re-pricing a stored model: the branch that never ran (2026-09-23)
+
+`peak_bytes()` has had a branch for `peak_bytes(row, some_other_context)` since it was written. On
+this box it has never produced a number:
+
+```
+peak at est_ctx (no ctx argument) : 82802543168
+peak at explicit 8192             : None        ← for every one of the 16 models here
+```
+
+The reason is two vocabularies for one fact. `model_index` stores `layers`, `kv_heads`,
+`attention_heads`; the estimator reads `block_count`, `attention_kv_count`, `attention_count`. The
+branch handed the row itself to `kv_bytes_at()`, which looked up `block_count`, found nothing, and
+answered "cannot plan". Nothing was visibly wrong, because None is the honest-looking answer.
+
+**`est_inputs` was the fix already sitting in the table** — it is each row's own record of what its
+estimate used, in the estimator's vocabulary — except that it recorded only scalars. For gemma-4
+and Laguna, whose estimates come from per-layer head arrays and sliding-window caps, that meant a
+column claiming to hold "the inputs the estimate used" while omitting the inputs that decided the
+answer, and no way to reproduce or check those two rows' numbers at all. `est_total` now records
+`attention_kv_count_layers`, `attention_count_layers`, `sliding_window` and
+`sliding_window_pattern` too; absent keys stay absent, so "this arch declares no per-layer shape"
+does not become indistinguishable from "this row predates us storing it". After a rescan:
+
+```
+repricable at ctx 8192                    : 16/16
+stored estimate reproduces from its inputs: yes for all 16
+```
+
+**Repricing is verified before it is trusted.** Pricing a row's own inputs back at the context they
+were recorded at must reproduce `est_kv`. When it does not, the geometry was never stored, and the
+answer is `None` rather than a scalar approximation — a plausible number that is not the right one
+is the failure this index exists to prevent, and a row like that needs a rescan, not a guess.
+
+**A second inconsistency in the same table:** `est_kv` is priced at the model's **trained** context
+while `est_ctx` records the largest context that **fits**. `qwen3-emb-8b-Q8_0` stores an estimate
+made at 40960 beside an `est_ctx` of 32768. `peak_bytes()` reused the stored cache whenever the
+caller asked for `est_ctx`, reporting a trained-context cache as a reduced-context one — conservative,
+but describing a cost that is not the cost of the question asked. `estimate_ctx()` now says where
+the stored number was made, and it is reused only when it is that context's price.
+
+**And the direction a fallback may be wrong in, corrected by measuring it.** The fallback added
+earlier in this session scaled the stored cache linearly and was documented as erring "the safe
+way" — overstating. That was wrong, and wrong in the unsafe direction:
+
+| gemma-4-31B-it-QAT-Q4_0 (7.075 GiB cache at 262144) | exact | linear scaling |
+|---|---|---|
+| ctx 8192 | **0.718 GiB** | 0.221 GiB |
+| ctx 32768 | **1.333 GiB** | 0.884 GiB |
+| ctx 524288 | 13.638 GiB | 14.150 GiB |
+
+Cache size is concave in ctx — window-capped layers hold `min(ctx, window)` — so the line from the
+origin to the stored point lies **below** the truth beneath that point. Linear scaling understates by
+3.2× at 8192. `_conservative_peak()` now clamps to `max(stored, scaled)`, so both directions err
+toward refusing a context that would have fitted; the one error a loader cannot survive is pricing a
+model below what it costs. A linearly-scaled Qwen row, by contrast, is exact at every context — the
+error is specific to windowed archs, which is why it was invisible until measured.
+
+All three fixes are mutation-checked: removing the clamp, removing the reproducibility guard, and
+making repricing blind to `est_inputs` each fail exactly the test guarding it.
 
 ## 7. Build-out roadmap
 
