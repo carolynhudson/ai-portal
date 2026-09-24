@@ -915,11 +915,15 @@ def test_host_cache_is_priced_from_measured_defaults(tmp_path):
     """llama.cpp runs both of these by default and the aperture estimate contains neither: an 8192
     MiB prompt cache and up to 32 checkpoint copies per slot.
 
-    One checkpoint is priced as the model's KV for `CHECKPOINT_TOKEN_BOUND` tokens. For this fixture
-    that is 16 MiB -- the model's own cache at 4096 tokens, window caps included -- against 19.266
-    MiB and 50.251 MiB measured on real models here (§6.12.6). The bound is above the 0.8B model's
-    measurement and below the 9B one's, which is the honest statement of how well it generalises:
-    it is conservative for small hybrid models and is not enough for large ones.
+    One checkpoint is priced as the model's KV for `CHECKPOINT_TOKEN_BOUND` tokens: for this fixture
+    that is 16 MiB, its whole cache at 4096 tokens with the window caps applied, so the bound is
+    exact-by-construction against this row rather than against some other model's measurement.
+
+    On the real models the bound was measured against (§6.12.6) it sits above what the server
+    reported -- 28.0 MiB priced against 19.266 MiB for Qwen3.5-0.8B (1.45x) and 128.0 MiB against
+    50.251 MiB for Qwythos-9B (2.55x). Above is the side worth being on for a capacity check, but
+    the two ratios are not one ratio, and the bound is not derived from the mechanism -- it is a
+    token-count guess that happens to be conservative on both models measured so far.
     """
     row = _scanned_row(tmp_path, _WINDOW_KV)
     h = mi.host_cache_bytes(row)

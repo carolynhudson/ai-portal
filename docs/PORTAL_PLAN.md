@@ -1771,6 +1771,55 @@ error is specific to windowed archs, which is why it was invisible until measure
 All three fixes are mutation-checked: removing the clamp, removing the reproducibility guard, and
 making repricing blind to `est_inputs` each fail exactly the test guarding it.
 
+### 6.12.6 The second ceiling: what llama.cpp holds in host RAM (2026-09-23)
+
+The estimator priced weights + KV + a 4 GiB headroom against a 108 GiB aperture, and §6.12.2 had
+measured the real footprint running ~12 GiB above the file size. What that 12 GiB *was* had never
+been identified. It is mostly two features that are on by default, priced at nothing, and not in
+the aperture at all.
+
+Measured on this box with the server's own accounting (`created context checkpoint ... size = N MiB`)rather than inferred from the source:
+
+| what | value | how it was established |
+|---|---|---|
+| prompt cache limit | **8192 MiB** | start-up log: "prompt cache is enabled, size limit: 8192 MiB" |
+| checkpoints per slot | **32** | start-up log: "context checkpoints enabled, max = 32, min spacing = 8192" |
+| one checkpoint, Qwen3.5-0.8B | **19.266 MiB** | identical at contexts 16384, 32768, 65536 **and** 131072, and at n_tokens 4056 and 4568 |
+| one checkpoint, Qwythos-9B | **50.251 MiB** | same run shape, different model |
+| checkpoints on a dense model | **none** | with `--ctx-checkpoints 32` in effect, the server logged `main/do_checkpoint = no` |
+| aperture cost | **zero** | GTT did not move at all between checkpoint-on and checkpoint-off runs; RSS rose by exactly the logged checkpoint total |
+
+Four things follow from that, and two of them kill the obvious formulas:
+
+- **Checkpoint size is not proportional to context, and not proportional to session length.** A
+  constant 19.266 MiB across an eight-fold context range and across a growing conversation is a
+  property of the model's cache layout. "Cost scales with context" and "cost scales with how long
+  the session is" are the two things an estimator would try first, and both are wrong here.
+- **Checkpoints are gated per model, not per setting** (`server-context.cpp`: SWA in use, or sequence
+  removal that is full or bounded). That is why the flag is aliased `--swa-checkpoints`. Nine of the
+  sixteen models on this box have the hybrid layout that gets them.
+- **It is host RAM, not aperture.** `common_prompt_checkpoint` is `std::vector<uint8_t>`; the
+  measurement agrees. Which matters because this box has 122.83 GiB of RAM and a 108.00 GiB GTT
+  aperture carved out of it — so the caches and the models are competing for the same physical
+  memory, and a check that consults only the aperture cannot see the competition at all. That is the
+  shape of "it should fit but the kernel killed it".
+- The prompt cache limit is a *cap*, so it is priceable; `cache-ram = -1` removes the cap and is
+  therefore returned as `None` rather than as a big number.
+
+`modelindex.host_cache_bytes()` prices both, and `personality.Budget` now carries a second verdict
+(`fits_ram`, `ram_headroom_bytes`) alongside the aperture one. `apply()` refuses on `fits_ram` alone.
+The two ceilings disagree on real numbers: **98 GiB of loaded models inside a 100 GiB aperture on a
+110 GiB machine fits the aperture and misses RAM by 4 GiB.**
+
+Checkpoints are priced as the model's KV for 4096 tokens — 28.0 MiB against the 19.266 MiB measured
+on the 0.8B model (1.45x) and 128.0 MiB against 50.251 MiB on the 9B (2.55x). Conservative in both
+cases, and stated as a token-count guess rather than a derivation: the mechanism that decides a
+checkpoint's size is the KV cache's internal layout, and that was not derived here.
+
+**This is not a check that refuses everything.** On the live library, the shipped `default`
+personality costs 93.73 GiB against the 108.00 GiB aperture (14.27 spare) and 93.73 + **12.97 GiB**
+of host caches against 122.83 GiB of RAM (16.13 spare). `presets.ini` is unchanged by any of this.
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |
