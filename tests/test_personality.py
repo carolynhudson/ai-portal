@@ -322,12 +322,141 @@ def test_fit_keys_stay_out_of_every_generated_file(library):
         "the managed router gets --lazy-mode from nowhere else, so the generated file is its only source"
 
 
+# ------------------------------------------------ settings that would say nothing
+
+def test_global_defaults_are_all_real_choices_not_copies_of_the_servers(library):
+    """Nothing in the shipped global section may be a restatement of llama-server's own default.
+
+    Such a line looks like a decision and is really a snapshot of one release's number; the day
+    upstream changes it, the pinned copy becomes the setting and nobody remembers agreeing to it.
+    """
+    copied = {k: v for k, v in P.GLOBAL_DEFAULTS.items() if P._no_op_reason(k, v, None)}
+    assert copied == {}, f"GLOBAL_DEFAULTS restates the server's defaults: {copied}"
+
+
+def test_a_value_equal_to_the_server_default_is_omitted_and_explained(library):
+    """Omitted, and reported. An operator who set a value and finds it absent from the file has
+    to be able to learn why, from the same response that showed them the diff."""
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "global": {"threads": -1, "flash-attn": "auto"}})
+    assert "threads = " not in out["text"] and "flash-attn" not in out["text"]
+    reasons = {o["key"]: o["reason"] for o in out["omitted"]}
+    assert set(reasons) == {"threads", "flash-attn"}
+    assert "default" in reasons["threads"]
+
+
+def test_ctx_size_at_the_trained_maximum_is_the_same_as_not_setting_it(library):
+    """The reflex case: an editor being explicit about a model's limit writes the limit, which
+    is what the server does anyway. The whole section goes with it — a header with no settings
+    under it would make the router report a custom preset that sets nothing."""
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "overrides": {"small": {"ctx-size": 4096}}})
+    assert "ctx-size" not in out["text"]
+    assert "[small]" not in out["text"], "a section emptied by omission must not survive"
+    assert out["omitted"][0]["reason"].startswith(
+        "ctx-size = 4096 is this model's trained maximum")
+
+
+def test_ctx_size_zero_is_the_same_as_not_setting_it(library):
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "overrides": {"small": {"ctx-size": 0}}})
+    assert "ctx-size" not in out["text"]
+    assert any("loaded from the model" in o["reason"] for o in out["omitted"])
+
+
+def test_a_ctx_size_that_is_a_real_choice_still_gets_written(library):
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "overrides": {"small": {"ctx-size": 2048}}})
+    assert "[small]" in out["text"] and "ctx-size = 2048" in out["text"]
+    assert out["omitted"] == []
+
+
+def test_a_ctx_size_below_the_estimate_is_scaled_not_refused(library):
+    """model_index does not store the head width the estimate used, so repricing a stored row at a
+    new context is not something the index can do — and refusing every such request would make an
+    explicit ctx-size unusable on real models.
+
+    2048 against an estimate made at 4096 halves the stored cache: 55 + 5/2 + 4 = 61.5 GiB for
+    `huge`, inside the fixture's 100 GiB. The number is asserted, not just "it passed": a fallback
+    that produced a plausible-but-unexamined figure would otherwise be invisible here too.
+    """
+    out = P.render({"name": "x", "models_max": 1, "models": ["huge"],
+                    "overrides": {"huge": {"ctx-size": 2048}}},
+                   budget_bytes=100 * 2 ** 30)
+    assert "ctx-size = 2048" in out["text"]
+    assert out["budget"]["worst_case_bytes"] == 64 * 2 ** 30, \
+        "the plan's worst case is priced at the stored estimate, not at the override"
+
+
+def test_ctx_size_above_the_models_trained_maximum_is_refused(library):
+    """Not a warning. presets.ini is read at load time by something that will not explain itself,
+    and a context larger than the model was trained for is a load the router will fail."""
+    with pytest.raises(P.PersonalityError) as exc:
+        P.render({"name": "x", "models_max": 1, "models": ["small"],
+                  "overrides": {"small": {"ctx-size": 8192}}})
+    assert "trained for 4096" in str(exc.value)
+
+
+def test_ctx_size_whose_cache_cannot_be_paid_for_is_refused(library):
+    """Within the model's own limit and still beyond the aperture: two different ceilings, and a
+    value can clear one and fail the other.
+
+    est_ctx is re-seeded to 2048 so peak_bytes() prices this row from its stored est_kv instead
+    of deriving KV from attention geometry a synthetic row does not have. Left at the fixture
+    default it returns None and the refusal under test never runs.
+    """
+    _index_row("huge", est_total=60 * 2 ** 30, est_weights=55 * 2 ** 30,
+               est_ctx=2048, ctx_trained=4096)
+    with pytest.raises(P.PersonalityError) as exc:
+        P.render({"name": "x", "models_max": 1, "models": ["huge"],
+                  "overrides": {"huge": {"ctx-size": 2048}}},
+                 budget_bytes=10 * 2 ** 30)
+    assert "64.0 GiB against a 10.0 GiB aperture" in str(exc.value), \
+        "the refusal has to carry the two numbers that produced it"
+
+
+def test_an_unpriceable_ctx_size_is_refused_not_allowed(library):
+    """A model the index cannot price must not pass an aperture check that has nothing to measure.
+
+    `mystery` carries no weight estimate, which is the state peak_bytes() already treats as
+    unpriceable; the conservative fallback refuses for the same reason instead of substituting a
+    number it was never given.
+    """
+    _index_row("mystery", est_total=8 * 2 ** 30, est_weights=0)
+    with pytest.raises(P.PersonalityError) as exc:
+        P.render({"name": "x", "models_max": 1, "models": ["mystery"],
+                  "overrides": {"mystery": {"ctx-size": 2048}}},
+                 budget_bytes=10 * 2 ** 30)
+    assert "cannot be priced" in str(exc.value)
+
+
+def test_booleans_are_written_the_way_llama_cpp_reads_them(library):
+    """`True` is Python's spelling and the preset parser is not Python.
+
+    Both directions are asserted: a non-default boolean is written as on/off, and a default one
+    is dropped rather than written in either spelling.
+    """
+    off = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "global": {"cache-prompt": False}})
+    assert "cache-prompt = off" in off["text"]
+    assert "True" not in off["text"] and "False" not in off["text"]
+
+    same_as_default = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                                "global": {"cache-prompt": True}})
+    assert "cache-prompt" not in same_as_default["text"]
+    assert any(o["key"] == "cache-prompt" for o in same_as_default["omitted"])
+
+
 def test_global_section_comes_first_because_the_router_applies_it_as_the_base(library):
     """Precedence is CLI > model section > [*]. Position in the file does not decide
     that, but a human reading the file reasons top-down, and [*] first matches how the
-    values actually resolve."""
+    values actually resolve.
+
+    2048, not 8192: every seeded row here is trained to 4096 and render() now refuses a context
+    above that. Ordering is what this test is about, so its example has to be a legal value.
+    """
     text = P.render({"name": "x", "models_max": 1, "models": ["small"],
-                     "overrides": {"small": {"ctx-size": 8192}}})["text"]
+                     "overrides": {"small": {"ctx-size": 2048}}})["text"]
     assert text.index("[*]") < text.index("[small]")
 
 

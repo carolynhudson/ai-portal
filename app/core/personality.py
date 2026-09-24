@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core import db, modelindex, paths
+from app.core import db, modelindex, modelmeta, paths
 
 # The router's own preset-exclusive options, from llama.cpp tools/server/README.md.
 # These are NOT command-line arguments and only exist inside a preset file, so they are
@@ -42,6 +42,35 @@ ROUTER_CONTROLLED_KEYS = frozenset({
     "host", "port", "api-key", "api-key-file", "alias", "model", "model-draft",
     "hf-repo", "hf-file",
 })
+
+#: What llama-server itself defaults to, so "this setting is a choice" is decidable rather
+#: than a matter of taste. Read from the binary this box actually runs — `llama-server --help`,
+#: build b10964 — with the two router-only keys from source: `DEFAULT_STOP_TIMEOUT 10`
+#: (tools/server/server-models.cpp:43) and `models-max` 4. `parallel -1` is the registered
+#: default even though auto resolves to 4 slots over a unified KV pool, because writing 4 pins
+#: a number a future release may change while -1 lets the server keep deciding.
+#:
+#: A value that equals the server's own default is not documentation, it is a fork of that
+#: release's number: the day llama.cpp changes a default, a pinned copy silently becomes the
+#: setting. So the generator omits them, and `render()` reports what it omitted rather than
+#: dropping it silently.
+SERVER_DEFAULTS: dict[str, Any] = {
+    "threads": -1,
+    "ctx-size": 0,             # 0 = loaded from the model
+    "flash-attn": "auto",
+    "parallel": -1,
+    "ctx-checkpoints": 32,
+    "cache-prompt": True,
+    "reasoning-budget": -1,
+    "reasoning-effort": "default",
+    "n-gpu-layers": "auto",
+    "cache-reuse": 0,
+    "jinja": True,
+    "lazy-mode": "auto",
+    "stop-timeout": 10,
+    "models-max": 4,
+}
+
 
 #: Global section. Values here are what every model inherits unless a personality
 #: overrides it per model; the router's precedence is CLI > model section > [*].
@@ -554,6 +583,68 @@ def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
     return out
 
 
+def _ini_value(value: Any) -> str:
+    """Render one preset value the way llama.cpp reads it.
+
+    A Python bool would otherwise land as `True` / `False`. llama.cpp's preset parser takes its
+    own spellings (`on` / `off`), not Python's capitalisation, so a boolean offered by the editor
+    would produce a file the router might reject at load time — which is the failure shape the
+    whole presets pipeline exists to prevent.
+    """
+    if value is True:
+        return "on"
+    if value is False:
+        return "off"
+    return str(value)
+
+
+def _conservative_peak(row: dict, ctx: int) -> int | None:
+    """What this model would cost at `ctx` when the index cannot reprice it exactly.
+
+    `peak_bytes()` can only price a context it has geometry for, and `model_index` does not keep
+    all of it: the table stores `layers`, `kv_heads` and `attention_heads`, while the estimator
+    works from sniffed GGUF metadata (`block_count`, `attention_kv_count`, `attention_count`) and
+    a **head width** the table never stores. So `kv_bytes_at(row, other_ctx)` returns None, and
+    `peak_bytes` has only ever worked when the requested context equals `est_ctx` and the stored
+    `est_kv` can be reused. Repricing at a different context is precisely what an explicit
+    `ctx-size` decision needs.
+
+    Scaling the stored `est_kv` linearly is the honest fallback, and its error points the safe
+    way: a model with sliding-window layers caches sublinearly, so a linear scaling **overstates**
+    the cache. It can refuse a context that would have fitted; it cannot bless one that would not.
+    """
+    weights = modelmeta._as_int(row.get("est_weights"))
+    kv = modelmeta._as_int(row.get("est_kv"))
+    at = modelmeta._as_int(row.get("est_ctx"))
+    # `kv is None` and `kv == 0` are different facts. Zero is a priced answer; None is the absence
+    # of one, and treating them alike turns "we could not measure" into "costs nothing".
+    if not weights or kv is None or not at or ctx < 1:
+        return None
+    return weights + kv * ctx // at + modelindex.HEADROOM_BYTES
+
+
+def _no_op_reason(key: str, value: Any, row: dict | None) -> str | None:
+    """Say why writing this key with this value is indistinguishable from not writing it.
+
+    Two shapes. The obvious one: the value is llama-server's own default, so the line is a copy
+    of this release's number rather than a decision — and the day the release changes it, the
+    pinned copy becomes the setting. The subtler one is `ctx-size`, where both `0` and the
+    model's trained maximum ask for exactly what the server would have chosen anyway; the second
+    is what an editor reaches for by reflex when it wants to be explicit about a model's limit.
+    """
+    if key == "ctx-size":
+        ctx = modelmeta._as_int(value)
+        trained = modelmeta._as_int((row or {}).get("ctx_trained"))
+        if ctx == 0:
+            return "ctx-size = 0 already means 'loaded from the model'"
+        if trained and ctx == trained:
+            return (f"ctx-size = {trained} is this model's trained maximum; "
+                    f"it caps there whether or not the file says so")
+    if key in SERVER_DEFAULTS and SERVER_DEFAULTS[key] == value:
+        return f"{key} = {_ini_value(value)} is llama-server's own default"
+    return None
+
+
 def _ini_text(sections: dict[str, dict[str, Any]]) -> str:
     """Render an ini body. Comments carry the evidence, because a bare number in a file
     the router reads is exactly the thing a future debugger cannot question.
@@ -573,7 +664,7 @@ def _ini_text(sections: dict[str, dict[str, Any]]) -> str:
         body = sections[section]
         lines.append(f"[{section}]")
         for key in sorted(body):
-            lines.append(f"{key} = {body[key]}")
+            lines.append(f"{key} = {_ini_value(body[key])}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -619,6 +710,58 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
         if per:
             sections[mid] = per
 
+    rows = {r["id"]: r for r in _rows()}
+    budget = budget_bytes if budget_bytes is not None else modelindex._pool_bytes()
+
+    # Over-capacity values are refusals, not warnings. presets.ini is read at load time by
+    # something that will not explain itself, and both of these are ways to ask for more than
+    # exists: a context the model was never trained for, and a context whose cache cannot be
+    # paid for in this aperture.
+    for section, per in sections.items():
+        if section == "*" or per.get("ctx-size") is None:
+            continue
+        row = rows.get(section)
+        if row is None:
+            continue
+        ctx = modelmeta._as_int(per["ctx-size"])
+        trained = modelmeta._as_int(row.get("ctx_trained"))
+        if ctx and trained and ctx > trained:
+            raise PersonalityError(
+                f"personality {name!r} asks ctx-size {ctx} for {section}; "
+                f"the model is trained for {trained}")
+        if ctx and budget:
+            peak = modelindex.peak_bytes(row, ctx)
+            if peak is None:
+                peak = _conservative_peak(row, ctx)
+            if peak is None:
+                # Unpriced is not the same as free. Without attention geometry there is no
+                # number to compare against the aperture, and a check that quietly passes when
+                # it has nothing to measure is worse than no check — it reads as verification.
+                raise PersonalityError(
+                    f"personality {name!r} asks ctx-size {ctx} for {section}; its cache cannot be "
+                    f"priced from the index, so it cannot be verified against a "
+                    f"{budget / 2 ** 30:.1f} GiB aperture")
+            if peak > budget:
+                raise PersonalityError(
+                    f"personality {name!r} asks ctx-size {ctx} for {section}: that cache costs "
+                    f"{peak / 2 ** 30:.1f} GiB against a {budget / 2 ** 30:.1f} GiB aperture")
+
+    # Then drop what would say nothing. Reported, not swallowed: an operator who set a value and
+    # finds it absent from the file has to be able to learn why it is not there.
+    omitted: list[dict] = []
+    for section in list(sections):
+        row = rows.get(section)
+        for key in list(sections[section]):
+            reason = _no_op_reason(key, sections[section][key], row)
+            if reason:
+                omitted.append({"section": section, "key": key,
+                                "value": _ini_value(sections[section][key]), "reason": reason})
+                del sections[section][key]
+        if section != "*" and not sections[section]:
+            # A section reduced to nothing is a header with no settings under it — the router
+            # would list the model as carrying a custom preset that sets nothing.
+            del sections[section]
+
     text = _ini_text(sections)
     current = _current_text()
     return {
@@ -633,6 +776,7 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
             fromfile="presets.ini (on disk)", tofile=f"presets.ini ({name})",
             lineterm="")),
         "budget": budget_for(personality, budget_bytes).as_dict(),
+        "omitted": omitted,
     }
 
 
