@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """fit_probe.py — does llama.cpp's `fit` account for memory used by *others*?
 
+Answer, corrected 2026-09-24: yes, for memory held *on the device*. This probe held its hog in host
+RAM, which a device-memory gauge cannot see, and concluded "blind". `tools/fit_awareness_probe.py`
+re-asks the same question with llama.cpp processes as the residents and shows `fit` measuring free
+device memory and reducing the context. Keep this file as the record of what was measured; read
+§6.12.7 for what it turned out to mean.
+
 Why this exists separately from ttl_oom_lab
 -------------------------------------------
 ttl_oom_lab answers "what does the router do with 150 GB of demand", which needs

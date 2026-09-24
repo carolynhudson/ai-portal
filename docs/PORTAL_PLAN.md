@@ -1882,6 +1882,12 @@ assignment confirms the hybrid pricing: Qwythos-9B logs `llama_memory_recurrent`
 `repriced_kv()` uses. (`n_swa = 0` in the same log is about sliding-window attention, a different
 thing from this split, and is not a contradiction.)
 
+Both halves are reproducible: `tools/fit_awareness_probe.py` runs the hog A/B and prints what `fit`
+decides, and `tools/load_cost_probe.py` measures per-model aperture deltas against the portal's own
+prediction. They load real models, so they need tens of GiB of free aperture — run them with the
+router stopped or on small models. `tools/fit_probe.py`, which produced the superseded claim, stays in
+the tree with a pointer to this correction.
+
 `fit = on` is now suppressed as a no-op rather than emitted: the server's default is `on`, so the line
 the live file used to carry said nothing. `fit-target`'s default 1024 is likewise suppressed, while a
 deliberate `fit-target = 8192` is still written — suppressing restatements, not decisions.
