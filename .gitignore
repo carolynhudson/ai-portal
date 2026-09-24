@@ -16,5 +16,12 @@ portal.auth.json
 tests/ui/node_modules/
 tests/ui/package-lock.json
 
+# A local `npm install` of the agent harness itself lands these at the repo root. The portal has no
+# JS build step, and its UI tests install into tests/ui/ (ignored above), so a root node_modules here
+# is somebody's pi install and not part of this project.
+/node_modules/
+/package.json
+/package-lock.json
+
 # Drop a screenshot here to talk about it; it is not part of the repo
 /*.png
