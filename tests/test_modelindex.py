@@ -846,6 +846,81 @@ def test_peak_bytes_survives_hostile_numbers():
         assert mi.peak_bytes({"est_weights": 10**10, "est_kv": 10**9, "est_ctx": junk}) is None
 
 
+# -------------------------------------- re-pricing a stored row at another context
+def _scanned_row(tmp_path, kv: dict, model: str = "A") -> dict:
+    """One synthetic model, scanned and stored, returned as the row `rows()` hands out."""
+    root = tmp_path / "llama"
+    (root / model).mkdir(parents=True)
+    _write_fake_gguf(root / model / f"{model}.gguf", kv)
+    db.init()
+    mi.rescan(models_dir=root, budget_bytes=100 * GiB)
+    return mi.rows()[0]
+
+
+_DENSE_KV = {"block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+             "embedding_length": 256, "context_length": 4096}
+
+_WINDOW_KV = dict(_DENSE_KV, **{
+    "attention.head_count_kv": [16, 16, 4, 4],
+    "attention.sliding_window": 1024,
+    "attention.sliding_window_pattern": [True, True, False, False],
+})
+
+
+def test_a_stored_row_can_be_repriced_at_a_smaller_context(tmp_path):
+    """peak_bytes()'s re-pricing branch used to hand the scan row straight to kv_bytes_at(), which
+    reads `block_count` — a fact the table stores as `layers`. It found nothing and returned None
+    for all 16 models on this box, so "what would this cost at a smaller context" has never been a
+    question this index could answer.
+
+    Arithmetic, not a range: 8 layers x 2 kv heads x 64 (256/4) x 2 (K,V) x 2 bytes x 1024 tokens.
+    """
+    row = _scanned_row(tmp_path, _DENSE_KV)
+    small = mi.peak_bytes(row, 1024)
+    assert small is not None, "re-pricing returned None, as it did for every real model here"
+    assert small == row["est_weights"] + 8 * 2 * 64 * 2 * 2 * 1024 + mi.HEADROOM_BYTES
+
+
+def test_est_inputs_records_the_per_layer_shape_it_priced_with(tmp_path):
+    """`est_inputs` claims to hold the inputs the estimate used. For a model whose head counts are
+    per-layer arrays it did not: gemma-4 and Laguna were priced by geometry that was never stored
+    anywhere, so their own estimates could not be reproduced or checked by anything.
+    """
+    row = _scanned_row(tmp_path, _WINDOW_KV)
+    inputs = row["est_inputs"]
+    assert inputs["attention_kv_count_layers"] == [16, 16, 4, 4]
+    assert inputs["sliding_window_pattern"] == [True, True, False, False]
+    # Per layer, sliding layers capped at their own window: (16*1024 + 16*1024 + 4*4096 + 4*4096)
+    # x 64 (head width, embedding 256 / 4 query heads) x 2 (K,V) x 2 bytes = 16 MiB at 4096.
+    assert row["est_kv"] == (16 * 1024 + 16 * 1024 + 4 * 4096 + 4 * 4096) * 64 * 2 * 2
+
+
+def test_repricing_a_sliding_window_row_repeats_the_window_caps(tmp_path):
+    """Re-pricing must re-run the windowed sum at the new context, not scale the answer.
+
+    At 512 the truth is (16*512 + 16*512 + 4*512 + 4*512) x 64 x 2 x 2 = 5 MiB, while scaling the
+    stored 16 MiB by 512/4096 says 2 MiB — 2.5x too small. This box shows the same effect at 3.2x
+    on gemma-4 (§6.12.5), which is why the fallback in personality.py refuses to price a smaller
+    context below the estimate made at a larger one.
+    """
+    row = _scanned_row(tmp_path, _WINDOW_KV)
+    exact = mi.repriced_kv(row, 512)
+    assert exact == (16 * 512 + 16 * 512 + 4 * 512 + 4 * 512) * 64 * 2 * 2
+    assert exact > row["est_kv"] * 512 // row["est_inputs"]["ctx"], \
+        "linear scaling understated a sliding-window model — the direction that ships an OOM"
+
+
+def test_repricing_refuses_when_the_stored_estimate_is_not_reproducible(tmp_path):
+    """A row whose own inputs cannot explain its stored number is a row whose geometry was never
+    recorded. Handing back the scalar approximation instead is exactly the failure this index exists
+    to prevent: a plausible number that is not the right one.
+    """
+    row = _scanned_row(tmp_path, _DENSE_KV)
+    row["est_kv"] += 1
+    assert mi.repriced_kv(row, 1024) is None
+    assert mi.peak_bytes(row, 1024) is None, "an unreproducible estimate must not be priced"
+
+
 def test_headroom_after_is_what_a_load_leaves_behind():
     """Router planning is a sequence. `--models-max 1` today; a policy that keeps two
     warm needs to know what a load costs the next one."""

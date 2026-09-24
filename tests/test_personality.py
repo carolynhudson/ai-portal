@@ -371,21 +371,28 @@ def test_a_ctx_size_that_is_a_real_choice_still_gets_written(library):
     assert out["omitted"] == []
 
 
-def test_a_ctx_size_below_the_estimate_is_scaled_not_refused(library):
-    """model_index does not store the head width the estimate used, so repricing a stored row at a
-    new context is not something the index can do — and refusing every such request would make an
-    explicit ctx-size unusable on real models.
+def test_a_smaller_context_is_never_priced_below_the_stored_estimate(library):
+    """The fallback clamps to the stored estimate because scaling down is the unsafe direction.
 
-    2048 against an estimate made at 4096 halves the stored cache: 55 + 5/2 + 4 = 61.5 GiB for
-    `huge`, inside the fixture's 100 GiB. The number is asserted, not just "it passed": a fallback
-    that produced a plausible-but-unexamined figure would otherwise be invisible here too.
+    Measured on this box, not theorised: `gemma-4-31B-it-QAT-Q4_0` is priced at 7.075 GiB of cache
+    at 262144, and at 8192 it really costs 0.718 GiB, while linear scaling reports 0.221 GiB — 3.2×
+    too small. Cache size is concave in ctx (window-capped layers hold min(ctx, window)), so the
+    chord from the origin to the stored point sits *below* the truth beneath that point.
+
+    `huge` here is priced at 5 GiB of cache at 4096. Asking for 2048 keeps the 5 GiB rather than
+    halving it: 55 + 5 + 4 = 64 GiB. Asserting the arithmetic is the point — a fallback that
+    quietly under-priced would otherwise be invisible in a test that only asked whether it passed.
     """
+    row = next(r for r in mi.rows() if r["id"] == "huge")
+    assert P._conservative_peak(row, 2048) == P._conservative_peak(row, 4096), \
+        "a smaller context was priced below the estimate made at the larger one"
+    assert P._conservative_peak(row, 2048) == 64 * 2 ** 30
+
     out = P.render({"name": "x", "models_max": 1, "models": ["huge"],
                     "overrides": {"huge": {"ctx-size": 2048}}},
                    budget_bytes=100 * 2 ** 30)
     assert "ctx-size = 2048" in out["text"]
-    assert out["budget"]["worst_case_bytes"] == 64 * 2 ** 30, \
-        "the plan's worst case is priced at the stored estimate, not at the override"
+    assert out["budget"]["worst_case_bytes"] == 64 * 2 ** 30
 
 
 def test_ctx_size_above_the_models_trained_maximum_is_refused(library):

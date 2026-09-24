@@ -609,9 +609,19 @@ def _conservative_peak(row: dict, ctx: int) -> int | None:
     `est_kv` can be reused. Repricing at a different context is precisely what an explicit
     `ctx-size` decision needs.
 
-    Scaling the stored `est_kv` linearly is the honest fallback, and its error points the safe
-    way: a model with sliding-window layers caches sublinearly, so a linear scaling **overstates**
-    the cache. It can refuse a context that would have fitted; it cannot bless one that would not.
+    The direction of the error is the entire question, and it is not the intuitive one. Scaling the
+    stored cache linearly **understates** a sliding-window model whenever the requested context is
+    smaller than the estimate's. Measured on this box, not theorised: `gemma-4-31B-it-QAT-Q4_0` is
+    priced at 7.075 GiB of cache at 262144, and at 8192 it really costs 0.718 GiB while a linear
+    scale reports 0.221 GiB — 3.2x too small, in the one direction a capacity check must never be
+    wrong. Cache size is concave in ctx (window-capped layers hold `min(ctx, window)`), so it lies
+    *above* the line from the origin to the stored point, and that line is below the truth
+    everywhere beneath it.
+
+    So the fallback never goes below the stored estimate: `max(stored, scaled)`. Above the estimate
+    the linear scale overstates, which is safe; below it the stored value is kept, which is also
+    safe. Both directions err toward refusing a context that would have fitted -- the one error a
+    loader cannot survive is the one that says a model costs less than it does.
     """
     weights = modelmeta._as_int(row.get("est_weights"))
     kv = modelmeta._as_int(row.get("est_kv"))
@@ -620,7 +630,7 @@ def _conservative_peak(row: dict, ctx: int) -> int | None:
     # of one, and treating them alike turns "we could not measure" into "costs nothing".
     if not weights or kv is None or not at or ctx < 1:
         return None
-    return weights + kv * ctx // at + modelindex.HEADROOM_BYTES
+    return weights + max(kv, kv * ctx // at) + modelindex.HEADROOM_BYTES
 
 
 def _no_op_reason(key: str, value: Any, row: dict | None) -> str | None:

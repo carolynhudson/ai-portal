@@ -179,6 +179,17 @@ def est_total(meta: dict, weight_bytes: int, ctx: int,
         "embedding_length": meta.get("embedding_length"),
         "full_attention_interval": meta.get("full_attention_interval"),
         "rope_dimension_count": meta.get("rope_dimension_count"),
+        # The per-layer shape, when the model has one. A sliding-window model is priced as a sum
+        # over layers -- each caching min(ctx, its own window) -- and the scalars above cannot
+        # express that. Recording only scalars is what made `est_inputs` claim to hold "the inputs
+        # the estimate used" while omitting the inputs that decided the answer for gemma-4 and
+        # Laguna: their own estimates could not be reproduced or checked by anything. Absent keys
+        # stay absent rather than becoming empty lists, so "this arch has no per-layer shape" and
+        # "this row predates us storing it" remain distinguishable.
+        "attention_kv_count_layers": meta.get("attention_kv_count_layers"),
+        "attention_count_layers": meta.get("attention_count_layers"),
+        "sliding_window": meta.get("sliding_window"),
+        "sliding_window_pattern": meta.get("sliding_window_pattern"),
         "kv_dtype": dtype,
         "ctx": ctx,
         "weight_bytes": weight_bytes,
@@ -700,6 +711,67 @@ def _pool_bytes() -> int:
     return 0
 
 
+def estimate_ctx(row: dict) -> int:
+    """The context `est_kv` was actually priced at -- which is not always `est_ctx`.
+
+    A scan prices the cache at the model's **trained** context and separately records `est_ctx` as
+    the largest context that fits the aperture. For a model trained wider than this box can hold
+    those are different numbers: `qwen3-emb-8b-Q8_0` stores an estimate made at 40960 beside an
+    `est_ctx` of 32768. Treating the stored cache as the price of the smaller context reports a
+    trained-context cache as a reduced-context one.
+    """
+    inputs = row.get("est_inputs") or {}
+    return modelmeta._as_int(inputs.get("ctx")) or 0
+
+
+def _reprice_inputs(row: dict) -> dict | None:
+    """The estimator-shaped inputs a stored row can offer for a *different* context.
+
+    Two vocabularies describe the same facts: the scan table stores `layers`, `kv_heads` and
+    `attention_heads`, while the estimator reads `block_count`, `attention_kv_count` and
+    `attention_count`. `peak_bytes()` used to hand the row itself to `kv_bytes_at()`, so the branch
+    written for "price this at another context" looked up `block_count`, found nothing, and returned
+    None for every model on this box -- it had never once worked.
+
+    `est_inputs` is the row's own record of what its estimate used, already in the estimator's
+    vocabulary, so it is the honest source; the columns only fill fields an older row never
+    recorded. A row with no `est_inputs` gets None here and is priced from its stored numbers.
+    """
+    inputs = row.get("est_inputs")
+    if not inputs:
+        return None
+    out = dict(inputs)
+    out.setdefault("block_count", row.get("layers"))
+    out.setdefault("attention_kv_count", row.get("kv_heads"))
+    out.setdefault("attention_count", row.get("attention_heads"))
+    out.setdefault("embedding_length", row.get("embedding_length"))
+    out.setdefault("full_attention_interval", row.get("full_attention_interval"))
+    out.setdefault("rope_dimension_count", row.get("rope_dimension_count"))
+    return out
+
+
+def repriced_kv(row: dict, ctx: int, dtype: str = DEFAULT_KV_DTYPE) -> int | None:
+    """KV cache for a stored row at `ctx`, or None when the row cannot be repriced honestly.
+
+    Repricing is checked before it is trusted: pricing the row's own inputs back at the context
+    they were recorded at must reproduce `est_kv`. When it does not, the estimate came from geometry
+    the row never recorded, and returning a scalar approximation in its place would be precisely the
+    failure this index exists to prevent -- a plausible number that is not the right one. Those rows
+    need a rescan, not a guess.
+    """
+    ctx = modelmeta._as_int(ctx) or 0
+    if ctx < 1:
+        return None
+    inputs = _reprice_inputs(row)
+    if inputs is None:
+        return None
+    at = estimate_ctx(row)
+    stored = row.get("est_kv")
+    if at and stored is not None and kv_bytes_at(inputs, at, dtype) != stored:
+        return None
+    return kv_bytes_at(inputs, ctx, dtype)
+
+
 def peak_bytes(row: dict, ctx: int | None = None,
                dtype: str = DEFAULT_KV_DTYPE) -> int | None:
     """What this model costs resident at `ctx`, including headroom — the number a
@@ -734,11 +806,14 @@ def peak_bytes(row: dict, ctx: int | None = None,
         # the difference is the cache — the part that swaps a box. Report that we
         # cannot plan rather than hand a scheduler a number it will treat as a peak.
         return None
-    if ctx == row.get("est_ctx"):
+    # Reusing the stored cache is only correct when that cache *is* the price of this context.
+    # estimate_ctx() says where the stored number was made, and it is often the trained context
+    # rather than est_ctx (see its docstring). A row with no recorded inputs -- a legacy row, or a
+    # hand-built one in a test -- has nothing to check against and is priced from its stored numbers.
+    if ctx == row.get("est_ctx") and estimate_ctx(row) in (0, ctx):
         kv = row.get("est_kv")
     else:
-        priced = kv_bytes_at(row, ctx, dtype)
-        kv = priced if priced is not None else None
+        kv = repriced_kv(row, ctx, dtype)
     if kv is None:
         return None
     kv_whole = _whole(kv)
