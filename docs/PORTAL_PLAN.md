@@ -936,6 +936,46 @@ when an operator presses it, because they believe they changed something and can
 does not save), the §4.7 `models` symlink farm, and using `presets_history` — the table exists in
 `portal.db` with zero rows, while snapshots live on disk under `state/rollback/`.
 
+#### 4.10.0 A line that says nothing is not a harmless line (2026-09-23)
+
+The failure mode to avoid is a presets.ini that looks configured and is not: keys written with
+values equal to what llama-server would have chosen anyway. Those lines are not documentation.
+They are a copy of one release's number, and the day upstream changes that number the pinned copy
+becomes a setting nobody agreed to — which is how `mmap` and `fit` reappear in a file someone
+thought they had cleaned.
+
+So `SERVER_DEFAULTS` records what the binary on this box actually defaults to — read from
+`llama-server --help` (b10964), with the two router-only keys from source: `DEFAULT_STOP_TIMEOUT 10`
+(`server-models.cpp:43`) and `models-max` 4 — and `render()` drops any key whose value equals it.
+Omission is **reported**, in `omitted` with a reason, on the same response that carries the diff:
+an operator who set a value and finds it absent has to be able to learn why it is not there.
+
+`ctx-size` has two no-op shapes, and the second is the one an editor reaches for by reflex:
+
+- `ctx-size = 0`, which already means *loaded from the model*;
+- `ctx-size = <trained maximum>`, which is where the model caps whether or not the file says so.
+
+A model section emptied by omission is deleted rather than left as a header with nothing under it:
+the router would list that model as carrying a custom preset that sets nothing.
+
+**Capacity is a refusal, not an advisory**, because presets.ini is read at load time by something
+that will not explain itself. Two ceilings, checked independently — clearing one and failing the
+other is a real value: a context above the model's trained maximum, and a context whose cache
+cannot be paid for in the aperture. Verified against the live library rather than fixtures:
+`524288` refused for a `262144`-trained model, `32768` accepted, `262144` omitted with its reason,
+and the shipped `default` personality still renders byte-identical to the file on disk.
+
+**A limitation found while doing this and named rather than papered over:** `model_index` stores
+`layers`, `kv_heads` and `attention_heads`, but not the **head width** the estimate used, so
+`kv_bytes_at(row, other_ctx)` returns `None` and `peak_bytes()` has only ever priced a stored row
+when the requested context equals `est_ctx`. Repricing at a different context is exactly what an
+explicit `ctx-size` needs. `_conservative_peak()` scales the stored `est_kv` linearly, and its
+error points the safe way: sliding-window models cache sublinearly, so it can refuse a context that
+would have fitted and cannot bless one that would not. An unpriceable model is still a refusal —
+`kv == 0` and `kv is None` are kept distinct, because conflating them turns "could not measure"
+into "costs nothing". Properly fixing this means storing the head width in the index, which is a
+schema widening, not a helper.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
@@ -1656,6 +1696,24 @@ copies. The unpriced part is idle-time allocation, against `HEADROOM_BYTES` of 4
 measured a footprint ~12 GiB above file size. Fixing it means deciding whether the allowance
 belongs in `peak_bytes` (which tests pin at exactly `HEADROOM_BYTES`) or in a separate resident
 cost the budget checks and the models page both read.
+
+#### 6.12.4 Is `--metrics` eating memory? No — read from the source, not inferred
+
+Worth asking rather than assuming, because the two routers on this box really do differ: the
+managed unit sets `LLAMA_METRICS=1` and passes `--metrics`, a hand-started `llama-server` does not,
+and `--metrics` defaults to **disabled**. A per-request metrics store that never gets cleared would
+have been a plausible source of the memory that seemed unattributed.
+
+`tools/server/server-common.h:442` settles it. `server_metrics` is a fixed set of scalar counters —
+two `bucket` structs (count / steps / time) and a handful of `uint64_t` totals. There is no
+per-request record and no history; the only container in it is `std::vector<uint64_t>
+n_accepted_per_pos`, one entry per speculative-decoding draft position, which exists only when
+speculative decoding is on. Nothing accumulates with uptime.
+
+So `--metrics` is not the difference between the managed router and a manual one. The measured
+difference is `--lazy-mode` (80.5 vs 54.5 GiB, §6.12.3), and the direction that matters is the
+opposite of the intuitive one: the managed unit is the *more* constrained of the two, because it
+forces `--models-max 1` where a hand-started router takes the default 4.
 
 ## 7. Build-out roadmap
 
