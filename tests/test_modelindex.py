@@ -910,6 +910,80 @@ def test_repricing_a_sliding_window_row_repeats_the_window_caps(tmp_path):
         "linear scaling understated a sliding-window model — the direction that ships an OOM"
 
 
+# --------------------------------- host RAM: prompt cache and context checkpoints
+def test_host_cache_is_priced_from_measured_defaults(tmp_path):
+    """llama.cpp runs both of these by default and the aperture estimate contains neither: an 8192
+    MiB prompt cache and up to 32 checkpoint copies per slot.
+
+    One checkpoint is priced as the model's KV for `CHECKPOINT_TOKEN_BOUND` tokens. For this fixture
+    that is 16 MiB -- the model's own cache at 4096 tokens, window caps included -- against 19.266
+    MiB and 50.251 MiB measured on real models here (§6.12.6). The bound is above the 0.8B model's
+    measurement and below the 9B one's, which is the honest statement of how well it generalises:
+    it is conservative for small hybrid models and is not enough for large ones.
+    """
+    row = _scanned_row(tmp_path, _WINDOW_KV)
+    h = mi.host_cache_bytes(row)
+    assert h["prompt_cache_bytes"] == 8192 * 1024 * 1024
+    assert h["checkpoint_eligible"] is True
+    assert h["checkpoint_bytes"] == 32 * 16 * 2 ** 20
+    assert h["total_bytes"] == (8192 + 32 * 16) * 2 ** 20
+
+
+def test_checkpoint_cost_is_per_slot_not_per_server(tmp_path):
+    """`n_ctx_checkpoints` is documented as per slot, so four slots cost four times the copies."""
+    row = _scanned_row(tmp_path, _WINDOW_KV)
+    one = mi.host_cache_bytes(row, parallel=1)["checkpoint_bytes"]
+    four = mi.host_cache_bytes(row, parallel=4)["checkpoint_bytes"]
+    assert four == 4 * one
+    assert mi.host_cache_bytes(row, parallel=-1)["checkpoint_bytes"] == one, \
+        "parallel = -1 is llama.cpp's auto, not a negative slot count"
+
+
+def test_a_dense_model_is_not_charged_for_checkpoints_it_would_not_create(tmp_path):
+    """llama.cpp declines checkpoints per model, not per setting (server-context.cpp: needs SWA, or
+    sequence removal that is full/bounded). Measured here: `--ctx-checkpoints 32` on a dense Mistral
+    logged `main/do_checkpoint = no` and produced none, while two interval-4 archs checkpointed at
+    every boundary.
+
+    The decline depends on the KV cache's runtime capability, which a GGUF header does not state, so
+    the zero is recorded as an unpriced assumption in `notes` rather than presented as a measurement.
+    """
+    row = _scanned_row(tmp_path, _DENSE_KV)
+    h = mi.host_cache_bytes(row)
+    assert h["checkpoint_eligible"] is False
+    assert h["checkpoint_bytes"] == 0
+    assert h["total_bytes"] == 8192 * 1024 * 1024
+    assert any("declines checkpoints" in n for n in h["notes"])
+
+
+def test_a_hybrid_layout_makes_a_model_checkpoint_eligible(tmp_path):
+    """`full_attention_interval > 1` is the layout llama.cpp checkpoints for, and it is the fact the
+    index already keeps, so eligibility is read from the index rather than guessed from the arch name.
+    """
+    row = _scanned_row(tmp_path, dict(_DENSE_KV, **{"full_attention_interval": 4}))
+    assert mi.checkpoint_eligible(row) is True
+
+
+def test_cache_ram_limits_are_priced_and_an_unbounded_one_is_not(tmp_path):
+    """0 disables the cache and is priced at zero; -1 removes the limit and cannot be priced at all.
+
+    The `-1` case returns None rather than a big number because the point of the price is to be
+    compared against installed RAM, and "as much as it likes" has no comparison.
+    """
+    row = _scanned_row(tmp_path, _DENSE_KV)
+    off = mi.host_cache_bytes(row, cache_ram_mib=0)
+    assert off["prompt_cache_bytes"] == 0
+    assert off["total_bytes"] == 0, "cache off and no checkpoints: nothing to hold"
+
+    unbounded = mi.host_cache_bytes(row, cache_ram_mib=-1)
+    assert unbounded["prompt_cache_bytes"] is None
+    assert unbounded["total_bytes"] is None
+    assert any("no limit" in n for n in unbounded["notes"])
+
+    halved = mi.host_cache_bytes(row, cache_ram_mib=2048)
+    assert halved["total_bytes"] == 2048 * 1024 * 1024
+
+
 def test_repricing_refuses_when_the_stored_estimate_is_not_reproducible(tmp_path):
     """A row whose own inputs cannot explain its stored number is a row whose geometry was never
     recorded. Handing back the scalar approximation instead is exactly the failure this index exists

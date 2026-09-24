@@ -125,6 +125,11 @@ def library(tmp_path, _schema, monkeypatch):
     db._conn().execute("DELETE FROM model_index")
     db._conn().commit()
     monkeypatch.setattr(mi, "_pool_bytes", lambda: 100 * 2**30)
+    # RAM is a second, independent ceiling from the aperture. Left to read /proc/meminfo, every
+    # budget test in this file would depend on how much memory this box happens to have. Pinned
+    # well above any worst case here so a test about the aperture stays about the aperture, and the
+    # RAM ceiling gets its own tests that lower it on purpose.
+    monkeypatch.setattr(mi, "ram_total_bytes", lambda: 200 * 2**30)
     _index_row("huge", est_total=60 * 2**30, est_weights=55 * 2**30)
     _index_row("medium", est_total=30 * 2**30, est_weights=27 * 2**30)
     _index_row("small", est_total=1 * 2**30, est_weights=1 * 2**30)
@@ -162,6 +167,50 @@ def test_models_max_one_costs_only_the_single_heaviest_model(library):
     assert b.worst_case_bytes == 64 * 2**30
     assert b.headroom_bytes == 36 * 2**30
     assert b.fits is P.FITS_YES
+
+
+def test_the_aperture_and_the_machine_are_different_ceilings(library, monkeypatch):
+    """A personality can fit the GPU aperture and still not fit the box.
+
+    98 GiB of loaded models inside a 100 GiB aperture, on a machine holding 110 GiB of RAM: the
+    two llama-servers also hold their prompt caches (8192 MiB each by default) and, for a hybrid or
+    sliding-window model, their context checkpoints. On this box GTT is a carve-out of the same
+    physical RAM, so 98 + 16 does not fit in 110 even though 98 fits in 100.
+
+    The seeded rows declare no hybrid or sliding-window layout, so no checkpoint cost is priced for
+    them -- which is recorded in `host_notes` rather than silently reading as zero.
+    """
+    monkeypatch.setattr(mi, "ram_total_bytes", lambda: 110 * 2 ** 30)
+    b = P.budget_for({"name": "x", "models_max": 2, "models": None},
+                     budget_bytes=100 * 2 ** 30)
+    assert b.worst_case_bytes == 98 * 2 ** 30
+    assert b.fits is P.FITS_YES, "the aperture is not the problem being tested here"
+    assert b.host_cache_bytes == 16 * 2 ** 30, "two servers x the 8192 MiB prompt cache"
+    assert b.fits_ram is P.FITS_NO
+    assert b.ram_headroom_bytes == -4 * 2 ** 30
+
+    findings = P.validate({"name": "x", "models_max": 2, "models": None},
+                          budget_bytes=100 * 2 ** 30)
+    bad = [f for f in findings if f["severity"] == "bad"]
+    assert len(bad) == 1, "the aperture fits, so the RAM ceiling is the only bad finding"
+    assert "114.0 GiB" in bad[0]["message"] and "110.0 GiB" in bad[0]["message"], \
+        "the refusal has to name the total that does not fit and the RAM it does not fit in"
+
+
+def test_an_unbounded_prompt_cache_cannot_be_verified(library):
+    """`cache-ram = -1` is a legal llama.cpp setting and an unpriceable request.
+
+    The aperture verdict stays what it was -- the cache is not aperture -- while the RAM verdict
+    becomes unknown rather than yes. A check that cannot measure must not report success.
+    """
+    per = {"name": "x", "models_max": 1, "models": None, "global": {"cache-ram": -1}}
+    b = P.budget_for(per, budget_bytes=100 * 2 ** 30)
+    assert b.fits is P.FITS_YES
+    assert b.host_cache_bytes is None
+    assert b.fits_ram is P.FITS_UNKNOWN
+    warns = [f["message"] for f in P.validate(per, budget_bytes=100 * 2 ** 30)
+             if f["severity"] == "warn"]
+    assert any("no limit" in m for m in warns)
 
 
 def test_models_max_that_does_not_fit_is_reported_with_its_numbers(library):

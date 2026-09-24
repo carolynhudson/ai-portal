@@ -772,6 +772,133 @@ def repriced_kv(row: dict, ctx: int, dtype: str = DEFAULT_KV_DTYPE) -> int | Non
     return kv_bytes_at(inputs, ctx, dtype)
 
 
+#: llama.cpp's own defaults for the two features that consume host RAM and never appear in the
+#: aperture. Both come from the binary on this box (b10964): its start-up log prints "prompt cache
+#: is enabled, size limit: 8192 MiB" and "context checkpoints enabled, max = 32, min spacing =
+#: 8192", and common/common.h agrees (cache_ram_mib = 8192, n_ctx_checkpoints = 32 per slot).
+DEFAULT_CACHE_RAM_MIB = 8192
+DEFAULT_CTX_CHECKPOINTS = 32
+
+#: One context checkpoint, priced from measurement rather than from reading the serializer.
+#: Taken from the server's own accounting ("created context checkpoint ... size = N MiB"):
+#:
+#:   Qwen3.5-0.8B.Q4_K_M       19.266 MiB -- identical at ctx 16384, 32768, 65536 and 131072,
+#:                                            and identical at n_tokens 4056 and 4568
+#:   Qwythos-9B-...-Q4_K_M      50.251 MiB
+#:
+#: Constant across context size and across session length, so a checkpoint is a property of the
+#: model's cache layout, not of the conversation. That rules out the two formulas an estimator
+#: would reach for first -- cost scales with context, or cost scales with session length -- and
+#: both would have been wrong. Priced here as the model's KV for CHECKPOINT_TOKEN_BOUND tokens:
+#: 29.4 MiB and 131.1 MiB, i.e. 1.5x and 2.6x above what was measured. Above is the only side it
+#: is worth being wrong on.
+CHECKPOINT_TOKEN_BOUND = 4096
+
+
+def checkpoint_eligible(row: dict) -> bool:
+    """Whether llama.cpp will make context checkpoints for this model at all.
+
+    Not a property of the setting. The server declines it per model (server-context.cpp):
+
+        do_checkpoint = n_ctx_checkpoints > 0 && completion && (
+            seq_rm_type == FULL || seq_rm_type == RS || n_swa > 0)
+
+    Measured on this box with `--ctx-checkpoints 32` in effect: two interval-4 archs produced
+    checkpoints at every boundary, while Mistral-Code-Architect-7b logged `main/do_checkpoint = no`
+    and produced none. That is also why the option is aliased `--swa-checkpoints`.
+
+    The declining condition reads the KV cache's runtime capability, which a GGUF header does not
+    state, so this is a layout proxy: hybrid / sliding-window layouts are eligible, plain dense
+    layouts are not. When the index records no layout at all the answer is False and the caller is
+    told the cost was not priced -- see host_cache_bytes().
+    """
+    if (modelmeta._as_int(row.get("full_attention_interval")) or 1) > 1:
+        return True
+    inputs = row.get("est_inputs") or {}
+    return bool(modelmeta._as_int(inputs.get("sliding_window")))
+
+
+def host_cache_bytes(row: dict, checkpoints: int = DEFAULT_CTX_CHECKPOINTS,
+                     parallel: int = 1, cache_ram_mib: int = DEFAULT_CACHE_RAM_MIB) -> dict:
+    """What this model's server holds in **host RAM** for caching, on top of the aperture cost.
+
+    Two things the aperture estimate does not contain, both on by default:
+
+    - the prompt cache, capped by `cache-ram` at 8192 MiB unless changed; `0` disables it, and
+      `-1` means no limit -- which cannot be priced, so it returns None rather than a number.
+    - context checkpoints: `checkpoints` copies per slot, `parallel` slots, each a host-RAM
+      snapshot of KV state. GTT did not move at all across checkpoint-on and checkpoint-off runs
+      on this box while RSS rose by exactly the logged checkpoint total, so this is host RAM and
+      must not be checked against the aperture alone.
+
+    Both are returned so a caller can show them separately; `total_bytes` is None when any part
+    cannot be priced, because a partial total is how a capacity check turns into a guess.
+    """
+    notes: list[str] = []
+
+    ram_mib = modelmeta._as_int(cache_ram_mib)
+    if ram_mib is None:
+        cache_bytes = None
+        notes.append("cache-ram is not a number; prompt cache cost unknown")
+    elif ram_mib < 0:
+        cache_bytes = None
+        notes.append("cache-ram = -1 means no limit: an unbounded cache cannot be verified")
+    elif ram_mib == 0:
+        cache_bytes = 0
+        notes.append("cache-ram = 0 disables the prompt cache")
+    else:
+        cache_bytes = ram_mib * 1024 * 1024
+
+    n_cp = modelmeta._as_int(checkpoints) or 0
+    # `parallel = -1` is llama.cpp's "auto", not a negative count. Clamped up rather than down:
+    # auto resolves to several slots on this box, and pricing a per-slot cost at one slot each
+    # would understate it.
+    n_par = max(1, modelmeta._as_int(parallel) or 1)
+    if n_cp <= 0:
+        cp_bytes = 0
+        notes.append("ctx-checkpoints = 0: no checkpoint copies")
+    elif not checkpoint_eligible(row):
+        cp_bytes = 0
+        notes.append(
+            "no checkpoint cost priced: the index records no sliding-window or hybrid layout for "
+            "this model, and llama.cpp declines checkpoints for those -- but the decline depends on "
+            "the KV cache's runtime capability, which a GGUF header does not state")
+    else:
+        each = repriced_kv(row, CHECKPOINT_TOKEN_BOUND)
+        if each is None:
+            cp_bytes = None
+            notes.append("cannot price one checkpoint: this row cannot be repriced")
+        else:
+            cp_bytes = each * n_cp * n_par
+
+    total = None if (cache_bytes is None or cp_bytes is None) else cache_bytes + cp_bytes
+    return {
+        "prompt_cache_bytes": cache_bytes,
+        "checkpoint_bytes": cp_bytes,
+        "total_bytes": total,
+        "checkpoints": n_cp,
+        "parallel": n_par,
+        "checkpoint_eligible": checkpoint_eligible(row),
+        "notes": notes,
+    }
+
+
+def ram_total_bytes() -> int | None:
+    """Physical RAM, which is the pool the GTT aperture is carved out of.
+
+    On this box: 122.8 GiB of RAM and a 108.00 GiB GTT aperture. A model that fits the aperture
+    exactly leaves nothing for the prompt cache and checkpoints, which live in the same physical
+    RAM -- the shape of "it should fit but the kernel killed it".
+    """
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def peak_bytes(row: dict, ctx: int | None = None,
                dtype: str = DEFAULT_KV_DTYPE) -> int | None:
     """What this model costs resident at `ctx`, including headroom — the number a

@@ -251,6 +251,23 @@ def test_apply_refuses_to_write_a_plan_that_does_not_fit(home):
     assert presets_store.list_snapshots() == [], "refusal must not even snapshot"
 
 
+def test_apply_refuses_when_the_ram_ceiling_is_missed_even_if_the_aperture_fits(home, monkeypatch):
+    """The second ceiling has to refuse too, or it is only advice.
+
+    The aperture is deliberately given away generously (1 TiB) so the only ceiling in play is RAM:
+    `ram_total_bytes` is pinned to 1 GiB, less than the two default prompt caches alone. The budget
+    verdict for the aperture is `fits = yes`, so this refusal comes from `fits_ram` alone -- which is
+    the case that would otherwise be written to disk and fail at load time as an OOM kill.
+    """
+    monkeypatch.setattr(mi, "ram_total_bytes", lambda: 1 * 2 ** 20)
+    with pytest.raises(P.PersonalityError) as exc:
+        P.apply(PERSONA, 1024 * 2 ** 30, log=_quiet, restart=False)
+    assert "host-side prompt cache" in str(exc.value)
+    assert "RAM this machine has" in str(exc.value)
+    assert paths.PRESETS_INI.read_text() == ORIGINAL, "refusal must not write"
+    assert presets_store.list_snapshots() == [], "refusal must not even snapshot"
+
+
 def test_apply_refuses_when_no_model_can_be_priced(home, monkeypatch):
     """FITS_UNKNOWN must refuse, and it must refuse without writing.
 

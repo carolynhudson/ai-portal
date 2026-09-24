@@ -112,6 +112,46 @@ GLOBAL_DEFAULTS: dict[str, Any] = {
 # section header, the model path and the projector path — so emitting them is the portal
 # asserting something the router has already decided.
 SETTINGS: dict[str, dict[str, Any]] = {
+    # The host-RAM knobs. They were absent from the registry entirely, which meant an operator
+    # could not set them and the portal's budget did not account for them -- while llama.cpp runs
+    # them by default at 8 GiB of prompt cache and 32 checkpoint copies per slot. On this box that
+    # is the difference between "fits the aperture" and "fits the machine": 108 GiB of GTT carved
+    # out of 122.8 GiB of RAM, and the caches live in the RAM, not the aperture.
+    "cache-ram": {
+        "kind": "int",
+        "section": "both",
+        "default": 8192,
+        "help": "Prompt cache limit in MiB of host RAM. llama.cpp defaults to 8192; 0 disables it, "
+                "-1 removes the limit. Not GPU memory: on this box it is the same physical RAM the "
+                "GTT aperture is carved from.",
+        "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    "ctx-checkpoints": {
+        "kind": "int",
+        "section": "both",
+        "default": 32,
+        "help": "Context checkpoints per slot, each a host-RAM copy of KV state. llama.cpp only "
+                "makes them for sliding-window / hybrid models (the flag is aliased "
+                "--swa-checkpoints). Measured on this box: 19.3 MiB each for Qwen3.5-0.8B and "
+                "50.3 MiB for Qwythos-9B, identical at contexts from 16384 to 131072.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "checkpoint-min-step": {
+        "kind": "int",
+        "section": "both",
+        "default": 8192,
+        "help": "Minimum tokens between checkpoints. It changes how often they are created, not "
+                "how large each one is -- the measured size did not move with it or with context.",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "cache-idle-slots": {
+        "kind": "bool",
+        "section": "both",
+        "default": True,
+        "help": "Save an idle slot's state into the prompt cache when a new task starts. Costs "
+                "host RAM inside the cache-ram limit, and needs cache-ram enabled to do anything.",
+        "accepts": lambda v: isinstance(v, bool),
+    },
     "threads": {
         "kind": "int",
         "section": "both",
@@ -487,6 +527,13 @@ class Budget:
     budget_bytes: int | None = None
     headroom_bytes: int | None = None
     fits: bool | None = FITS_UNKNOWN
+    # A second, independent ceiling. `fits` answers "does the loaded set fit the GPU aperture";
+    # these answer "does the loaded set plus its host-RAM caches fit the machine". They can disagree.
+    host_cache_bytes: int | None = None
+    host_notes: list[str] = field(default_factory=list)
+    ram_total_bytes: int | None = None
+    ram_headroom_bytes: int | None = None
+    fits_ram: bool | None = FITS_UNKNOWN
 
     def as_dict(self) -> dict:
         return {
@@ -498,6 +545,11 @@ class Budget:
             "budget_bytes": self.budget_bytes,
             "headroom_bytes": self.headroom_bytes,
             "fits": self.fits,
+            "host_cache_bytes": self.host_cache_bytes,
+            "host_notes": self.host_notes,
+            "ram_total_bytes": self.ram_total_bytes,
+            "ram_headroom_bytes": self.ram_headroom_bytes,
+            "fits_ram": self.fits_ram,
         }
 
 
@@ -525,6 +577,25 @@ def resolve_models(personality: dict) -> list[str]:
             f"entry: {', '.join(unknown)}"
         )
     return list(named)
+
+
+#: llama.cpp's `parallel = -1` means "decide for me", and what it decides is measurable: 4 slots
+#: over a unified KV pool on this box (PORTAL_PLAN §6.12.2). Checkpoint copies are per slot, so an
+#: unset `parallel` still costs 4 copies, and pricing it as 1 would understate the request.
+AUTO_PARALLEL_SLOTS = 4
+
+
+def _effective(personality: dict, model_id: str, key: str, fallback: Any) -> Any:
+    """The value a key will actually have for one model: model section, then [*], then llama.cpp's
+    own default. Not the portal's GLOBAL_DEFAULTS -- these keys are deliberately not in it, so an
+    unset key means the server's default, not a portal-chosen one."""
+    per = (personality.get("overrides") or {}).get(model_id) or {}
+    if key in per:
+        return per[key]
+    glob = personality.get("global") or {}
+    if key in glob:
+        return glob[key]
+    return fallback
 
 
 def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
@@ -575,6 +646,37 @@ def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
         return out
 
     out.worst_case_bytes = sum(p for p, _ in take)
+
+    # The aperture is not the whole accounting. Every loaded model's server also holds host RAM --
+    # the prompt cache (8192 MiB by default) and its context checkpoints -- and on this box that is
+    # the same physical memory the 108.00 GiB GTT aperture is carved out of (122.83 GiB installed).
+    # A personality that fits the aperture exactly leaves nothing for the caches, and the failure
+    # that produces does not look like a GPU error at all: it looks like the kernel killing
+    # llama-server, which is the shape the OOM events on this box actually had.
+    host_total: int | None = 0
+    for _, mid in take:
+        slots = _effective(personality, mid, "parallel", AUTO_PARALLEL_SLOTS)
+        h = modelindex.host_cache_bytes(
+            rows[mid],
+            checkpoints=_effective(personality, mid, "ctx-checkpoints",
+                                   modelindex.DEFAULT_CTX_CHECKPOINTS),
+            parallel=AUTO_PARALLEL_SLOTS if not slots or slots < 1 else slots,
+            cache_ram_mib=_effective(personality, mid, "cache-ram",
+                                     modelindex.DEFAULT_CACHE_RAM_MIB))
+        if h["total_bytes"] is None:
+            # An unbounded prompt cache (cache-ram = -1) or an unpriceable model: there is no
+            # number to check, so the RAM question stays unanswered rather than answered "yes".
+            host_total = None
+            out.host_notes.extend(h["notes"])
+        elif host_total is not None:
+            host_total += h["total_bytes"]
+    out.host_cache_bytes = host_total
+    out.ram_total_bytes = modelindex.ram_total_bytes()
+    if host_total is not None and out.ram_total_bytes:
+        need = out.worst_case_bytes + host_total
+        out.ram_headroom_bytes = out.ram_total_bytes - need
+        out.fits_ram = need <= out.ram_total_bytes
+
     if pool is None:
         out.fits = None
         return out
@@ -1038,6 +1140,18 @@ def apply(personality: dict, budget_bytes: int | None = None,
             f"({', '.join(budget['unpriced']) or 'no memory budget readable'}); an unpriced "
             f"plan is not a plan"
         )
+    # A separate refusal for the other ceiling, because a personality can clear the aperture and
+    # still be unwritable on this box. The message names both numbers so the operator can see which
+    # ceiling they are actually up against.
+    if budget["fits_ram"] is FITS_NO:
+        raise PersonalityError(
+            f"refusing to write personality {rendered['name']!r}: its heaviest "
+            f"{rendered['models_max']}-model combination costs "
+            f"{_gib(budget['worst_case_bytes'])} plus {_gib(budget['host_cache_bytes'])} of "
+            f"host-side prompt cache and context checkpoints = "
+            f"{_gib(budget['worst_case_bytes'] + budget['host_cache_bytes'])}, over the "
+            f"{_gib(budget['ram_total_bytes'])} of RAM this machine has"
+        )
 
     known = {r["id"] for r in _rows()}
     problems = check_generated(rendered["text"], known)
@@ -1122,6 +1236,23 @@ def validate(personality: dict, budget_bytes: int | None = None) -> list[dict]:
             "severity": "warn", "kind": "personality",
             "message": f"{len(b.unpriced)} model(s) cannot be priced, so the worst case "
                        f"is unbounded: {', '.join(b.unpriced[:4])}",
+        })
+    if b.fits_ram is FITS_NO:
+        findings.append({
+            "severity": "bad", "kind": "personality",
+            "message": (
+                f"worst case {_gib(b.worst_case_bytes)} plus {_gib(b.host_cache_bytes)} of "
+                f"host-side caches = {_gib(b.worst_case_bytes + b.host_cache_bytes)} exceeds the "
+                f"{_gib(b.ram_total_bytes)} of RAM this machine has: the aperture is not the only "
+                f"ceiling, and llama.cpp's prompt cache and context checkpoints live in the same "
+                f"physical memory the aperture is carved from"
+            ),
+        })
+    elif b.fits_ram is FITS_UNKNOWN:
+        findings.append({
+            "severity": "warn", "kind": "personality",
+            "message": "host-side cache cost cannot be bounded, so the RAM ceiling cannot be "
+                       f"checked: {'; '.join(b.host_notes) or 'no RAM total readable'}",
         })
     # fits is tri-state, so branch on the value rather than on truthiness:
     # FITS_NO = measured and over budget, FITS_YES = measured and inside it,

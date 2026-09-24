@@ -87,6 +87,15 @@ h2{margin:18px 0 6px}
         {% set spare = (b.get('headroom_bytes') / 1073741824)|round(1) %}
         <span>heaviest {{ worst }} GiB of {{ total }} GiB ({{ spare }} spare)</span>
       {% endif %}
+      {# The other ceiling, shown separately because it is a separate question: what the servers
+         hold in host RAM (prompt cache, context checkpoints) against installed RAM. A personality
+         can read "fits" here and still not fit the machine. #}
+      {% if b.get('host_cache_bytes') is not none and b.get('ram_total_bytes') %}
+        {% set hostc = (b.get('host_cache_bytes') / 1073741824)|round(1) %}
+        {% set ramtot = (b.get('ram_total_bytes') / 1073741824)|round(1) %}
+        {% set ramspace = (b.get('ram_headroom_bytes') / 1073741824)|round(1) %}
+        <span>+{{ hostc }} GiB host caches: {{ ramspace }} GiB spare of {{ ramtot }} GiB RAM</span>
+      {% endif %}
       <span class="mut">{% if c.editable %}custom{% else %}built-in, not editable in place{% endif %}</span>
     </div>
 
@@ -348,6 +357,11 @@ h2{margin:18px 0 6px}
     if (b.heaviest && b.heaviest.length) {
       el.appendChild(node('span', null, ` · heaviest ${b.heaviest.join(', ')}`));
     }
+    const ramVerdict = b.fits_ram === true ? 'fits'
+      : b.fits_ram === false ? 'DOES NOT FIT'
+      : 'cannot be priced';
+    el.appendChild(node('span', null,
+      ` · +${gib(b.host_cache_bytes)} host caches vs ${gib(b.ram_total_bytes)} RAM — ${ramVerdict}`));
     el.appendChild(node('span', null, ` · models_max ${b.models_max}`));
   }
 
