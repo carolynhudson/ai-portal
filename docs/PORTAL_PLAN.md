@@ -402,7 +402,7 @@ A personality is:
 | `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. |
 | `models_max` | how many may be resident simultaneously — a hard router limit, not a hint |
 | per-model preset | backend, context policy, extras (§6.12's rubric) |
-| `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom. This is enforced by *nothing* but the portal: loaded weights are anonymous and unreclaimable (§6.12), `fit` is blind to other residents, and a model's footprint runs ~12 GB above its file size (§6.12.2). Measured, not assumed. |
+| `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom. This is enforced by *nothing* but the portal: loaded weights are anonymous and unreclaimable (§6.12), `fit` touches only arguments left unset, decides per load, and omits the compute buffers it allocates afterwards (§6.12.7), and a model's footprint runs above its file size by the runtime's own allocations (§6.12.2, §6.12.7). Measured, not assumed. |
 | `ttl` | idle seconds after which the portal unloads a model the router would otherwise keep forever |
 
 Two worked shapes, from the user:
@@ -1473,6 +1473,11 @@ portal has to do, so they are stated as conclusions rather than open questions:
    model occupied ~98 GB under `--fit-target 8192`. **The §4.7 budget is therefore
    mandatory, not advisory** — nothing downstream refuses an over-committed set.
    See `tools/fit_probe.py`.
+   *Superseded in part on 2026-09-23 by §6.12.7: with the residents being llama.cpp
+   processes rather than a host allocation, `fit` measured free device memory correctly
+   and reduced the context. It is blind to host residents, not to device ones. The
+   conclusion this item exists to support — that the portal's budget is mandatory —
+   stands, and §6.12.7 explains why.*
 3. **Unload during generation is destructive.** `POST /models/unload` returns 200
    `{"success":true}` and the in-flight generation dies (`http 500 … Failed to read
    connection`). A TTL built directly on unload will cut users off mid-sentence;
@@ -1819,6 +1824,72 @@ checkpoint's size is the KV cache's internal layout, and that was not derived he
 **This is not a check that refuses everything.** On the live library, the shipped `default`
 personality costs 93.73 GiB against the 108.00 GiB aperture (14.27 spare) and 93.73 + **12.97 GiB**
 of host caches against 122.83 GiB of RAM (16.13 spare). `presets.ini` is unchanged by any of this.
+
+#### 6.12.7 — what `fit` really does, and what one load really costs (2026-09-23)
+
+**A recorded conclusion was wrong, and it was this portal's own.** §6.12.2 item 2 says `fit` is
+"blind to other residents", from a probe where 18 GB held elsewhere changed the chosen context not at
+all. Re-asking the question with the residents being llama.cpp processes rather than a host
+allocation, `fit` both sees and acts:
+
+```
+(router holding 54.5 GiB)  projected to use 38893 MiB of device memory vs. 54888 MiB of free device memory
+                           will leave 15995 >= 1024 MiB of free device memory, no changes needed
+(same model, +12 GiB hog)  projected to use 38893 MiB of device memory vs. 36972 MiB of free device memory
+                           cannot meet free memory target of 1024 MiB, need to reduce device memory by 2944 MiB
+                           context size reduced from 1048576 to 957184
+```
+
+Each "free" figure is the aperture minus what other processes hold, so it is not blind to *device*
+residents. The earlier probe held its 18 GB where a device-memory gauge cannot see it — on an iGPU
+host RAM and aperture are the same physical pool but not the same accounting. What the old
+measurement got right is the part the portal depends on: `fit` adjusts only arguments left unset, per
+load, at load time, and it does not bound a plan.
+
+**Meeting its own target does not mean the load survives.** In the second run the server logged
+`successfully fit params to free device memory`, then died:
+
+```
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 1022.77 MiB on device 0: cudaMalloc failed: out of memory
+graph_reserve: failed to allocate compute buffers
+llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+srv    llama_server: exiting due to model loading error
+```
+
+`fit`'s projection omits the compute graph it reserves afterwards. That ~1 GiB arrives *after* fit has
+declared success, which is the exact shape of "this model should fit and then OOMs at load".
+
+**What a load costs in the aperture.** GTT delta measured around one load, minus weights and repriced
+KV, at ctx 32768:
+
+| model | weights | KV predicted | measured GTT delta | unexplained |
+|---|---|---|---|---|
+| Qwythos-9B-Q4_K_M | 5.24 GiB | 1.00 GiB | 6.17 GiB | −0.07 GiB |
+| Qwen3.6-35B-A3B-Q4_K_M | 19.71 | 0.31 | 20.62 | +0.60 |
+| ThinkingCap-27B-Q8_0 | 27.05 | 1.77 | 28.28 | −0.54 |
+
+The same Qwythos model at its trained 1048576 measured 38.16 GiB against 37.24 predicted (+0.92), and
+llama.cpp's own projection agrees with the portal's (38893 MiB). So **a load costs weights + KV + about
+1 GiB**, and `HEADROOM_BYTES` (4 GiB) is a deliberate margin roughly four times the measured overhead,
+not a measurement — it is where the graph reserve and `fit`'s optimism get paid for. Keeping it is a
+choice; as of this section it is a documented one rather than an inherited number.
+
+**Two things read from the server instead of inferred.** `n_parallel is set to auto, using n_parallel =
+4 and kv_unified = true` confirms `personality.AUTO_PARALLEL_SLOTS = 4` for b10964. And the layer
+assignment confirms the hybrid pricing: Qwythos-9B logs `llama_memory_recurrent` for exactly
+{0,1,2,4,5,6,8,…} — 24 layers — with `llama_kv_cache` holding a device buffer only for layers
+3, 7, 11, … i.e. **8 KV layers out of 32, which is `ceil(32 / full_attention_interval)`**, the number
+`repriced_kv()` uses. (`n_swa = 0` in the same log is about sliding-window attention, a different
+thing from this split, and is not a contradiction.)
+
+`fit = on` is now suppressed as a no-op rather than emitted: the server's default is `on`, so the line
+the live file used to carry said nothing. `fit-target`'s default 1024 is likewise suppressed, while a
+deliberate `fit-target = 8192` is still written — suppressing restatements, not decisions.
+
+**Open items.** The per-checkpoint price is still a token-count guess. `parallel = -1` is priced as 4
+slots, now confirmed for this build but re-read per build rather than derived. `HEADROOM_BYTES` and
+`host_cache_bytes` may partly overlap: the 4 GiB margin and the priced host caches both describe costs
+that are not weights or KV, and one clean load measured end to end would say how much each explains.
 
 ## 7. Build-out roadmap
 
