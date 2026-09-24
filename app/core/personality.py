@@ -69,7 +69,29 @@ SERVER_DEFAULTS: dict[str, Any] = {
     "lazy-mode": "auto",
     "stop-timeout": 10,
     "models-max": 4,
+    # Added when the settings registry grew these keys, so the no-op rule covers everything the
+    # editor can actually write rather than everything remembered at the time. All read from b10964:
+    # `--fit` default 'on', `--fit-target` 1024, `--keep` 0, `--cache-ram` 8192, `--checkpoint-min-step`
+    # 8192, `cache_idle_slots = true` in common/common.h.
+    #
+    # `fit = on` is the historical example this table exists for: the file on this box used to carry
+    # that line, and it said nothing — the server already does it. See §6.12.7 for what fit actually
+    # does, which is not what this portal previously recorded.
+    "fit": "on",
+    "fit-target": 1024,
+    "keep": 0,
+    "cache-ram": 8192,
+    "checkpoint-min-step": 8192,
+    "cache-idle-slots": True,
 }
+
+#: Deliberately absent: `load-on-startup`. The router autoloads models unless a preset says
+#: otherwise (`models_autoload = true`, common/common.h:687), so an unset key is not the same as
+#: `load-on-startup = false` -- writing the false is a real decision, not a restatement. The registry
+#: lists its default as False because that is what the editor shows unchecked, which is a UI fact and
+#: not a claim about the server. `dedup-cache-models` is absent for the same reason in the other
+#: direction: its behaviour is implemented in the router's preset reader and was not verified here,
+#: and an unverified default in this table would suppress a line that is not a no-op.
 
 
 #: Global section. Values here are what every model inherits unless a personality
@@ -165,9 +187,11 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "on",
         "choices": ("on", "off"),
-        "help": "Adjust arguments that were not set so the model fits in device memory. "
-                "Blind to what is already resident: it fits against free memory at load "
-                "time, not against a plan.",
+        "help": "Adjust arguments that were not set so the model fits in device memory. It does "
+                "measure what other processes already hold on the device, and it will shrink the "
+                "context to make room -- but it decides per load, at load time, only touches "
+                "arguments left unset, and its projection omits the compute buffers allocated "
+                "afterwards. It bounds nothing about a plan. See §6.12.7.",
         "accepts": lambda v: v in ("on", "off"),
     },
     "fit-target": {

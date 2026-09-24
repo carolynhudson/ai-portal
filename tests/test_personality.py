@@ -383,6 +383,51 @@ def test_global_defaults_are_all_real_choices_not_copies_of_the_servers(library)
     assert copied == {}, f"GLOBAL_DEFAULTS restates the server's defaults: {copied}"
 
 
+def test_the_no_op_rule_covers_every_writable_setting_with_a_known_default(library):
+    """The table has to cover what the editor can write, not what was remembered when it was written.
+
+    The gap is asserted as an explicit set rather than as "no gaps", because two settings genuinely
+    have no verified server-side default: `dedup-cache-models` is implemented in the router's preset
+    reader and was not measured here, and `load-on-startup` is absent on purpose -- the router
+    autoloads unless a preset says otherwise, so writing `load-on-startup = false` is a decision, not
+    a restatement. A new setting with no entry here fails this test, which is the point: an
+    uncovered key can be written as a silent no-op and nobody would notice.
+    """
+    gaps = {k for k, spec in P.SETTINGS.items()
+            if spec["section"] in ("both", "model") and k not in P.SERVER_DEFAULTS}
+    assert gaps == {"dedup-cache-models", "load-on-startup"}, \
+        f"settings the editor can write with no entry in SERVER_DEFAULTS: {gaps}"
+
+
+def test_the_settings_that_ship_at_their_default_produce_no_line(library):
+    """Every one of these is what llama.cpp already does, so writing them is noise with a
+    provenance problem: the line is a snapshot of one release's number.
+
+    `fit = on` is the case this rule exists for. The live presets.ini on this box used to carry it
+    while the server's own default is `on` -- a line that looked like a decision and changed nothing.
+    """
+    per = {"name": "x", "models_max": 1, "models": ["small"],
+           "global": {"fit": "on", "fit-target": 1024, "cache-ram": 8192,
+                      "ctx-checkpoints": 32, "checkpoint-min-step": 8192,
+                      "cache-idle-slots": True, "keep": 0}}
+    out = P.render(per)
+    for key in ("fit", "fit-target", "cache-ram", "ctx-checkpoints",
+                "checkpoint-min-step", "cache-idle-slots", "keep"):
+        assert f"{key} = " not in out["text"], f"{key} was written despite being the server's default"
+    assert {o["key"] for o in out["omitted"]} == set(per["global"]), \
+        "every suppressed value has to be reported, not quietly dropped"
+
+
+def test_a_deliberate_margin_above_the_default_is_still_written(library):
+    """The rule suppresses restatements, not decisions. `fit-target = 8192` is a 8 GiB aperture
+    margin instead of 1 GiB -- that is a change worth a line, and worth keeping visible."""
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "global": {"fit-target": 8192, "fit": "on"}})
+    assert "fit-target = 8192" in out["text"]
+    assert "fit = " not in out["text"]
+    assert [o["key"] for o in out["omitted"]] == ["fit"]
+
+
 def test_a_value_equal_to_the_server_default_is_omitted_and_explained(library):
     """Omitted, and reported. An operator who set a value and finds it absent from the file has
     to be able to learn why, from the same response that showed them the diff."""
