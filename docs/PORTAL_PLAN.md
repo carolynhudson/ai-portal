@@ -1001,6 +1001,52 @@ global default, no line for a personality that names models) and, on the other s
 `test_an_explicit_context_choice_survives_everything_else` — because a generator that dropped
 `ctx-size` on the floor would pass the first guard while breaking the operator's decision.
 
+#### 4.10.2 What presets.ini can carry, and what startup loading actually means (2026-09-24)
+
+The question worth answering before adding a settings page for it: are there llama.cpp options that
+`presets.ini` **cannot** carry, which would then have to live in the unit's command line and be kept
+in step with the preset file? Measured key by key against the binary on this box, with `mmap` as the
+positive control:
+
+| | |
+|---|---|
+| keys tried | 29, including every key this portal can write |
+| rejected as not-a-preset-key | **`mmap`** and nothing else — `option 'mmap' not recognized in preset '*'` |
+| accepted | threads, lazy-mode, ctx-size, parallel, flash-attn, n-gpu-layers, fit, fit-target, keep, cache-ram, ctx-checkpoints, checkpoint-min-step, cache-idle-slots, jinja, reasoning-budget, reasoning-effort, stop-timeout, dedup-cache-models, load-on-startup, models-max, models-autoload, api-key, no-webui, metrics, override-kv, mmproj, model, alias |
+
+`mmap` is why the router died once: one unrecognised key in `[*]` makes the router reject the **whole
+file**, silently at load time. "Accepted" here means the file parses; whether the value then does
+what the operator meant is a separate question — `models-autoload` was accepted and its effect was not
+separately confirmed.
+
+**Startup loading is not autoload.** `models_autoload = true` means models load *on demand*, not at
+startup. Three runs of the same router:
+
+| preset | startup loads |
+|---|---|
+| `[*]` sets nothing | 0 |
+| `[model] load-on-startup = off` | 0 |
+| `[model] load-on-startup = on` | 1 — `load_startup: (startup) loading model Qwen3.5-0.8B.Q4_K_M` |
+
+So a personality **can** decide what is resident before the first request from `presets.ini` alone:
+no unit edit, no command-line change, no keeping two files in step. Consequences that were implemented:
+
+- `load-on-startup = off` is the unset state, so it is suppressed as a no-op like every other
+  restatement;
+- `load-on-startup` in `[*]` is refused, and the refusal is general — **any** setting registered
+  `section: "model"` is rejected in `[*]`. Measured why: `[*] load-on-startup = on` started loading a
+  local 0.8B model **and** `unsloth/Qwen3.8-27B-GGUF:Q8_K_XL` discovered through the shared HF cache,
+  a model the preset never named, and `models-max = 1` in the same file did not stop either load. `[*]`
+  applies to what the router *discovers*, not to what the personality *lists*. The registry has always
+  described these keys as model-scoped; nothing enforced it until now.
+- the same rule closes the `ctx-size` version of the mistake — one line in `[*]` capping every model in
+  the library, which is exactly what §4.10.1 forbids.
+
+Probes: `tools/preset_eligibility_probe.py` and `tools/load_on_startup_probe.py`. Both point
+`--models-dir` at a probe directory holding one small model rather than the real library: with autoload
+left at its default, `--models-dir` *is* the blast radius, and the F run of the eligibility probe is
+what a real library would have autoloaded — beside a router already holding 54.5 GiB.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |

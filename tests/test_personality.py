@@ -411,6 +411,43 @@ def test_an_explicit_context_choice_survives_everything_else(library):
     assert out["omitted"] == []
 
 
+def test_a_model_scoped_key_cannot_be_set_for_every_model_at_once(library):
+    """`[*]` reaches every model the router *discovers*, not the models a personality listed.
+
+    Measured on this box (§4.10.2): a preset carrying `[*] load-on-startup = on` began loading a
+    local 0.8B model *and* `unsloth/Qwen3.8-27B-GGUF:Q8_K_XL` found through the shared HF cache --
+    a 27 GiB model this personality had never named -- and `models-max = 1` in the same file did not
+    stop either. `ctx-size` in `[*]` is the same shape of harm: one line caps every model in the
+    library, which is exactly what §4.10.1 forbids.
+    """
+    for key, value in (("load-on-startup", True), ("ctx-size", 4096)):
+        with pytest.raises(P.PersonalityError) as exc:
+            P.render({"name": "x", "models_max": 1, "models": ["small"], "global": {key: value}})
+        assert f"{key}" in str(exc.value) and "[*]" in str(exc.value)
+        assert "own section" in str(exc.value), \
+            "the refusal has to say where the value belongs, not just that it is wrong"
+
+
+def test_startup_loading_is_a_per_model_choice_and_the_negative_form_says_nothing(library):
+    """`on` is a decision; `off` restates what happens when nothing is written.
+
+    A router with a preset that set nothing produced zero startup loads, and the same router with
+    `load-on-startup = off` produced zero startup loads (§4.10.2). The false is therefore the unset
+    state and belongs to the no-op rule, while `on` -- per model, in that model's section -- is the
+    only way a personality decides what is resident before the first request.
+    """
+    on = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                   "overrides": {"small": {"load-on-startup": True}}})
+    assert "load-on-startup = on" in on["text"]
+
+    off = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "overrides": {"small": {"load-on-startup": False}}})
+    # `= ` and not the bare key: the file's own header names the router-only keys, and a guard that
+    # matches the header would pass while the setting was present, or fail while it was absent.
+    assert "load-on-startup = " not in off["text"]
+    assert [o["key"] for o in off["omitted"]] == ["load-on-startup"]
+
+
 def test_global_defaults_are_all_real_choices_not_copies_of_the_servers(library):
     """Nothing in the shipped global section may be a restatement of llama-server's own default.
 
@@ -433,7 +470,7 @@ def test_the_no_op_rule_covers_every_writable_setting_with_a_known_default(libra
     """
     gaps = {k for k, spec in P.SETTINGS.items()
             if spec["section"] in ("both", "model") and k not in P.SERVER_DEFAULTS}
-    assert gaps == {"dedup-cache-models", "load-on-startup"}, \
+    assert gaps == {"dedup-cache-models"}, \
         f"settings the editor can write with no entry in SERVER_DEFAULTS: {gaps}"
 
 

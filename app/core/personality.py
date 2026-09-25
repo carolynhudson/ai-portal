@@ -83,15 +83,17 @@ SERVER_DEFAULTS: dict[str, Any] = {
     "cache-ram": 8192,
     "checkpoint-min-step": 8192,
     "cache-idle-slots": True,
+    # Measured on this box (§4.10.2): a router whose preset sets nothing produced zero startup
+    # loads, and a preset saying `load-on-startup = off` produced zero startup loads. Identical, so
+    # the false *is* the unset state and writing it is noise. `on` is the decision -- and it is only
+    # safe in a model section, which is why render() refuses it anywhere else.
+    "load-on-startup": False,
 }
 
-#: Deliberately absent: `load-on-startup`. The router autoloads models unless a preset says
-#: otherwise (`models_autoload = true`, common/common.h:687), so an unset key is not the same as
-#: `load-on-startup = false` -- writing the false is a real decision, not a restatement. The registry
-#: lists its default as False because that is what the editor shows unchecked, which is a UI fact and
-#: not a claim about the server. `dedup-cache-models` is absent for the same reason in the other
-#: direction: its behaviour is implemented in the router's preset reader and was not verified here,
-#: and an unverified default in this table would suppress a line that is not a no-op.
+#: Deliberately absent: `dedup-cache-models`. Its behaviour lives in the router's preset reader
+#: rather than in the argument table, and it was not measured here; an unverified default in this
+#: table would suppress a line that is not a no-op.
+#:
 
 
 #: Global section. Values here are what every model inherits unless a personality
@@ -831,6 +833,18 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
             f"personality {name!r} sets router-controlled key(s) {hostile} in [*]; "
             f"the router overwrites them"
         )
+    # Keys registered as model-scoped are refused in [*], because [*] applies to every model the
+    # router *discovers*, not to the models this personality listed. Measured on this box: `[*]
+    # load-on-startup = on` began loading a local 0.8B model *and* `unsloth/Qwen3.8-27B-GGUF:Q8_K_XL`
+    # found in the shared HF cache, and `models-max = 1` in the same file did not stop either one
+    # (§4.10.2). A personality must not be able to reach models it never named.
+    scoped = sorted(k for k in glob if SETTINGS.get(k, {}).get("section") == "model")
+    if scoped:
+        raise PersonalityError(
+            f"personality {name!r} sets {scoped} in [*]; that section reaches every model the router "
+            f"discovers, including cached ones this personality never lists -- set it in that "
+            f"model's own section instead")
+
     sections["*"].update(glob)
 
     for mid in models:
