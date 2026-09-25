@@ -153,7 +153,7 @@ h2{margin:18px 0 6px}
       <td>{{ s.kind }}{% if s.choices %} ({{ s.choices|join(' | ') }}){% endif %}</td>
       <td>{{ 'model only' if s.section == 'model' else 'global and per-model' }}</td>
       <td class="mono">{{ s.default if s.default is not none else '—' }}</td>
-      <td class="h">{{ s.help }}</td>
+      <td class="h">{{ s.help }}{% if s.side_effects %}<div class="mut">side effect: {{ s.side_effects }}</div>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
@@ -203,7 +203,7 @@ h2{margin:18px 0 6px}
         <input id="ed-g-{{ k }}" type="text" inputmode="numeric"
                placeholder="leave as is (default {{ s.default }})">
         {% endif %}
-        <span class="mut h">{{ s.help }}</span>
+        <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
       </div>
       {% endif %}
     {% endfor %}
@@ -236,7 +236,7 @@ h2{margin:18px 0 6px}
         {% else %}
         <input id="ed-m-{{ k }}" type="text" inputmode="numeric" placeholder="unset">
         {% endif %}
-        <span class="mut h">{{ s.help }}</span>
+        <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
       </div>
     {% endfor %}
   </div>

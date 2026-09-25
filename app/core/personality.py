@@ -148,6 +148,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Prompt cache limit in MiB of host RAM. llama.cpp defaults to 8192; 0 disables it, "
                 "-1 removes the limit. Not GPU memory: on this box it is the same physical RAM the "
                 "GTT aperture is carved from.",
+        "side_effects": "Charged against host RAM, which on this box is the same memory the "
+                        "aperture is carved from. Raising it does not spend GPU memory, it spends "
+                        "the machine.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
     "ctx-checkpoints": {
@@ -157,7 +160,12 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Context checkpoints per slot, each a host-RAM copy of KV state. llama.cpp only "
                 "makes them for sliding-window / hybrid models (the flag is aliased "
                 "--swa-checkpoints). Measured on this box: 19.3 MiB each for Qwen3.5-0.8B and "
-                "50.3 MiB for Qwythos-9B, identical at contexts from 16384 to 131072.",
+                "50.3 MiB for Qwythos-9B, identical at contexts from 16384 to 131072. They appear "
+                "after a request finishes rather than at load, which is why RSS climbs when a "
+                "model looks idle.",
+        "side_effects": "Cost is per slot and constant -- it does not scale with context size or "
+                        "with how long a session runs, and it lands in host RAM, not the aperture "
+                        "(§6.12.6).",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "checkpoint-min-step": {
@@ -166,6 +174,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": 8192,
         "help": "Minimum tokens between checkpoints. It changes how often they are created, not "
                 "how large each one is -- the measured size did not move with it or with context.",
+        "side_effects": "Lower spacing means more checkpoints alive at once. The multiplier is this "
+                        "number, not the context length.",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "cache-idle-slots": {
@@ -174,6 +184,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": True,
         "help": "Save an idle slot's state into the prompt cache when a new task starts. Costs "
                 "host RAM inside the cache-ram limit, and needs cache-ram enabled to do anything.",
+        "side_effects": "This is what lets a finished conversation keep holding RAM. Leaving it on "
+                        "is the reason an idle model can cost more than an active one.",
         "accepts": lambda v: isinstance(v, bool),
     },
     "threads": {
@@ -194,6 +206,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
                 "context to make room -- but it decides per load, at load time, only touches "
                 "arguments left unset, and its projection omits the compute buffers allocated "
                 "afterwards. It bounds nothing about a plan. See §6.12.7.",
+        "side_effects": "May silently choose a smaller context than the model can address. A load "
+                        "can satisfy fit's target and still fail, because fit's projection omits the "
+                        "compute graph allocated after it (§6.12.7).",
         "accepts": lambda v: v in ("on", "off"),
     },
     "fit-target": {
@@ -202,6 +217,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": 1024,
         "help": "Margin in MiB the fit adjustment leaves per device. Comma-separated for "
                 "a per-device list; one value applies to every device.",
+        "side_effects": "Raising it makes fit shrink context sooner. It reserves aperture, not host "
+                        "RAM -- and the prompt cache and checkpoints live in host RAM, so a generous "
+                        "target does not prevent the kills this box actually gets.",
         "accepts": lambda v: _positive_mib_list(v),
     },
     "stop-timeout": {
@@ -211,6 +229,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "preset_only": True,
         "help": "Seconds to wait after a requested unload before forcing termination. "
                 "Preset-exclusive: it is not a command-line argument at all.",
+        "side_effects": "A deadline that ends in a force-kill: unloading at the timeout stops a "
+                        "generation in flight rather than waiting for it (§6.12.2).",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "load-on-startup": {
@@ -221,6 +241,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Load this model when the server starts rather than on first request. "
                 "Only read at startup: after a preset reload a newly added model is "
                 "listed but not loaded.",
+        "side_effects": "Decides what is resident before the first request. Startup loads are not "
+                        "capped by models-max -- measured, two began with models-max = 1 in the same "
+                        "file. It belongs in a model's own section: in [*] it reaches cached models "
+                        "the personality never named (§4.10.2).",
         "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
     },
     "dedup-cache-models": {
@@ -230,6 +254,7 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "preset_only": True,
         "help": "When a preset's hf-repo points at a model already downloaded, hide the "
                 "cached entry from GET /models. Preset-exclusive.",
+        "side_effects": "Only the listing changes: the model stays on disk and still resolvable.",
         "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
     },
     "ctx-size": {
@@ -239,6 +264,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Prompt context. 0 means take it from the model. Not emitted by default: "
                 "a hard-coded ctx cap below a model's trained context silently removes "
                 "capability, which is what the old per-model sections on this box did.",
+        "side_effects": "This is the model's ceiling until somebody edits the line. Nothing raises "
+                        "it back, and fit will not touch it, because it is no longer an unset "
+                        "argument (§4.10.1).",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "n-gpu-layers": {
@@ -247,6 +275,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": "auto",
         "help": "How many layers live in VRAM: a number, 'auto', or 'all'. The lever that "
                 "trades GPU for system RAM on an oversized model.",
+        "side_effects": "Weight layers moved out of the aperture become anonymous, unreclaimable RAM "
+                        "that cannot be paged out -- the signature every OOM kill in this box's "
+                        "journal carries (§6.12).",
         "accepts": lambda v: v in ("auto", "all") or (isinstance(v, int) and v >= 0),
     },
     "flash-attn": {
@@ -256,6 +287,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "choices": ("on", "off", "auto"),
         "help": "Flash Attention. On this box it is the setting most likely to matter for "
                 "large-context models on ROCm.",
+        "side_effects": "A performance lever with a capacity side effect: it changes the attention "
+                        "path a long context is allocated through.",
         "accepts": lambda v: v in ("on", "off", "auto"),
     },
     "parallel": {
@@ -265,16 +298,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Number of request slots. -1 = auto, and auto resolves to 4 slots with a "
                 "unified KV pool (server.cpp), so the pool is shared rather than copied per "
                 "slot. Set it explicitly, or price KV per slot only when KV is not unified.",
+        "side_effects": "Slots share the KV pool, but checkpoints and idle-slot caches are counted "
+                        "per slot -- more slots means more copies of those (§6.12.6).",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
-    },
-    "ctx-checkpoints": {
-        "kind": "int",
-        "section": "both",
-        "default": 32,
-        "help": "Context checkpoints kept per slot (server default 32). Each one holds a "
-                "saved slice of the cache, so this is memory that shows up *after* a request "
-                "finishes, not at load time — which is why RSS climbs when a model looks idle.",
-        "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "cache-prompt": {
         "kind": "bool",
@@ -284,6 +310,7 @@ SETTINGS: dict[str, dict[str, Any]] = {
                 "faster. This is where the OOM usually lands on this box: upstream reported an "
                 "idle slot saving a 2.6 GiB state and the kernel killing the worker five "
                 "seconds later (llama.cpp discussion #22372), on the same machine class.",
+        "side_effects": "The speed it buys is paid for in host RAM held after the request ends.",
         "accepts": lambda v: isinstance(v, bool),
     },
     "reasoning-budget": {
@@ -295,6 +322,7 @@ SETTINGS: dict[str, dict[str, Any]] = {
                 "long session, and prompt growth is what makes checkpoints and prompt-cache "
                 "saves expensive. It changes what a session costs, not what a model costs to "
                 "load.",
+        "side_effects": "Session cost, not load cost: it cannot make a model cheaper to bring up.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
     "reasoning-effort": {
@@ -305,6 +333,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "help": "Reasoning level handed to the chat template. This is the knob Qwen3.8-Flash-"
                 "Next actually obeys: its template reads `reasoning_effort` and branches on "
                 "'low' / 'medium' / 'high' / 'xhigh'.",
+        "side_effects": "Session cost, not load cost -- and only honoured at all if the model's "
+                        "template reads the field.",
         "accepts": lambda v: v in ("default", "minimal", "low", "medium", "high", "xhigh", "max"),
     },
     "jinja": {
@@ -313,20 +343,17 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": True,
         "help": "Use the model's embedded chat template. Tool calling needs it: a model "
                 "whose template declares tools is unusable with jinja off.",
+        "side_effects": "Off removes the template's role and tool handling: the tokens are still in "
+                        "the prompt, nothing interprets them.",
         "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
-    },
-    "ctx-checkpoints": {
-        "kind": "int",
-        "section": "both",
-        "default": 32,
-        "help": "Context checkpoints kept per slot. Costs memory per slot.",
-        "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "keep": {
         "kind": "int",
         "section": "both",
         "default": 0,
         "help": "Tokens kept from the initial prompt. -1 keeps all.",
+        "side_effects": "Pinned tokens are charged against the slot's context for the whole "
+                        "session, not for the turns that used them.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
     "lazy-mode": {
@@ -340,6 +367,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
                 "matter for the multi-hundred-GiB models: keeping weights resident is what "
                 "competes with the GTT aperture. Not emitted by default, because a router started "
                 "by hand can already set it on the command line, and CLI beats presets.ini.",
+        "side_effects": "Measured on this box: 80.5 GiB of aperture with lazy-mode unset against "
+                        "54.5 GiB with it on, same model and build -- weights stay in reclaimable "
+                        "page cache instead of pinned buffers. A kernel upgrade landed at the same "
+                        "time, so that gap is not attributable to this flag alone.",
         "accepts": lambda v: v in ("on", "off", "auto"),
     },
 }

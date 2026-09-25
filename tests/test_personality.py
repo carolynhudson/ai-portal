@@ -458,6 +458,66 @@ def test_global_defaults_are_all_real_choices_not_copies_of_the_servers(library)
     assert copied == {}, f"GLOBAL_DEFAULTS restates the server's defaults: {copied}"
 
 
+def test_no_setting_is_defined_twice_in_the_registry():
+    """A duplicate key in a dict literal is not an error. The last definition simply wins.
+
+    `ctx-checkpoints` was defined three times in SETTINGS, and the one that took effect was the
+    tersest -- "Costs memory per slot" -- silently replacing a paragraph that carried the measured
+    per-checkpoint sizes and the fact that the cost is host RAM rather than aperture. Nothing broke,
+    because the registry was still a valid dictionary with the key in it. That is what makes this
+    worth a test rather than a review comment.
+    """
+    import ast
+    import collections
+    import pathlib
+
+    tree = ast.parse(pathlib.Path(P.__file__).read_text())
+    offenders: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            names = [node.target.id] if isinstance(node.target, ast.Name) else []
+        elif isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        else:
+            continue
+        for name in names:
+            if name not in ("SETTINGS", "SERVER_DEFAULTS", "GLOBAL_DEFAULTS"):
+                continue
+            if not isinstance(node.value, ast.Dict):
+                continue
+            keys = [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
+            dupes = sorted({k for k, c in collections.Counter(keys).items() if c > 1})
+            if dupes:
+                offenders[name] = dupes
+    assert offenders == {}, f"later definitions silently overwrote earlier ones: {offenders}"
+
+
+#: Settings whose description already states their whole effect, and why that is sufficient.
+#: A bare exemption list is how the failure above becomes invisible again, so each entry has to
+#: carry its reason and the test refuses entries that stop being needed.
+EFFECT_IS_THE_NAME = {
+    "threads": "Sizes the CPU thread pool used during generation; nothing else in a plan is derived "
+               "from it, and it cannot change what fits.",
+}
+
+
+def test_every_setting_states_the_effects_the_name_does_not(library):
+    """Capacity settings that act sideways have to say so where the operator is reading.
+
+    `fit-target` sounds like a safety margin and is really "shrink the context sooner, and reserve
+    aperture while the caches live in host RAM". `n-gpu-layers` sounds like a placement choice and is
+    really "convert reclaimable weight pages into unreclaimable anonymous RAM". The description the
+    editor renders is the only place either of those is discoverable without reading the plan.
+    """
+    missing = {k for k, spec in P.SETTINGS.items()
+               if not spec.get("side_effects") and k not in EFFECT_IS_THE_NAME}
+    assert missing == set(), f"settings whose consequences are not stated: {missing}"
+    stale = {k for k in EFFECT_IS_THE_NAME if P.SETTINGS.get(k, {}).get("side_effects")}
+    assert stale == set(), f"described after all, remove from EFFECT_IS_THE_NAME: {stale}"
+    absent = {k for k in EFFECT_IS_THE_NAME if k not in P.SETTINGS}
+    assert absent == set(), f"exempted keys that are not settings at all: {absent}"
+
+
 def test_the_no_op_rule_covers_every_writable_setting_with_a_known_default(library):
     """The table has to cover what the editor can write, not what was remembered when it was written.
 
