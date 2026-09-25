@@ -409,6 +409,12 @@ def comfy_snapshot() -> dict:
     }
 
 
+#: Warm-up threads started by `create_app()`, kept reachable so a test can join the one it started
+#: instead of racing it. They are daemon threads: nothing in production waits for them, which is
+#: precisely what makes them a problem in a test suite that shares one `model_index` table.
+INDEX_STARTUP_THREADS: list["threading.Thread"] = []
+
+
 def create_app() -> FastAPI:
     log = logsetup.setup()          # level: AI_PORTAL_LOG_LEVEL (env/unit)
     app = FastAPI(title="AI Portal", version="0.1.0")
@@ -444,8 +450,17 @@ def create_app() -> FastAPI:
         except Exception:  # noqa: BLE001 — index absence is survivable by design
             log.exception("model index scan failed; readers fall back to disk")
 
-    threading.Thread(target=_index_startup, daemon=True,
-                     name="model-index-startup").start()
+    # Switchable for exactly one reason. This thread rescans whatever `app.core.paths` points at at
+    # the moment it happens to run. Pointed at a sandboxed home, that is a warm-up. Pointed at the
+    # home some other test file has monkeypatched, it rewrites a table underneath a test that is
+    # asserting on that table's contents -- which is how tests in `test_personality.py` started failing
+    # at random depending on which file ran before them. The suite turns it off (tests/conftest.py)
+    # and the two tests that care about the startup scan turn it back on and wait for it.
+    if os.environ.get("AI_PORTAL_INDEX_STARTUP", "1") != "0":
+        warmup = threading.Thread(target=_index_startup, daemon=True,
+                                  name="model-index-startup")
+        INDEX_STARTUP_THREADS.append(warmup)
+        warmup.start()
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):

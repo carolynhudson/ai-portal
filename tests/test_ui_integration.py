@@ -110,6 +110,11 @@ def ui_server():
         AI_PORTAL_HOST="127.0.0.1",
         AI_PORTAL_PORT=str(_free_port()),
         AI_PORTAL_PASSWORD=PASSWORD,
+        # The UI harness drives a real portal in a subprocess, so its warm-up scan cannot race this
+        # process's tables -- and these pages assert on populated budget figures, which only exist if
+        # the index was actually built. Ask for the scan explicitly rather than inheriting the suite
+        # default that exists to keep the in-process tests from racing a background scan.
+        AI_PORTAL_INDEX_STARTUP="1",
         AI_PORTAL_TEST_SYSCALL_LOG=str(syscalls),
         PATH=f"{UIDIR / 'bin'}{os.pathsep}{env['PATH']}",
         # fail fast instead of reaching the internet: the endpoints degrade to

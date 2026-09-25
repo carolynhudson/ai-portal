@@ -613,6 +613,9 @@ def test_app_startup_populates_the_index(tmp_path, monkeypatch):
                       "attention.head_count_kv": 2,
                       "embedding_length": 256, "context_length": 4096})
     monkeypatch.setattr(mi.paths, "LLAMA_MODELS", root)
+    # The suite turns the startup scan off (tests/conftest.py) because an uncontrolled background scan
+    # corrupts other tests. This one is the reason the scan exists, so it turns it back on and waits.
+    monkeypatch.setenv("AI_PORTAL_INDEX_STARTUP", "1")
 
     from app import main as app_main
     conn = db._conn()
@@ -649,6 +652,7 @@ def test_index_startup_failure_leaves_readers_working(tmp_path, monkeypatch):
         raise RuntimeError("no such table: events")
 
     monkeypatch.setattr(mi, "rescan", boom)
+    monkeypatch.setenv("AI_PORTAL_INDEX_STARTUP", "1")   # the degrade path is only real if the scan runs
     a = app_main.create_app()     # must not raise
     assert a is not None
     # and selection still returns something usable via the walk
@@ -1117,6 +1121,9 @@ def _seed_library(monkeypatch, names):
                          {"block_count": 8, "attention.head_count": 4,
                           "attention.head_count_kv": 2,
                           "embedding_length": 256, "context_length": 4096})
+    # Rescan here rather than relying on the app's warm-up thread to do it first. The docstring above
+    # spells out why racing that thread is not fixable from the test's side; not depending on it is.
+    mi.rescan()
     return root
 
 
