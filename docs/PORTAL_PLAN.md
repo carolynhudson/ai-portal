@@ -1047,6 +1047,25 @@ Probes: `tools/preset_eligibility_probe.py` and `tools/load_on_startup_probe.py`
 left at its default, `--models-dir` *is* the blast radius, and the F run of the eligibility probe is
 what a real library would have autoloaded — beside a router already holding 54.5 GiB.
 
+#### 4.10.3 Every setting states what it does sideways (2026-09-24)
+
+A settings page that names a knob without naming its consequence lets the operator read the name as the
+effect. `fit-target` sounds like a safety margin; it is "shrink the context sooner, and reserve aperture
+while the prompt cache and checkpoints live in host RAM". `n-gpu-layers` sounds like placement; it is
+"turn reclaimable weight pages into anonymous, unreclaimable RAM". `ctx-size` sounds like a cap you can
+lift later; nothing lifts it. `load-on-startup` sounds like it obeys `models-max`; it does not.
+
+So every entry in the registry carries `side_effects` next to `help`, rendered under the description in
+the table and inline in the editor. A test demands it of every setting except an exemption list that
+must state its reason — `threads`, which sizes a CPU pool and from which nothing in a plan derives —
+and that list fails if it keeps an entry which no longer needs exempting.
+
+The same commit found `ctx-checkpoints` defined **three times** in `SETTINGS`. Python keeps the last,
+and the last was the tersest: "Costs memory per slot", which had quietly replaced a paragraph carrying
+the measured per-checkpoint sizes and the host-RAM-not-aperture fact. Nothing broke, because a dict
+with a duplicate key is still a valid dict — so the registry literals are now parsed and duplicates are
+refused.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
@@ -2006,6 +2025,41 @@ deliberate `fit-target = 8192` is still written — suppressing restatements, no
 slots, now confirmed for this build but re-read per build rather than derived. `HEADROOM_BYTES` and
 `host_cache_bytes` may partly overlap: the 4 GiB margin and the priced host caches both describe costs
 that are not weights or KV, and one clean load measured end to end would say how much each explains.
+
+### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
+
+`create_app()` used to do three things on one daemon thread: build the schema and first-run password
+(`_settings()`), create `model_index`, and rescan the library. Only the rescan needed to be off the
+request path — a library on a cold mount must not stall a page load — and putting all three there cost
+twice.
+
+**In production:** an app could be constructed with no schema and no password, and nothing waited for
+the thread to fix that.
+
+**In the test suite, where it had been hiding:** the thread rescans whatever `app.core.paths` points at
+at the moment it happens to run. A dozen test files build the app while monkeypatching `paths` to their
+own throwaway homes, and the whole suite shares one `model_index` table. A warm-up scan started by one
+file lands during another and rewrites the rows that test is asserting on. At HEAD this surfaced as
+tests in `test_personality.py` failing at random — a *different* test each run, none of them touching
+the index — and the captured log inside the failing test named the culprit directly:
+`main.py:442 model index: 2 model(s)`, from a thread that test never started. The failing test also
+proved it was not new: 2 failures in 3 runs of the same file combination at HEAD.
+
+| | |
+|---|---|
+| schema + `modelindex.init()` | synchronous in `create_app()` — cheap, idempotent, needed before the first request |
+| library rescan | still off the request path, gated by `AI_PORTAL_INDEX_STARTUP` |
+| test suite | `tests/conftest.py` sets it to `0` for the session; the tests that are *about* the scan set it back to `1` and wait for the rows |
+| UI harness | sets it to `1` — its portal runs in a subprocess and cannot race this process's tables |
+| threads | recorded in `main.INDEX_STARTUP_THREADS` and joined after each test, so a re-enabled scan cannot outlive the test that asked for it |
+
+Verified rather than asserted: the four-file combination that had been failing ran 4/4 clean with the
+guard, and produced a failure in 1 of 4 runs with `tests/conftest.py` moved aside. Full suite **572
+passed, 1 skipped**, twice in a row, where before it was nondeterministic.
+
+`_seed_library()`'s own docstring had described this race accurately and worked around it by seeding
+the directory the thread would scan. It now rescans itself. The workaround was the tell: a test that
+has to guess which directory a background thread is about to read is a test that depends on it.
 
 ## 7. Build-out roadmap
 
