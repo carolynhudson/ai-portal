@@ -971,6 +971,36 @@ once run — it passed the scan row to an estimator speaking a different vocabul
 `None` for all 16 models on this box. Repricing is exactly what an explicit `ctx-size` needs, so
 §6.12.5 is about making it real, and about the direction a fallback is allowed to be wrong in.
 
+#### 4.10.1 Context is the model's to decide, not the portal's (2026-09-24)
+
+The rule: **nothing the portal writes sets `ctx-size` unless the person composing the personality
+wrote it.** A model runs at the context its own header declares. The portal does not choose a "safe"
+context, does not pre-fill one in the editor, and does not carry one in a builtin.
+
+This is a rule rather than an observation because of what this box started from: the migrated tree
+capped **every** model at `ctx-size = 65536` — 262144-trained models and a 1048576-trained one alike
+(`tools/phase1_build_model_tree.py`, with a comment saying so). A cap that low is invisible
+capability loss: model, page and user all agree the model is shorter than it is, and the file never
+says who decided. The live `presets.ini` today has no model sections and no `ctx-size` in it at all.
+
+Two things can still shrink a context, and neither is the portal deciding for the operator:
+
+| who | when | where you can see it |
+|---|---|---|
+| llama.cpp `fit` (default `on`) | at load, for arguments left unset only | its own log: `context size reduced from 1048576 to 957184` (§6.12.7) |
+| the operator | by writing `ctx-size` in that model's section | the line itself — and a refusal if it asks for more than the model or the aperture can pay for |
+
+So "no other choice in order to fit" is handled by `fit`, which measures free device memory and
+reduces what it must. The portal's job is the reporting: the models page says which models do not fit
+at their trained context and states that it set nothing, and the `fit` description says it may pick a
+smaller context than the model can address. The portal's own estimate of the largest fitting context
+stays an estimate — shown as one, never written into the file the router reads.
+
+Guarded by `test_no_personality_limits_a_context_the_author_did_not_choose` (no builtin override, no
+global default, no line for a personality that names models) and, on the other side of the rule,
+`test_an_explicit_context_choice_survives_everything_else` — because a generator that dropped
+`ctx-size` on the floor would pass the first guard while breaking the operator's decision.
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |

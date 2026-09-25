@@ -13,6 +13,22 @@ the directory names the router will assign.
 Usage:
   python3 phase1_build_model_tree.py --dry-run   # show what would happen
   python3 phase1_build_model_tree.py             # build
+
+Do not re-run this. It is the record of a one-time migration, and its preset template has three
+problems that were found by measurement after it ran:
+
+  * `mmap = 1` in `[*]` is not a preset key in the current build. The router rejects the whole file:
+    "option 'mmap' not recognized in preset '*'". Re-running this writes a presets.ini the router
+    will not load at all.
+  * every model section writes `ctx-size = 65536`, capping models trained at 262144 and one trained
+    at 1048576 alike. That silently removes capability and is the opposite of the portal's policy
+    now (§4.10.1): nothing writes ctx-size unless the operator asks for it.
+  * `fit = on` restates the server's own default, and `fit-target = 8192` re-tunes a mechanism whose
+    behaviour this project has since measured and rewritten about (§6.12.7).
+
+What writes ~/ai/config/llama/presets.ini now is app/core/personality.py, through the personalities
+page. The model tree this script built -- hard links under ~/ai/models/llama -- is still the tree in
+use, which is why the file stays in the tree.
 """
 from __future__ import annotations
 

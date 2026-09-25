@@ -130,7 +130,8 @@
      the one the old page could not answer — can it run *here* — and it reads off
      the GPU aperture, not free RAM (§6.12.0). #}
   <p class="mut" style="margin:.2rem 0 .8rem">one row per model · size is all shards summed ·
-    “fits” is against the {{ pool_h }} GPU aperture at the model’s trained context</p>
+    “fits” is against the {{ pool_h }} GPU aperture at the model’s trained context ·
+    this page writes nothing: no ctx-size is set here, so a model runs at the context its own header declares</p>
   {# `scroll` is kept as well as `grid-wrap`: the UI harness checks that every named
      table sits in a scroll container (tests/ui/run.mjs), and it recognises either an
      inline overflow style or the project's `scroll` class. Dropping `scroll` here would
@@ -172,11 +173,11 @@
       <td class="mono">{% if not m.has_chat_template %}<span class="tag warn" title="the GGUF carries no tokenizer.chat_template — a base/completion model">no template</span>{% else %}{% for k in m.template_markers.split(',') if m.template_markers %}<span class="tag info">{{ k }}</span> {% endfor %}{% if not m.template_markers %}<span class="mut">template, no roles</span>{% endif %}{% endif %}</td>
       <td class="mono">{{ m.peak_h }} <span class="mut">@{{ (m.est_ctx or 0) | ctxlen }}</span></td>
       <td>
-        {% if m.verdict == "yes" %}<span class="tag ok">fits</span>
-        {% elif m.verdict == "reduced" %}<span class="tag warn">reduced</span>
-        {% elif m.verdict == "never" %}<span class="tag bad">never</span>
-        {% else %}<span class="tag mut">unknown</span>{% endif %}
-        {% if m.verdict == "reduced" and m.est_ctx %}<div class="mut">max {{ m.est_ctx | ctxlen }}</div>{% endif %}
+        {% if m.verdict == "yes" %}<span class="tag ok" title="fits at its trained context, with headroom">fits</span>
+        {% elif m.verdict == "reduced" %}<span class="tag warn" title="does not fit at its trained context. Nothing in presets.ini sets ctx-size, so llama.cpp's fit (on by default) picks a smaller context at load; write ctx-size in this model's section to make that decision yourself">reduced</span>
+        {% elif m.verdict == "never" %}<span class="tag bad" title="cannot be paid for here even at a minimal context">never</span>
+        {% else %}<span class="tag mut" title="no attention geometry in the index, so there is no number to compare against the aperture">unknown</span>{% endif %}
+        {% if m.verdict == "reduced" and m.est_ctx %}<div class="mut" title="the portal's estimate of the largest context that fits, shown as an estimate -- it is not written to the file the router reads">max {{ m.est_ctx | ctxlen }}</div>{% endif %}
       </td>
     </tr>
     {% endfor %}

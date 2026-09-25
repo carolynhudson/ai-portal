@@ -345,10 +345,12 @@ def test_generated_file_parses_the_way_the_router_reads_it(library):
 def test_fit_keys_stay_out_of_every_generated_file(library):
     """`fit` is registered — the editor should be able to talk about it — but no builtin emits it.
 
-    `fit_probe.py` measured two things that make it unsafe as a default: `fit` is blind to memory
-    other processes already hold (18 GB held elsewhere changed the context it chose by nothing at
-    all), and it does not bound the model it is applied to (an 87.2 GB model occupied ~98 GB under
-    `--fit-target 8192`). The owner had already deleted both keys from the live file by hand.
+    Three reasons, and the first one changed when §6.12.7 re-measured the question. `fit` is *not*
+    blind to memory other processes hold on the device — it measures free device memory and does
+    reduce the context; what it misses is host RAM and the compute graph it allocates after
+    declaring success. What keeps these keys out of the generated file is that `fit`'s default is
+    already `on` (so writing it says nothing), that it decides per load rather than against a plan,
+    and that the owner had deleted both keys from the live file by hand.
 
     Written against `render()` rather than the preview route on purpose: the route needs an
     authenticated client and a library the shared model index agrees about, and this assertion is
@@ -372,6 +374,42 @@ def test_fit_keys_stay_out_of_every_generated_file(library):
 
 
 # ------------------------------------------------ settings that would say nothing
+
+def test_no_personality_limits_a_context_the_author_did_not_choose(library):
+    """Nothing the portal writes may cap a context unless somebody asked for that cap.
+
+    The tree this box started from capped every model at `ctx-size = 65536` -- models trained at
+    262144 and one trained at 1048576 alike. A cap that low is invisible capability loss: the model,
+    the page and the user all agree the model is shorter than it is, and the file never says who
+    decided. So the absence of `ctx-size` is the policy, and it needs a guard rather than a habit:
+    no builtin carries an override, no global default carries the key, and a personality that lists
+    models without overrides renders no `ctx-size` line at all.
+
+    Shrinking still happens -- llama.cpp's `fit` does it at load when it has no choice (§6.12.7).
+    The difference is that the portal reports that instead of causing it.
+    """
+    assert "ctx-size" not in P.GLOBAL_DEFAULTS, \
+        "a global ctx-size caps every model in the library at once"
+    for b in P.builtins():
+        for model, per in (b.get("overrides") or {}).items():
+            assert "ctx-size" not in per, \
+                f"builtin {b['name']!r} caps {model} at {per.get('ctx-size')}"
+    text = P.render({"name": "x", "models_max": 3,
+                     "models": ["small", "medium", "huge"]})["text"]
+    assert "ctx-size" not in text
+
+
+def test_an_explicit_context_choice_survives_everything_else(library):
+    """The other half of the rule: when an operator does choose, the choice is written verbatim.
+
+    A guard that only proves "we never cap" would be satisfied by a generator that dropped ctx-size
+    on the floor, which is the same bug wearing the opposite clothes.
+    """
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "overrides": {"small": {"ctx-size": 2048}}})
+    assert "ctx-size = 2048" in out["text"]
+    assert out["omitted"] == []
+
 
 def test_global_defaults_are_all_real_choices_not_copies_of_the_servers(library):
     """Nothing in the shipped global section may be a restatement of llama-server's own default.
