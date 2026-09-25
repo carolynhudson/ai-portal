@@ -3,6 +3,10 @@ name = "ai-portal"
 version = "0.1.0"
 description = "AI Tool Management Web Portal — manage llama.cpp, ComfyUI, and Hugging Face on this box"
 requires-python = ">=3.14"
+# Runtime only. `gguf` used to be listed here and nothing imported it -- the portal parses GGUF
+# headers itself in app/core/modelmeta.py -- while the package dragged numpy into the deployed venv.
+# tests/test_dependencies.py fails if a declared runtime package stops being used or a used one
+# stops being declared, which is what kept this list honest-looking while it was wrong.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -10,12 +14,16 @@ dependencies = [
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
-    "gguf>=0.10",
     "huggingface_hub>=0.26",
 ]
 
 [project.scripts]
 ai-portal = "app.main:run"
+
+# Test-only, and deliberately absent from the box that runs the portal: app/deploy.py syncs the
+# deployment with `--no-dev`. `uv sync` installs these; `uv sync --no-dev` does not.
+[dependency-groups]
+dev = ["pytest>=9"]
 
 [build-system]
 requires = ["hatchling"]

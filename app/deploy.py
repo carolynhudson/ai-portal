@@ -15,8 +15,12 @@ Mechanics, in order:
 1. **Export** the chosen git ref (``git archive``) into the target — never the
    working tree, so what runs is always reproducible from a sha. A dirty tree
    warns instead of silently shipping edits.
-2. **Venv** in the target: ``uv sync --frozen`` when uv is available (lockfile
-   decides versions), else ``python -m venv`` + ``pip install -e .``.
+2. **Venv** in the target: ``uv sync --frozen --no-dev`` when uv is available
+   (lockfile decides versions), else ``python -m venv`` + ``pip install -e .``.
+   ``--no-dev`` is the point, not a detail: the dev group is declared in
+   pyproject.toml so the *repo* venv can carry the test harness, and the box that
+   runs the portal is kept free of it. A deployed tree that can run its own tests
+   is a deployed tree with pytest in production.
 3. **Launch files**, all generated (:mod:`app.core.units`): ``portal.env``,
    ``~/ai/bin/ai-portal.sh``, ``~/.config/systemd/user/ai-portal.service``
    (an existing unit file is backed up to ``state/rollback/units/`` first).
@@ -173,11 +177,11 @@ def make_venv(target: Path, dry: bool = False) -> str:
     """Create the runtime venv in the target; returns the python path."""
     uv = shutil.which("uv")
     if uv:
-        p = _run([uv, "sync", "--frozen"], dry=dry, cwd=target, timeout=1800)
+        p = _run([uv, "sync", "--frozen", "--no-dev"], dry=dry, cwd=target, timeout=1800)
         if getattr(p, "returncode", 1) != 0:
             print(f"  uv sync failed, retrying without --frozen: "
                   f"{(getattr(p, 'stderr', '') or '')[-400:]}")
-            p = _run([uv, "sync"], dry=dry, cwd=target, timeout=1800)
+            p = _run([uv, "sync", "--no-dev"], dry=dry, cwd=target, timeout=1800)
             if getattr(p, "returncode", 1) != 0:
                 raise RuntimeError("uv sync failed — see output above")
     else:  # pragma: no cover - uv is the documented toolchain

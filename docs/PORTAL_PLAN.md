@@ -1008,12 +1008,46 @@ global default, no line for a personality that names models) and, on the other s
 | Backend | FastAPI + uvicorn | async (long jobs, SSE log tail), typed, small |
 | Validation | pydantic v2 | request/config models, preset-key validation |
 | HF | `huggingface_hub` | download + cache prune APIs (already on system: 1.2.2 / 1.29.0) |
-| GGUF metadata | `gguf` | parses headers for inventory/matching (gguf-indexer already proves it) |
+| GGUF metadata | ~~`gguf`~~ → stdlib `mmap` + `struct` in `app/core/modelmeta.py` | the plan assumed the package; the shipped reader parses headers itself, and `gguf` was removed 2026-09-24 for never being imported (§5.1) |
 | DB | stdlib `sqlite3` | zero-dep, single file in `~/ai/state/` |
 | HTTP probes | `httpx` | lunarg SDK check, `git ls-remote` alternative |
 | Presets | `configparser` | the INI format the router reads |
 | Frontend | **D1 — open** | see §8; recommendation below |
 | Reuse | `tools/aiportal.py` → `app/core/paths.py`; gguf-indexer code → `app/models/` | don't rewrite proven logic |
+
+### 5.1 The dependency list, audited against what actually runs (2026-09-24)
+
+`gguf` had been in `dependencies` since the plan above was written. It was resolved on every
+`uv lock` and installed on every deploy, and **nothing in the project imported it** —
+`app/core/modelmeta.py` reads GGUF headers with `mmap` and `struct`. Its transitive payload was worse
+than its own size: `numpy`, `requests`, `urllib3` and `charset-normalizer` were installed on the
+machine serving the portal. Nothing ever failed, because an unused dependency never does.
+
+| | |
+|---|---|
+| runtime (`dependencies`) | fastapi, uvicorn[standard], pydantic, jinja2, python-multipart, httpx, huggingface_hub |
+| dev (`[dependency-groups].dev`) | pytest |
+| deployed venv | runtime only — `app/deploy.py` runs `uv sync --frozen --no-dev` |
+| repo venv | `uv sync`, dev group included by uv's default |
+| `requirements.txt` | generated: `uv export --no-editable --no-dev --no-hashes --frozen -o requirements.txt` |
+
+`requirements.txt` is a **derived** artifact and not a second source of truth: its header names the
+exact command, and a test refuses it if the runtime set drifts or the dev group leaks into it. It
+exists for tools that speak pip; `uv.lock` still decides versions.
+
+`tests/test_dependencies.py` is what makes the audit durable — three claims, each mutation-checked:
+
+1. **no declared runtime package may be unused**, except one sitting on an explicit list that has to
+   explain itself: `python-multipart` is load-bearing for FastAPI's `Form(...)`/`File(...)` and no
+   import line names it. The exemption list itself fails if it holds a package that *is* imported, so
+   it cannot collect fossils.
+2. **every third-party module `app/` imports must be declared** — the direction that catches a runtime
+   need hiding in a test-only venv.
+3. **`uv sync` installs the dev group by default**, so every uv invocation in the deploy path is
+   asserted to carry `--no-dev`. Forget the flag and the harness lands in production, silently.
+
+Re-resolving after removing `gguf` dropped five packages from the venv and left the gate at **568
+passed, 1 skipped** — which is the measurement that nothing needed it.
 
 ## 6. Safety model
 
