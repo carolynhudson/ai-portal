@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -29,6 +30,11 @@ from pathlib import Path
 
 # Throwaway home before the app is imported (same pattern as test_smoke.py).
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-mi-"))
+# The two live-provider tests log in with `os.environ["AI_PORTAL_PASSWORD"]`, and this
+# module never set one — so they passed only because some earlier module in the same
+# process had. Set it here, with setdefault like every other module, so the module is
+# self-sufficient when pytest selects it alone.
+os.environ.setdefault("AI_PORTAL_PASSWORD", "mi-test-password")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -1176,3 +1182,323 @@ def test_live_models_outside_the_library_are_listed_not_dropped(monkeypatch):
     assert "stranger/outside-weights:Q8" in body, "an unaccounted live model vanished"
     assert "Live but not in the library (1)" in body
 
+
+
+# ------------------------------------------------------ the Hugging Face cache
+#
+# The runtime discovers these on its own: measured on the deployed build, a router
+# started with --models-dir pointed elsewhere still listed every cache repo as
+# `[cache] org/repo:QUANT`. So the naming rules in scan_cache() are not the
+# portal's invention — they are transcribed from llama.cpp, and a drift between
+# them means the portal writes preset sections the router will never read.
+
+_REV_A = "a" * 40
+_REV_B = "b" * 40
+_KV = {"block_count": 8, "attention.head_count": 4, "attention.head_count_kv": 2,
+       "embedding_length": 256, "context_length": 4096}
+
+
+def _hub_repo(hub: Path, repo: str, revision: str, files: dict[str, dict],
+              *, refs: str | None = "main") -> Path:
+    """One repo in a fake hub cache, laid out the way `hf download` lays it out.
+
+    `refs=None` builds the state a half-finished download leaves behind: files on
+    disk and no pointer to which revision is current.
+    """
+    folder = hub / f"models--{repo.replace('/', '--')}"
+    snap = folder / "snapshots" / revision
+    for name, kv in files.items():
+        p = snap / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _write_fake_gguf(p, kv or _KV, pad=len(name))
+    if refs is not None:
+        (folder / "refs").mkdir(parents=True, exist_ok=True)
+        (folder / "refs" / refs).write_text(revision + "\n")
+    return snap
+
+
+def _fake_mmproj(path: Path, *, vision: bool = True) -> None:
+    """A projector fixture that declares what a projector declares.
+
+    `general.type` is a top-level string key and `clip.has_vision_encoder` is a
+    top-level bool; written through _write_fake_gguf they would come out arch-
+    prefixed (`testarch.general.type`), the reader would see a projector that
+    declares nothing, and sidecar_type would be None for a reason that has
+    nothing to do with the code under test.
+    """
+    _write_fake_gguf(path, {"block_count": 1}, pad=0)
+    _append_kv_string(path, "general.type", "mmproj")
+    if vision:
+        _append_kv_key(path, "clip.has_vision_encoder", True)
+
+
+def _append_kv_string(path: Path, key: str, value: str) -> None:
+    """_append_kv_key, for a string value instead of a boolean."""
+    raw = bytearray(path.read_bytes())
+    n = struct.unpack_from("<Q", raw, 16)[0]
+    struct.pack_into("<Q", raw, 16, n + 1)
+    path.write_bytes(bytes(raw) + _enc_str(key) + _enc_value(value))
+
+
+def test_a_cache_repo_is_named_exactly_as_the_router_names_it(tmp_path):
+    """The id is the whole point.
+
+    A preset section configures the model whose name it matches, so an id the
+    router does not use is a settings block that silently does nothing — and a
+    budget computed from it prices a model nobody can load.
+    """
+    hub = tmp_path / "hub"
+    snap = _hub_repo(hub, "org/Muse-GGUF", _REV_A, {
+        "IQ3_S/muse-IQ3_S-00001-of-00002.gguf": _KV,
+        "IQ3_S/muse-IQ3_S-00002-of-00002.gguf": _KV,
+        "mmproj-BF16.gguf": _KV,
+    })
+    _fake_mmproj(snap / "mmproj-BF16.gguf")
+
+    models, problems = mi.scan_cache(hub)
+    assert problems == [], problems
+    assert [m["id"] for m in models] == ["org/Muse-GGUF:IQ3_S"]
+    m = models[0]
+    assert m["source"] == "cache"
+    assert m["shard_total"] == 2, "two shards, one model — the part set sums to one cost"
+    assert m["mmproj_bytes"] > 0, "the projector is real memory and has to be priced"
+    assert m["has_mmproj"] and m["has_vision"]
+
+
+def test_the_quant_tag_is_read_the_way_llama_cpp_reads_it(tmp_path):
+    """Upper-casing, dot separators, and the one case that is not a model at all.
+
+    get_gguf_split_info() takes the trailing `[-.]TOKEN` and upper-cases it, and
+    drops a file with no such token. A scanner that guessed "the directory name is
+    the quant" would name these wrongly, and the wrongness shows up as a preset
+    section that matches nothing.
+    """
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Odd-GGUF", _REV_A, {
+        "plain-q4_k_m.gguf": _KV,      # lower case in the filename
+        "other.F16.gguf": _KV,         # dot before the tag, not dash
+        "no_quant_here.gguf": _KV,     # no tag: llama.cpp does not offer it
+    })
+
+    models, problems = mi.scan_cache(hub)
+    assert problems == [], problems
+    assert sorted(m["id"] for m in models) == ["org/Odd-GGUF:F16", "org/Odd-GGUF:Q4_K_M"]
+
+
+def test_only_the_revision_refs_names_is_scanned(tmp_path):
+    """A stale snapshot directory is not a second model.
+
+    hf-cache.cpp resolves refs/main and walks only that revision. Listing the
+    leftovers of an older one would put a model on the page that no load can
+    reach — and if it shares a quant tag, it would look like a duplicate id.
+    """
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Muse-GGUF", _REV_A, {"muse-IQ3_S.gguf": _KV},
+              refs=None)
+    _hub_repo(hub, "org/Muse-GGUF", _REV_B, {"muse-IQ3_S.gguf": _KV}, refs=None)
+    (hub / "models--org--Muse-GGUF" / "refs" / "main").parent.mkdir(parents=True,
+                                                                     exist_ok=True)
+    (hub / "models--org--Muse-GGUF" / "refs" / "main").write_text(_REV_B + "\n")
+
+    models, problems = mi.scan_cache(hub)
+    assert problems == [], problems
+    assert len(models) == 1
+    assert Path(models[0]["path"]).parent.name == _REV_B
+
+
+def test_a_repo_with_no_readable_ref_is_reported_not_guessed(tmp_path):
+    """Files on disk, no pointer to which revision is current.
+
+    Neither the runtime nor the portal can know which snapshot is live, so the
+    model is not offered — and the reason is said out loud rather than the cache
+    simply looking empty."""
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "someone/NoRef-GGUF", _REV_A, {"thing-Q4_K_M.gguf": _KV},
+              refs=None)
+
+    models, problems = mi.scan_cache(hub)
+    assert models == []
+    assert [p["kind"] for p in problems] == ["no-ref"]
+
+
+def test_a_projector_or_draft_file_is_never_a_model_of_its_own(tmp_path):
+    """mmproj and mtp-* files are companions, not loadable models.
+
+    Offering them as models invites loading a projector as if it were a network —
+    and skipping them entirely loses the memory and the vision capability they
+    add to the model they hang off."""
+    hub = tmp_path / "hub"
+    snap = _hub_repo(hub, "org/Muse-GGUF", _REV_A, {
+        "muse-IQ3_S.gguf": _KV,
+        "mmproj-BF16.gguf": _KV,
+        "mtp-muse-IQ3_S.gguf": _KV,
+    })
+    _fake_mmproj(snap / "mmproj-BF16.gguf")
+
+    models, problems = mi.scan_cache(hub)
+    assert problems == [], problems
+    assert [m["id"] for m in models] == ["org/Muse-GGUF:IQ3_S"]
+    assert models[0]["mmproj_bytes"] > 0
+    assert models[0]["sidecar_type"] == "mmproj", "what the file says it is, not what we guessed"
+    assert models[0]["has_vision"]
+
+
+def test_two_quants_that_would_share_one_id_are_reported(tmp_path):
+    """llama.cpp keeps the first file that yields an id and drops the rest.
+
+    Inventing the second one as a model would put something on the page that no
+    load can name; dropping it silently would hide two files answering to one
+    name. So it is recorded."""
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Dup-GGUF", _REV_A, {
+        "one/model-Q4_K_M.gguf": _KV,
+        "two/model-Q4_K_M.gguf": _KV,
+    })
+
+    models, problems = mi.scan_cache(hub)
+    assert [m["id"] for m in models] == ["org/Dup-GGUF:Q4_K_M"]
+    assert [p["kind"] for p in problems] == ["duplicate-id"]
+
+
+def test_an_incomplete_shard_set_in_the_cache_is_a_problem_not_a_row(tmp_path):
+    """Half a sharded model cannot load, in the cache as much as in the library."""
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Half-GGUF", _REV_A, {
+        "half-Q4_K_M-00002-of-00002.gguf": _KV,
+    })
+
+    models, problems = mi.scan_cache(hub)
+    assert models == []
+    assert [p["kind"] for p in problems] == ["incomplete-shards"]
+    assert problems[0]["missing"] == [1]
+
+
+def test_a_shared_id_goes_to_the_library_and_the_shadow_is_said(tmp_path):
+    """Defensive branch, and honest about being defensive.
+
+    A cache id always contains a slash and a library id is a directory name, which
+    cannot — so today the two id spaces cannot collide. This is tested directly
+    because the collision is not the point: `INSERT OR REPLACE` turns an unguarded
+    collision into one model's row silently replacing another's, which surfaces as
+    a wrong fit verdict on the models page and never as an error. The router's own
+    cascade (server-models.cpp:702) says local beats cache, so the portal prices
+    the same copy the runtime would load.
+    """
+    lib = ([{"id": "org/Muse-GGUF:Q4_K_M", "path": str(tmp_path / "lib.gguf"),
+             "source": "library"}], [])
+    cache = ([{"id": "org/Muse-GGUF:Q4_K_M", "path": str(tmp_path / "cache.gguf"),
+               "source": "cache"},
+              {"id": "org/Other-GGUF:Q4_K_M", "path": str(tmp_path / "other.gguf"),
+               "source": "cache"}],
+             [{"kind": "duplicate-id", "model": "org/Other-GGUF:Q4_K_M"}])
+
+    models, problems = mi._merge_sources(lib, cache)
+    assert [m["source"] for m in models] == ["library", "cache"]
+    assert models[0]["path"].endswith("lib.gguf")
+    kinds = sorted(p["kind"] for p in problems)
+    assert kinds == ["duplicate-id", "shadowed-cache-model"], (
+        "a merge that drops either side's problems makes the index look clean")
+
+
+def test_rescan_says_which_models_came_from_where(tmp_path):
+    """The library is a fence; the cache is not.
+
+    A model under ~/ai/models/llama is there because the operator put it there.
+    A model in the hub cache is loadable by the runtime whatever the portal lists,
+    so a page that shows both identically overstates the control the portal has."""
+    lib = tmp_path / "library"
+    (lib / "Local-Model").mkdir(parents=True)
+    _write_fake_gguf(lib / "Local-Model" / "Local-Model.gguf", _KV)
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Cached-GGUF", _REV_A, {"cached-Q4_K_M.gguf": _KV})
+
+    summary = mi.rescan(models_dir=lib, cache_dir=hub, budget_bytes=40 * 2**30)
+    assert summary["library"] == 1
+    assert summary["cache"] == 1
+    rows = {r["id"]: r["source"] for r in mi.rows()}
+    assert rows == {"Local-Model": "library", "org/Cached-GGUF:Q4_K_M": "cache"}
+
+
+def test_a_cache_model_is_marked_as_a_cache_model_on_the_page(monkeypatch):
+    """The page says which rows the operator owns.
+
+    Both sources are loadable and both take per-model settings, so this is not a
+    claim about what can run. It is about provenance: a table that renders a
+    hub-cache model exactly like a library model implies the portal put it there,
+    and the operator who goes looking for it under the library directory finds
+    nothing while the router keeps serving it.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+
+    hub = mi.paths.HOME / "fake-hub"
+    _hub_repo(hub, "org/Cached-GGUF", _REV_A, {"cached-Q4_K_M.gguf": _KV})
+    # Before the seed: _seed_library rescans, and the rescan is what has to see the
+    # hub. Setting it afterwards would produce a page with no cache row and a test
+    # that asserts nothing.
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    _seed_library(monkeypatch, ["Library-Model"])
+
+    c = TestClient(app_main.create_app())
+    c.post("/login", data={"password": os.environ["AI_PORTAL_PASSWORD"]})
+    body = c.get("/models").text
+    assert "org/Cached-GGUF:Q4_K_M" in body, "a model the router can load is missing"
+    assert "Library-Model" in body
+    assert body.count("(hub cache)") == 1, (
+        "the marker is on the cache row only — on both, or neither, and the "
+        "operator cannot tell what the portal manages")
+
+
+def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
+    """The contract that keeps the transcribed rules honest.
+
+    Asked directly — `llama-server --cache-list` is the runtime reading the same
+    directory with its own code. If these two sets ever disagree, the portal is
+    naming models the router will not, and every per-model setting written against
+    that name is inert.
+
+    Skipped where llama-server is not installed; AI_LLAMA_SERVER names it
+    explicitly when the binary is not on PATH."""
+    import shutil
+    import subprocess
+
+    binary = os.environ.get("AI_LLAMA_SERVER") or shutil.which("llama-server")
+    if not binary:
+        pytest.skip("no llama-server to adjudicate the cache listing")
+
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Muse-GGUF", _REV_A, {
+        "IQ3_S/muse-IQ3_S-00001-of-00002.gguf": _KV,
+        "IQ3_S/muse-IQ3_S-00002-of-00002.gguf": _KV,
+        "mmproj-BF16.gguf": {"general.type": "mmproj"},
+        "mtp-muse-IQ3_S.gguf": _KV,
+    })
+    _hub_repo(hub, "org/Odd-GGUF", _REV_B, {
+        "plain-q4_k_m.gguf": _KV, "other.F16.gguf": _KV, "no_quant_here.gguf": _KV,
+    })
+    _hub_repo(hub, "org/Stale-GGUF", _REV_A, {"old-Q8_0.gguf": _KV}, refs=None)
+
+    env = {**os.environ, "HF_HUB_CACHE": str(hub)}
+    try:
+        out = subprocess.run([binary, "--cache-list"], env=env, capture_output=True,
+                             text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        pytest.skip(f"could not run {binary}: {e}")
+    # "   3. org/Muse-GGUF:IQ3_S" — and nothing else. llama.cpp also logs with a
+    # dotted timestamp, so the pattern has to be the numbering, not "starts with a
+    # digit".
+    listed = {m.group(1)
+              for m in (re.match(r"^\s*\d+\.\s+(\S+)\s*$", line)
+                        for line in (out.stdout + out.stderr).splitlines())
+              if m}
+    if not listed and out.returncode != 0:
+        # An older runtime has no --cache-list to ask. There is no answer to
+        # compare against, and failing here would be a statement about the
+        # installed build, not about the naming rules.
+        pytest.skip(f"{binary} does not list the cache itself "
+                    f"(exit {out.returncode}): {out.stderr[:200]!r}")
+    assert listed, f"{binary} --cache-list listed nothing:\n{out.stdout[:400]}\n{out.stderr[:400]}"
+
+    mine = {m["id"] for m in mi.scan_cache(hub)[0]}
+    assert mine == listed, (f"portal says {sorted(mine)}, llama.cpp says {sorted(listed)}")

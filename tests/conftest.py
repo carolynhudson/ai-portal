@@ -46,6 +46,13 @@ import pytest
 # that are no longer on disk, a snapshot a rollback test "restores" that some other test wrote, a
 # presets.ini whose diff starts out empty. Each of those reads like a code bug. Making the home fresh
 # is what makes "the suite is green" a statement about this run.
+# Do NOT set AI_PORTAL_PASSWORD here. It is tempting — a module that forgets to set
+# one gets a KeyError out of its own `os.environ["AI_PORTAL_PASSWORD"]` rather than a
+# clean refusal — but test modules claim it with `setdefault`, so a default placed
+# here wins the race and every module that then logs in with the password it *thinks*
+# it set fails. Failed logins are counted, the throttle table lives in the one
+# session-wide home, and after ten of them every later module gets a 401: that was
+# measured, 56 failures and 12 errors from a single line added here.
 if "AI_PORTAL_HOME" in os.environ:
     SUITE_HOME = os.environ["AI_PORTAL_HOME"]
     _MADE_HOME = False
@@ -80,6 +87,30 @@ def _never_the_real_home():
     # own is a debugging affordance, and cleaning up after them is not mine to do.
     if _MADE_HOME:
         shutil.rmtree(SUITE_HOME, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_login_throttle():
+    """Each module's failed logins stay its own.
+
+    `app.core.ratelimit` keeps its counters in module-level state, and the whole suite
+    runs in one process against one home. So failed attempts from one module are
+    visible to every later module: once `MAX_FAILURES` (10) accumulate, unrelated
+    tests start getting 401s from endpoints they never touched. That was observed —
+    one bad login path in a fixture turned into 56 failures and 12 errors spread
+    across test_hero, test_jobs, test_network, test_comfyui and others, none of which
+    had anything to do with auth. Clearing the counters around each test keeps an
+    auth experiment local to the test that ran it; the throttle itself stays covered
+    by `tests/test_network.py::test_login_throttles_repeated_failures`, which calls
+    `ratelimit.reset()` itself and does its sequence inside a single test.
+    """
+    try:
+        from app.core import ratelimit
+    except Exception:  # noqa: BLE001 — the guard is optional if app/ is unimportable
+        return
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
 
 
 @pytest.fixture(autouse=True, scope="session")

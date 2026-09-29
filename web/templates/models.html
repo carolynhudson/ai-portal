@@ -132,6 +132,12 @@
   <p class="mut" style="margin:.2rem 0 .8rem">one row per model · size is all shards summed ·
     “fits” is against the {{ pool_h }} GPU aperture at the model’s trained context ·
     this page writes nothing: no ctx-size is set here, so a model runs at the context its own header declares</p>
+  <p class="mut" style="margin:0 0 .8rem">rows come from two places: <code>{{ diskroot }}</code> (yours —
+    the portal manages it) and the Hugging Face hub cache, whose rows are labelled
+    <span class="mut">“hub cache”</span> below.
+    Both are loadable and both take per-model settings; the router discovers the cache on its own, so
+    leaving it unlisted would hide models it can already serve. Its ids are read the way llama.cpp
+    reads them — a settings section has to be called what the router calls the model.</p>
   {# `scroll` is kept as well as `grid-wrap`: the UI harness checks that every named
      table sits in a scroll container (tests/ui/run.mjs), and it recognises either an
      inline overflow style or the project's `scroll` class. Dropping `scroll` here would
@@ -152,7 +158,7 @@
          answer this column can give, since "not running" invites loading a second
          copy of a model that is already taking traffic. #}
       <td>{% if m.live %}<span class="tag ok" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% else %}<span class="tag mut" title="on disk, not loaded">·</span>{% endif %}</td>
-      <td class="mono">{{ m.id }}{% if m.live_as and m.live_as != m.id %} <span class="mut">(as {{ m.live_as }})</span>{% endif %}</td>
+      <td class="mono">{{ m.id }}{% if m.live_as and m.live_as != m.id %} <span class="mut">(as {{ m.live_as }})</span>{% endif %}{% if m.source == "cache" %} <span class="mut" title="found in the Hugging Face hub cache, not under {{ diskroot }} — llama.cpp can load it and does list it, but the portal did not put it there">(hub cache)</span>{% elif m.source and m.source != "library" %} <span class="mut">({{ m.source }})</span>{% endif %}</td>
       <td class="mono">{{ m.arch or "—" }}</td>
       <td class="mono">{{ m.quant or "—" }}</td>
       <td class="mono">{{ m.bytes | sz }}{% if (m.shard_total or 1) > 1 %} <span class="mut">({{ m.shard_total }} shards)</span>{% endif %}</td>
@@ -202,7 +208,7 @@
     <tr><th>router id</th><th>note</th></tr>
     {% for m in extra_live %}
     <tr><td class="mono">{{ m.get('id') }}</td>
-        <td class="mut">registered with the router; no matching directory under {{ diskroot }}</td></tr>
+        <td class="mut">registered with the router; no matching directory under {{ diskroot }} and no hub-cache row under that id either</td></tr>
     {% endfor %}
   </table>
   {% endif %}

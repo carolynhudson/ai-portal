@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 from pathlib import Path
@@ -358,95 +359,368 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
             target["sidecars"].append(p)
 
     for key, s in sets.items():
-        parts = s["parts"]
-        have = sorted(parts)
-        # Expected count comes from the shard suffix ("…-of-00003"), which is the
-        # only statement of completeness available. A file with no suffix is a
-        # whole model, so it expects exactly itself.
-        sh = next((_shard_of(p.name) for p in parts.values() if _shard_of(p.name)),
-                  None)
-        expected = sh[1] if sh else 1
-        missing = [n for n in range(1, expected + 1) if n not in parts]
-        if missing:
-            problems.append({"kind": "incomplete-shards", "path": str(entry),
-                             "model": key, "have": have, "missing": missing,
-                             "note": "shard set is incomplete — cannot be loaded"})
-            continue
-        try:
-            head = parts[have[0]]
-            total = sum(p.stat().st_size for p in parts.values())
-            side_bytes = sum(p.stat().st_size for p in s["sidecars"])
-        except OSError as e:
-            problems.append({"kind": "unreadable", "path": str(entry),
-                             "note": f"{type(e).__name__}: {e}"})
-            continue
-        meta = modelmeta.sniff_gguf(head)
-        if not meta:
-            problems.append({"kind": "not-gguf", "path": str(head),
-                             "note": "header did not parse as GGUF"})
-            continue
-        # Sniff the sidecar too, not just its size. The mmproj declares what kind of
+        _model_row(entry.name, "library", entry, key, s["parts"], s["sidecars"],
+                   models, problems)
+
+
+def _model_row(model_id: str, source: str, where: Path, model_key: str,
+               parts: dict[int, Path], sidecars: list[Path],
+               models: list[dict], problems: list[dict]) -> None:
+    """Turn one shard set plus its sidecars into one index row.
+
+    Shared by the library scan and the HF-cache scan deliberately. Two builders
+    would drift, and the drift would be invisible from the outside: a cache row
+    quietly missing a field the budget math needs is a wrong fit verdict, not a
+    crash — the same shape as the imatrix regex bug that a shared column list
+    exists to prevent.
+
+    `where` and `model_key` only feed problems, so a complaint still names the
+    directory and the model it found, whatever the source.
+    """
+    have = sorted(parts)
+    # Expected count comes from the shard suffix ("…-of-00003"), which is the
+    # only statement of completeness available. A file with no suffix is a
+    # whole model, so it expects exactly itself.
+    sh = next((_shard_of(p.name) for p in parts.values() if _shard_of(p.name)),
+              None)
+    expected = sh[1] if sh else 1
+    missing = [n for n in range(1, expected + 1) if n not in parts]
+    if missing:
+        problems.append({"kind": "incomplete-shards", "path": str(where),
+                         "model": model_key, "have": have, "missing": missing,
+                         "note": "shard set is incomplete — cannot be loaded"})
+        return
+    try:
+        head = parts[have[0]]
+        total = sum(p.stat().st_size for p in parts.values())
+        side_bytes = sum(p.stat().st_size for p in sidecars)
+    except OSError as e:
+        problems.append({"kind": "unreadable", "path": str(where),
+                         "note": f"{type(e).__name__}: {e}"})
+        return
+    meta = modelmeta.sniff_gguf(head)
+    if not meta:
+        problems.append({"kind": "not-gguf", "path": str(head),
+                         "note": "header did not parse as GGUF"})
+        return
+    # Sniff the sidecar too, not just its size. The mmproj declares what kind of
         # projector it is (`general.type`, `clip.has_vision_encoder`), so "this model
         # takes image input" is read from a file rather than inferred from a filename
         # prefix or an upstream tag list. Only the first sidecar is opened: it is the one
         # the router would load, and a header read is a few microseconds.
-        side_meta = None
-        for sp in s["sidecars"]:
-            side_meta = modelmeta.sniff_gguf(sp)
-            if side_meta:
-                break
-        models.append({
-            "id": entry.name,
-            "path": str(head),
-            "bytes": total,
-            "shard_total": len(parts),
-            "mmproj_bytes": side_bytes,
-            "arch": meta.get("arch"),
-            "name": meta.get("name"),
-            "quant": _quant_from_name(head.name),
-            "ctx_trained": meta.get("context_length"),
-            "layers": meta.get("block_count"),
-            "kv_heads": meta.get("attention_kv_count"),
-            "attention_heads": meta.get("attention_count"),
-            "embedding_length": meta.get("embedding_length"),
-            "full_attention_interval": meta.get("full_attention_interval"),
-            "rope_dimension_count": meta.get("rope_dimension_count"),
-            "expert_count": meta.get("expert_count"),
-            "expert_used_count": meta.get("expert_used_count"),
-            "is_moe": meta.get("is_moe"),
-            "has_ssm_state": meta.get("has_ssm_state"),
-            # Vision is decided by what sits beside the model, not by the main header:
-            # the mmproj is a separate file. `has_mmproj` is the disk's fact — a file is
-            # there. `has_vision` prefers the mmproj's OWN declaration
-            # (`clip.has_vision_encoder`), which every one of the 8 projectors on this box
-            # states, and falls back to the main header's claim. That way "takes image
-            # input" is a fact read out of a file rather than inferred from an `mmproj-`
-            # filename, and a projector that declared something other than vision would
-            # not be silently labelled vision.
-            "has_vision": bool(side_meta.get("vision_encoder")) if side_meta
-            else bool(meta.get("has_vision")),
-            "has_mmproj": bool(side_bytes),
-            # What the sidecar says it is. Kept separate from has_vision so a future
-            # audio projector can be shown as what it declares instead of being folded
-            # into a vision column.
-            "sidecar_type": (side_meta or {}).get("declared_type"),
-            # What the file says it can speak, read from the chat template it ships
-            # with. Stored as a comma-joined string because it is a set of short
-            # labels, not a flag: "chat,system,tool-results,tools" is one fact per
-            # protocol and a column per protocol would be a schema change every time
-            # a new arch invents a new delimiter.
-            #
-            # Empty string means the template declares none of the tracked protocols —
-            # which for a base model is the expected value, not missing data. The
-            # template itself being absent is a different state and is carried by
-            # has_chat_template so the two are not conflated.
-            "has_chat_template": bool(meta.get("has_chat_template")),
-            "template_markers": ",".join(meta.get("template_markers") or []),
-            "is_aux": False,
-            "header_hash": _header_hash(head),
-            "scanned_at": time.time(),
-            "_meta": meta,
-        })
+    side_meta = None
+    for sp in sidecars:
+        side_meta = modelmeta.sniff_gguf(sp)
+        if side_meta:
+            break
+    models.append({
+        "id": model_id,
+        # 'library' = under ~/ai/models/llama, which the operator owns: taking a
+        # model out of it really does take it out of the router's reach.
+        # 'cache' = in the Hugging Face cache, where llama.cpp discovers it on its
+        # own whatever the portal lists or presets say. The row carries the
+        # difference so nothing downstream claims a fence it does not have.
+        "source": source,
+        "path": str(head),
+        "bytes": total,
+        "shard_total": len(parts),
+        "mmproj_bytes": side_bytes,
+        "arch": meta.get("arch"),
+        "name": meta.get("name"),
+        "quant": _quant_from_name(head.name),
+        "ctx_trained": meta.get("context_length"),
+        "layers": meta.get("block_count"),
+        "kv_heads": meta.get("attention_kv_count"),
+        "attention_heads": meta.get("attention_count"),
+        "embedding_length": meta.get("embedding_length"),
+        "full_attention_interval": meta.get("full_attention_interval"),
+        "rope_dimension_count": meta.get("rope_dimension_count"),
+        "expert_count": meta.get("expert_count"),
+        "expert_used_count": meta.get("expert_used_count"),
+        "is_moe": meta.get("is_moe"),
+        "has_ssm_state": meta.get("has_ssm_state"),
+        # Vision is decided by what sits beside the model, not by the main header:
+        # the mmproj is a separate file. `has_mmproj` is the disk's fact — a file is
+        # there. `has_vision` prefers the mmproj's OWN declaration
+        # (`clip.has_vision_encoder`), which every one of the 8 projectors on this box
+        # states, and falls back to the main header's claim. That way "takes image
+        # input" is a fact read out of a file rather than inferred from an `mmproj-`
+        # filename, and a projector that declared something other than vision would
+        # not be silently labelled vision.
+        "has_vision": bool(side_meta.get("vision_encoder")) if side_meta
+        else bool(meta.get("has_vision")),
+        "has_mmproj": bool(side_bytes),
+        # What the sidecar says it is. Kept separate from has_vision so a future
+        # audio projector can be shown as what it declares instead of being folded
+        # into a vision column.
+        "sidecar_type": (side_meta or {}).get("declared_type"),
+        # What the file says it can speak, read from the chat template it ships
+        # with. Stored as a comma-joined string because it is a set of short
+        # labels, not a flag: "chat,system,tool-results,tools" is one fact per
+        # protocol and a column per protocol would be a schema change every time
+        # a new arch invents a new delimiter.
+        #
+        # Empty string means the template declares none of the tracked protocols —
+        # which for a base model is the expected value, not missing data. The
+        # template itself being absent is a different state and is carried by
+        # has_chat_template so the two are not conflated.
+        "has_chat_template": bool(meta.get("has_chat_template")),
+        "template_markers": ",".join(meta.get("template_markers") or []),
+        "is_aux": False,
+        "header_hash": _header_hash(head),
+        "scanned_at": time.time(),
+        "_meta": meta,
+    })
+
+
+# ------------------------------------------------------------- the HF hub cache
+#
+# llama.cpp finds models in the Hugging Face cache on its own — measured on the
+# deployed b11146, a router started with --models-dir pointed somewhere else still
+# listed every cache repo as `[cache] org/repo:QUANT`, and a preset section keyed
+# by that exact id was accepted and could give it an alias. So the cache is a
+# second source the portal has to name the same way the router does, or the
+# per-model settings it writes land on a name the router never uses.
+#
+# The rules below are transcribed from the build in use, not guessed:
+#   common/download.cpp:964 common_list_cached_models() — shard part 1 only, tag
+#     must be non-empty, prefix containing mmproj/mtp-/eagle3-/dflash-/dspark- is
+#     skipped, id = repo_id + ":" + tag, first one wins.
+#   common/download.cpp:506 get_gguf_split_info() — the shard suffix and the
+#     trailing `[-.]TAG` (upper-cased).
+#   common/hf-cache.cpp:374 get_cached_ref() — refs/main wins, else the first
+#     readable ref; only that one revision is scanned, so a stale snapshot
+#     directory is not a model and must not become one here either.
+_HF_SPLIT = re.compile(r"^(.+)-([0-9]{5})-of-([0-9]{5})$", re.IGNORECASE)
+_HF_TAG = re.compile(r"[-.]([A-Za-z0-9_]+)$")
+_HF_NOT_A_MODEL = ("mmproj", "mtp-", "eagle3-", "dflash-", "dspark-")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def hub_dir(root: Path | None = None) -> Path:
+    """Where the hub cache lives, the way the runtime finds it.
+
+    `HF_HUB_CACHE` is what the huggingface tooling honours, and llama.cpp's own
+    `get_cache_path()` consults the same environment. Defaulting to paths.HF_CACHE
+    keeps this inside the portal home, so a test sandbox that redirects the home
+    redirects the cache too instead of reading the operator's real one.
+    """
+    if root is not None:
+        return Path(root)
+    env = os.environ.get("HF_HUB_CACHE")
+    if env:
+        return Path(env)
+    return paths.HF_CACHE / "hub"
+
+
+def _repo_id(dirname: str) -> str | None:
+    """`models--org--repo` -> `org/repo`; `models--repo` -> `repo`.
+
+    The same decoding hf-cache.cpp does (folder_name_to_repo). The id matters:
+    it is what a preset section has to be called for the router to take it.
+    """
+    if not dirname.startswith("models--"):
+        return None
+    rest = dirname[len("models--"):]
+    org, _, repo = rest.partition("--")
+    return f"{org}/{repo}" if repo else org
+
+
+def _cached_commit(repo_dir: Path) -> str | None:
+    refs = repo_dir / "refs"
+    if not refs.is_dir():
+        return None
+    fallback = None
+    for f in sorted(refs.iterdir()):
+        if not f.is_file():
+            continue
+        try:
+            commit = f.read_text(errors="replace").split("\n", 1)[0].strip()
+        except OSError:
+            continue
+        if not _COMMIT_RE.match(commit):
+            continue
+        if f.name == "main":
+            return commit
+        fallback = fallback or commit
+    return fallback
+
+
+def _hf_split(name: str) -> tuple[str, int, int, str | None]:
+    """(base, part, total, TAG) for a cache filename, mirroring get_gguf_split_info.
+
+    TAG is None when the name carries no trailing `[-.]TOKEN` — llama.cpp skips
+    such a file as a model, so it is not one here either.
+    """
+    stem = name[:-5] if name.lower().endswith(".gguf") else name
+    part, total = 1, 1
+    m = _HF_SPLIT.match(stem)
+    if m:
+        stem, part, total = m.group(1), int(m.group(2)), int(m.group(3))
+    t = _HF_TAG.search(stem)
+    return stem, part, total, t.group(1).upper() if t else None
+
+
+def scan_cache(root: Path | None = None) -> tuple[list[dict], list[dict]]:
+    """Rows for every model llama.cpp can already see in the hub cache.
+
+    Never an exception, same contract as scan_library — this reads a directory
+    the portal does not own, populated by a third-party downloader.
+    """
+    hub = hub_dir(root)
+    if not hub.is_dir():
+        return [], [{"kind": "missing-dir", "path": str(hub),
+                     "note": "no Hugging Face hub cache here"}]
+
+    models: list[dict] = []
+    problems: list[dict] = []
+    for repo in sorted(hub.iterdir()):
+        if not repo.is_dir():
+            continue
+        repo_id = _repo_id(repo.name)
+        snaps = repo / "snapshots"
+        if repo_id is None or not snaps.is_dir():
+            continue
+        commit = _cached_commit(repo)
+        if not commit:
+            problems.append({"kind": "no-ref", "path": str(repo),
+                             "note": "refs/ is missing or unreadable — neither "
+                                     "llama.cpp nor the portal can tell which "
+                                     "revision on disk is the current one"})
+            continue
+        snap = snaps / commit
+        if not snap.is_dir():
+            problems.append({"kind": "snapshot-missing", "path": str(snap),
+                             "model": repo_id,
+                             "note": "refs/ names a revision that is not on disk"})
+            continue
+        _scan_cache_repo(snap, repo_id, models, problems)
+    return models, problems
+
+
+def _quant_bits(tag: str | None) -> int:
+    """`Q5_K_M` -> 5, `BF16` -> 16, no digits -> 0. extract_quant_bits()."""
+    if not tag:
+        return 0
+    for i, c in enumerate(tag):
+        if c.isdigit():
+            try:
+                return int(tag[i:])
+            except ValueError:
+                return 0
+    return 0
+
+
+def _merge_sources(library: tuple[list[dict], list[dict]],
+                   cache: tuple[list[dict], list[dict]],
+                   ) -> tuple[list[dict], list[dict]]:
+    """One index out of two sources, keeping every problem either scan found.
+
+    The library is a set the operator owns; the hub cache is a set llama.cpp
+    reads whether the portal looks at it or not (measured: a router started with
+    `--models-dir` elsewhere still listed every cache repo by its
+    `org/repo:QUANT` id). Indexing both is what lets a per-model section, a budget and
+    a fit verdict apply to a model the operator can actually load.
+
+    On a shared id the library entry wins, matching the router's own cascade —
+    "if a model exists in both cached and local, local takes precedence"
+    (server-models.cpp:702). Worth being straight about the odds: a cache id
+    always contains a slash and a library id is a directory name, which cannot,
+    so today the two id spaces are disjoint and this branch is defensive. It is
+    kept because `INSERT OR REPLACE` makes an unguarded collision a silent
+    overwrite, and a source that silently overwrites another model's row is the
+    kind of defect that shows up as a wrong fit verdict rather than as an error.
+    """
+    lib_models, lib_problems = library
+    cache_models, cache_problems = cache
+    models = list(lib_models)
+    problems = list(lib_problems)
+    have = {m["id"] for m in models}
+    for m in cache_models:
+        if m["id"] in have:
+            problems.append({"kind": "shadowed-cache-model", "model": m["id"],
+                             "path": m["path"],
+                             "note": "another source already has this id — the "
+                                     "library entry is the one the router loads"})
+            continue
+        have.add(m["id"])
+        models.append(m)
+    problems.extend(cache_problems)
+    return models, problems
+
+
+def _best_sibling(sidecars: list[tuple[Path, tuple[str, ...]]],
+                  model_dir: tuple[str, ...], tag: str | None) -> Path | None:
+    """The projector this model would actually get — find_best_sibling().
+
+    Worth mirroring rather than approximating: an mmproj is real memory and real
+    capability, so picking the wrong one (or none) misprices the model and gets
+    `has_vision` wrong. The rule is: the sidecar's whole directory must match the
+    model's directory prefix, then prefer the deeper match, then a sidecar whose
+    path says `-TAG.`, then the closest quant. A repo-root projector therefore
+    still attaches to a model filed under a quant subdirectory, at depth 0.
+    """
+    best: Path | None = None
+    best_depth = best_diff = -1
+    best_exact = False
+    model_bits = _quant_bits(tag)
+    for sp, sib_dir in sidecars:
+        if model_dir[:len(sib_dir)] != sib_dir:
+            continue
+        depth = len(sib_dir)
+        diff = abs(_quant_bits(_hf_split(sp.name)[3]) - model_bits)
+        exact = bool(tag) and f"-{tag.upper()}." in sp.name.upper()
+        if (best is None or depth > best_depth
+                or (depth == best_depth and exact and not best_exact)
+                or (depth == best_depth and exact == best_exact and diff < best_diff)):
+            best, best_depth, best_diff, best_exact = sp, depth, diff, exact
+    return best
+
+
+def _scan_cache_repo(snap: Path, repo_id: str, models: list[dict],
+                     problems: list[dict]) -> None:
+    """One repo revision -> rows keyed `repo_id:TAG`, as the router names them."""
+    sets: dict[str, dict] = {}
+    sidecars: list[tuple[Path, tuple[str, ...]]] = []
+    for entry in sorted(p for p in snap.rglob("*") if p.is_file() or p.is_symlink()):
+        if entry.suffix.lower() != ".gguf":
+            continue
+        base, part, total, tag = _hf_split(entry.name)
+        rel = entry.relative_to(snap)
+        rel_dir = rel.parent.parts
+        if "mmproj" in entry.name.lower():
+            # A projector, never a model of its own. Kept with its position relative
+            # to the revision, because the pairing below ranks by directory depth —
+            # and a sidecar at the revision root has no parts at all, which is what
+            # lets a repo-level `mmproj-BF16.gguf` pair with models that live inside
+            # per-quant subdirectories.
+            sidecars.append((entry, rel_dir))
+            continue
+        if any(s in base.lower() for s in _HF_NOT_A_MODEL) or tag is None:
+            continue
+        s = sets.setdefault(f"{rel.parent}/{base}", {"parts": {}, "sidecars": [],
+                                                    "tag": tag, "id": f"{repo_id}:{tag}"})
+        s["parts"][part] = entry
+
+    seen: set[str] = set()
+    for key, s in sets.items():
+        if s["id"] in seen:
+            # llama.cpp keeps the first and drops the rest; recording the shadow is
+            # the difference between "the portal knows" and "the portal invented a
+            # model that no load can name".
+            problems.append({"kind": "duplicate-id", "path": str(snap),
+                             "model": s["id"],
+                             "note": "another quant in this repo already claims the "
+                                     "id — llama.cpp keeps the first, so this one is "
+                                     "not loadable under that name"})
+            continue
+        seen.add(s["id"])
+        model_dir = s["parts"][min(s["parts"])].relative_to(snap).parent.parts
+        pick = _best_sibling(sidecars, model_dir, s["tag"])
+        if pick is not None:
+            s["sidecars"].append(pick)
+        _model_row(s["id"], "cache", snap, key, s["parts"], s["sidecars"],
+                   models, problems)
 
 
 _QUANT_RE = re.compile(r"(Q\d+(?:_[A-Z]\d*)?|IQ\d+(?:_[A-Z]\d+)?|BF16|F16|F32)",
@@ -464,7 +738,7 @@ def _quant_from_name(name: str) -> str | None:
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS model_index (
   id TEXT PRIMARY KEY,
-  path TEXT, bytes INTEGER, shard_total INTEGER, mmproj_bytes INTEGER,
+  source TEXT, path TEXT, bytes INTEGER, shard_total INTEGER, mmproj_bytes INTEGER,
   arch TEXT, name TEXT, quant TEXT, ctx_trained INTEGER,
   layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
   embedding_length INTEGER, full_attention_interval INTEGER,
@@ -513,7 +787,7 @@ def _est_row(m: dict, est: dict, ctx: int) -> dict:
 # nothing, silently did nothing, and the divergence hid inside the abstraction
 # that was written to prevent it (the imatrix regex, §4.9 notes).
 _WRITE_COLUMNS = (
-    "id", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
+    "id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
     "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
@@ -600,6 +874,10 @@ def _row_values(row: dict) -> list:
 
 
 def init() -> None:
+    # rescan() records an audit event through db, so the index cannot be usable
+    # without db's own schema in place. Assuming some earlier caller did that is
+    # what made two tests here pass only when an unrelated test ran first.
+    db.init()
     conn = db._conn()
     conn.executescript(SCHEMA)
     # Column drift: SCHEMA gains a column, _WRITE_COLUMNS does not notice, and the
@@ -639,7 +917,8 @@ def init() -> None:
     conn.commit()
 
 
-def rescan(models_dir: Path | None = None, budget_bytes: int | None = None) -> dict:
+def rescan(models_dir: Path | None = None, budget_bytes: int | None = None,
+           cache_dir: Path | None = None) -> dict:
     """Rebuild the index. Returns a summary with the problems worth surfacing.
 
     Incremental in effect if not in mechanism: a rescand is ~34 ms/model of
@@ -648,7 +927,10 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None) -> d
     follow-up can skip unchanged rows if it ever becomes worth the state.
     """
     init()
-    models, problems = scan_library(models_dir)
+    library, cache = scan_library(models_dir), scan_cache(cache_dir)
+    models, problems = _merge_sources(library, cache)
+    library_n = sum(1 for m in models if m["source"] == "library")
+
     budget = budget_bytes or _pool_bytes()
     conn = db._conn()
     conn.execute("DELETE FROM model_index")
@@ -665,8 +947,10 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None) -> d
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM model_index").fetchone()[0]
     db.event("portal", "model-index",
-             f"scanned {n} model(s); {len(problems)} problem(s)")
-    return {"models": n, "problems": problems, "budget_bytes": budget}
+             f"scanned {n} model(s) — {library_n} from the library, "
+             f"{n - library_n} from the hub cache; {len(problems)} problem(s)")
+    return {"models": n, "library": library_n, "cache": n - library_n,
+            "problems": problems, "budget_bytes": budget}
 
 
 def _pool_bytes() -> int:
