@@ -1066,6 +1066,91 @@ the measured per-checkpoint sizes and the host-RAM-not-aperture fact. Nothing br
 with a duplicate key is still a valid dict — so the registry literals are now parsed and duplicates are
 refused.
 
+#### 4.10.4 A model config: one file, a name of the operator's choosing, settings per personality (2026-09-25)
+
+A model file is not one thing. The same `Alpha-7B.Q4_K_M.gguf` may want 2048 tokens and two slots for
+work and the whole trained context for a long document, and the operator may want to call it something
+other than the name its author gave the file. Before this, both were impossible without editing the
+same personality that `safe` and `default` are built from — and those two are supposed to be fixed by
+construction.
+
+A **model config** is `(name, base_model, settings, note)`: a stored set of registry-legal keys for one
+library file, addressed by a name the operator chose. A personality's model list can now contain
+library ids (bare: that file, under its own name, llama.cpp's own defaults, no config at all) or config
+names (that file, under the config's name, with the config's settings). `safe` and `default` are made
+entirely of bare entries, which is what keeps them unbreakable by editing a config.
+
+**The router behaviour this is built on**, measured on this box (b10964) and still true of the deployed
+b11146 — both refusal strings are present in `releases/llama.cpp-b11146/libllama-server-impl.so`, and
+in `tools/server/server-models.cpp:616`, `:651`, with the `(aliases: …)` listing at `:789`:
+
+- `[<directory>] alias = <name>` makes the model answer to `<name>` as well; the router logs
+  `* <dir> (aliases: <name>)`. End-to-end through the portal's own generated file: a request for
+  `tiny-chat` returned 200 with `model="tiny-chat"`.
+- A name that collides is **not a warning**: `model name '…' conflicts with alias of model '…'` and the
+  router **exits 1 having loaded nothing**. So every collision shape is refused at save time, where
+  there is a form to answer to, rather than at the next restart: name already a library model, name
+  already another config (aliases share one namespace across all models), name in `RESERVED`
+  (`*`, `safe`, `default`), and the charset/length rule — the router splits aliases on commas and an
+  ini value ends at a newline.
+- Two configs on one model, for one personality, are refused rather than resolved: a preset has one
+  section per model, so "which won" would be answered by dictionary order.
+- A config does not change which model it names. Retargeting would keep the name and the settings while
+  pointing at another file, so every personality assigning it would start meaning something else.
+- A config in use cannot be deleted through the API ("assigned by work"); if it is removed under a
+  personality by other means, `render()` raises ("no stored config") instead of quietly writing a
+  smaller file than the operator believes they are editing.
+
+**Layering is one function**, `_layered_settings()`: `[*]` is the floor (and after 1c4836c it can only
+hold global keys, §4.10.2), the config sits on top of it, and a personality-level override sits on top
+of the config. `render()` writes that result and `budget_for()` prices *the same* result.
+
+**The defect the omission produced**, and the reason the sharing is not a refactor nicety: `budget_for()`
+priced each model at the index's stored estimate, so a config setting `ctx-size = 1024` never moved
+`worst_case_bytes`. A card could read "worst case fits" above a file that would have asked for the
+model's trained context instead — the exact shape of the OOMs §6.12 exists to prevent. Mutation-checked:
+replacing `peak_bytes(row, ctx)` with `peak_bytes(row)` fails exactly
+`test_config_settings_are_what_reprice_the_budget` and no other test. The host-cache side (`parallel`,
+`ctx-checkpoints`, `cache-ram`) reads the same layered dict, so the two ceilings now answer about one
+file rather than two.
+
+**Which personality is running is derived, and now visible.** Nothing stores it. `main.py` sets
+`active = not changed` from `render()`, and the card carries a `pers-active` badge — so a personality is
+active exactly when its own text is the file on disk, and a hand-edited `presets.ini` shows as *nothing
+active* rather than as a personality the router is not running.
+
+Not done: no UI for the override layer (deliberate — two layers writing one key is what this design
+exists to avoid, and it survives only for hand-assembled payloads), and configs carry no per-config
+draft/mmproj choice beyond what the registry already names.
+
+#### 4.10.5 The suite deleted the model library (2026-09-25) — and what now refuses to
+
+Recorded here because the plan is where this project keeps the things it learned the hard way.
+
+A test module added on this date set `AI_PORTAL_PASSWORD` at import and **not** `AI_PORTAL_HOME`.
+`app/core/paths` resolves the home **when it is imported**, not when a fixture runs, so
+`paths.LLAMA_MODELS` was the live `~/ai/models/llama`, and that module's fixture — which clears the
+library so `rescan()` sees only its own models — cleared 13 model directories and 274 GiB of GGUFs.
+Nothing in the test looked wrong. Every other module survived this only because it happened to set the
+variable at its own top: a convention nothing enforced. The data was not recoverable — ext4, no
+snapshots, no trash (rmtree bypasses it), no root, `ptrace_scope=1` blocking the copy still mapped in a
+live worker, and no undelete tooling installed.
+
+Three things are in the repo now instead of discipline:
+
+1. `tests/conftest.py` sets the suite home **at conftest import**, earlier than any test module can
+   import `app.core.paths`, and uses a **fresh `mkdtemp` per run** — a fixed name carried `model_index`
+   rows and snapshots across runs, which showed up as tests passing over state they never created.
+2. A session fixture **aborts the run** if `paths` resolved the real home or anything outside the temp
+   directory. Verified by pointing it at `$HOME`: pytest exits with the alarm and changes nothing.
+3. `tests/sandbox.py` is the only sanctioned way for a test to clear a tree (`clear_library()`,
+   `clear_snapshots()`), and it refuses any target not under the temp directory.
+
+Standing rule for every script in this project, not only tests: **a destructive operation runs
+report-only first** — resolved absolute targets, sizes, and the root it descends from — and the
+executing form is opt-in. A dry run that prints the path the code will actually use is the difference
+between "I meant the temp directory" and "the code was in the temp directory".
+
 ## 5. Libraries & stack (Python 3.14, uv-managed)
 
 | Concern | Choice | Why |
