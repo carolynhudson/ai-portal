@@ -75,22 +75,30 @@ def test_every_key_is_a_plausible_llama_server_argument():
             assert key not in ("ctx", "size", "-size", "="), f"[{section}] fragment key {key!r}"
 
 
-def test_sections_that_name_models_match_directories_on_disk():
-    """A preset section whose name is not a model directory is dead configuration: the
-    router never asks for it. This is the same inconsistency the health pane reports as
-    stale_presets; the generator must not be able to produce it.
+def test_every_model_section_is_a_name_a_loader_could_ask_for():
+    """Sections must be usable directory names, and one model may not be named twice.
 
-    Skipped when the real library is absent (a clean checkout, CI) rather than failing
-    for a reason that has nothing to do with the code.
+    What this test *used* to do was compare the generator's sections against the live library, and
+    that comparison stopped meaning anything the moment it was read as a live check: `PRESETS_INI`
+    here is a frozen literal in `tools/phase1_build_model_tree.py`, a retired one-time record (its
+    own header says so), while the library is whatever happens to be on the machine today. After the
+    library was rebuilt on 2026-09-25 the test failed by naming thirteen models that had been gone for
+    weeks -- a true statement about a snapshot, and not a defect in any code under test.
+
+    The live inconsistency it was standing in for is checked where it actually matters: `health.py`
+    compares the sections of the real presets.ini against the real library and reports them as
+    `stale_presets`, asserted in tests/test_health.py::...Vanished-Model. What is left to assert here
+    is the part that is about this file's own output.
     """
-    library = Path.home() / "ai" / "models" / "llama"
-    if not library.is_dir():
-        pytest.skip("no llama model library on this machine")
-    dirs = {p.name for p in library.iterdir() if p.is_dir() or p.is_symlink()}
     cp = parse(INI)
-    named = {s for s in cp.sections() if s != "*"}
-    dead = sorted(named - dirs)
-    assert not dead, f"preset sections with no model directory: {dead}"
+    named = [s for s in cp.sections() if s != "*"]
+    assert named, "the generator emitted no model sections at all"
+    assert len(named) == len(set(named)), f"two sections name the same model: {named}"
+    for section in named:
+        # The router matches a section to a directory by name, so a section that cannot be a
+        # directory name is configuration no loader will ever ask for.
+        assert re.fullmatch(r"[^/\\\s]+", section), f"unusable section name {section!r}"
+        assert not section.startswith("-"), f"section {section!r} looks like a broken split"
 
 
 def test_generated_output_is_stable_across_two_parses():
