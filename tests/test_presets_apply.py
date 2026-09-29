@@ -154,10 +154,14 @@ def test_check_generated_rejects_undefined_and_router_owned_keys(home):
     controlled-key reason then continues — so a fixture built from `model` can never produce the
     derived-key message. `metrics` is derived only, so it is the key that actually exercises that
     branch.
+
+    `api-key` is the controlled-key exemplar. It used to be `alias`, and `alias` is no longer a
+    plain refusal: it is the one router-controlled key the portal writes, as a model config's name,
+    in that model's own section. Its own rules are in tests/test_model_configs.py.
     """
     known = {r["id"] for r in mi.rows()}
     problems = P.check_generated(
-        "[*]\nnot-a-real-key = 3\nalias = whatever\nmetrics = 1\n", known)
+        "[*]\nnot-a-real-key = 3\napi-key = whatever\nmetrics = 1\n", known)
     joined = "\n".join(problems)
     assert "no definition in the settings registry" in joined
     assert "overwrites this key" in joined

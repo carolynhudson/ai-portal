@@ -47,6 +47,27 @@ CREATE TABLE IF NOT EXISTS model_files (
 CREATE TABLE IF NOT EXISTS presets_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, note TEXT, before TEXT, after TEXT
 );
+-- Model configs and custom personalities (§4.7). Both are definitions the portal *shows*
+-- and validates; presets.ini remains the only thing the router reads.
+--
+-- `model_configs.name` is not a display label: render() writes it into the base model's own
+-- section as `alias = <name>`, and the router then serves and routes by it (measured, b10964:
+-- `/models` lists the alias and a chat request naming it returns 200). That is also why a name is
+-- a Primary key and not a per-personality field -- the router keeps aliases in one namespace across
+-- all models, and a collision makes it refuse to start at all.
+CREATE TABLE IF NOT EXISTS model_configs (
+  name TEXT PRIMARY KEY, base_model TEXT NOT NULL,
+  settings TEXT NOT NULL DEFAULT '{}', note TEXT NOT NULL DEFAULT '',
+  created_at REAL, updated_at REAL
+);
+-- `models` is a JSON list of model config names and/or library model ids; NULL means the whole
+-- library, which is what `default` means and why it stays computed rather than stored.
+CREATE TABLE IF NOT EXISTS personalities (
+  name TEXT PRIMARY KEY, models_max INTEGER NOT NULL DEFAULT 1,
+  note TEXT NOT NULL DEFAULT '', models TEXT,
+  global TEXT NOT NULL DEFAULT '{}',
+  created_at REAL, updated_at REAL
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, actor TEXT, kind TEXT, detail TEXT
 );

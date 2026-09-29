@@ -65,6 +65,13 @@ h2{margin:18px 0 6px}
     <div class="pers-facts">
       <span><b>models_max</b> {{ c.models_max }}</span>
       <span><b>models</b> {{ (c.models or [])|length }}</span>
+      {# "Active" is read off the file, not remembered: main.py sets it from render()["changed"], so a
+         personality is active exactly when its own text is the file on disk, and a hand-edited
+         presets.ini matches none of the cards. `pers-active` is the marker tests assert on; the
+         wording is for the operator. #}
+      {% if g.get('active') %}
+        <span class="badge yes pers-active">is what the router is running now</span>
+      {% endif %}
       {% set b = g.get('budget') or {} %}
       {% if b.get('fits') is true %}
         <span class="badge yes">worst case fits</span>

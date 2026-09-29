@@ -34,7 +34,7 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, modeladd, modelindex, paths, personality, presets_store
+from .core import db, health, modeladd, model_config, modelindex, paths, personality, presets_store
 from .core import systemd, updater
 from . import providers
 from .providers import PROVIDERS, get as get_provider
@@ -106,6 +106,39 @@ class PresetsRollbackBody(BaseModel):
     """Restore a named presets.ini snapshot. `confirm` for the same reason as above: this
     replaces a file the router reads and restarts the router."""
     stamp: str
+    confirm: bool = False
+
+
+class PersonalitySaveBody(BaseModel):
+    """Create or replace a custom personality.
+
+    No `confirm`: this writes the portal's own definition table, not presets.ini, and it restarts
+    nothing. `models_max` stays an int here rather than a string because it is the one value the
+    portal itself parses and acts on (`_models_max` refuses the rest), and `models` is a list of
+    library model ids and/or stored model config names — `None` meaning the whole library, which is
+    what `default` means.
+    """
+    name: str
+    models_max: int = 1
+    note: str = ""
+    models: list[str] | None = None
+    global_edits: dict[str, str] = {}
+
+
+class ModelConfigSaveBody(BaseModel):
+    """Create or update a model config: a name the router will answer to, the library model it
+    renames, and the settings that model gets. Values arrive raw for the same reason as an apply
+    payload — a form field is a string and the registry decides the type."""
+    name: str
+    base_model: str
+    note: str = ""
+    settings: dict[str, str] = {}
+
+
+class NamedBody(BaseModel):
+    """Delete one personality or model config. `confirm` because a delete changes what the next
+    apply would write, and because a config name is something other rows already reference."""
+    name: str
     confirm: bool = False
 
 
@@ -802,19 +835,32 @@ def create_app() -> FastAPI:
         restart.
         """
         budget = modelindex._pool_bytes()
-        cards = [personality.describe(p, budget) for p in personality.builtins()]
+        people = personality.all_personalities()
+        cards = [personality.describe(p, budget) for p in people]
         generated = []
-        for p in personality.builtins():
+        for p in people:
             try:
-                generated.append(personality.render(p, budget))
+                g = personality.render(p, budget)
+                # "Active" is read off the file, not remembered. render() already compares what this
+                # personality would write against what is on disk, so a personality is active exactly
+                # when its file is the file -- which is also why a hand-edited presets.ini shows up
+                # as "nothing is active" rather than as a personality the router is not running.
+                g["active"] = not g.get("changed", True)
+                generated.append(g)
             except personality.PersonalityError as exc:
                 # A personality that cannot be rendered is reported as such on its own
                 # card. Dropping the card would make the page look like the personality
                 # does not exist, which is a different and worse lie.
                 generated.append({"name": p.get("name"), "error": str(exc), "diff": [],
-                                  "text": "", "changed": False, "models": [], "budget": {}})
+                                  "text": "", "changed": True, "active": False,
+                                  "models": [], "budget": {}})
+        configs = model_config.rows()
         return templates.TemplateResponse(request, "personalities.html",
                                           {"cards": cards, "generated": generated,
+                                           "configs": configs,
+                                           "config_uses": {c["name"]: model_config
+                                                           .assigned_personalities(c["name"])
+                                                           for c in configs},
                                            "settings": personality.SETTINGS,
                                            "setting_names": personality.setting_names(),
                                            "pool_h": _human(budget),
@@ -831,13 +877,15 @@ def create_app() -> FastAPI:
     def api_personalities(_=Depends(_require_auth)):
         """JSON for the same view (D1: every read is also an endpoint)."""
         budget = modelindex._pool_bytes()
+        configs = model_config.rows()
         return {
             "budget_bytes": budget,
-            "personalities": [personality.describe(p, budget) for p in personality.builtins()],
-            "settings": [
-                {"key": k, **{f: v for f, v in spec.items() if f != "accepts"}}
-                for k, spec in personality.SETTINGS.items()
-            ],
+            "personalities": [personality.describe(p, budget)
+                              for p in personality.all_personalities()],
+            "personalities_on_disk": [p["name"] for p in personality.stored()],
+            "configs": configs,
+            "assigned": {c["name"]: model_config.assigned_personalities(c["name"]) for c in configs},
+            "settings": _setting_specs(),
         }
 
     @app.post("/api/personalities/preview")
@@ -957,13 +1005,107 @@ def create_app() -> FastAPI:
     def _personality_by_name(name: str) -> dict:
         """Resolve a personality name to the definition the generator will use.
 
-        Only built-ins are resolvable today; custom personalities are future work. An unknown
-        name raises so the route answers 404 rather than silently applying something else.
+        Built-ins and stored ones resolve identically, which is the point: a custom personality is
+        not a second kind of personality with a second set of rules, it is the same shape coming
+        from the database instead of from the module. An unknown name raises so the route answers
+        404 rather than silently applying something else.
         """
-        for p in personality.builtins():
+        for p in personality.all_personalities():
             if p.get("name") == name:
                 return dict(p)
         raise ValueError(f"no personality named {name!r}")
+
+    def _setting_specs() -> list[dict]:
+        """The registry as data: what every writable key means, what it accepts, what it costs.
+
+        `accepts` is left out because it is a callable, and a JSON projection of a callable is a
+        string nobody can act on. The rules themselves stay in Python where the generator uses them.
+        """
+        return [{"key": k, **{f: v for f, v in spec.items() if f != "accepts"}}
+                for k, spec in personality.SETTINGS.items()]
+
+    @app.get("/api/model-configs")
+    def api_model_configs(_=Depends(_require_auth)):
+        """Stored model configs, the library models they may be built on, and who uses them.
+
+        `assigned` is part of the read rather than something the delete route works out later: the
+        page has to show that deleting `tiny-chat` would take the settings and the name away from
+        `work`, before the operator asks it to.
+        """
+        configs = model_config.rows()
+        return {
+            "configs": configs,
+            "bases": [r["id"] for r in modelindex.rows()],
+            "assigned": {c["name"]: model_config.assigned_personalities(c["name"]) for c in configs},
+            "settings": _setting_specs(),
+        }
+
+    @app.post("/api/model-configs/save")
+    def api_model_config_save(body: ModelConfigSaveBody, _=Depends(_require_auth)):
+        """Save one model config. Refuses before writing: a name the router would collide with, a
+        base model that is not in the library, or a value the registry refuses.
+
+        Not gated on `confirm` or on the machine being idle: this changes a definition the portal
+        keeps, not the file the router reads. presets.ini only changes through Apply.
+        """
+        try:
+            clean = personality.normalize_config(body.name, body.base_model, body.settings,
+                                                 body.note)
+            saved = model_config.save(clean["name"], clean["base_model"], clean["settings"],
+                                      clean["note"])
+        except (personality.PersonalityError, model_config.ConfigError) as e:
+            raise HTTPException(400, str(e)) from None
+        return {"config": saved,
+                "assigned": model_config.assigned_personalities(saved["name"]),
+                "personalities": [p["name"] for p in personality.stored()]}
+
+    @app.post("/api/model-configs/delete")
+    def api_model_config_delete(body: NamedBody, _=Depends(_require_auth)):
+        """Delete a model config, unless a personality is still using it.
+
+        The refusal is the interesting half. A config that vanishes from under a personality does
+        not error anywhere: the personality simply stops carrying those settings and the next apply
+        writes a smaller file than the operator believes they are editing.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        users = model_config.assigned_personalities(body.name)
+        if users:
+            raise HTTPException(400, f"{body.name!r} is assigned by {', '.join(users)}; remove it "
+                                     f"from those personalities first")
+        if not model_config.delete(body.name):
+            raise HTTPException(404, f"no model config named {body.name!r}")
+        return {"deleted": body.name}
+
+    @app.post("/api/personalities/save")
+    def api_personality_save(body: PersonalitySaveBody, _=Depends(_require_auth)):
+        """Create or replace a custom personality.
+
+        `safe` and `default` are refused by name: they are derived from the library, which is what
+        makes them a floor a bad edit can be recovered to. Saving through here still cannot reach
+        presets.ini — that stays Apply's job.
+        """
+        try:
+            saved = personality.save_personality(
+                body.name, body.models_max, body.note, body.models, body.global_edits,
+                modelindex._pool_bytes())
+        except personality.PersonalityError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"personality": personality.describe(saved, modelindex._pool_bytes()),
+                "personalities": [p["name"] for p in personality.stored()]}
+
+    @app.post("/api/personalities/delete")
+    def api_personality_delete(body: NamedBody, _=Depends(_require_auth)):
+        """Delete a custom personality. `safe` and `default` are refused rather than absent: the
+        page should say why the button is not there instead of hiding it."""
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="confirm required")
+        try:
+            if not personality.delete_personality(body.name):
+                raise HTTPException(404, f"no personality named {body.name!r}")
+        except personality.PersonalityError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"deleted": body.name}
 
     @app.get("/api/models")
     def api_models(_=Depends(_require_auth)):

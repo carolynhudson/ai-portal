@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import configparser
 import difflib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core import db, modelindex, modelmeta, paths
+from app.core import db, model_config, modelindex, modelmeta, paths
 
 # The router's own preset-exclusive options, from llama.cpp tools/server/README.md.
 # These are NOT command-line arguments and only exist inside a preset file, so they are
@@ -616,24 +617,57 @@ def _rows() -> list[dict]:
     return modelindex.rows()
 
 
-def resolve_models(personality: dict) -> list[str]:
-    """Expand a personality's `models` (None = whole library) to real directory names.
+def resolve_targets(personality: dict) -> list[dict]:
+    """Expand a personality's `models` into (library model, model config) pairs.
 
-    Unknown names raise. A personality that quietly drops a model the operator named is
-    worse than one that refuses: the operator would see a working-looking box missing the
-    model they were about to rely on.
+    An entry is one of two things. A library model id means that file under its own name with
+    llama.cpp's own defaults and no config at all — which is what `default` and `safe` are made of,
+    and why they cannot be changed by accident. The name of a stored model config means the same
+    file plus that config's settings, addressed by the config's name (§4.10.4).
+
+    Two rules here are refusals rather than conveniences:
+
+      * an unknown name raises, because a personality that quietly drops a model the operator named
+        is a personality the operator will trust until the model is missing;
+      * two entries covering the same file raise, because a preset has one section per model, so
+        "which config won" would be answered by dictionary ordering.
     """
     known = {r["id"] for r in _rows()}
+    configs = {c["name"]: c for c in model_config.rows()}
     named = personality.get("models")
     if named is None:
-        return sorted(known)
-    unknown = [m for m in named if m not in known]
+        return [{"model": mid, "config": None} for mid in sorted(known)]
+
+    out: list[dict] = []
+    unknown: list[str] = []
+    covered: dict[str, str] = {}
+    for entry in named:
+        if entry in known:
+            base, conf = entry, None
+        elif entry in configs:
+            base, conf = configs[entry]["base_model"], entry
+        else:
+            unknown.append(entry)
+            continue
+        if base in covered:
+            raise PersonalityError(
+                f"personality {personality.get('name')!r} assigns {covered[base]!r} and "
+                f"{entry!r} to the same model {base!r}; a preset has one section per model, so "
+                f"which config's settings and whose name win would be decided by ordering")
+        covered[base] = entry
+        out.append({"model": base, "config": conf})
+
     if unknown:
         raise PersonalityError(
-            f"personality {personality.get('name')!r} names models with no library "
-            f"entry: {', '.join(unknown)}"
+            f"personality {personality.get('name')!r} names models or model configs with no "
+            f"library entry and no stored config: {', '.join(unknown)}"
         )
-    return list(named)
+    return out
+
+
+def resolve_models(personality: dict) -> list[str]:
+    """The library model ids a personality covers. See resolve_targets for what an entry may be."""
+    return [t["model"] for t in resolve_targets(personality)]
 
 
 #: llama.cpp's `parallel = -1` means "decide for me", and what it decides is measurable: 4 slots
@@ -642,13 +676,44 @@ def resolve_models(personality: dict) -> list[str]:
 AUTO_PARALLEL_SLOTS = 4
 
 
-def _effective(personality: dict, model_id: str, key: str, fallback: Any) -> Any:
+def _layered_settings(personality: dict, targets: list[dict] | None = None,
+                      configs: dict[str, dict] | None = None) -> dict[str, dict[str, Any]]:
+    """The model sections this personality produces, keyed by library model id.
+
+    One implementation on purpose. `render()` writes these dicts into the file and `budget_for()`
+    prices them; a budget computed from a different layering than the file that gets written is a
+    verdict about a file that will never exist. The order is the router's own: `[*]` is the floor
+    (added by `_effective()`, not here), the model config sits on top of it, and a personality-level
+    override sits on top of the config.
+    """
+    if targets is None:
+        targets = resolve_targets(personality)
+    if configs is None:
+        configs = {c["name"]: c for c in model_config.rows()}
+    overrides = personality.get("overrides") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for target in targets:
+        conf = configs.get(target["config"]) if target["config"] else None
+        per: dict[str, Any] = dict((conf or {}).get("settings") or {})
+        per.update(dict(overrides.get(target["model"]) or {}))
+        out[target["model"]] = per
+    return out
+
+
+def _effective(personality: dict, model_id: str, key: str, fallback: Any,
+               layered: dict[str, Any] | None = None) -> Any:
     """The value a key will actually have for one model: model section, then [*], then llama.cpp's
     own default. Not the portal's GLOBAL_DEFAULTS -- these keys are deliberately not in it, so an
-    unset key means the server's default, not a portal-chosen one."""
-    per = (personality.get("overrides") or {}).get(model_id) or {}
-    if key in per:
-        return per[key]
+    unset key means the server's default, not a portal-chosen one.
+
+    `layered` is that model section already resolved, by `_layered_settings()`: the config layer with
+    the personality's override on top of it. Passing it is what keeps a priced budget and a written
+    file answering the same question; without it only the override layer is seen, which is what a
+    pre-config personality looks like.
+    """
+    for source in (layered, (personality.get("overrides") or {}).get(model_id) or {}):
+        if source and key in source:
+            return source[key]
     glob = personality.get("global") or {}
     if key in glob:
         return glob[key]
@@ -674,21 +739,34 @@ def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
         pool = None
     rows = {r["id"]: r for r in _rows()}
     out = Budget(models_max=models_max, budget_bytes=pool)
+    targets = resolve_targets(personality)
+    # One layering, shared with render(): the settings each model will actually receive.
+    layered = _layered_settings(personality, targets)
 
     peaks: list[tuple[int, str]] = []
-    for mid in resolve_models(personality):
+    for target in targets:
+        mid = target["model"]
         row = rows.get(mid)
         if row is None:
             out.unpriced.append(mid)
             continue
-        peak = modelindex.peak_bytes(row)
+        # The context this model is going to get. `peak_bytes(row)` prices the index's own estimate,
+        # which is a context the file may never ask for: a model config that sets ctx-size changes
+        # the footprint, so a worst case that ignores it is the price of a different personality
+        # than the one being applied (PORTAL_PLAN §4.10.4).
+        per = layered.get(mid) or {}
+        ctx = modelmeta._as_int(per.get("ctx-size"))
+        peak = modelindex.peak_bytes(row, ctx)
+        if peak is None and ctx:
+            peak = _conservative_peak(row, ctx)
         if peak is None:
             # Unpriceable is not "free": it means we cannot prove this fits.
             out.unpriced.append(mid)
             continue
         peaks.append((peak, mid))
         out.priced.append({"id": mid, "peak_bytes": peak,
-                           "est_ctx": row.get("est_ctx")})
+                           "ctx_priced": ctx if ctx else row.get("est_ctx"),
+                           "ctx_from": "section" if ctx else "index estimate"})
 
     peaks.sort(reverse=True)
     take = peaks[:models_max]
@@ -712,14 +790,15 @@ def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
     # llama-server, which is the shape the OOM events on this box actually had.
     host_total: int | None = 0
     for _, mid in take:
-        slots = _effective(personality, mid, "parallel", AUTO_PARALLEL_SLOTS)
+        per = layered.get(mid) or {}
+        slots = _effective(personality, mid, "parallel", AUTO_PARALLEL_SLOTS, per)
         h = modelindex.host_cache_bytes(
             rows[mid],
             checkpoints=_effective(personality, mid, "ctx-checkpoints",
-                                   modelindex.DEFAULT_CTX_CHECKPOINTS),
+                                   modelindex.DEFAULT_CTX_CHECKPOINTS, per),
             parallel=AUTO_PARALLEL_SLOTS if not slots or slots < 1 else slots,
             cache_ram_mib=_effective(personality, mid, "cache-ram",
-                                     modelindex.DEFAULT_CACHE_RAM_MIB))
+                                     modelindex.DEFAULT_CACHE_RAM_MIB, per))
         if h["total_bytes"] is None:
             # An unbounded prompt cache (cache-ram = -1) or an unpriceable model: there is no
             # number to check, so the RAM question stays unanswered rather than answered "yes".
@@ -827,6 +906,8 @@ def _ini_text(sections: dict[str, dict[str, Any]]) -> str:
         "# Section names MUST match directory names under ~/ai/models/llama.",
         "# Keys are llama-server args (no leading dash); see llama.cpp tools/server/README.md.",
         "# Router-only keys understood here: " + ", ".join(ROUTER_ONLY_KEYS),
+        "# A model section may set `alias = <name>`: the router then routes by that name too, while",
+        "# the section stays keyed by the directory name. Aliases share one namespace across models.",
         "",
     ]
     for section in sorted(sections, key=lambda s: (s != "*", s)):
@@ -850,8 +931,9 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
         raise PersonalityError("personality needs a name")
 
     models_max = _models_max(personality)
-    models = resolve_models(personality)
-    overrides = personality.get("overrides") or {}
+    targets = resolve_targets(personality)
+    models = [t["model"] for t in targets]
+    configs = {c["name"]: c for c in model_config.rows()}
 
     # `global` sits on top of GLOBAL_DEFAULTS rather than replacing them, so an editor that
     # changes one key still emits the rest. GLOBAL_DEFAULTS is the safety net; the router's own
@@ -878,8 +960,16 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
 
     sections["*"].update(glob)
 
-    for mid in models:
-        per = dict(overrides.get(mid) or {})
+    # The layering is the router's own, and it lives in one function: [*] is the floor, the model
+    # config sits on top of it, and a personality-level override sits on top of the config. The page
+    # creates the middle layer only; the top layer exists for payloads assembled by hand and must
+    # still resolve. budget_for() prices this same result, so a card's fit verdict is about the file
+    # underneath it rather than about the library's defaults.
+    layered = _layered_settings(personality, targets, configs)
+    for target in targets:
+        mid = target["model"]
+        conf = configs.get(target["config"]) if target["config"] else None
+        per: dict[str, Any] = dict(layered[mid])
         hostile = sorted(k for k in per if k.lower() in ROUTER_CONTROLLED_KEYS)
         if hostile:
             # The router removes or overwrites these on load; emitting them would look
@@ -888,6 +978,13 @@ def render(personality: dict, budget_bytes: int | None = None) -> dict:
                 f"personality {name!r} sets router-controlled key(s) {hostile} for "
                 f"{mid}; the router overwrites them"
             )
+        if conf:
+            # Injected after that refusal, on purpose: `alias` is a router-controlled key in every
+            # direction a person can type it, and it is refused in [*] as a model-scoped key. The
+            # only way it reaches the file is as the config's own name, because that name has been
+            # checked against every model id and every other config -- a collision the router
+            # answers by not starting at all (measured, §4.10.4).
+            per["alias"] = conf["name"]
         if per:
             sections[mid] = per
 
@@ -986,6 +1083,177 @@ def builtins() -> list[dict]:
     return [dict(SAFE), dict(DEFAULT)]
 
 
+#: A personality name and a model config name have to survive the same three things -- an ini
+#: value, the router's comma-split of `--alias`, and being rendered into the page -- so they share
+#: one alphabet rather than having two rules that drift.
+NAME_RE = model_config.NAME_RE
+RESERVED_NAMES = ("safe", "default")
+
+
+def name_problem(name: str) -> str | None:
+    """Why this cannot be a personality name, or None. `safe` and `default` are refused because
+    they are computed from the library: storing an editable copy of them would mean the page shows
+    one thing and the router runs another the day the library changes."""
+    if not isinstance(name, str) or not name.strip():
+        return "a personality needs a name"
+    if name.lower() in RESERVED_NAMES:
+        return (f"{name!r} is a built-in personality: it is derived from the library and is not "
+                f"edited in place -- save a new name instead")
+    if not NAME_RE.fullmatch(name):
+        return ("a personality name may use letters, digits, dot, dash and underscore, starting "
+                "with a letter or digit")
+    return None
+
+
+def stored() -> list[dict]:
+    """Custom personalities, as stored. JSON columns are decoded here so no caller has to
+    remember which of them were JSON."""
+    out: list[dict] = []
+    for row in db.query("SELECT * FROM personalities ORDER BY name"):
+        p = {"name": row["name"], "models_max": row["models_max"], "note": row["note"] or "",
+             "models": None, "global": {}, "built_in": False,
+             "created_at": row["created_at"], "updated_at": row["updated_at"]}
+        try:
+            p["models"] = json.loads(row["models"]) if row["models"] is not None else None
+        except (TypeError, ValueError):
+            p["models"] = []
+            p["corrupt"] = "models"
+        try:
+            p["global"] = json.loads(row["global"] or "{}")
+        except (TypeError, ValueError):
+            p["global"] = {}
+            p["corrupt"] = "global"
+        out.append(p)
+    return out
+
+
+def all_personalities() -> list[dict]:
+    """Everything the page and the API may offer: the computed pair first, then custom ones."""
+    return builtins() + stored()
+
+
+def find(name: str) -> dict | None:
+    for p in all_personalities():
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def _clean_settings(where: str, raw: dict | None, errors: list[str]) -> dict:
+    """One field-by-field pass over proposed settings: defined, writable, right type, allowed value.
+
+    Shared by the personality editor and the model-config editor because both are the same
+    question -- "may this key take this value in this section" -- and two answers to it is how one
+    of them gets relaxed.
+    """
+    cleaned: dict[str, Any] = {}
+    for key, value in (raw or {}).items():
+        if key in ROUTER_CONTROLLED_KEYS:
+            errors.append(f"{where} {key}: the router overwrites this key at launch")
+            continue
+        if key in ROUTER_DERIVED_KEYS:
+            errors.append(f"{where} {key}: the router derives this value itself")
+            continue
+        if key not in SETTINGS:
+            errors.append(f"{where} {key}: no definition in the settings registry")
+            continue
+        try:
+            coerced = coerce_setting(key, value)
+        except PersonalityError as exc:
+            errors.append(f"{where} {key}: {exc}")
+            continue
+        reason = check_setting(key, coerced)
+        if reason:
+            errors.append(f"{where} {key}: {reason}")
+            continue
+        cleaned[key] = coerced
+    return cleaned
+
+
+def save_personality(name: str, models_max: Any = 1, note: str = "",
+                     models: list[str] | None = None, global_edits: dict | None = None,
+                     budget_bytes: int | None = None) -> dict:
+    """Create or replace a custom personality, refusing before anything is written.
+
+    The stored form is deliberately small: identity, models_max, which models/configs it assigns,
+    and `[*]`. Per-model settings are not stored here any more -- they live in the model config the
+    personality assigns (§4.10.4) -- so there is one place to edit a value and no layer to wonder
+    about. `overrides` is still honoured when a personality dict is assembled by hand, because
+    render() and apply() are older than this and their tests describe real behaviour.
+
+    It saves through render(), not alongside it: a personality that cannot be generated is not a
+    personality, and accepting it here would only move the failure to the moment someone presses
+    Apply.
+    """
+    problem = name_problem(name)
+    if problem:
+        raise PersonalityError(problem)
+
+    candidate = {"name": name, "models_max": models_max, "note": note, "models": models,
+                 "global": {}}
+    _models_max(candidate)                      # refuses a non-positive/non-numeric models_max
+
+    errors: list[str] = []
+    glob = _clean_settings("[*]", global_edits, errors)
+    if errors:
+        raise PersonalityError("the proposed settings were refused:\n  " + "\n  ".join(errors))
+
+    candidate["global"] = glob
+    targets = resolve_targets(candidate)         # unknown names, and two configs on one model
+
+    render(candidate, budget_bytes)              # the same refusal Apply would give
+
+    now = time.time()
+    existing = db.query("SELECT created_at FROM personalities WHERE name = ?", (name,))
+    created = existing[0]["created_at"] if existing else now
+    db.execute(
+        """INSERT INTO personalities (name, models_max, note, models, global, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(name) DO UPDATE SET
+             models_max=excluded.models_max, note=excluded.note, models=excluded.models,
+             global=excluded.global, updated_at=excluded.updated_at""",
+        (name, candidate["models_max"], note,
+         json.dumps(models if models is not None else None, sort_keys=True),
+         json.dumps(glob, sort_keys=True), created, now))
+    db.event("portal", "personality",
+             f"saved {name}: models_max={candidate['models_max']}, "
+             f"{'whole library' if models is None else f'{len(targets)} model(s)'}")
+    return find(name) or candidate
+
+
+def delete_personality(name: str) -> bool:
+    """Drop a custom personality. The built-in pair cannot be deleted: they are what the page falls
+    back to, and a box with no personalities is a box with no way back."""
+    if name.lower() in RESERVED_NAMES:
+        raise PersonalityError(f"{name!r} is built-in and cannot be deleted")
+    row = db.query("SELECT name FROM personalities WHERE name = ?", (name,))
+    if not row:
+        return False
+    db.execute("DELETE FROM personalities WHERE name = ?", (name,))
+    db.event("portal", "personality", f"deleted {name}")
+    return True
+
+
+def normalize_config(name: str, base_model: str, raw_settings: dict | None,
+                     note: str = "") -> dict:
+    """Validate a model config: a usable name, a real base model, and settings this section may carry.
+
+    The name check is not housekeeping. `render()` writes the name as `alias`, the router keeps
+    aliases in one namespace across every model it discovers, and a collision is a router that exits
+    1 before loading anything -- so the refusal has to happen here, where there is a form to answer
+    to, rather than at the next restart.
+    """
+    errors: list[str] = []
+    problem = model_config.name_problem(name, base_model, allow_self=True)
+    if problem:
+        errors.append(f"name: {problem}")
+    settings = _clean_settings(f"[{name or '?'}]", raw_settings, errors)
+    if errors:
+        raise PersonalityError("the proposed model config was refused:\n  "
+                               + "\n  ".join(errors))
+    return {"name": name, "base_model": base_model, "settings": settings, "note": note}
+
+
 # ------------------------------------------------------------------- writing (N4 apply)
 def _rollback(presets_store, stamp: str, expected: str, log) -> None:
     """Restore a snapshot and prove the file on disk matches it.
@@ -1034,6 +1302,24 @@ def _reparse(text: str) -> dict[str, dict[str, str]]:
     return {s: dict(cp[s]) for s in cp.sections()}
 
 
+def _alias_problems(section: str, where: str, value: str, known_models: set[str],
+                    seen_alias: dict[str, str]) -> list[str]:
+    """Why this `alias` line must not be written, or [] if the router can live with it."""
+    if section == "*":
+        return [f"{where} alias: [*] applies to every model the router discovers, so one alias "
+                f"there names all of them -- put the alias in that model's own section"]
+    if not NAME_RE.fullmatch(value or ""):
+        return [f"{where} alias {value!r}: a name the router can be given must use letters, "
+                f"digits, dot, dash or underscore (it splits aliases on commas)"]
+    if value in known_models:
+        return [f"{where} alias {value!r} is already a model in the library: the router keeps "
+                f"names and aliases in one namespace and refuses to start on a collision"]
+    if value in seen_alias:
+        return [f"{where} alias {value!r} is already the alias of {seen_alias[value]!r}: two "
+                f"models answering to one name is another collision the router will not accept"]
+    return []
+
+
 def check_generated(text: str, known_models: set[str]) -> list[str]:
     """Every reason this text must not be written, as messages. [] means safe to write.
 
@@ -1046,6 +1332,7 @@ def check_generated(text: str, known_models: set[str]) -> list[str]:
         matches nothing is a silent no-op that looks like a setting.
     """
     problems: list[str] = []
+    seen_alias: dict[str, str] = {}
     try:
         sections = _reparse(text)
     except configparser.Error as exc:
@@ -1061,6 +1348,16 @@ def check_generated(text: str, known_models: set[str]) -> list[str]:
                 f"{where} is not a model in the library: the router matches sections to "
                 f"directory names, so this section would be ignored")
         for key, value in body.items():
+            if key == "alias":
+                # The one router-controlled key the portal does write, and only as a config's name
+                # in that model's own section. It is checked here rather than trusted because this
+                # is the last point where a file can still be refused: the router's own answer to an
+                # alias collision is to exit 1 without loading anything (§4.10.4), which is not a
+                # failure that arrives as a useful message later.
+                problems.extend(_alias_problems(section, where, value, known_models, seen_alias))
+                if value:
+                    seen_alias.setdefault(value, section)
+                continue
             if key in ROUTER_CONTROLLED_KEYS:
                 problems.append(f"{where} {key}: the router overwrites this key at launch")
                 continue
@@ -1103,28 +1400,7 @@ def normalize_proposed(base: dict, global_edits: dict | None,
     out = dict(base)
 
     def clean(where: str, raw: dict | None) -> dict:
-        cleaned: dict[str, Any] = {}
-        for key, value in (raw or {}).items():
-            if key in ROUTER_CONTROLLED_KEYS:
-                errors.append(f"{where} {key}: the router overwrites this key at launch")
-                continue
-            if key in ROUTER_DERIVED_KEYS:
-                errors.append(f"{where} {key}: the router derives this value itself")
-                continue
-            if key not in SETTINGS:
-                errors.append(f"{where} {key}: no definition in the settings registry")
-                continue
-            try:
-                coerced = coerce_setting(key, value)
-            except PersonalityError as exc:
-                errors.append(f"{where} {key}: {exc}")
-                continue
-            reason = check_setting(key, coerced)
-            if reason:
-                errors.append(f"{where} {key}: {reason}")
-                continue
-            cleaned[key] = coerced
-        return cleaned
+        return _clean_settings(where, raw, errors)
 
     glob = clean("[*]", global_edits)
 
@@ -1363,7 +1639,9 @@ def describe(personality: dict, budget_bytes: int | None = None) -> dict:
         "name": name,
         "note": personality.get("note") or "",
         "models_max": 1,
-        "editable": name not in ("safe", "default"),
+        "editable": name.lower() not in RESERVED_NAMES,
+        "built_in": name.lower() in RESERVED_NAMES,
+        "configs": [],
         "findings": [],
         "generated_at": time.time(),
     }
@@ -1372,7 +1650,13 @@ def describe(personality: dict, budget_bytes: int | None = None) -> dict:
     # models_max and no findings would read as "this personality is fine".
     try:
         out["models_max"] = _models_max(personality)
-        out["models"] = resolve_models(personality)
+        # Configs are named here as well as models: the page has to distinguish "this file, under
+        # the name the file gave it" from "this file, through a config that renames it and carries
+        # settings", because those two look identical in a list of model ids.
+        targets = resolve_targets(personality)
+        out["models"] = [t["model"] for t in targets]
+        out["configs"] = [{"name": t["config"], "model": t["model"]} for t in targets
+                          if t["config"]]
         out["findings"] = validate(personality, budget_bytes)
     except PersonalityError as exc:
         out["models"] = []
