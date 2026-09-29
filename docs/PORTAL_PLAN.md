@@ -399,7 +399,7 @@ A personality is:
 
 | field | meaning |
 | --- | --- |
-| `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. |
+| `models` | the **available set** — a symlink farm of model dirs the router may see at all (§2 layout). Everything not in it cannot be loaded, cannot be OOM'd by, and does not appear in clients. **(corrected 2026-09-29: that holds for the directory source only — on b11146 hub-cache models stay discoverable and load by name no matter what the farm contains, measured in §4.9.1; `HF_HUB_CACHE` in the unit is the lever that closes it.)** |
 | `models_max` | how many may be resident simultaneously — a hard router limit, not a hint |
 | per-model preset | backend, context policy, extras (§6.12's rubric) |
 | `budget` | the memory plan: the **heaviest `models_max` combination** in the set must fit with headroom. This is enforced by *nothing* but the portal: loaded weights are anonymous and unreclaimable (§6.12), `fit` touches only arguments left unset, decides per load, and omits the compute buffers it allocates afterwards (§6.12.7), and a model's footprint runs above its file size by the runtime's own allocations (§6.12.2, §6.12.7). Measured, not assumed. |
@@ -843,6 +843,75 @@ bytes, prune to the newest 20 — plus the gated write path and settings editor 
   under what load*. Copy the habit, not just the numbers.
 - Auxiliary files (`mmproj-`, `mtp-`, `draft-`, `imatrix-`) are not models and
   always lose a naive size contest. The portal now agrees via one shared regex.
+
+#### 4.9.1 The hub cache is a second source of models — and the fence does not fence it (2026-09-29)
+
+The library emptied itself on 2026-09-25 (§4.10.5) and every model pulled since
+then went into the Hugging Face hub cache. The portal saw none of it —
+`scan_library()` walks one directory — while the router saw all of it. That
+asymmetry is the finding, and it was measured rather than assumed:
+
+| probe (all on the deployed b11146) | result |
+| --- | --- |
+| router with `--models-dir /tmp/fence --no-models-autoload`, that dir holding no models at all | `Available models (5)`, every one of them `[cache] org/repo:QUANT` |
+| `POST /models/load` for `lmstudio-community/codegemma-2b-GGUF:Q5_K_M` — a model **not** in `--models-dir` | `{"success": true}`; a worker started and the GTT aperture rose. A cache model loads on demand whether or not the portal’s directory fence contains it |
+| b11146’s help for a way to switch cache discovery off | none. The model-management options are `--models-dir`, `--models-preset`, `--models-max`, `--models-autoload`; `--cache-list` only prints the cache, and `--offline` *forces* cache use |
+| same router with `HF_HUB_CACHE=/tmp/empty-hub` | `Available models (0)` — the cache view disappears |
+| same env, but with one entry under `--models-dir` | that entry stays: `[models_dir] codegemma-local`. The env fence takes the cache, not the directory |
+
+**What this does to §4.7.** That section defines a personality’s `models` as “a
+symlink farm of model dirs the router may see at all. Everything not in it cannot
+be loaded, cannot be OOM’d by, and does not appear in clients.” On this build that
+is true of the directory source and false of the cache: hub-cache models are
+discoverable and loadable under their own ids no matter what the farm contains.
+So the budget guarantee in §4.7 — *the heaviest `models_max` combination must
+fit* — is conditional on the loadable set actually being closed, and today it is
+not. `models_max` and the portal’s own refusal still bind the loads the portal
+issues; they do not bind a client that names a cache model directly. Candidate
+remedy, measured but **not applied**: set `HF_HUB_CACHE` in the router unit to a
+directory the operator controls. That restores a closed set without touching the
+cache contents.
+
+**The symlink farm over the cache was tried and rejected.** Three shapes — a real
+directory holding symlinked `.gguf`s, the snapshot directory itself symlinked, and
+a preset section whose `model =` points at the cache blob — all produced the same
+thing: the `[cache]` entry stayed, the farm entry appeared beside it, and
+llama.cpp’s own dedup path (`hiding cache model name=%s (deduplicated by a
+preset)`) never fired. Two ids for one set of bytes, each with its own preset
+section, alias namespace and load. That is worse than the problem, because
+presets key on the id the router uses: a section for the farm name configures a
+model nobody loads while the operator keeps loading `unsloth/Qwen3.8-27B-GGUF:Q8_K_XL`.
+Short names come from `alias =` in the model’s own section instead — measured to
+work on a cache id, with nothing written into the cache.
+
+**What landed.** `scan_cache()` mirrors the runtime’s rules rather than guessing
+at them, because a preset section configures the model whose *name* it matches —
+an id the router does not use is a settings block that silently does nothing:
+
+| rule | source |
+| --- | --- |
+| shard part 1 only; non-empty tag; `mmproj`/`mtp-`/`eagle3-`/`dflash-`/`dspark-` prefixes are not models; `id = repo:TAG`, first one wins | `common/download.cpp:964` |
+| shard suffix, then trailing `[-.]TAG` upper-cased; no tag ⇒ not offered | `common/download.cpp:506` |
+| `refs/main` else the first readable ref, and **only that revision** is scanned — a stale snapshot directory is not a model | `common/hf-cache.cpp:374` |
+| sidecar pairing: directory prefix must match, then deeper match, then `-TAG.`, then nearest quant — so a repo-root `mmproj-BF16.gguf` still attaches to a model filed under a quant subdirectory | `find_best_sibling()` |
+
+Rows carry `source`, and the models page labels hub-cache rows so the operator can
+tell what the portal manages from what llama.cpp found. A shared id goes to the
+library (the router’s own cascade, `server-models.cpp:702`) — unreachable today,
+since a cache id contains a slash and a library id is a directory name — kept
+because `INSERT OR REPLACE` would turn an unguarded collision into a silent
+overwrite. The naming rule has an adjudicator rather than a reviewer:
+`llama-server --cache-list` reads the same fixture hub with the runtime’s own code,
+and the two sets must be equal.
+
+Open items:
+- `HF_HUB_CACHE` is **not** set in the router’s unit, so the cache is open on this
+  box now. Fencing it is a unit edit, and it changes which models the operator can
+  load by name — worth deciding deliberately, not by accident.
+- If the set stays open, the models page should say so next to the budget figure:
+  “worst case” is computed over the personality’s set, which is not the loadable set.
+- `--cache-list` on an older build does not exist; the oracle test skips there
+  rather than failing the suite over the installed version.
 
 ### 4.10 Writing presets.ini — the apply path and the settings editor (landed 2026-09-22)
 
