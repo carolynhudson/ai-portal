@@ -671,6 +671,40 @@ def header_facts(model: Path) -> dict:
 
 
 # ---------------------------------------------------------------------- driver
+def bench_embed(srv: Server, report: dict) -> None:
+    """Embedding latency and dimensionality -- what a RAG slot actually costs.
+
+    The router proxies /embeddings (server.cpp:227), so these numbers carry to
+    :8080; /rerank is proxied too (server.cpp:229) and is probed here because a
+    reranker that cannot rank is worth knowing about before it is downloaded.
+    """
+    out = {}
+    for label, text in (("short", "aperture usage on amdgpu"),
+                        ("chunk", " ".join(
+                            ["the portal prices a model as weights plus the KV cache at the"
+                             " context it reserves, and the runtime adds its own prompt cache"
+                             " on top of that"] * 6))):
+        try:
+            body, dt = srv.post("/embedding", {"input": text}, timeout=180)
+            data = (body.get("data") or [{}])[0].get("embedding") or []
+            out[label] = {"dim": len(data), "s": round(dt, 4)}
+            print(f"      embed {label:<6} dim={len(data):<6} {dt*1000:7.1f} ms")
+        except Exception as e:                                # noqa: BLE001
+            out[label] = {"error": rec_short(e)}
+            print(f"      embed {label:<6} FAILED {rec_short(e)}")
+    try:
+        body, dt = srv.post("/rerank", {"query": "what fits in the aperture",
+                                        "documents": ["the GTT window is 108 GiB",
+                                                      "codegemma is 1.71 GiB"]},
+                            timeout=180)
+        out["rerank"] = {"results": len(body.get("results") or []), "s": round(dt, 4)}
+        print(f"      /rerank {out['rerank']['results']} results {dt*1000:.1f} ms")
+    except Exception as e:                                    # noqa: BLE001
+        out["rerank"] = {"error": rec_short(e)}
+        print(f"      /rerank FAILED {rec_short(e)} (expected unless the model ranks)")
+    report["embedding"] = out
+
+
 def bench_attached(model_id: str, args, rec: dict) -> None:
     """Same probes, run against a router that is already up and loaded."""
     srv = Server(None, 0, [], Path("/dev/null"), attach=args.attach, model_id=model_id)
@@ -708,15 +742,7 @@ def bench_attached(model_id: str, args, rec: dict) -> None:
         print(f"    served slot_ctx={slot_ctx} slots={props.get('total_slots')} "
               f"weights={rec['served']['served_size_gib']} GiB train={cm.get('n_ctx_train')}")
         if args.role == "embed":
-            try:
-                body, dt = srv.post("/embedding", {"input": "what does this aperture measure?"},
-                                    timeout=180)
-                rec["embedding"] = {"dim": len((body.get("data") or [{}])[0]
-                                               .get("embedding") or []), "s": round(dt, 3)}
-                print(f"    /embedding dim={rec['embedding']['dim']} {dt:.3f}s")
-            except Exception as e:                            # noqa: BLE001
-                rec["embedding"] = {"error": rec_short(e)}
-                print(f"    /embedding FAILED {rec_short(e)}")
+            bench_embed(srv, rec)
             return
         bench_speed(srv, rec, slot_ctx,
                     probes=BIG_PROBES if args.big_probes else ATTACH_PROBES)
@@ -874,12 +900,18 @@ def main() -> int:
             results.append(rec)
             continue
 
+        # The alias is not cosmetics: a llama-server that can see a models dir and
+        # the hub cache holds several models, and a request without a "model" field
+        # is answered 400 "model name is missing from the request". Naming it is what
+        # makes every probe in this script reach the model it loaded.
+        alias = spec
         extra = ["--ctx-size", str(ctx), "--parallel", str(args.parallel), "--kv-unified",
-                 "--n-gpu-layers", "99", "--flash-attn", "on"]
+                 "--n-gpu-layers", "99", "--flash-attn", "on", "--alias", alias]
         if mm:
             extra += ["--mmproj", str(mm[0])]
         try:
-            with Server(path, port[0], extra, log_dir / f"{repo.split('/')[-1]}.log") as srv:
+            with Server(path, port[0], extra, log_dir / f"{repo.split('/')[-1]}.log",
+                        model_id=alias) as srv:
                 # b11146 /props has no top-level n_ctx at all: the slot context is
                 # default_generation_settings.n_ctx, and the model card (n_ctx_train,
                 # n_params, ftype) lives under /models -> data[].meta (server-context.cpp:4599).
@@ -900,11 +932,18 @@ def main() -> int:
                 print(f"    served slot_ctx={slot_ctx} slots={props.get('total_slots')} "
                       f"train={cm.get('n_ctx_train')} ftype={props.get('model_ftype')} "
                       f"vision={rec['served']['vision']}")
-                bench_speed(srv, rec, slot_ctx)
-                if args.role in ("fim", "chat", "coder", "agent"):
-                    bench_fim(srv, rec)
-                if args.role in ("coder", "agent"):
-                    bench_tools(srv, rec)
+                if args.role == "embed":
+                    bench_embed(srv, rec)
+                else:
+                    bench_speed(srv, rec, slot_ctx)
+                    if args.role in ("fim", "chat", "coder", "agent"):
+                        if rec.get("fim_tokens"):
+                            bench_fim(srv, rec)
+                        else:
+                            rec["infill"] = {"skipped": "file carries no FIM tokens"}
+                            print("      /infill skipped: no FIM tokens in this vocabulary")
+                    if args.role in ("coder", "agent"):
+                        bench_tools(srv, rec)
                 rec["peak_gtt_gib"] = round(srv.peak_gtt / GIB, 2)
                 rec["peak_rss_gib"] = round(srv.peak_rss / GIB, 2)
                 print(f"    peak aperture {rec['peak_gtt_gib']:.2f} GiB, peak RSS "
