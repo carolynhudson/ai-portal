@@ -108,6 +108,17 @@ def hub_files(repo: str) -> list[dict]:
             for s in (info.siblings or []) if s.rfilename.endswith(".gguf")]
 
 
+#: What a file or id has to contain to be a draft head rather than a model. Same
+#: markers llama.cpp skips when it lists the cache, applied here to refuse a probe
+#: that would otherwise hang (see the guard in main()).
+_DRAFT_MARKERS = ("mtp-", "eagle3-", "dflash-", "dspark-")
+
+
+def _draft_like(name: str) -> bool:
+    low = str(name).lower()
+    return any(m in low for m in _DRAFT_MARKERS)
+
+
 def cached_paths(repo: str) -> dict[str, Path]:
     """What llama.cpp can already see in the HF cache, keyed by QUANT tag.
 
@@ -776,6 +787,9 @@ def main() -> int:
                          "model is resident")
     ap.add_argument("--name", metavar="ID",
                     help="model id to address in attach mode; default: whatever is loaded")
+    ap.add_argument("--spec", choices=["off", "mtp"], default="off",
+                    help="use the model's own MTP head for speculative decoding "
+                         "(--spec-type draft-mtp). Required for a *-MTP-* file.")
     ap.add_argument("--big-probes", action="store_true",
                     help="let attach mode also send the 8192-token prefill probe; needs "
                          "12 GiB free instead of 6. Do not use this against a model the "
@@ -860,6 +874,19 @@ def main() -> int:
                     else sum(p.stat().st_size for p in mm))
         rec["mmproj_gib"] = round(mm_bytes / GIB, 2)
 
+        # A draft/MTP file is not something to benchmark on its own. The last run
+        # of this script hung on exactly that and had to be killed; llama.cpp uses
+        # an MTP file as the target's own next-token head (--spec-type draft-mtp),
+        # so say so instead of hanging. Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF is a
+        # full model that carries blk.32.nextn.*, and the base repo
+        # Jackrong/Qwopus3.5-4B-Coder-GGUF is what it was built beside.
+        if args.spec == "off" and (_draft_like(spec) or _draft_like(path.name)):
+            print("    SKIPPED: draft/MTP file -- pair it with --spec mtp, or bench "
+                  "the base model it was built beside")
+            rec["skipped"] = "draft-file"
+            results.append(rec)
+            continue
+
         # ---- the guard: aperture first, because on this box it is the wall ----
         used, total = aperture()
         need = size + mm_bytes + (kv or int(0.75 * GIB)) + SCRATCH_BYTES
@@ -907,6 +934,8 @@ def main() -> int:
         alias = spec
         extra = ["--ctx-size", str(ctx), "--parallel", str(args.parallel), "--kv-unified",
                  "--n-gpu-layers", "99", "--flash-attn", "on", "--alias", alias]
+        if args.spec == "mtp":
+            extra += ["--spec-type", "draft-mtp"]
         if mm:
             extra += ["--mmproj", str(mm[0])]
         try:

@@ -388,6 +388,10 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
     if missing:
         problems.append({"kind": "incomplete-shards", "path": str(where),
                          "model": model_key, "have": have, "missing": missing,
+                         # The name the router uses: llama.cpp lists a half
+                         # downloaded set, so it is worth saying out loud that the
+                         # id exists and the load will not.
+                         "id": model_id,
                          "note": "shard set is incomplete — cannot be loaded"})
         return
     try:
@@ -484,16 +488,45 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
 #
 # The rules below are transcribed from the build in use, not guessed:
 #   common/download.cpp:964 common_list_cached_models() — shard part 1 only, tag
-#     must be non-empty, prefix containing mmproj/mtp-/eagle3-/dflash-/dspark- is
-#     skipped, id = repo_id + ":" + tag, first one wins.
+#     must be non-empty, id = repo_id + ":" + tag, first one wins.
+#   common/download.cpp:661 gguf_filename_is_model() — the markers below are
+#     substrings matched case-sensitively, and the name keeps its tag (so
+#     `model-Q8_0-mtpr.gguf` is a model: "mtp-" is not in it, while
+#     `model-coder-mtp-Q8_0.gguf` is not).
+#
+# Measured against b11146 over a fixture cache (2026-09-30, ~20 name shapes):
+#   * A quant tag in the directory does not count — `Q6_K/model.gguf` is not
+#     listed — so the tag has to come from the file name. `Q6_K/model-Q6_K.gguf`
+#     is listed, which is the layout `hf download` actually produces.
+#   * One shape this box refuses for a reason I could not pin: a lone
+#     `sub-eagle3-x/model-Q8_0.gguf` is not listed, yet in a repo holding several
+#     candidates the same basename wins the tag. The marker test is therefore
+#     transcribed as basename-only (what the source says) and that shape is left
+#     out of the pinned table rather than guessed at.
 #   common/download.cpp:506 get_gguf_split_info() — the shard suffix and the
 #     trailing `[-.]TAG` (upper-cased).
 #   common/hf-cache.cpp:374 get_cached_ref() — refs/main wins, else the first
 #     readable ref; only that one revision is scanned, so a stale snapshot
 #     directory is not a model and must not become one here either.
+#
+# The case-sensitivity is not a detail. `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF`
+# carries `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf`, which llama.cpp lists as a loadable
+# model and the portal — lower-casing before the marker test — refused to name. A
+# model the router can load and the portal cannot see gets no preset section, so
+# every per-model setting for it is inert and the Models page under-reports the
+# library. `imatrix` was missing from the list entirely.
 _HF_SPLIT = re.compile(r"^(.+)-([0-9]{5})-of-([0-9]{5})$", re.IGNORECASE)
 _HF_TAG = re.compile(r"[-.]([A-Za-z0-9_]+)$")
-_HF_NOT_A_MODEL = ("mmproj", "mtp-", "eagle3-", "dflash-", "dspark-")
+_HF_NOT_A_MODEL = ("mmproj", "imatrix", "mtp-", "eagle3-", "dflash-", "dspark-")
+
+
+def _hf_path_probe(rel: Path) -> str:
+    """The string llama.cpp runs its "is this a model" test over.
+
+    The basename, case untouched. Transcribed from gguf_filename_is_model(),
+    which strips everything before the last '/' — and case is load-bearing, see
+    the block comment above."""
+    return rel.name
 _COMMIT_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 
@@ -688,7 +721,8 @@ def _scan_cache_repo(snap: Path, repo_id: str, models: list[dict],
         base, part, total, tag = _hf_split(entry.name)
         rel = entry.relative_to(snap)
         rel_dir = rel.parent.parts
-        if "mmproj" in entry.name.lower():
+        probe = _hf_path_probe(rel)
+        if "mmproj" in probe:
             # A projector, never a model of its own. Kept with its position relative
             # to the revision, because the pairing below ranks by directory depth —
             # and a sidecar at the revision root has no parts at all, which is what
@@ -696,7 +730,7 @@ def _scan_cache_repo(snap: Path, repo_id: str, models: list[dict],
             # per-quant subdirectories.
             sidecars.append((entry, rel_dir))
             continue
-        if any(s in base.lower() for s in _HF_NOT_A_MODEL) or tag is None:
+        if tag is None or any(s in probe for s in _HF_NOT_A_MODEL):
             continue
         s = sets.setdefault(f"{rel.parent}/{base}", {"parts": {}, "sidecars": [],
                                                     "tag": tag, "id": f"{repo_id}:{tag}"})

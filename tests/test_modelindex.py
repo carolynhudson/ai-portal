@@ -1450,6 +1450,80 @@ def test_a_cache_model_is_marked_as_a_cache_model_on_the_page(monkeypatch):
         "operator cannot tell what the portal manages")
 
 
+#: Which cache paths llama.cpp counts as models, measured against b11146 with
+#: `--cache-list` over a fixture hub. The left column is the path relative to the
+#: revision directory; the right is the id tag it earns, or None for "not a
+#: model". Every row here was a live disagreement or a near miss:
+#:   - case decides `-MTP-` vs `-mtp-`, and the portal used to fold them together
+#:     (the runtime loads Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0; the portal
+#:     refused to name it, so it could not be given a preset section at all);
+#:   - the marker is a substring, so `mtpr` survives and `mtp-` does not;
+#:   - `imatrix` was missing from the portal's list entirely;
+#:   - the marker test covers the directory, the quant tag does not come from it.
+_HF_NAME_TABLE = {
+    "Qwopus3.5-4B-Coder-MTP-Q8_0.gguf":          "Q8_0",   # the real repo on this box
+    "Model-4B-Coder-Mtp-Q8_0.gguf":              "Q8_0",   # mixed case is not a marker
+    "model-Q4_K_M-mtpr.gguf":                    "MTPR",   # substring, not stem
+    "model-Q4_K_M-mtp.gguf":                     "MTP",    # a draft, and still a model
+    "model-Q8_0-mtp.gguf":                       "MTP",
+    "model-coder-mtp-Q8_0.gguf":                 None,
+    "model-mtp-Q4_K_M-MTP-Q8_0.gguf":            None,
+    "mtp-Q8_0.gguf":                             None,
+    "model-Q4_K_M-eagle3-Q8_0.gguf":             None,
+    "model-Q4_K_M-dflash-Q8_0.gguf":             None,
+    # An imatrix file is calibration metadata, not weights, so the portal will not
+    # price it as a model. b11146 disagrees — it lists this as `repo:Q8_0` — and is
+    # left out of the oracle fixture below for that one documented reason.
+    "model-Q4_K_M-imatrix-Q8_0.gguf":            None,
+    "model-mmproj-Q8_0.gguf":                    None,
+    "model-Q8_0-mtpr-Q4_K_M.gguf":                "Q4_K_M",
+    "Q6_K/model-Q6_K.gguf":                       "Q6_K",   # the usual per-quant layout
+    "deep/nest-Q6_K.gguf":                        "Q6_K",
+    "Q6_K/model.gguf":                            None,     # tag only in the directory
+    "no_quant_here.gguf":                         None,
+}
+
+#: Shard sets that name a tag but are not whole. llama.cpp lists these; the portal
+#: refuses to price a model that cannot load and reports it instead — the one
+#: deliberate difference from the runtime, asserted below rather than smoothed over.
+_HALF_SHARDS = ["IQ4_XS/half-IQ4_XS-00001-of-00002.gguf", "IQ4_XS/half-Q6_K-00001-of-00002.gguf"]
+
+
+def test_which_cache_files_count_as_models(tmp_path):
+    """The name rule, pinned without the binary.
+
+    The oracle test below asks llama.cpp itself and so drifts with the installed
+    build; this table is the portal's own opinion written down, including the
+    cases that only exist because someone named a repo in mixed case.
+    """
+    hub = tmp_path / "hub"
+    for i, (rel, tag) in enumerate(_HF_NAME_TABLE.items()):
+        _hub_repo(hub, f"org/N{i:02d}-GGUF", _REV_A, {rel: _KV})
+    got = {row["id"] for row in mi.scan_cache(hub)[0]}
+    want = {f"org/N{i:02d}-GGUF:{tag}" for i, (rel, tag) in enumerate(_HF_NAME_TABLE.items())
+            if tag is not None}
+    assert got == want, "\n".join(
+        [f"  extra:   {x}" for x in sorted(got - want)]
+        + [f"  missing: {x}" for x in sorted(want - got)])
+
+
+def test_an_incomplete_shard_set_is_named_the_way_the_router_names_it(tmp_path):
+    """A half-downloaded set is a problem with the router's id on it.
+
+    llama.cpp lists these (part 1 carries the header, so it has something to
+    name), which is why a user can see a model in the router's list that the
+    portal never showed them. The portal still refuses to price it — the byte
+    total is a fraction of the real one and a load would fail — but it has to
+    say which id that is, in the router's own spelling.
+    """
+    hub = tmp_path / "hub"
+    _hub_repo(hub, "org/Half-GGUF", _REV_A, {rel: _KV for rel in _HALF_SHARDS})
+    models, problems = mi.scan_cache(hub)
+    assert models == []
+    named = {p["id"] for p in problems if p["kind"] == "incomplete-shards"}
+    assert named == {"org/Half-GGUF:IQ4_XS", "org/Half-GGUF:Q6_K"}, problems
+
+
 def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
     """The contract that keeps the transcribed rules honest.
 
@@ -1478,6 +1552,18 @@ def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
         "plain-q4_k_m.gguf": _KV, "other.F16.gguf": _KV, "no_quant_here.gguf": _KV,
     })
     _hub_repo(hub, "org/Stale-GGUF", _REV_A, {"old-Q8_0.gguf": _KV}, refs=None)
+    # Every shape from the table above, so a runtime that changes its mind about
+    # one of them fails here instead of silently naming models the portal will
+    # never offer (or hiding ones the router can load).
+    _hub_repo(hub, "org/Shapes-GGUF", _REV_B, {
+        rel: _KV for rel, tag in _HF_NAME_TABLE.items()
+        if tag is not None and not rel.endswith("-of-00002.gguf")
+    })
+    _hub_repo(hub, "org/Drafts-GGUF", _REV_B, {
+        rel: _KV for rel, tag in _HF_NAME_TABLE.items()
+        if tag is None and "imatrix" not in rel  # the runtime lists it; see the table
+    })
+    _hub_repo(hub, "org/Half-GGUF", _REV_B, {rel: _KV for rel in _HALF_SHARDS})
 
     env = {**os.environ, "HF_HUB_CACHE": str(hub)}
     try:
@@ -1501,4 +1587,12 @@ def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
     assert listed, f"{binary} --cache-list listed nothing:\n{out.stdout[:400]}\n{out.stderr[:400]}"
 
     mine = {m["id"] for m in mi.scan_cache(hub)[0]}
-    assert mine == listed, (f"portal says {sorted(mine)}, llama.cpp says {sorted(listed)}")
+    _, problems = mi.scan_cache(hub)
+    halves = {p["id"] for p in problems if p["kind"] == "incomplete-shards"}
+    # The one allowed difference, and it has to go both ways: the runtime names
+    # half-downloaded sets and the portal reports them instead of pricing them.
+    assert halves and halves <= listed, (
+        f"expected the runtime to list the incomplete sets {sorted(halves)}; "
+        f"it listed {sorted(listed)}")
+    assert mine == listed - halves, (
+        f"portal says {sorted(mine)}, llama.cpp says {sorted(listed - halves)}")

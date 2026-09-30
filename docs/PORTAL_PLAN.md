@@ -913,6 +913,63 @@ Open items:
 - `--cache-list` on an older build does not exist; the oracle test skips there
   rather than failing the suite over the installed version.
 
+#### 4.9.2 The cache name rule is the router's — and case is load-bearing (2026-09-30)
+
+The operator downloaded `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF` and said plainly: this
+is a multi-token-prediction head, it belongs with the matching full model, and probing
+it alone hangs. The router listed it as a loadable model. **The portal refused to name
+it at all** — no index row, no preset section, absent from the Models page. Cause:
+
+```python
+if any(s in base.lower() for s in _HF_NOT_A_MODEL) or tag is None:
+```
+
+`_HF_NOT_A_MODEL` holds `mtp-`; lower-casing turns `…-Coder-MTP-Q8_0` into a match. A
+model the router can load and the portal cannot see is a model that can never be given
+per-model settings, and the failure is silent in both directions.
+
+Rather than fix the one case, I asked the runtime what its rule actually is, over a
+fixture hub, 20 name shapes (`llama-server --cache-list`):
+
+| name shape | b11146 | portal before | portal now |
+|---|---|---|---|
+| `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` | `:Q8_0` | hidden | `:Q8_0` |
+| `model-Q4_K_M-mtpr.gguf` | `:MTPR` | hidden | `:MTPR` |
+| `model-Q4_K_M-mtp.gguf` | `:MTP` | `:MTP` | `:MTP` |
+| `model-coder-mtp-Q8_0.gguf` | not a model | not a model | not a model |
+| `model-Q4_K_M-eagle3-Q8_0.gguf` | not a model | not a model | not a model |
+| `model-Q4_K_M-imatrix-Q8_0.gguf` | `:Q8_0` | hidden | hidden (deliberate) |
+| `Q6_K/model.gguf` | not a model | not a model | not a model |
+| `deep/nest-Q6_K.gguf` | `:Q6_K` | `:Q6_K` | `:Q6_K` |
+
+So the markers are **case-sensitive substrings of the basename** — `mtpr` survives,
+`mtp-` does not — and `imatrix` was missing from the portal's list entirely.
+`gguf_filename_is_model()` (`common/download.cpp:661`) is the transcription source;
+the fix is `_hf_path_probe()` plus the corrected list.
+
+Two differences from the runtime are kept on purpose, and both are asserted:
+
+- **imatrix.** b11146 lists `model-Q4_K_M-imatrix-Q8_0.gguf` as a model. An imatrix
+  file is calibration metadata with no weights to speak of; pricing it as a model
+  would misstate the fit budget, so the portal withholds it and the oracle fixture
+  leaves that one shape out.
+- **Half-downloaded shard sets.** The runtime names them (part 1 carries the header,
+  so there is something to name); the portal refuses to price them, because the byte
+  total is a fraction of the real one and the load will fail. The `incomplete-shards`
+  problem now carries the **router's own id**, so the two systems are describing the
+  same thing in the same words.
+
+One shape I could not explain and did not guess: a lone
+`sub-eagle3-x/model-Q8_0.gguf` is not listed by this build, yet the same basename wins
+a tag in a repo holding several candidates. It is left out of both tables with a note
+rather than encoded as a rule.
+
+Tests: `_HF_NAME_TABLE` pins the portal's opinion with no binary involved;
+`test_the_portal_and_the_runtime_agree_on_what_the_cache_holds` asks b11146 about the
+same shapes; `test_an_incomplete_shard_set_is_named_the_way_the_router_names_it` covers
+the deliberate difference. Breaking case-folding or dropping `imatrix` fails two tests
+(check that the tests still fail when the fix is reverted).
+
 ### 4.10 Writing presets.ini — the apply path and the settings editor (landed 2026-09-22)
 
 N4 is the first step in this project that writes a file the router reads at load time, so the
@@ -2229,6 +2286,38 @@ a personality that will lose the router, and the editor should say so in the sam
 "fits". Concretely: price `--cache-ram` (8192 MiB default) and `--ctx-checkpoints` against the chosen
 context in `peak_bytes`, surface `free after load` next to the verdict, and treat
 `ctx = trained_ctx` with a thin margin as a warning rather than a success.
+
+#### 6.12.9 — the benchmark hung on a draft model, and that was two defects (2026-09-30)
+
+The operator ran `slot_bench.py` against `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0`
+and had to kill it. Their reading of the file was correct and mine was not: the `-MTP-`
+repo is a **speculative-decoding head**, meant to be paired with the matching full
+model, and it cannot be exercised on its own.
+
+Two separate defects, both now fixed in `tools/slot_bench.py`:
+
+- **No per-request timeout.** Every call inherited the socket default, so a stalled
+  generation wedges the whole run — the script cannot report what it cannot finish.
+  Each probe now names its own budget (240 s for tool calls, 600 s for the big decode,
+  180 s for the small ones), and a slow model is a slow number in the report instead of
+  a hung terminal.
+- **It probed a draft as if it were a model.** The script now refuses any id or file
+  whose name carries a draft marker (`mtp-`, `eagle3-`, `dflash-`, `dspark-`) unless
+  `--spec mtp` is given. Refusal is a line in the report; a hang is not.
+
+What "paired" means on this build, read off the binary rather than assumed: the MTP
+repo is a **complete model that also carries the nextn tensors** — `Q8_0/Qwopus3.5-4B-
+Coder-MTP-Q8_0.gguf` has 310 tensors, 21 architecture keys, and `blk.32.nextn.*` at the
+end, the same arch as the base repo. So the pairing is one file plus
+`--spec-type draft-mtp` (b11146 help, the `--spec-type` line), not two files loaded
+together. `--spec mtp` passes exactly that. The `/metrics` mapping already carries
+`spec_decode_num_draft_tokens_total` / `..._accepted_tokens_total` / `..._drafts_total`,
+so once a run uses `--spec mtp` the acceptance rate is a number in the report, which is
+the only way to know whether draft decoding earns its keep on this box.
+
+Open: whether `--spec-draft-hf <mtp repo>` against the **base** model is a second
+configuration worth measuring — a base target plus the MTP head as an external draft.
+Not assumed; it needs a run.
 
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
