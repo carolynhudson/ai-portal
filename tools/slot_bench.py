@@ -550,8 +550,14 @@ def bench_speed(srv: Server, report: dict, slot_ctx: int | None,
                            "accept_rate": round((d.get("accepted_tok") or 0) /
                                                 d["draft_tok"], 3) if d.get("draft_tok") else None}
         out[f"{pp}+{tg}"] = row
+        spec = ""
+        if row.get("spec"):
+            s = row["spec"]
+            spec = (f"   draft {s['draft_tok']}/{s['drafts']} tok, "
+                    f"accept {s['accept_rate']}")
         print(f"      pp{pp:<5} tg{tg:<4} TTFT {str(row['ttft_s']):>7}s   "
-              f"prefill {str(row['prefill_tok_s']):>8} tok/s   decode {str(row['decode_tok_s']):>7} tok/s")
+              f"prefill {str(row['prefill_tok_s']):>8} tok/s   decode {str(row['decode_tok_s']):>7} tok/s"
+              + spec)
     report["speed"] = out
 
 
