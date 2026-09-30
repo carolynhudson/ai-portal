@@ -216,17 +216,29 @@ def download(repo: str, quant: str) -> Path | None:
 class Server:
     """One llama-server on a spare port, in its own process group."""
 
-    def __init__(self, model: Path, port: int, extra: list[str], log: Path):
+    def __init__(self, model: Path | None, port: int, extra: list[str], log: Path,
+                 attach: str | None = None, model_id: str | None = None):
+        """attach=<base url> benches a router that is *already* running.
+
+        Every request then has to name the model: with a models dir and the hub
+        cache in view the router holds several models, and a request without a
+        "model" field is refused with 400 "model name is missing from the
+        request" -- which is exactly how a whole benchmark run produced nothing.
+        """
         self.model, self.port, self.log = model, port, log
         self.extra = extra
+        self.attach = attach.rstrip("/") if attach else None
+        self.model_id = model_id
         self.proc = None
         self.peak_gtt = 0
         self.peak_rss = 0
+        self.min_mem = 1 << 62
         self._stop = threading.Event()
 
     def _sample(self):
         while not self._stop.is_set():
             used, _ = aperture()
+            self.min_mem = min(self.min_mem, mem_available())
             self.peak_gtt = max(self.peak_gtt, used)
             try:
                 for line in Path(f"/proc/{self.proc.pid}/status").read_text().splitlines():
@@ -237,6 +249,9 @@ class Server:
             time.sleep(0.5)
 
     def __enter__(self):
+        if self.attach:
+            json.loads(self.get("/health", timeout=20))
+            return self
         binary = os.environ.get("AI_LLAMA_SERVER", "/home/cortana/ai/bin/llama-server")
         cmd = [binary, "--model", str(self.model), "--host", "127.0.0.1",
                "--port", str(self.port), "--metrics", "--no-webui"] + self.extra
@@ -257,6 +272,12 @@ class Server:
 
     def __exit__(self, *exc):
         self._stop.set()
+        if self.attach:
+            used, total = aperture()
+            print(f"      (attached run: nothing was started or stopped; "
+                  f"aperture {used/GIB:.2f} / {total/GIB:.2f} GiB, "
+                  f"lowest MemAvailable {self.min_mem/GIB:.2f} GiB)")
+            return
         if self.proc and self.proc.poll() is None:
             pgid = os.getpgid(self.proc.pid)
             for sig, wait in ((signal.SIGTERM, 20), (signal.SIGKILL, 10)):
@@ -272,15 +293,20 @@ class Server:
                     break
         used, total = aperture()
         print(f"      aperture back to {used/GIB:.2f} / {total/GIB:.2f} GiB"
-              f"  (peak during run {self.peak_gtt/GIB:.2f} GiB)")
+              f"  (peak during run {self.peak_gtt/GIB:.2f} GiB,"
+              f" lowest MemAvailable {self.min_mem/GIB:.2f} GiB)")
 
     def get(self, path: str, timeout: int = 60):
-        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}",
-                                    timeout=timeout) as r:
+        with urllib.request.urlopen(self._url(path), timeout=timeout) as r:
             return r.read().decode()
 
+    def _url(self, path: str) -> str:
+        return (self.attach or f"http://127.0.0.1:{self.port}") + path
+
     def post(self, path: str, body: dict, timeout: int = 300):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}",
+        if self.model_id and "model" not in body:
+            body = {**body, "model": self.model_id}
+        req = urllib.request.Request(self._url(path),
                                     data=json.dumps(body).encode(),
                                     headers={"Content-Type": "application/json"})
         t0 = time.perf_counter()
@@ -384,8 +410,11 @@ def bench_fim(srv: Server, report: dict) -> None:
             continue
         got = (body.get("content") or "").strip()
         tok = body.get("tokens") or []
+        t = body.get("timings") or {}
         lat.append({"lang": lang, "s": round(dt, 3),
-                    "tok_per_s": round(len(tok) / dt, 1) if dt else None,
+                    "tok_per_s": round(t["predicted_per_second"], 1)
+                    if t.get("predicted_per_second") else
+                    (round(len(tok) / dt, 1) if dt else None),
                     "completion": got[:120].replace("\n", "\\n")})
         print(f"      {lang:<11} {dt*1000:6.0f} ms  "
               f"{(len(tok)/dt if dt else 0):6.1f} tok/s  {got[:60]!r}")
@@ -418,7 +447,43 @@ def rec_short(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"[:120]
 
 
-def bench_speed(srv: Server, report: dict, slot_ctx: int | None) -> None:
+# Measured on this box, 2026-09-30: probing a resident 77.86 GiB model that the
+# router had loaded at its full trained context (262144) with an 8192-token prompt
+# helped push MemAvailable (already 0.00 GiB) over, and the kernel OOM-killed the
+# router service. Attach mode therefore has a floor and small defaults: it may
+# read a running box, it may not be what tips it.
+ATTACH_MEM_FLOOR = 6 * GIB
+ATTACH_PROBES = ((512, 64), (2048, 64))
+BIG_PROBES = ((512, 64), (2048, 64), (8192, 64))
+
+
+def mem_available() -> int:
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) * 1024
+    return 0
+
+
+def _timings(body: dict) -> dict:
+    """Per-request rates straight out of the response.
+
+    The router on this box runs without --metrics (/metrics -> 400), but every
+    completion carries a `timings` object: prompt_ms / prompt_n / predicted_ms /
+    predicted_n / cache_n. Prefer the counters when they exist (no HTTP round
+    trip in them), fall back to this otherwise.
+    """
+    t = body.get("timings") or {}
+    if not t:
+        return {}
+    return {"prompt_s": (t.get("prompt_ms") or 0) / 1000.0,
+            "prompt_tok": t.get("prompt_n") or 0,
+            "decode_s": (t.get("predicted_ms") or 0) / 1000.0,
+            "decode_tok": t.get("predicted_n") or 0,
+            "cached_tok": t.get("cache_n") or 0}
+
+
+def bench_speed(srv: Server, report: dict, slot_ctx: int | None,
+                probes: tuple = BIG_PROBES) -> None:
     """Prefill at editor/RAG sizes, decode of a short answer, using llama.cpp's counters.
 
     Two lessons live here. A probe wider than the slot's context is rejected with
@@ -428,7 +493,11 @@ def bench_speed(srv: Server, report: dict, slot_ctx: int | None) -> None:
     wall time, because wall time includes the HTTP round trip.
     """
     out = {}
-    for pp, tg in SPEED_PROBES:
+    unhealthy = False
+    for pp, tg in probes:
+        if unhealthy:
+            out[f"{pp}+{tg}"] = {"skipped": "server unhealthy after the previous probe"}
+            continue
         if slot_ctx and pp + tg + 64 > slot_ctx:
             out[f"{pp}+{tg}"] = {"skipped": f"needs ~{pp + tg} tokens, slot serves {slot_ctx}"}
             print(f"      pp{pp:<5} tg{tg:<4} skipped: slot context {slot_ctx} too small")
@@ -440,13 +509,20 @@ def bench_speed(srv: Server, report: dict, slot_ctx: int | None) -> None:
                                                   "temperature": 0.0, "cache": False},
                                   timeout=600)
         except Exception as e:                                # noqa: BLE001
+            # A 500 or a refused connection means the worker is in trouble. Keep
+            # hammering it and the remaining numbers are noise -- and on a box at
+            # the edge of its memory they are also what tips it over.
             out[f"{pp}+{tg}"] = {"error": rec_short(e)}
-            print(f"      pp{pp:<5} tg{tg:<4} FAILED {rec_short(e)}")
-            continue
+            unhealthy = True
+            print(f"      pp{pp:<5} tg{tg:<4} FAILED {rec_short(e)} -- stopping speed probes")
         d = deltas(before, counters(srv))
+        if not d:
+            d, src = _timings(body), "response.timings"
+        else:
+            src = "metrics"
         ps, ds = d.get("prompt_s", 0.0), d.get("decode_s", 0.0)
         pt, dt_ = d.get("prompt_tok", 0.0), d.get("decode_tok", 0.0)
-        row = {
+        row = {"timing_source": src,
             "wall_s": round(wall, 3),
             "ttft_s": round(ps, 3) if ps else None,
             "prefill_tok_s": round(pt / ps, 1) if ps and pt else None,
@@ -595,6 +671,65 @@ def header_facts(model: Path) -> dict:
 
 
 # ---------------------------------------------------------------------- driver
+def bench_attached(model_id: str, args, rec: dict) -> None:
+    """Same probes, run against a router that is already up and loaded."""
+    srv = Server(None, 0, [], Path("/dev/null"), attach=args.attach, model_id=model_id)
+    floor = ATTACH_MEM_FLOOR if not args.big_probes else 12 * GIB
+    free = mem_available()
+    print(f"    MemAvailable {free/GIB:.2f} GiB"
+          f"{' -- below the attach floor, refusing to probe' if free < floor else ''}")
+    if free < floor:
+        rec["refused"] = (f"MemAvailable {free/GIB:.2f} GiB < {floor/GIB:.0f} GiB attach floor "
+                          f"(a resident model at full trained context leaves nothing; "
+                          f"probing it is what OOM-kills the router)")
+        print("    REFUSED. Unload the resident model through the portal, or bench the "
+              "model the script loads itself.")
+        return
+    with srv:
+        props = json.loads(srv.get("/props", timeout=30))
+        listed = json.loads(srv.get("/models", timeout=30)).get("data") or []
+        card = next((m for m in listed if m.get("id") == model_id), None) \
+            or next((m for m in listed if m.get("object") == "model"), {})
+        cm = card.get("meta") or {}
+        slot_ctx = ((props.get("default_generation_settings") or {}).get("n_ctx")
+                    or cm.get("n_ctx"))
+        rec["model_id"] = card.get("id") or model_id
+        rec["served"] = {"slot_n_ctx": slot_ctx,
+                         "total_slots": props.get("total_slots"),
+                         "total_n_ctx": props.get("total_n_ctx"),
+                         "n_ctx_train": cm.get("n_ctx_train"),
+                         "n_params": cm.get("n_params"),
+                         "served_size_gib": round((cm.get("size") or 0) / GIB, 2),
+                         "ftype": props.get("model_ftype"),
+                         "vision": (props.get("modalities") or {}).get("vision"),
+                         "chat_template_caps": props.get("chat_template_caps")}
+        rec["has_chat_template"] = bool(props.get("chat_template_caps"))
+        print(f"    attached to {args.attach} as {rec['model_id']}")
+        print(f"    served slot_ctx={slot_ctx} slots={props.get('total_slots')} "
+              f"weights={rec['served']['served_size_gib']} GiB train={cm.get('n_ctx_train')}")
+        if args.role == "embed":
+            try:
+                body, dt = srv.post("/embedding", {"input": "what does this aperture measure?"},
+                                    timeout=180)
+                rec["embedding"] = {"dim": len((body.get("data") or [{}])[0]
+                                               .get("embedding") or []), "s": round(dt, 3)}
+                print(f"    /embedding dim={rec['embedding']['dim']} {dt:.3f}s")
+            except Exception as e:                            # noqa: BLE001
+                rec["embedding"] = {"error": rec_short(e)}
+                print(f"    /embedding FAILED {rec_short(e)}")
+            return
+        bench_speed(srv, rec, slot_ctx,
+                    probes=BIG_PROBES if args.big_probes else ATTACH_PROBES)
+        if mem_available() < floor:
+            rec["halted"] = f"MemAvailable fell to {mem_available()/GIB:.2f} GiB -- stopping"
+            print(f"    HALTED: {rec['halted']}")
+            return
+        if args.role in ("fim", "chat", "coder", "agent"):
+            bench_fim(srv, rec)
+        if args.role in ("coder", "agent") and mem_available() >= floor:
+            bench_tools(srv, rec)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", action="append", default=[],
@@ -609,6 +744,16 @@ def main() -> int:
                          "Was 8192 with --parallel 4, which handed each slot 2048 tokens and made "
                          "the pp2048 probe a guaranteed HTTP 400.")
     ap.add_argument("--parallel", type=int, default=4, help="server slots (burst handling)")
+    ap.add_argument("--attach", metavar="URL",
+                    help="bench an ALREADY RUNNING router (e.g. http://127.0.0.1:8080): "
+                         "nothing is loaded, started or stopped, so it is safe while a "
+                         "model is resident")
+    ap.add_argument("--name", metavar="ID",
+                    help="model id to address in attach mode; default: whatever is loaded")
+    ap.add_argument("--big-probes", action="store_true",
+                    help="let attach mode also send the 8192-token prefill probe; needs "
+                         "12 GiB free instead of 6. Do not use this against a model the "
+                         "router loaded at its full trained context.")
     ap.add_argument("--quant", default="", help="fallback quant when the id has none")
     ap.add_argument("--dry-run", action="store_true", help="size and guard only; load nothing")
     args = ap.parse_args()
@@ -629,6 +774,19 @@ def main() -> int:
         quant = (quant or args.quant or "").upper()
         rec: dict = {"repo": repo, "quant": quant, "role": args.role}
         print(f"\n=== {repo}" + (f":{quant}" if quant else ""))
+
+        if args.attach:
+            # Nothing is loaded or stopped: the numbers come from the router the
+            # operator is already running, which is the only safe way to measure
+            # a 78 GiB model that is already resident.
+            rec["attach"] = args.attach
+            try:
+                bench_attached(args.name or spec, args, rec)
+            except Exception as e:                            # noqa: BLE001
+                rec["error"] = rec_short(e)
+                print(f"    attach failed: {rec['error']}")
+            results.append(rec)
+            continue
 
         if LOW_SAFETY.search(repo) and args.role in ("fim", "coder", "agent"):
             print("    REFUSED: a low-safety requant is not admissible for coding/agentic")

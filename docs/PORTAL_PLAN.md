@@ -2180,6 +2180,56 @@ slots, now confirmed for this build but re-read per build rather than derived. `
 `host_cache_bytes` may partly overlap: the 4 GiB margin and the priced host caches both describe costs
 that are not weights or KV, and one clean load measured end to end would say how much each explains.
 
+#### 6.12.8 — the day the benchmark OOM-killed the router (2026-09-30)
+
+Measured, not inferred, and the cause was mine. `tools/slot_bench.py --attach` was pointed at the
+**resident** model to get numbers without loading anything. The state at the time:
+
+| | |
+|---|---|
+| loaded model | `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S`, 77.86 GiB of weights |
+| context the worker was given | **262144** — the model's full trained context, because the router passes no `--ctx-size` and the model asks for that |
+| aperture in use | 86.93 / 108.00 GiB |
+| `MemAvailable` before the first probe | **0.00 GiB** |
+| first probe | `/completion`, 512-token prompt → HTTP 500; next two → connection refused |
+| what happened | the kernel OOM-killed the router service; systemd restarted it |
+
+The worker's own args show why there was no margin — the runtime's defaults are not free, and this
+section had never priced them for a model loaded at its trained context:
+
+```
+-cram, --cache-ram N        max cache size in MiB (default: 8192)      -> up to 8 GiB per worker
+-ctxcp, --ctx-checkpoints N context checkpoints per slot (default: 32)
+-cms,  --checkpoint-min-step N  minimum spacing between checkpoints (default: 8192 tokens)
+```
+
+So a load priced as *weights + KV at ctx* under-states the truth by the prompt cache and up to 32
+checkpoint copies per slot, and at 262144 tokens those are not rounding errors. `est_total` and
+`peak_bytes` both said this model "fits" — they were right about the aperture and blind to the host
+caches on top of it. That is the same gap §6.12.6 left open ("`HEADROOM_BYTES` and `host_cache_bytes`
+may partly overlap"), now with a date and a corpse attached.
+
+What changed in the tool, so it cannot do this again:
+
+- `--attach` has a hard floor: it reads `MemAvailable` **before** sending anything and refuses below
+  6 GiB (12 GiB if `--big-probes` is asked for), then re-checks between probe groups and halts.
+- attach mode's default probes are 512 and 2048 tokens; the 8192-token prefill is opt-in.
+- the first server error stops the speed probes: a 500 or a refused connection means the worker is
+  already in trouble, and further requests are both noise and pressure.
+- every run reports the **lowest `MemAvailable` observed**, not just peak aperture.
+
+Verified against the live box afterwards: it now prints `MemAvailable 0.97 GiB — below the attach
+floor, refusing to probe` and sends no request at all.
+
+**What the portal owes the operator because of this.** Not a silent context cap — the standing rule is
+that a model's context is only limited when the author chooses it or when it is the only way to fit.
+What is owed is the number this event turned up: **free memory after load, including what the runtime
+will ask for by itself.** A personality that loads a 262144-context model and leaves 0.97 GiB spare is
+a personality that will lose the router, and the editor should say so in the same breath as it says
+"fits". Concretely: price `--cache-ram` (8192 MiB default) and `--ctx-checkpoints` against the chosen
+context in `peak_bytes`, surface `free after load` next to the verdict, and treat
+`ctx = trained_ctx` with a thin margin as a warning rather than a success.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
