@@ -48,9 +48,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-from app.core import modelmeta  # the portal's own GGUF header reader  # noqa: E402
+from app.core import modelindex, modelmeta   # the portal's own readers  # noqa: E402
 
 GIB = 1 << 30
+SCRATCH_BYTES = GIB          # compute graphs + buffers; measured ~1 GiB overhead
 
 # ---------------------------------------------------------------- the ceilings
 #
@@ -59,7 +60,7 @@ GIB = 1 << 30
 # Measured on this box: aperture 108.00 GiB, RAM 122.83 GiB. The unpriced extras
 # are llama.cpp's own defaults, not my invention -- a prompt cache of 8192 MiB
 # and 32 context checkpoints per slot (see docs/PORTAL_PLAN.md 6.12.6).
-APERTURE_SLACK = 6 * GIB        # KV pool + scratch + checkpoint buffers
+APERTURE_SLACK = 4 * GIB        # headroom beyond the priced KV/scratch
 MEM_SLACK = 10 * GIB            # page cache churn during load, plus the portal
 
 LOW_SAFETY = re.compile(r"abliterat|heretic|uncensored|de-?restrict|nsfw|roleplay", re.I)
@@ -110,9 +111,59 @@ def hub_files(repo: str) -> list[dict]:
 def cached_paths(repo: str) -> dict[str, Path]:
     """What llama.cpp can already see in the HF cache, keyed by QUANT tag.
 
-    Mirrors the runtime's rule (common/download.cpp): part 1 of a split is the
-    model, mmproj/mtp/dflash/eagle3/dspark are not.
+    Asked of the portal's own cache scanner, whose naming rule is pinned against
+    `llama-server --cache-list` (test_modelindex). An earlier copy of this
+    function parsed file names itself and could not name a **sharded** cache
+    model at all: `IQ1_M/repo-IQ1_M-00001-of-00002.gguf` ends in a shard number,
+    so the tag lookup missed and a model sitting on disk was reported
+    "not cached". Keep the hand parser only as a fallback for when app.core is
+    unreachable.
     """
+    rows = _cache_rows()
+    if rows:
+        out: dict[str, Path] = {}
+        for r in rows:
+            rid = r.get("id") or ""
+            if ":" not in rid or not rid.startswith(repo + ":"):
+                continue
+            p = Path(r.get("path") or "")
+            if p.is_file():
+                out.setdefault(rid.split(":", 1)[1].upper(), p)
+        if out:
+            return out
+    return _cached_paths_fallback(repo)
+
+
+_ROWS: list[dict] | None = None
+
+
+def _cache_rows() -> list[dict]:
+    """The portal's cache rows, read once. Never fatal: empty means 'fall back'."""
+    global _ROWS
+    if _ROWS is None:
+        try:
+            _ROWS, _problems = modelindex.scan_cache()
+        except Exception as e:                                # noqa: BLE001
+            print(f"    (cache scanner unavailable: {type(e).__name__}: {e})")
+            _ROWS = []
+    return _ROWS
+
+
+def cache_row(repo: str, quant: str) -> dict | None:
+    """The index row for repo:QUANT, which knows the **total** across shards.
+
+    `path.stat()` is shard 1 of 2 -- pricing the guard with it under-states a
+    split model by about half, which is the kind of error that becomes an OOM
+    instead of a refusal.
+    """
+    want = f"{repo}:{quant}"
+    for r in _cache_rows():
+        if r.get("id") == want:
+            return r
+    return None
+
+
+def _cached_paths_fallback(repo: str) -> dict[str, Path]:
     hub = Path(os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub"))
     folder = hub / f"models--{repo.replace('/', '--')}"
     refs = folder / "refs"
@@ -238,19 +289,43 @@ class Server:
         return json.loads(raw), time.perf_counter() - t0
 
 
+# b11146 renders counters as llamacpp:<name> and renamed them: the old
+# llama:prompt_seconds / llama:decode_seconds simply are not there any more, so
+# every rate this script derived came back None. Map both spellings onto one
+# canonical key (server-task.cpp:1523 server_task_result_metrics::to_metrics).
+_METRICS = {
+    "llamacpp:prompt_seconds_total":              "prompt_s",
+    "llamacpp:prompt_tokens_total":               "prompt_tok",
+    "llamacpp:prompt_tokens_cached_total":        "cached_tok",
+    "llamacpp:tokens_predicted_seconds_total":    "decode_s",
+    "llamacpp:tokens_predicted_total":            "decode_tok",
+    "llamacpp:spec_decode_num_draft_tokens_total":     "draft_tok",
+    "llamacpp:spec_decode_num_accepted_tokens_total":  "accepted_tok",
+    "llamacpp:spec_decode_num_drafts_total":           "drafts",
+    "llama:prompt_seconds":                       "prompt_s",
+    "llama:prompt_tokens":                        "prompt_tok",
+    "llama:decode_seconds":                       "decode_s",
+    "llama:decode_tokens":                        "decode_tok",
+}
+
+
 def counters(srv: Server) -> dict[str, float]:
     """llama.cpp's own accounting, when --metrics is on."""
     try:
         txt = srv.get("/metrics", timeout=10)
     except Exception:
         return {}
-    want = ("llama:prompt_seconds", "llama:prompt_tokens",
-            "llama:decode_seconds", "llama:decode_tokens")
     out = {}
     for line in txt.splitlines():
-        name = line.split("{", 1)[0].split()[0] if line and not line.startswith("#") else ""
-        if name in want:
-            out[name] = float(line.rsplit(None, 1)[1])
+        if not line or line.startswith("#"):
+            continue
+        name = line.split("{", 1)[0].split()[0]
+        key = _METRICS.get(name)
+        if key:
+            try:
+                out[key] = float(line.rsplit(None, 1)[1])
+            except ValueError:
+                pass
     return out
 
 
@@ -283,9 +358,16 @@ def bench_fim(srv: Server, report: dict) -> None:
     if "fim" not in json.dumps(report.get("vocab", {})).lower():
         report["infill"] = {"skipped": "no FIM tokens in the vocab"}
         return
-    probe, _ = srv.post("/infill", {"prompt": "def f():\n    return", "suffix": "",
-                                    "n_predict": 8, "temperature": 0.0, "cache": False},
-                        timeout=120)
+    try:
+        probe, _ = srv.post("/infill", {"prompt": "def f():\n    return", "suffix": "",
+                                        "n_predict": 8, "temperature": 0.0, "cache": False},
+                            timeout=120)
+    except Exception as e:                                    # noqa: BLE001
+        # /infill is refused outright when the vocab lacks the FIM triple, and a
+        # refusal here is a finding, not a crash.
+        report["infill"] = {"error": f"{type(e).__name__}: {e}"}
+        print(f"      /infill probe failed: {rec_short(e)}")
+        return
     if "content" not in probe:
         report["infill"] = {"error": "/infill returned no content",
                             "keys": sorted(probe)[:8]}
@@ -293,8 +375,13 @@ def bench_fim(srv: Server, report: dict) -> None:
 
     lat = []
     for lang, (pre, suf) in FIM_SNIPPETS.items():
-        body, dt = srv.post("/infill", {"prompt": pre, "suffix": suf, "n_predict": 64,
-                                        "temperature": 0.0, "cache": False}, timeout=180)
+        try:
+            body, dt = srv.post("/infill", {"prompt": pre, "suffix": suf, "n_predict": 64,
+                                            "temperature": 0.0, "cache": False}, timeout=180)
+        except Exception as e:                                # noqa: BLE001
+            lat.append({"lang": lang, "error": f"{type(e).__name__}: {e}"})
+            print(f"      {lang:<11} FAILED {rec_short(e)}")
+            continue
         got = (body.get("content") or "").strip()
         tok = body.get("tokens") or []
         lat.append({"lang": lang, "s": round(dt, 3),
@@ -306,61 +393,99 @@ def bench_fim(srv: Server, report: dict) -> None:
 
     burst = FIM_SNIPPETS["python"][0], FIM_SNIPPETS["rust"][0], \
             FIM_SNIPPETS["typescript"][0], FIM_SNIPPETS["bash"][0]
+
     def one(prefix):
-        _, dt = srv.post("/infill", {"prompt": prefix, "suffix": "", "n_predict": 64,
-                                     "temperature": 0.0, "cache": False}, timeout=180)
-        return dt
+        try:
+            _, dt = srv.post("/infill", {"prompt": prefix, "suffix": "", "n_predict": 64,
+                                         "temperature": 0.0, "cache": False}, timeout=180)
+            return dt
+        except Exception:                                     # noqa: BLE001
+            return None
     with cf.ThreadPoolExecutor(max_workers=4) as pool:
-        times = list(pool.map(one, burst))
+        times = [t for t in pool.map(one, burst) if t is not None]
+    if len(times) < 2:
+        report["infill_burst4"] = {"error": "fewer than 2 of 4 concurrent requests succeeded",
+                                   "ok": len(times)}
+        return
     report["infill_burst4"] = {"per_request_s": [round(t, 3) for t in times],
                                "p95_s": round(statistics.quantiles(times, n=20)[18], 3)
                                if len(times) > 1 else round(max(times), 3),
                                "wall_s": round(max(times), 3)}
-    print(f"      4 concurrent /infill: {[round(t,2) for t in times]} s")
+    print(f"      {len(times)}/4 concurrent /infill: {[round(t,2) for t in times]} s")
 
 
-def bench_speed(srv: Server, report: dict) -> None:
-    """Prefill at editor/RAG sizes, decode of a short answer, using llama.cpp's counters."""
+def rec_short(e: Exception) -> str:
+    return f"{type(e).__name__}: {e}"[:120]
+
+
+def bench_speed(srv: Server, report: dict, slot_ctx: int | None) -> None:
+    """Prefill at editor/RAG sizes, decode of a short answer, using llama.cpp's counters.
+
+    Two lessons live here. A probe wider than the slot's context is rejected with
+    HTTP 400, and one such rejection used to abort the whole model -- so every
+    probe is sized against what the server actually serves, and each failure is
+    recorded on its own row. Rates come from the runtime's counters rather than
+    wall time, because wall time includes the HTTP round trip.
+    """
     out = {}
-    for pp, tg in ((512, 64), (2048, 64), (8192, 64)):
+    for pp, tg in SPEED_PROBES:
+        if slot_ctx and pp + tg + 64 > slot_ctx:
+            out[f"{pp}+{tg}"] = {"skipped": f"needs ~{pp + tg} tokens, slot serves {slot_ctx}"}
+            print(f"      pp{pp:<5} tg{tg:<4} skipped: slot context {slot_ctx} too small")
+            continue
         payload = "Describe what this code does. " + "struct S { int x; };\n" * (pp // 8)
         before = counters(srv)
-        body, wall = srv.post("/completion", {"prompt": payload, "n_predict": tg,
-                                              "temperature": 0.0, "cache": False},
-                              timeout=600)
+        try:
+            body, wall = srv.post("/completion", {"prompt": payload, "n_predict": tg,
+                                                  "temperature": 0.0, "cache": False},
+                                  timeout=600)
+        except Exception as e:                                # noqa: BLE001
+            out[f"{pp}+{tg}"] = {"error": rec_short(e)}
+            print(f"      pp{pp:<5} tg{tg:<4} FAILED {rec_short(e)}")
+            continue
         d = deltas(before, counters(srv))
-        ps, ds = d.get("llama:prompt_seconds", 0.0), d.get("llama:decode_seconds", 0.0)
-        pt, dt_ = d.get("llama:prompt_tokens", 0.0), d.get("llama:decode_tokens", 0.0)
-        out[f"{pp}+{tg}"] = {
+        ps, ds = d.get("prompt_s", 0.0), d.get("decode_s", 0.0)
+        pt, dt_ = d.get("prompt_tok", 0.0), d.get("decode_tok", 0.0)
+        row = {
             "wall_s": round(wall, 3),
             "ttft_s": round(ps, 3) if ps else None,
             "prefill_tok_s": round(pt / ps, 1) if ps and pt else None,
             "decode_tok_s": round(dt_ / ds, 1) if ds and dt_ else None,
+            "prompt_tokens": pt or None,
+            "cached_tokens": d.get("cached_tok") or None,
             "usage": body.get("usage") or {k: body.get(k) for k in
                                            ("prompt_tokens", "completion_tokens") if k in body},
         }
-        r = out[f"{pp}+{tg}"]
-        print(f"      pp{pp:<5} tg{tg:<4} TTFT {str(r['ttft_s']):>7}s   "
-              f"prefill {str(r['prefill_tok_s']):>8} tok/s   decode {str(r['decode_tok_s']):>7} tok/s")
+        # MTP / draft evidence: only interesting if a draft was wired up.
+        if d.get("drafts"):
+            row["spec"] = {"drafts": d["drafts"], "draft_tok": d.get("draft_tok"),
+                           "accepted_tok": d.get("accepted_tok"),
+                           "accept_rate": round((d.get("accepted_tok") or 0) /
+                                                d["draft_tok"], 3) if d.get("draft_tok") else None}
+        out[f"{pp}+{tg}"] = row
+        print(f"      pp{pp:<5} tg{tg:<4} TTFT {str(row['ttft_s']):>7}s   "
+              f"prefill {str(row['prefill_tok_s']):>8} tok/s   decode {str(row['decode_tok_s']):>7} tok/s")
     report["speed"] = out
+
+
+SPEED_PROBES = ((512, 64), (2048, 64), (8192, 64))   # editor, RAG chunk, long doc
 
 
 def bench_tools(srv: Server, report: dict) -> None:
     """Can it actually emit a schema-valid tool call? Cheap and decisive."""
-    body, dt = srv.post("/chat/completions", {
-        "messages": [{"role": "user",
-                      "content": "What is the GTT aperture used right now? Use a tool."}],
-        "tools": [{"type": "function", "function": {
-            "name": "read_aperture",
-            "description": "Read the amdgpu GTT aperture usage counters.",
-            "parameters": {"type": "object",
-                           "properties": {"unit": {"type": "string",
-                                                   "enum": ["bytes", "gib"]}},
-                           "required": ["unit"]}}}],
-        "tool_choice": "auto", "temperature": 0.0, "max_tokens": 200}, timeout=240)
+    if not report.get("has_chat_template"):
+        report["tool_call"] = {"skipped": "no chat template in the file"}
+        print("      tool call skipped: file carries no chat template (base model)")
+        return
+    try:
+        body, dt = _tool_request(srv)
+    except Exception as e:                                    # noqa: BLE001
+        report["tool_call"] = {"error": rec_short(e)}
+        print(f"      tool call FAILED {rec_short(e)}")
+        return
     try:
         call = body["choices"][0]["message"]["tool_calls"] or []
-    except KeyError:
+    except (KeyError, TypeError, IndexError):
         call = []
     ok = bool(call) and isinstance(call[0].get("function", {}).get("name"), str)
     args_ok = False
@@ -374,6 +499,20 @@ def bench_tools(srv: Server, report: dict) -> None:
                            "raw": (call[:1] or [{}])[0].get("function", {}),
                            "s": round(dt, 2)}
     print(f"      tool call emitted={ok} args_ok={args_ok}")
+
+
+def _tool_request(srv: Server):
+    return srv.post("/chat/completions", {
+        "messages": [{"role": "user",
+                      "content": "What is the GTT aperture used right now? Use a tool."}],
+        "tools": [{"type": "function", "function": {
+            "name": "read_aperture",
+            "description": "Read the amdgpu GTT aperture usage counters.",
+            "parameters": {"type": "object",
+                           "properties": {"unit": {"type": "string",
+                                                   "enum": ["bytes", "gib"]}},
+                           "required": ["unit"]}}}],
+        "tool_choice": "auto", "temperature": 0.0, "max_tokens": 200}, timeout=240)
 
 
 # GGUF v3 value types (gguf.h): 0 UINT8 1 INT8 2 UINT16 3 INT16 4 UINT32 5 INT32
@@ -441,7 +580,8 @@ def header_facts(model: Path) -> dict:
     toks, added = _scan_vocab(model)
     fim = sorted({t for t in list(toks) + list(added)
                   if isinstance(t, str) and "fim" in t.lower() and t.startswith("<")})
-    return {"architecture": meta.get("arch"),
+    return {"_meta": {k: v for k, v in meta.items() if not isinstance(v, (list, dict))},
+            "architecture": meta.get("arch"),
             "declared_type": meta.get("declared_type"),
             "trained_ctx": meta.get("context_length"),
             "sliding_window": meta.get("sliding_window"),
@@ -459,11 +599,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", action="append", default=[],
                     help="repo[:QUANT], repeatable. e.g. IFM/K2-Horizon-MoVA-36B-A4B-GGUF:Q4_K_M")
-    ap.add_argument("--role", choices=["fim", "chat", "agent", "embed"], default="chat",
+    ap.add_argument("--role", choices=["fim", "chat", "coder", "agent", "embed"],
+                    default="chat",
                     help="which extra tests to run for every model in this invocation")
     ap.add_argument("--download", action="store_true",
                     help="fetch missing models into the HF cache llama.cpp reads")
-    ap.add_argument("--ctx", type=int, default=8192, help="context to reserve per slot")
+    ap.add_argument("--ctx", type=int, default=16384,
+                    help="total context to reserve (a shared KV pool; --kv-unified). "
+                         "Was 8192 with --parallel 4, which handed each slot 2048 tokens and made "
+                         "the pp2048 probe a guaranteed HTTP 400.")
     ap.add_argument("--parallel", type=int, default=4, help="server slots (burst handling)")
     ap.add_argument("--quant", default="", help="fallback quant when the id has none")
     ap.add_argument("--dry-run", action="store_true", help="size and guard only; load nothing")
@@ -486,7 +630,7 @@ def main() -> int:
         rec: dict = {"repo": repo, "quant": quant, "role": args.role}
         print(f"\n=== {repo}" + (f":{quant}" if quant else ""))
 
-        if LOW_SAFETY.search(repo) and args.role in ("fim", "agent"):
+        if LOW_SAFETY.search(repo) and args.role in ("fim", "coder", "agent"):
             print("    REFUSED: a low-safety requant is not admissible for coding/agentic")
             rec["refused"] = "low-safety requant in a coding/agentic slot"
             results.append(rec)
@@ -510,24 +654,40 @@ def main() -> int:
             results.append(rec)
             continue
 
-        size = path.stat().st_size
+        row = cache_row(repo, quant)
+        size = int(row["bytes"]) if row and row.get("bytes") else path.stat().st_size
         rec["file"] = str(path)
         rec["file_gib"] = round(size / GIB, 2)
+        rec["shards"] = f"1/{row['shard_total']}" if row and row.get("shard_total") else "1/1"
+        if row and int(row.get("shard_total") or 1) > 1:
+            rec["file"] += f" (+{int(row['shard_total']) - 1} more shard(s))"
         rec.update(header_facts(path))
+        facts = rec.pop("_meta")                        # for KV pricing, not for the table
+
+        # What context this run will actually reserve: never wider than training,
+        # and priced, not guessed -- the portal's own estimator, so the bench and
+        # the portal's "fits here" verdict cannot disagree about the same file.
+        trained = rec.get("trained_ctx") or 0
+        ctx = args.ctx if not trained else min(args.ctx, trained)
+        kv = modelindex.kv_bytes_at(facts, ctx)
+        rec["bench_ctx"], rec["kv_at_ctx_gib"] = ctx, (round(kv / GIB, 2) if kv else None)
         mm = sorted(p for p in path.parent.rglob("*.gguf") if "mmproj" in p.name.lower())
-        mm_bytes = sum(p.stat().st_size for p in mm)
+        mm_bytes = (int(row["mmproj_bytes"]) if row and row.get("mmproj_bytes")
+                    else sum(p.stat().st_size for p in mm))
         rec["mmproj_gib"] = round(mm_bytes / GIB, 2)
 
         # ---- the guard: aperture first, because on this box it is the wall ----
         used, total = aperture()
-        need = size + mm_bytes + args.ctx * 4096      # KV+scratch estimate, loose
+        need = size + mm_bytes + (kv or int(0.75 * GIB)) + SCRATCH_BYTES
         free_ap = total - used
         mem = mem_available()
         moe = (f"MoE {rec['experts']} experts / {rec['experts_used']} active"
                if rec.get("is_moe") else "dense")
-        print(f"    file {size/GIB:6.2f} GiB  {moe}  trained_ctx {rec.get('trained_ctx')}  "
+        print(f"    file {size/GIB:6.2f} GiB ({rec['shards']})  {moe}  "
+              f"trained_ctx {rec.get('trained_ctx')}  "
               f"sw {rec.get('sliding_window')}  FIM tokens "
               f"{'yes' if rec['fim_tokens'] else 'NO'}")
+        print(f"    bench ctx {ctx} -> KV {rec['kv_at_ctx_gib']} GiB priced from the header")
         print(f"    aperture {used/GIB:.2f}/{total/GIB:.2f} GiB used, free {free_ap/GIB:.2f}; "
               f"needs ~{need/GIB:.2f};  MemAvailable {mem/GIB:.2f} GiB")
         rec.update({"gtt_used_gib": round(used / GIB, 2), "gtt_total_gib": round(total / GIB, 2),
@@ -556,24 +716,36 @@ def main() -> int:
             results.append(rec)
             continue
 
-        extra = ["--ctx-size", str(args.ctx), "--parallel", str(args.parallel),
+        extra = ["--ctx-size", str(ctx), "--parallel", str(args.parallel), "--kv-unified",
                  "--n-gpu-layers", "99", "--flash-attn", "on"]
         if mm:
             extra += ["--mmproj", str(mm[0])]
         try:
             with Server(path, port[0], extra, log_dir / f"{repo.split('/')[-1]}.log") as srv:
+                # b11146 /props has no top-level n_ctx at all: the slot context is
+                # default_generation_settings.n_ctx, and the model card (n_ctx_train,
+                # n_params, ftype) lives under /models -> data[].meta (server-context.cpp:4599).
                 props = json.loads(srv.get("/props", timeout=20))
-                rec["served"] = {"n_ctx": props.get("n_ctx"),
-                                 "n_ctx_train": props.get("n_ctx_train"),
-                                 "total_n_ctx": props.get("total_n_ctx"),
-                                 "slot_n_ctx": props.get("slot_n_ctx"),
-                                 "use_mlock": props.get("use_mlock")}
-                print(f"    served n_ctx={props.get('n_ctx')} train={props.get('n_ctx_train')} "
-                      f"slots={args.parallel} total_n_ctx={props.get('total_n_ctx')}")
-                bench_speed(srv, rec)
-                if args.role in ("fim", "chat", "agent"):
+                card = next((m for m in (json.loads(srv.get("/models", timeout=20))
+                                         .get("data") or []) if m.get("object") == "model"), {})
+                cm = card.get("meta") or {}
+                slot_ctx = ((props.get("default_generation_settings") or {}).get("n_ctx")
+                            or cm.get("n_ctx"))
+                rec["served"] = {"slot_n_ctx": slot_ctx,
+                                 "total_slots": props.get("total_slots"),
+                                 "n_ctx_train": cm.get("n_ctx_train"),
+                                 "n_params": cm.get("n_params"),
+                                 "served_size_gib": round((cm.get("size") or 0) / GIB, 2),
+                                 "ftype": props.get("model_ftype"),
+                                 "vision": (props.get("modalities") or {}).get("vision"),
+                                 "chat_template_caps": props.get("chat_template_caps")}
+                print(f"    served slot_ctx={slot_ctx} slots={props.get('total_slots')} "
+                      f"train={cm.get('n_ctx_train')} ftype={props.get('model_ftype')} "
+                      f"vision={rec['served']['vision']}")
+                bench_speed(srv, rec, slot_ctx)
+                if args.role in ("fim", "chat", "coder", "agent"):
                     bench_fim(srv, rec)
-                if args.role == "agent":
+                if args.role in ("coder", "agent"):
                     bench_tools(srv, rec)
                 rec["peak_gtt_gib"] = round(srv.peak_gtt / GIB, 2)
                 rec["peak_rss_gib"] = round(srv.peak_rss / GIB, 2)
