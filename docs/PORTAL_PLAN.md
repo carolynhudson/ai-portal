@@ -2349,6 +2349,63 @@ is the same weights, same ctx, 4.3 GiB each — the control and the treatment co
 the same aperture, so a decode-speed difference has nowhere to hide.
 
 
+#### 6.12.11 Speculative decoding: measured, and it is not a portal setting (2026-10-01)
+
+The user corrected a false premise, and the file proved it:
+`Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF` is not a draft to be paired with a separate
+target. Read both headers with the fixed walker:
+
+| file | tensors | nextn tensors | KV keys | size |
+|---|---|---|---|---|
+| `Qwopus3.5-4B-coder-Q8_0.gguf` | 441 | **4** | 33 | 4.29 GiB |
+| `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` | 441 | **4** | 35 | 4.29 GiB |
+
+Both carry the head (`blk.32.nextn.{eh_proj,enorm,hnorm,shared_head_norm}.weight`),
+so **both** Qwopus repos can draft with their own head, and `--spec-type draft-mtp`
+needs one `--model` and no `--spec-draft-model`. My earlier 303-vs-310 counts (in
+§6.12.10) came from an ad-hoc parser that mis-walked the tensor section; this table
+supersedes them. `find_draft` returning the target as its own `--spec-draft-model`
+— the hang the user hit — was the tool lower-casing the marker test and matching
+"MTP" inside the target's own name; the naming rule is now shared with modelindex
+(`NOT_A_MODEL_MARKERS`, case-sensitive), pinned in `tests/test_slot_bench_spec.py`
+and `tests/test_bench_tool.py`.
+
+Measured on this box, same file, ctx 8192, 4 slots, `--spec` off vs on
+(reports `slot-bench-20261001T1624*` are no longer on disk; numbers recorded here):
+
+| probe | spec off | spec on |
+|---|---|---|
+| decode tg64 | **41.51 tok/s** | **95.86 tok/s** |
+| tool round-trip mean | 0.531 s | 0.439 s |
+| 4 concurrent tool calls | 4×200, 0.90–1.22 s | 4×200, 0.83–1.01 s |
+
+2.31× decode for one flag on a 4B dense Q8_0. The runtime publishes the evidence
+beside the speed — `llamacpp:spec_decode_num_draft_tokens_total`,
+`..._accepted_tokens_total`, `..._drafts_total` (server-task.cpp:1554-1563) — and
+`slot_bench` maps them, so a run that claims a draft speedup has to show the
+accept rate that produced it.
+
+**The decision.** In b11146 no `--spec-*` key is preset-eligible: the whole
+speculative group sits in the argument block presets cannot reach (see the
+eligibility probe, `tools/preset_eligibility_probe.py`). The portal writes
+`presets.ini` and nothing else, so **speculative decoding is not a portal setting
+and stays out of the settings registry.** That is a rule, not an omission: a key
+the runtime accepts only on the command line cannot be applied by a personality,
+and a UI control that writes nothing is worse than no control. Re-open it if a
+future build moves those keys — check `llama-server --help` and re-run the probe.
+
+**§6.12.8 correction — what `--kv-unified` pools.** The journal for the 77.86 GiB
+load shows `slot ...: n_ctx = 131072 (2 slots)`: the worker got **two** 131072-slot
+pools, ~13.6 GiB together, while the aperture rose only **11.84 GiB** over the
+weights (77.86 → 89.70). What is measured, and what follows for the estimator: the
+runtime reserves prompt cache and checkpoints on its own
+(`--cache-ram` 8192 MiB, `--ctx-checkpoints` 32 per slot), `--kv-unified` pools the
+KV **slots** but not that budget, and neither `est_total` nor `peak_bytes` prices
+any of it against a 4 GiB `HEADROOM_BYTES`. `slot_bench` now prices the per-worker
+cache in the non-unified case too and prints it in the floor line
+("(+8 runtime cache)") so the number compared against free memory is the one the
+runtime will actually ask for.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
