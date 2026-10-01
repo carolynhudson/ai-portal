@@ -2319,6 +2319,36 @@ Open: whether `--spec-draft-hf <mtp repo>` against the **base** model is a secon
 configuration worth measuring — a base target plus the MTP head as an external draft.
 Not assumed; it needs a run.
 
+#### 6.12.10 — why the MTP run could never start (2026-10-01)
+
+`--spec mtp` reported "the target has no nextn head" for a file that does have one.
+Four independent defects, all inside `tools/slot_bench.py`, all hidden by the same
+bare `except Exception: return None`:
+
+1. `nextn_tensors()` used `struct` — a name the module never imported. NameError.
+2. It built its mmap inside `with open(...)`, so the fd closed before the first
+   read; every access raised EBADF. Measured directly: an mmap outlives nothing
+   if its file object is gone.
+3. Its inline GGUF string reader sliced the payload **at** the u64 length prefix
+   rather than after it, so every field after the first key read 8 bytes early.
+4. The beside-model draft glob matched the target's own name, so the MTP file was
+   passed to llama.cpp as its own `--spec-draft-model`; and `--spec-draft` decided
+   "this is a path" from a slash, which every `org/repo` id contains.
+
+Fixes plus `tests/test_slot_bench_spec.py` (6 tests on synthetic GGUF headers with
+real tensor-info records): suite 621 passed, 1 skipped.
+
+**Measured on this box, both Qwopus files:** `Qwopus3.5-4B-coder-Q8_0.gguf` and
+`Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` each carry **4 `*.nextn.*` tensors** and are
+each 4.29 GiB. So on this pair `--spec mtp` is one file, and `--spec-draft` is
+only needed for the other shape (unsloth's separate `mtp-*.gguf`). The earlier
+note that the base file has no head was read through the broken parser.
+
+Open question the run answers: does draft decoding earn its keep here? The pair
+is the same weights, same ctx, 4.3 GiB each — the control and the treatment cost
+the same aperture, so a decode-speed difference has nowhere to hide.
+
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
