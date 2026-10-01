@@ -2349,6 +2349,28 @@ is the same weights, same ctx, 4.3 GiB each — the control and the treatment co
 the same aperture, so a decode-speed difference has nowhere to hide.
 
 
+#### 6.12.12 The burst probe never measured anything (2026-10-01)
+
+`infill_burst4` reported "fewer than 2 of 4 concurrent requests succeeded" in every
+report, and the per-language rows beside it looked healthy — so the failure read
+like a server limit rather than a bug. It was a bug: the single-request probe had
+been fixed to `/infill`'s body (`input_prefix` / `input_suffix` / `input_middle`),
+the burst probe still sent `prompt` / `suffix`, and the runtime answered 500
+`key 'input_suffix' not found` (server-context.cpp:4853). The worker's own log said
+so on lines 114-117 of `slot-bench-20261001T053028Z.logs/codegemma-2b-GGUF.log`
+while the report said only "fewer than 2 of 4". Two rules follow, both in the tool:
+
+* one `fim_payload()` builder for every `/infill` call, and a test that counts
+  `srv.post("/infill"` against `fim_payload(` so a fourth call site with hand-written
+  keys fails the suite;
+* a probe that swallows an exception has to put the reason in the report
+  (`infill_burst4.why`), or the number becomes a verdict about the server instead
+  of a verdict about the harness.
+
+Autocomplete concurrency — the actual question the burst answers, and the reason an
+FIM slot needs its own measurement — is therefore **still unmeasured** on this box.
+
+
 #### 6.12.11 Speculative decoding: measured, and it is not a portal setting (2026-10-01)
 
 The user corrected a false premise, and the file proved it:

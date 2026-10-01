@@ -443,6 +443,22 @@ FIM_SNIPPETS = {                       # the operator's own language list
 }
 
 
+def fim_payload(prefix: str, suffix: str, n_predict: int) -> dict:
+    """The body /infill accepts — and there is exactly one shape.
+
+    /infill takes input_prefix / input_suffix / input_middle, NOT prompt / suffix:
+    the wrong keys are answered 500 "[json.exception.out_of_range.403] key
+    'input_suffix' not found" (server-context.cpp:4853). The single-request probe
+    was fixed to that; the 4-at-once probe kept the old keys, so every run's
+    infill_burst4 row read "fewer than 2 of 4 concurrent requests succeeded" —
+    the concurrency question the burst exists to answer went unmeasured while the
+    per-language rows looked healthy. One builder, so the three call sites cannot
+    disagree again.
+    """
+    return {"input_prefix": prefix, "input_suffix": suffix, "input_middle": "",
+            "n_predict": n_predict, "temperature": 0.0, "cache": False}
+
+
 def bench_fim(srv: Server, report: dict) -> None:
     """/infill with an editor-shaped prefix+suffix, then 4 at once.
 
@@ -456,9 +472,8 @@ def bench_fim(srv: Server, report: dict) -> None:
     # suffix. Sending the latter is answered 500 "key 'input_suffix' not found"
     # (server-context.cpp:4853) -- which is what made every FIM row look dead.
     try:
-        probe, _ = srv.post("/infill", {"input_prefix": "def f():\n    return",
-                                        "input_suffix": "", "n_predict": 8,
-                                        "temperature": 0.0, "cache": False},
+        probe, _ = srv.post("/infill",
+                            fim_payload("def f():\n    return", "", 8),
                             timeout=120)
     except Exception as e:                                    # noqa: BLE001
         # /infill is refused outright when the vocab lacks the FIM triple, and a
@@ -474,9 +489,7 @@ def bench_fim(srv: Server, report: dict) -> None:
     lat = []
     for lang, (pre, suf) in FIM_SNIPPETS.items():
         try:
-            body, dt = srv.post("/infill", {"input_prefix": pre, "input_suffix": suf,
-                                            "n_predict": 64, "temperature": 0.0,
-                                            "cache": False}, timeout=180)
+            body, dt = srv.post("/infill", fim_payload(pre, suf, 64), timeout=180)
         except Exception as e:                                # noqa: BLE001
             lat.append({"lang": lang, "error": f"{type(e).__name__}: {e}"})
             print(f"      {lang:<11} FAILED {rec_short(e)}")
@@ -498,21 +511,24 @@ def bench_fim(srv: Server, report: dict) -> None:
               f"{(n_pred/dt if dt and n_pred else 0):6.1f} tok/s  {got[:60]!r}")
     report["infill_samples"] = lat
 
-    burst = FIM_SNIPPETS["python"][0], FIM_SNIPPETS["rust"][0], \
-            FIM_SNIPPETS["typescript"][0], FIM_SNIPPETS["bash"][0]
+    burst = [FIM_SNIPPETS[k] for k in ("python", "rust", "typescript", "bash")]
 
-    def one(prefix):
+    def one(pair):
+        prefix, suffix = pair
         try:
-            _, dt = srv.post("/infill", {"prompt": prefix, "suffix": "", "n_predict": 64,
-                                         "temperature": 0.0, "cache": False}, timeout=180)
+            _, dt = srv.post("/infill", fim_payload(prefix, suffix, 64), timeout=180)
             return dt
-        except Exception:                                     # noqa: BLE001
+        except Exception as e:                                # noqa: BLE001
+            # silently swallowing this is what hid the payload bug: the count of
+            # successes was reported, the reason for the failures was not.
+            report.setdefault("infill_burst_errors", []).append(rec_short(e))
             return None
     with cf.ThreadPoolExecutor(max_workers=4) as pool:
         times = [t for t in pool.map(one, burst) if t is not None]
     if len(times) < 2:
         report["infill_burst4"] = {"error": "fewer than 2 of 4 concurrent requests succeeded",
-                                   "ok": len(times)}
+                                   "ok": len(times),
+                                   "why": (report.get("infill_burst_errors") or [None])[0]}
         return
     report["infill_burst4"] = {"per_request_s": [round(t, 3) for t in times],
                                "p95_s": round(statistics.quantiles(times, n=20)[18], 3)

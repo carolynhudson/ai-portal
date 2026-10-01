@@ -164,6 +164,28 @@ def test_embedding_vector_handles_every_shape_the_route_uses():
     assert sb.embedding_vector({"error": "no pooling"}) == []
 
 
+# ------------------------------------------------------------------- /infill
+def test_the_infill_body_is_the_only_shape_the_route_accepts():
+    """/infill reads input_prefix / input_suffix / input_middle. Sending prompt /
+    suffix is answered 500 "key 'input_suffix' not found" (server-context.cpp),
+    and the 4-at-once probe did exactly that: every report said "fewer than 2 of 4
+    concurrent requests succeeded" while the per-language rows — which used the
+    right keys — looked fine. The burst number the autocomplete slot needs was
+    never measured, and the swallowed exception hid why."""
+    body = sb.fim_payload("def f():\n", "\n    return 1", 64)
+    assert body["input_prefix"] == "def f():\n"
+    assert body["input_suffix"] == "\n    return 1"
+    assert "prompt" not in body and "suffix" not in body
+
+
+def test_every_infill_call_sends_that_body():
+    """One builder is only a rule if the call sites are checked."""
+    import inspect
+    src = inspect.getsource(sb.bench_fim)
+    assert src.count('srv.post("/infill"') == src.count("fim_payload("), src.count('srv.post("/infill"')
+    assert '"prompt"' not in src and '"suffix"' not in src
+
+
 # ----------------------------------------------------------------- FIM tokens
 def _append_top_level(path: pathlib.Path, key: str, value) -> None:
     """Append one unprefixed KV entry of a chosen type and bump kv_count.
