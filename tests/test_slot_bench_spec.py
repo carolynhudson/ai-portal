@@ -74,10 +74,10 @@ def test_an_unparseable_header_is_unknown_not_zero(tmp_path):
 def test_a_draft_beside_the_target_is_found_and_the_target_is_not(tmp_path):
     tool = load_tool()
     base = _gguf(tmp_path / "model-Q8_0.gguf", ["a.weight"])
-    draft = _gguf(tmp_path / "model-MTP-Q8_0.gguf", ["blk.32.nextn.output.weight"])
+    draft = _gguf(tmp_path / "mtp-model-Q8_0.gguf", ["blk.32.nextn.output.weight"])
     assert tool.find_draft(base) == draft
-    # The MTP file matches "mtp" in its own name; handing it back as its own -md
-    # is the mistake this guards.
+    # A file whose own name says "draft" must not be handed back as its own -md;
+    # llama-server then loads the same file twice and the run looks like a hang.
     assert tool.find_draft(draft) is None
 
 
@@ -88,9 +88,19 @@ def test_a_projector_is_never_mistaken_for_a_draft(tmp_path):
     assert tool.find_draft(base) is None
 
 
-def test_draft_markers_are_case_insensitive_in_names_and_ids():
+def test_draft_markers_are_case_sensitive_the_way_the_runtime_reads_them():
+    """This used to be a case-insensitive test, and the case-insensitive rule was
+    wrong: `llama-server --cache-list` (pinned in test_modelindex) lists
+    `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` as a loadable model, and the portal agrees.
+    Lower-casing here refused to bench that model and accepted an imatrix file."""
     tool = load_tool()
-    assert tool._draft_like("Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0")
+    assert not tool._draft_like("Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0")
+    assert not tool._draft_like("Qwopus3.5-4B-Coder-MTP-Q8_0.gguf")
     assert tool._draft_like("model-mtp-Q4_K_M.gguf")
+    assert tool._draft_like("eagle3-model.gguf")
     assert not tool._draft_like("Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0")
     assert not tool._draft_like("model-Q4_K_M.gguf")
+    # one rule, shared with the portal — not a second list that can drift
+    from app.core import modelindex
+    assert tool._DRAFT_MARKERS == tuple(
+        m for m in modelindex.NOT_A_MODEL_MARKERS if m != "mmproj")

@@ -517,7 +517,13 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
 # library. `imatrix` was missing from the list entirely.
 _HF_SPLIT = re.compile(r"^(.+)-([0-9]{5})-of-([0-9]{5})$", re.IGNORECASE)
 _HF_TAG = re.compile(r"[-.]([A-Za-z0-9_]+)$")
-_HF_NOT_A_MODEL = ("mmproj", "imatrix", "mtp-", "eagle3-", "dflash-", "dspark-")
+# Public because tools/slot_bench.py has to classify the same files the same way.
+# The bench script kept its own list (matched case-insensitively) and so refused
+# to bench `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` — a model the router loads — while
+# calling `model-Q8_0-eagle3.gguf` a model it should have skipped. One rule, one
+# place.
+NOT_A_MODEL_MARKERS = ("mmproj", "imatrix", "mtp-", "eagle3-", "dflash-", "dspark-")
+_HF_NOT_A_MODEL = NOT_A_MODEL_MARKERS
 
 
 def _hf_path_probe(rel: Path) -> str:

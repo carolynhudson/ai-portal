@@ -1,0 +1,193 @@
+"""tests for the benchmark harness — only the parts that made measurement calls.
+
+`tools/slot_bench.py` is the instrument every slot decision in the plan was read
+off, so a bug in it silently becomes a wrong decision about the library. Each
+rule pinned here was learned from a run that failed:
+
+  * pick_repo_file  — reported a model already on disk as "not cached" because
+                      the quant tag was a suffix, not a name prefix
+  * AUX / _draft_like — kept its own marker list matched case-insensitively, so
+                      it refused to bench a model the router loads
+  * find_draft      — handed the server its own MTP file as its draft
+  * nextn_tensors   — `--spec-type draft-mtp` means "use the head inside this
+                      file" or "find a second file", and only the file says which
+  * embedding_vector— /embedding answered in a shape the reader assumed was the
+                      OpenAI one, so a working 768-dim embedder reported dim=1
+  * _scan_vocab     — a card claiming FIM while the vocab has no FIM tokens makes
+                      every /infill sample meaningless
+
+The tool is loaded by path, not imported as a package member: importing it must
+stay a no-op (no scan, no network, no subprocess).
+"""
+
+import ast
+import importlib.util
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT))
+
+# gguf_fixture, never another test module: test_modelindex claims a password and a
+# throwaway home with setdefault at import, and importing it from here (which
+# collects earlier) wins that race for the whole session — 56 failures and 12
+# errors of 401s in files that never touched auth. See tests/gguf_fixture.py.
+import gguf_fixture as fx             # noqa: E402
+
+
+def _load_tool():
+    spec = importlib.util.spec_from_file_location(
+        "slot_bench", ROOT / "tools" / "slot_bench.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sb = _load_tool()
+
+
+def _markers() -> tuple:
+    """modelindex's marker list, imported inside the test: this module must not
+    import app/* at import time either, since the modules that own the throwaway
+    home and password claim them at theirs."""
+    from app.core import modelindex
+    return modelindex.NOT_A_MODEL_MARKERS
+
+
+# --------------------------------------------------------- one naming rule only
+def test_the_tool_and_the_portal_share_one_file_rule():
+    """The runtime's rule is pinned against `llama-server --cache-list` in
+    test_modelindex. A second copy here drifted (case-insensitive, its own list)
+    and the bench refused `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf`, which the router
+    loads, while accepting an imatrix calibration file as a model."""
+    for marker in _markers():
+        assert sb.AUX.search(f"anything-{marker}rest.gguf"), marker
+    assert not sb.AUX.search("Qwopus3.5-4B-Coder-MTP-Q8_0.gguf")   # a model
+    assert not sb._draft_like("Qwopus3.5-4B-Coder-MTP-Q8_0.gguf")
+    assert sb._draft_like("mtp-Qwythos-27B-Q6_K.gguf")             # a sidecar
+    assert not sb._draft_like("codegemma-2b-mmproj-Q5_K_M.gguf")   # not a draft
+
+
+# ------------------------------------------------------------- hub file picking
+def test_the_quant_tag_position_decides_not_the_name_prefix():
+    """All four of these name one model to llama.cpp. The old test was
+    `path.upper().startswith(quant[:2])`, which matched only the tag directory,
+    so ggml-org's embedder "downloaded" nothing and the run reported a file that
+    was already on disk as missing."""
+    cases = [
+        ([{"path": "embeddinggemma-300M-Q8_0.gguf"}], "Q8_0",
+         "embeddinggemma-300M-Q8_0.gguf"),
+        ([{"path": "qwen3-reranker-0.6b-q8_0.gguf"}], "Q8_0",
+         "qwen3-reranker-0.6b-q8_0.gguf"),                      # "_" not "-"
+        ([{"path": "IQ3_S/repo-IQ3_S-00001-of-00002.gguf"},
+          {"path": "IQ3_S/repo-IQ3_S-00002-of-00002.gguf"},
+          {"path": "Q5_K_M/repo-Q5_K_M.gguf"}], "IQ3_S",
+         "IQ3_S/repo-IQ3_S-00001-of-00002.gguf"),               # tag directory
+        ([{"path": "codegemma-2b-Q5_K_M.gguf"},
+          {"path": "codegemma-2b-Q4_K_M.gguf"}], "Q4_K_M",
+         "codegemma-2b-Q4_K_M.gguf"),
+    ]
+    for files, quant, want in cases:
+        got = sb.pick_repo_file(files, quant)
+        assert got == want, f"{quant}: got {got}, want {want}"
+
+
+def test_a_projector_or_a_calibration_file_is_never_the_model():
+    assert sb.pick_repo_file([{"path": "codegemma-2b-Q5_K_M.gguf"},
+                              {"path": "codegemma-2b-mmproj-Q5_K_M.gguf"}],
+                             "Q5_K_M") == "codegemma-2b-Q5_K_M.gguf"
+    assert sb.pick_repo_file([{"path": "mmproj-F16.gguf"},
+                              {"path": "eagle3-model.gguf"},
+                              {"path": "model-imatrix-Q8_0.gguf"}], "Q8_0") is None
+    assert sb.pick_repo_file([{"path": "README.md"}], "Q8_0") is None
+
+
+# ---------------------------------------------------------------------- drafts
+def test_a_model_is_never_its_own_draft(tmp_path):
+    """The Qwopus MTP file contains "MTP" in its own name; an unguarded glob
+    handed llama-server the target as --spec-draft-model and the run hung."""
+    target = tmp_path / "Qwopus3.5-4B-Coder-MTP-Q8_0.gguf"
+    target.write_bytes(b"GGUF")
+    assert sb.find_draft(target) is None, "a model is not its own draft"
+
+    other = tmp_path / "Qwopus3.5-4B-Coder-Q8_0.gguf"
+    other.write_bytes(b"GGUF")
+    assert sb.find_draft(other) is None
+
+
+def test_a_sidecar_draft_beside_the_target_is_found(tmp_path):
+    d = tmp_path / "unsloth"
+    d.mkdir()
+    sibling = d / "mtp-Qwythos-27B-Q6_K.gguf"
+    sibling.write_bytes(b"GGUF")
+    plain = d / "Qwythos-27B-Q6_K.gguf"
+    plain.write_bytes(b"GGUF")
+    (d / "Qwythos-27B-mmproj-Q6_K.gguf").write_bytes(b"GGUF")
+    assert sb.find_draft(plain) == sibling      # projector is not a draft
+
+
+def test_the_mtp_head_can_live_inside_the_target(tmp_path):
+    """Two repos, two wirings, and only the file says which: Jackrong's MTP file
+    is the base model plus blk.N.nextn.* (one --model is enough), unsloth's puts
+    the head in a separate mtp-*.gguf (needs --spec-draft-model)."""
+    own = tmp_path / "Qwopus3.5-4B-Coder-MTP-Q8_0.gguf"
+    fx._gguf_with_tensors(own, ["blk.31.ffn_down.weight", "blk.32.nextn.output.weight",
+                             "blk.32.nextn.head_h.0.weight"])
+    assert sb.nextn_tensors(own) == 2, sb.nextn_tensors(own)
+
+    plain = tmp_path / "Qwopus3.5-4B-Coder-Q8_0.gguf"
+    fx._gguf_with_tensors(plain, ["blk.31.ffn_down.weight", "output.weight"])
+    assert sb.nextn_tensors(plain) == 0
+
+    # a truncated or non-GGUF file is "unknown", not "no head"
+    junk = tmp_path / "junk.gguf"
+    junk.write_bytes(b"not a gguf at all")
+    assert sb.nextn_tensors(junk) is None
+
+
+# ---------------------------------------------------------- embedding responses
+def test_embedding_vector_handles_every_shape_the_route_uses():
+    """Measured on b11146: POST /embedding answers `[{"index":0,"embedding":
+    [[...]]}]`. Reading it as the OpenAI dict raised AttributeError, and taking
+    the length of the wrong level reported dim=1 — a working embedder looked
+    broken."""
+    vec = [0.1, 0.2, 0.3]
+    for body in (
+        [{"index": 0, "embedding": [vec]}],          # measured on b11146
+        {"embedding": [vec]},                        # non-OAI, nested per input
+        {"embedding": vec},                          # non-OAI, single input
+        [{"index": 0, "embedding": vec}],            # OpenAI item, no wrapper
+        {"data": [{"embedding": vec}]},              # OpenAI
+    ):
+        assert sb.embedding_vector(body) == vec, body
+    assert sb.embedding_vector({"error": "no pooling"}) == []
+
+
+# ----------------------------------------------------------------- FIM tokens
+def _append_top_level(path: pathlib.Path, key: str, value) -> None:
+    """Append one unprefixed KV entry of a chosen type and bump kv_count.
+    _append_kv_key fixes the type to bool; the vocab keys are string arrays."""
+    import struct
+    raw = bytearray(path.read_bytes())
+    n = struct.unpack_from("<Q", raw, 16)[0]
+    struct.pack_into("<Q", raw, 16, n + 1)
+    path.write_bytes(bytes(raw) + fx._enc_str(key) + fx._enc_value(value))
+
+
+def test_fim_tokens_come_from_the_vocab_not_the_card(tmp_path):
+    """The model card says FIM=yes; the request then ignores the markers because
+    the vocab has none. Only the header answers the question."""
+    withfim = tmp_path / "withfim.gguf"
+    fx._write_fake_gguf(withfim, {"block_count": 2})
+    _append_top_level(withfim, "tokenizer.ggml.tokens", ["hello", "world", ""])
+    _append_top_level(withfim, "tokenizer.ggml.added_tokens", ["", ""])
+    toks, added = sb._scan_vocab(withfim)
+    assert toks == ["hello", "world", ""], toks
+    assert added == ["", ""], added
+
+    plain = tmp_path / "plain.gguf"
+    fx._write_fake_gguf(plain, {"block_count": 2})
+    _append_top_level(plain, "tokenizer.ggml.tokens", ["hello", "world"])
+    toks, added = sb._scan_vocab(plain)
+    assert toks == ["hello", "world"] and added == [], (toks, added)

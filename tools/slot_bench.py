@@ -54,6 +54,9 @@ from app.core import modelindex, modelmeta   # the portal's own readers  # noqa:
 
 GIB = 1 << 30
 SCRATCH_BYTES = GIB          # compute graphs + buffers; measured ~1 GiB overhead
+#: llama-server's own --cache-ram default is 8192 MiB per worker, and the prompt
+#: cache plus shard page-in is what actually empties MemAvailable (6.12.8).
+CACHE_RAM_BYTES = 8 * GIB
 
 # ---------------------------------------------------------------- the ceilings
 #
@@ -66,7 +69,12 @@ APERTURE_SLACK = 4 * GIB        # headroom beyond the priced KV/scratch
 MEM_SLACK = 10 * GIB            # page cache churn during load, plus the portal
 
 LOW_SAFETY = re.compile(r"abliterat|heretic|uncensored|de-?restrict|nsfw|roleplay", re.I)
-AUX = re.compile(r"(mmproj|mtp-|dflash-|eagle3-|dspark-)", re.I)
+# Not a model, per the runtime's own rule — and the rule is case-sensitive. The
+# portal pins it against `llama-server --cache-list` (test_modelindex):
+# `Qwopus3.5-4B-Coder-MTP-Q8_0.gguf` is a loadable model, while `mtp-foo.gguf` is
+# a sidecar. This file used to keep its own list matched with re.I, which hid the
+# first and bench-qualified the second.
+AUX = re.compile("|".join(re.escape(m) for m in modelindex.NOT_A_MODEL_MARKERS))
 
 
 def aperture() -> tuple[int, int]:
@@ -113,12 +121,13 @@ def hub_files(repo: str) -> list[dict]:
 #: What a file or id has to contain to be a draft head rather than a model. Same
 #: markers llama.cpp skips when it lists the cache, applied here to refuse a probe
 #: that would otherwise hang (see the guard in main()).
-_DRAFT_MARKERS = ("mtp-", "eagle3-", "dflash-", "dspark-")
+_DRAFT_MARKERS = tuple(m for m in modelindex.NOT_A_MODEL_MARKERS if m != "mmproj")
 
 
 def _draft_like(name: str) -> bool:
-    low = str(name).lower()
-    return any(m in low for m in _DRAFT_MARKERS)
+    """Case-sensitive on purpose — see AUX. Lower-casing here meant the Qwopus
+    MTP model was refused as if it were a sidecar."""
+    return any(m in str(name) for m in _DRAFT_MARKERS)
 
 
 def cached_paths(repo: str) -> dict[str, Path]:
@@ -205,23 +214,58 @@ def _cached_paths_fallback(repo: str) -> dict[str, Path]:
     return out
 
 
-def download(repo: str, quant: str) -> Path | None:
-    """Fetch the model (and its projector) into the HF cache llama.cpp reads."""
-    from huggingface_hub import hf_hub_download
-    want = quant.upper()
-    picked = None
-    for f in hub_files(repo):
-        if AUX.search(f["path"]) or not f["path"].upper().startswith(want.split("-")[0][:2]):
+def pick_repo_file(files, quant: str) -> str | None:
+    """Which hub file a `repo:QUANT` names — ranked, never decided by a name prefix.
+
+    Repos disagree about where the quant tag sits: `IQ3_S/repo-IQ3_S-00001-of-2.gguf`
+    (tag dir), `codegemma-2b-Q5_K_M.gguf` (dash suffix) and
+    `qwen3-reranker-0.6b-q8_0.gguf` (underscore suffix) all mean the same thing to
+    llama.cpp. The old test was `startswith(quant[:2])`, which matched only the tag
+    dir, so ggml-org's 300 M embedder "downloaded" nothing and the run reported a
+    file that was already on disk as missing.
+    """
+    want = quant.upper().replace("-", "_")
+    scored: list[tuple[int, str]] = []
+    for f in files:
+        path = f["path"] if isinstance(f, dict) else f
+        if AUX.search(path) or not path.lower().endswith(".gguf"):
             continue
-        if f["path"].upper().replace("-", "_").endswith(f"{want}.GGUF") or want in f["path"].upper():
-            picked = f["path"]
-            break
-    if not picked:
+        head = path.rsplit("/", 1)[0].upper().replace("-", "_") if "/" in path else ""
+        # Compare both ways: authors separate the tag with "-" (codegemma-2b-Q5_K_M)
+        # and with "_" (qwen3-reranker-0.6b-q8_0); normalising dashes made the
+        # second shape invisible.
+        base = path.rsplit("/", 1)[-1].upper()
+        names = {base, base.replace("-", "_")}
+        if head == want or f"{want}.GGUF" in names:            # Q8_0/x.gguf, Q8_0.gguf
+            scored.append((0, path))
+        elif any(n.endswith(f"-{want}.GGUF") or n.endswith(f"_{want}.GGUF")
+                 for n in names):                             # model-Q8_0[-00001-of-2]
+            scored.append((1, path))
+        elif any(f"-{want}." in n or f"_{want}." in n or f"-{want}-" in n
+                 for n in names):                             # tag anywhere in the name
+            scored.append((2, path))
+    return sorted(scored)[0][1] if scored else None
+
+
+def download(repo: str, quant: str) -> Path | None:
+    """Fetch the model (its shards and projector too) into the HF cache llama.cpp reads."""
+    from huggingface_hub import hf_hub_download
+    files = hub_files(repo)
+    picked = pick_repo_file(files, quant)
+    if picked is None:
         return None
     p = Path(hf_hub_download(repo, picked))
-    for f in hub_files(repo):                      # projector, if it exists
-        if "mmproj" in f["path"].lower() and want in f["path"].upper():
-            hf_hub_download(repo, f["path"])
+    want = quant.upper().replace("-", "_")
+    for f in files:                            # projector, if one exists
+        path = f["path"] if isinstance(f, dict) else f
+        if "mmproj" in path.lower() and want in path.upper():
+            hf_hub_download(repo, path)
+    if "-of-" in picked:                       # a split set: shards share a directory
+        folder = picked.rsplit("/", 1)[0]
+        for f in files:
+            path = f["path"] if isinstance(f, dict) else f
+            if path.rsplit("/", 1)[0] == folder and path.lower().endswith(".gguf"):
+                hf_hub_download(repo, path)
     return p
 
 
@@ -323,8 +367,19 @@ class Server:
                                     data=json.dumps(body).encode(),
                                     headers={"Content-Type": "application/json"})
         t0 = time.perf_counter()
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode()
+        except urllib.error.HTTPError as e:
+            # "HTTP Error 500" tells the next reader nothing; the server's own
+            # message names the missing key or the bad parameter.
+            detail = ""
+            try:
+                detail = e.read().decode()[:300]
+            except Exception:                                   # noqa: BLE001
+                pass
+            raise urllib.error.HTTPError(
+                e.url, e.code, f"{e.reason} {detail}", e.headers, None) from None
         return json.loads(raw), time.perf_counter() - t0
 
 
@@ -397,9 +452,13 @@ def bench_fim(srv: Server, report: dict) -> None:
     if "fim" not in json.dumps(report.get("vocab", {})).lower():
         report["infill"] = {"skipped": "no FIM tokens in the vocab"}
         return
+    # /infill takes input_prefix / input_suffix / input_middle, NOT prompt /
+    # suffix. Sending the latter is answered 500 "key 'input_suffix' not found"
+    # (server-context.cpp:4853) -- which is what made every FIM row look dead.
     try:
-        probe, _ = srv.post("/infill", {"prompt": "def f():\n    return", "suffix": "",
-                                        "n_predict": 8, "temperature": 0.0, "cache": False},
+        probe, _ = srv.post("/infill", {"input_prefix": "def f():\n    return",
+                                        "input_suffix": "", "n_predict": 8,
+                                        "temperature": 0.0, "cache": False},
                             timeout=120)
     except Exception as e:                                    # noqa: BLE001
         # /infill is refused outright when the vocab lacks the FIM triple, and a
@@ -415,8 +474,9 @@ def bench_fim(srv: Server, report: dict) -> None:
     lat = []
     for lang, (pre, suf) in FIM_SNIPPETS.items():
         try:
-            body, dt = srv.post("/infill", {"prompt": pre, "suffix": suf, "n_predict": 64,
-                                            "temperature": 0.0, "cache": False}, timeout=180)
+            body, dt = srv.post("/infill", {"input_prefix": pre, "input_suffix": suf,
+                                            "n_predict": 64, "temperature": 0.0,
+                                            "cache": False}, timeout=180)
         except Exception as e:                                # noqa: BLE001
             lat.append({"lang": lang, "error": f"{type(e).__name__}: {e}"})
             print(f"      {lang:<11} FAILED {rec_short(e)}")
@@ -424,13 +484,18 @@ def bench_fim(srv: Server, report: dict) -> None:
         got = (body.get("content") or "").strip()
         tok = body.get("tokens") or []
         t = body.get("timings") or {}
-        lat.append({"lang": lang, "s": round(dt, 3),
+        # /infill answers with the non-OAI completion shape: tokens_predicted +
+        # timings (server-task.cpp:339 to_json_non_oaicompat). The "tokens" list
+        # is not the count and timings' rate is often absent, which is why every
+        # row used to print 0.0 tok/s next to a completion that clearly worked.
+        n_pred = body.get("tokens_predicted") or len(tok)
+        lat.append({"lang": lang, "s": round(dt, 3), "tok_pred": n_pred,
                     "tok_per_s": round(t["predicted_per_second"], 1)
                     if t.get("predicted_per_second") else
-                    (round(len(tok) / dt, 1) if dt else None),
+                    (round(n_pred / dt, 1) if dt and n_pred else None),
                     "completion": got[:120].replace("\n", "\\n")})
         print(f"      {lang:<11} {dt*1000:6.0f} ms  "
-              f"{(len(tok)/dt if dt else 0):6.1f} tok/s  {got[:60]!r}")
+              f"{(n_pred/dt if dt and n_pred else 0):6.1f} tok/s  {got[:60]!r}")
     report["infill_samples"] = lat
 
     burst = FIM_SNIPPETS["python"][0], FIM_SNIPPETS["rust"][0], \
@@ -758,6 +823,25 @@ def header_facts(model: Path) -> dict:
 
 
 # ---------------------------------------------------------------------- driver
+def embedding_vector(body) -> list:
+    """One input -> one vector, whatever shape the route answered with.
+
+    Measured on b11146: `POST /embedding` returns `[{"index": 0, "embedding":
+    [[...768 floats...]]}]` -- a list of per-input dicts whose "embedding" is
+    itself nested one level. Reading it as the OpenAI dict raised AttributeError
+    ("'list' object has no attribute 'get'") and taking its length reported
+    dim=1, which looks like a broken embedder rather than a parsing mistake.
+    """
+    obj = body
+    while isinstance(obj, list) and len(obj) == 1:
+        obj = obj[0]
+    while isinstance(obj, dict):
+        obj = obj.get("embedding") or obj.get("data") or []
+        while isinstance(obj, list) and len(obj) == 1:
+            obj = obj[0]
+    return obj if isinstance(obj, list) else []
+
+
 def bench_embed(srv: Server, report: dict) -> None:
     """Embedding latency and dimensionality -- what a RAG slot actually costs.
 
@@ -773,8 +857,17 @@ def bench_embed(srv: Server, report: dict) -> None:
                              " on top of that"] * 6))):
         try:
             body, dt = srv.post("/embedding", {"input": text}, timeout=180)
-            data = (body.get("data") or [{}])[0].get("embedding") or []
-            out[label] = {"dim": len(data), "s": round(dt, 4)}
+            # Shape differs by route: /embedding answers with a bare JSON array
+            # (one per input), {"embedding": [...]} in some builds, and
+            # /v1/embeddings with data[0].embedding. Assuming the OAI dict is an
+            # AttributeError on a list, which reads as "the model cannot embed".
+            data = embedding_vector(body)
+
+            shape = (f"list[{len(body)}] of dict " + ",".join(sorted(body[0])[:6])
+                     if isinstance(body, list) and body and isinstance(body[0], dict)
+                     else type(body).__name__)
+            out[label] = {"dim": len(data), "s": round(dt, 4), "shape": shape,
+                          "raw": repr(body)[:120]}
             print(f"      embed {label:<6} dim={len(data):<6} {dt*1000:7.1f} ms")
         except Exception as e:                                # noqa: BLE001
             out[label] = {"error": rec_short(e)}
@@ -784,7 +877,8 @@ def bench_embed(srv: Server, report: dict) -> None:
                                         "documents": ["the GTT window is 108 GiB",
                                                       "codegemma is 1.71 GiB"]},
                             timeout=180)
-        out["rerank"] = {"results": len(body.get("results") or []), "s": round(dt, 4)}
+        res = body.get("results") if isinstance(body, dict) else body
+        out["rerank"] = {"results": len(res or []), "s": round(dt, 4)}
         print(f"      /rerank {out['rerank']['results']} results {dt*1000:.1f} ms")
     except Exception as e:                                    # noqa: BLE001
         out["rerank"] = {"error": rec_short(e)}
@@ -1004,8 +1098,18 @@ def main() -> int:
 
         # ---- the guard: aperture first, because on this box it is the wall ----
         used, total = aperture()
-        need = (size + mm_bytes + (kv or int(0.75 * GIB)) + SCRATCH_BYTES
+        # Measured on this box (deepseek-coder-6.7B, 4.46 GiB, ctx 16384, 4 slots):
+        # aperture rose 12.8 GiB = weights + ONE KV pool at ctx, so --kv-unified
+        # really is one pool and the single-slot price is right. But MemAvailable
+        # fell 17.87 -> 1.28 GiB: the file page-in plus llama-server's own
+        # --cache-ram (8192 MiB default, per worker). So the aperture needs no
+        # slot multiplier while RAM needs the cache priced in, or a bench that
+        # "fits" is the one that OOM-kills the router (6.12.8).
+        slots = max(1, args.parallel)
+        kv_all = kv or int(0.75 * GIB)
+        need = (size + mm_bytes + kv_all + SCRATCH_BYTES
                 + (draft.stat().st_size if draft else 0))
+        need_ram = need + CACHE_RAM_BYTES
         free_ap = total - used
         mem = mem_available()
         moe = (f"MoE {rec['experts']} experts / {rec['experts_used']} active"
@@ -1014,14 +1118,24 @@ def main() -> int:
               f"trained_ctx {rec.get('trained_ctx')}  "
               f"sw {rec.get('sliding_window')}  FIM tokens "
               f"{'yes' if rec['fim_tokens'] else 'NO'}")
-        print(f"    bench ctx {ctx} -> KV {rec['kv_at_ctx_gib']} GiB priced from the header")
+        print(f"    bench ctx {ctx} -> KV {kv_all/GIB:.2f} GiB "
+              f"({slots} slots, unified pool), priced from the header")
         print(f"    aperture {used/GIB:.2f}/{total/GIB:.2f} GiB used, free {free_ap/GIB:.2f}; "
-              f"needs ~{need/GIB:.2f};  MemAvailable {mem/GIB:.2f} GiB")
+              f"needs ~{need/GIB:.2f};  MemAvailable {mem/GIB:.2f} GiB, "
+              f"needs ~{need_ram/GIB:.2f} (+{CACHE_RAM_BYTES/GIB:.0f} runtime cache)")
         rec.update({"gtt_used_gib": round(used / GIB, 2), "gtt_total_gib": round(total / GIB, 2),
                     "gtt_free_gib": round(free_ap / GIB, 2),
-                    "mem_available_gib": round(mem / GIB, 2), "need_gib": round(need / GIB, 2)})
+                    "mem_available_gib": round(mem / GIB, 2), "need_gib": round(need / GIB, 2),
+                    "need_ram_gib": round(need_ram / GIB, 2), "slots": slots})
         if args.dry_run:
             print("    dry run: not loading")
+            results.append(rec)
+            continue
+        if need_ram > mem:
+            print(f"    SKIPPED: MemAvailable {mem/GIB:.1f} GiB < {need_ram/GIB:.1f} needed "
+                  f"(weights + KV + the runtime's own cache). "
+                  f"Unload first, or pass --parallel 1 / --ctx.")
+            rec["skipped"] = "ram"
             results.append(rec)
             continue
         if need + APERTURE_SLACK > free_ap:
@@ -1050,6 +1164,14 @@ def main() -> int:
         alias = spec
         extra = ["--ctx-size", str(ctx), "--parallel", str(args.parallel), "--kv-unified",
                  "--n-gpu-layers", "99", "--flash-attn", "on", "--alias", alias]
+        if args.role == "embed":
+            # Measured: a plain server answers /embeddings with 501 "This server
+            # does not support embeddings. Start with --embeddings", and /rerank
+            # the same until --rerank. A RAG slot is a *flagged* worker, and that
+            # is a preset key the portal cannot currently name.
+            extra += ["--embeddings"]
+            if "rerank" in spec.lower() or "rerank" in path.name.lower():
+                extra += ["--rerank"]
         if args.spec == "mtp":
             extra += ["--spec-type", "draft-mtp"]
             if draft:
