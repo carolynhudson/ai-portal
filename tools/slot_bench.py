@@ -33,11 +33,13 @@ import argparse
 import concurrent.futures as cf
 import json
 import math
+import mmap
 import os
 import re
 import signal
 import socket
 import statistics
+import struct
 import subprocess
 import sys
 import threading
@@ -667,6 +669,74 @@ def _scan_vocab(path: Path, cap: int = 64 << 20) -> tuple[list, list]:
     return toks, added
 
 
+def find_draft(target: Path) -> Path | None:
+    """A draft file that sits beside `target`, or None.
+
+    The target is never its own draft: the Qwopus MTP file matches "mtp" in its
+    own name, so an unguarded glob handed the server its own file as -md.
+    """
+    near = sorted(p for p in target.parent.rglob("*.gguf")
+                  if _draft_like(p.name) and p != target
+                  and "mmproj" not in p.name.lower())
+    return near[0] if near else None
+
+
+def nextn_tensors(model: Path) -> int | None:
+    """How many tensors are named `*.nextn.*` — does the file carry its own head?
+
+    `--spec-type draft-mtp` means two different things depending on the file. A
+    model like Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF contains blk.32.nextn.*, so
+    the draft lives inside the target and one `--model` is enough. unsloth's
+    Qwen3.8-27B puts the same head in a separate MTP/mtp-*.gguf, which llama.cpp
+    only picks up through --spec-draft-model. Guessing wrong costs a server that
+    refuses to start, so read the tensor names.
+    """
+    # Keep the file object alive for the whole walk: an mmap whose fd is closed
+    # under it raises EBADF on the first read, which used to look like "no head".
+    try:
+        f = open(model, "rb")
+    except OSError:
+        return None
+    try:
+        mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    except OSError:
+        f.close()
+        return None
+    try:
+        if mm[:4] != b"GGUF":
+            return None
+        ver, = struct.unpack_from("<I", mm, 4)
+        if ver < 2:                       # v1 counts are uint32; nothing here is v1
+            return None
+        n_tensors, = struct.unpack_from("<Q", mm, 8)
+        n_kv, = struct.unpack_from("<Q", mm, 16)
+        offs, bo, hit = 24, "<", 0
+
+        def rd_str(o):
+            # a GGUF string is a u64 length THEN the bytes; the length is not part
+            # of the payload, and slicing from o instead of o + 8 makes every
+            # subsequent field read land 8 bytes early.
+            n, = struct.unpack_from(bo + "Q", mm, o)
+            return mm[o + 8:o + 8 + n].decode("utf-8", "replace"), o + 8 + n
+
+        for _ in range(n_kv):
+            _, offs = rd_str(offs)
+            t, = struct.unpack_from(bo + "I", mm, offs); offs += 4
+            _, offs = modelmeta._gguf_read_value(mm, bo, offs, t)
+        for _ in range(n_tensors):
+            name, offs = rd_str(offs)
+            nd, = struct.unpack_from(bo + "I", mm, offs); offs += 4
+            offs += 8 * nd + 4 + 8        # dims, ggml_type, offset
+            if ".nextn." in name:
+                hit += 1
+        return hit
+    except Exception:                     # noqa: BLE001 - a header we cannot read
+        return None                       # is not worth failing the bench over
+    finally:
+        mm.close()
+        f.close()
+
+
 def header_facts(model: Path) -> dict:
     """The facts the file itself states, plus whether /infill can work at all."""
     meta = modelmeta.sniff_file(model) or {}
@@ -794,8 +864,13 @@ def main() -> int:
     ap.add_argument("--name", metavar="ID",
                     help="model id to address in attach mode; default: whatever is loaded")
     ap.add_argument("--spec", choices=["off", "mtp"], default="off",
-                    help="use the model's own MTP head for speculative decoding "
-                         "(--spec-type draft-mtp). Required for a *-MTP-* file.")
+                    help="speculative decoding (--spec-type draft-mtp). Uses the target's "
+                         "own nextn head, or a draft file: see --spec-draft. Required to "
+                         "bench a *-MTP-* file at all.")
+    ap.add_argument("--spec-draft", metavar="MODEL", default="",
+                    help="draft model for --spec mtp: a path or repo:QUANT (--spec-draft-"
+                         "model). Default: an mtp-*/draft file found beside the target, "
+                         "which is how unsloth ships Qwen3.8-27B's head.")
     ap.add_argument("--big-probes", action="store_true",
                     help="let attach mode also send the 8192-token prefill probe; needs "
                          "12 GiB free instead of 6. Do not use this against a model the "
@@ -880,22 +955,57 @@ def main() -> int:
                     else sum(p.stat().st_size for p in mm))
         rec["mmproj_gib"] = round(mm_bytes / GIB, 2)
 
-        # A draft/MTP file is not something to benchmark on its own. The last run
-        # of this script hung on exactly that and had to be killed; llama.cpp uses
-        # an MTP file as the target's own next-token head (--spec-type draft-mtp),
-        # so say so instead of hanging. Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF is a
-        # full model that carries blk.32.nextn.*, and the base repo
-        # Jackrong/Qwopus3.5-4B-Coder-GGUF is what it was built beside.
-        if args.spec == "off" and (_draft_like(spec) or _draft_like(path.name)):
-            print("    SKIPPED: draft/MTP file -- pair it with --spec mtp, or bench "
-                  "the base model it was built beside")
-            rec["skipped"] = "draft-file"
-            results.append(rec)
-            continue
+        # A draft/MTP file is not something to benchmark on its own. An earlier run
+        # hung on exactly that and had to be killed. There are two shapes on this
+        # box and they take different arguments, so decide which one from the file
+        # rather than from the repo name:
+        #   Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF : full model + blk.32.nextn.*  -> 1 file
+        #   unsloth/Qwen3.8-27B-GGUF + MTP/mtp-Qwen3.8-27B-Q4_0.gguf            -> -md
+        if _draft_like(spec) or _draft_like(path.name):
+            if args.spec == "off":
+                print("    SKIPPED: draft/MTP file -- bench it as a draft with --spec mtp "
+                      "(it is not a standalone model), or bench the base model beside it")
+                rec["skipped"] = "draft-file"
+                results.append(rec)
+                continue
+
+        draft = None
+        head = nextn_tensors(path) if args.spec == "mtp" else None
+        if args.spec == "mtp":
+            if args.spec_draft:
+                # A repo id contains a slash too, so "has a slash" cannot tell a
+                # path from an id: only an existing file or a .gguf name is a path.
+                cand_path = Path(args.spec_draft).expanduser()
+                if cand_path.is_file() or args.spec_draft.endswith(".gguf"):
+                    cand = Path(args.spec_draft).expanduser()
+                    draft = cand if cand.is_file() else None
+                    if draft is None:
+                        print(f"    SKIPPED: --spec-draft {args.spec_draft} is not a file")
+                        rec["skipped"] = "draft-not-found"
+                        results.append(rec)
+                        continue
+                else:
+                    drepo, _, dq = args.spec_draft.partition(":")
+                    draft = cached_paths(drepo).get((dq or args.quant or "").upper())
+            else:
+                draft = find_draft(path)
+            rec["target_nextn_tensors"] = head
+            if draft is None and not head:
+                print("    SKIPPED: --spec mtp, but the target has no nextn head and no "
+                      "draft file was found beside it. Point at the draft explicitly: "
+                      "--spec-draft <repo:QUANT or path.gguf>")
+                rec["skipped"] = "no-draft"
+                results.append(rec)
+                continue
+            rec["draft_model"] = str(draft) if draft else "target's own nextn head"
+            rec["draft_gib"] = round(draft.stat().st_size / GIB, 2) if draft else 0.0
+            print(f"    draft: {rec['draft_model']} ({rec['draft_gib']} GiB); "
+                  f"target nextn tensors: {head}")
 
         # ---- the guard: aperture first, because on this box it is the wall ----
         used, total = aperture()
-        need = size + mm_bytes + (kv or int(0.75 * GIB)) + SCRATCH_BYTES
+        need = (size + mm_bytes + (kv or int(0.75 * GIB)) + SCRATCH_BYTES
+                + (draft.stat().st_size if draft else 0))
         free_ap = total - used
         mem = mem_available()
         moe = (f"MoE {rec['experts']} experts / {rec['experts_used']} active"
@@ -942,6 +1052,8 @@ def main() -> int:
                  "--n-gpu-layers", "99", "--flash-attn", "on", "--alias", alias]
         if args.spec == "mtp":
             extra += ["--spec-type", "draft-mtp"]
+            if draft:
+                extra += ["--spec-draft-model", str(draft)]
         if mm:
             extra += ["--mmproj", str(mm[0])]
         try:
