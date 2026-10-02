@@ -970,6 +970,71 @@ same shapes; `test_an_incomplete_shard_set_is_named_the_way_the_router_names_it`
 the deliberate difference. Breaking case-folding or dropping `imatrix` fails two tests
 (check that the tests still fail when the fix is reverted).
 
+#### 4.9.3 Capability columns: autocomplete, self-drafting, ranking (2026-10-02)
+
+The index used to answer one question — can it run here. A personality has to
+answer a second one before it picks: what is this file *good for*. Three
+capabilities are readable out of the header for ~105 ms per model and never
+appear in a repository name, so they are now columns, and the reading of them is
+one function.
+
+**The defect that made the tokenizer column pointless.** `modelmeta` summarised
+any string array longer than 64 entries as the placeholder `"<250002 strings
+skipped>"`. Two silent consequences: `vocab_size` was `len()` of that string —
+24 — and searching a 24-character placeholder for the fill-in-the-middle specials
+finds nothing. Every generative model on this box has a vocabulary above the
+threshold (248 320 on the qwen35 family), so the FIM rule would have been dead on
+arrival and *looked* like it worked, because the reader never raised. Fix: the skip
+stays (a header is not the place to materialise 250k strings), but the two arrays
+the capability rules need are named — `_KEEP_ARRAYS` = `tokenizer.ggml.tokens`,
+`tokenizer.ggml.added_tokens` — and read whole, then dropped; the vocabulary
+itself is never stored.
+`test_a_real_sized_vocabulary_is_read_whole_by_the_reader` counts 151 936 strings
+through the real reader, asserting the count rather than the absence of a
+plausible-looking placeholder.
+
+**Four new columns**, each the file's own statement, none derived:
+`vocab_size`, `has_fim` (three-valued — read-and-present / read-and-absent /
+unaskable), `nextn_layers` + `draft_tensors` (kept apart because they can
+disagree: a quantiser can drop a head the header still promises, and then
+`--spec-type draft-mtp` starts and drafts nothing), and `pooling_type` (4 = the
+runtime answers `/rerank`, measured 52 ms for 2 results; 1 = embedder, measured
+501). Tensor names are walked, not read: `blk.N.nextn.*` costs 31 ms on the
+51.05 GiB shard.
+
+**One derived rule, not four.** `modelindex.capabilities(row)` turns those columns
+into `{label, tone, note}` — `autocomplete` / `no FIM` / `fim?`, `draft x1` /
+`head missing`, `reranker` / `embedder` — and it is the only place allowed to
+combine them. The models page iterates it; a future slot-picker will call the same
+function instead of re-deriving. Hover text is not decoration: `no FIM` has to say
+why it is not the same as `cannot run /infill`, which is false (`/infill` splices
+prefix/suffix into any model) and would cost a working slot.
+
+Two traps this surfaced, both pinned:
+
+* `has_fim is True` — SQLite hands back `1`, so every row fetched from the table
+  read as "vocabulary unreadable" while every in-memory scanner row read
+  correctly. Wrong on the page, right in the unit test: the worst possible split.
+  Truthiness for the two known states, `is None` for the third, with a test that
+  feeds the stored representation rather than the computed one.
+* The FIM specials arrive with the base vocabulary. `qwen3-reranker` declares 4 of
+  them and is not an autocomplete model; `pooling_type 4` is what says so. So the
+  badge reads "the tokenizer can express the holes", never "use this one".
+
+Also fixed on the way: `find_draft` in the bench could hand a model its own file
+as `--spec-draft-model` (lower-cased marker test matched "MTP" inside the
+target's name — the hang the operator hit). The naming rule is now shared with the
+index via `NOT_A_MODEL_MARKERS`, case-sensitive.
+
+The rubric, the measurements and the anti-signals are written up in
+**docs/MODEL_SIGNALS.md**; that file is what a future indexer or hub scraper
+should be checked against, not this section. Tests: `tests/test_model_signals.py`
+pins every shape including both disagreements, cross-checks the index's tensor
+walk against `slot_bench.nextn_tensors()` on every cached model, and
+`test_the_models_page_says_what_a_model_can_be_used_for` fetches `/models` so the
+derivation cannot stop reaching the template (deleting the one line in the route
+fails it).
+
 ### 4.10 Writing presets.ini — the apply path and the settings editor (landed 2026-09-22)
 
 N4 is the first step in this project that writes a file the router reads at load time, so the
