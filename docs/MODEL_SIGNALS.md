@@ -162,6 +162,21 @@ Header-only reads. `fim` = FIM specials found, `nn` = `nextn_predict_layers`,
 | codegemma-2b-Q5_K_M | gemma | 1.71 | 256000 | 3 | — | 0 | — |
 | Granite-4.1-3b-coder.Q8_0 | granite | 3.37 | 100352 | 4 | — | 0 | — |
 
+**The header predicted the runtime, on the same day, without a hint.** The index
+said `pooling_type 1` for embeddinggemma and `4` for the reranker; started
+separately, `/rerank` returned 501 for the first and 2 results in 48 ms for the
+second (`slot-bench-20261002T190327Z`). That is the whole argument for reading
+the header: the alternative is starting a worker to find out.
+
+What an autocomplete slot actually costs on this box, at ctx 4096 / 4 slots
+(`slot-bench-20261002T190111Z`) — the first run where the concurrency probe
+measured anything, after the `/infill` payload fix:
+
+| file | decode | infill tok/s (py / c++ / ruby / rust) | 4 concurrent /infill | aperture over the file |
+|---|---|---|---|---|
+| codegemma-2b Q5_K_M | 99.6 tok/s | 95.3 / 94.3 / 92.2 / 97.0 | 0.13–0.74 s | +2.21 GiB |
+| Granite-4.1-3b Q8_0 | 49.8 tok/s | 49.0 / 46.9 / 43.8 / 48.6 | 0.22–1.38 s | +3.92 GiB |
+
 Two things that fall out of it and matter for slot-picking: the operator's usual
 77 GiB model (**Flash-Next**) cannot self-draft — no `nextn` declaration, no
 head tensors — while the 27B and both Qwopus files can, for free. And of the
