@@ -659,6 +659,8 @@ def create_app() -> FastAPI:
         library_ids = set()
         for m in indexed:
             m["verdict"] = modelindex.verdict(m, budget)
+            # Derived here, not stored: one rule for what a file can do (§4.9.2).
+            m["caps"] = modelindex.capabilities(m)
             hit = live_by_key.get(modelindex.router_key(m["id"]))
             m["live"] = bool(hit)
             m["live_as"] = (hit or {}).get("id") or ""

@@ -470,6 +470,32 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
         # has_chat_template so the two are not conflated.
         "has_chat_template": bool(meta.get("has_chat_template")),
         "template_markers": ",".join(meta.get("template_markers") or []),
+        # ---- what the weights are able to do, read from the file ----
+        # Each of these answers a question a personality has to decide, and each is
+        # a fact the file states rather than a verdict about quality. See
+        # docs/MODEL_SIGNALS.md for the measurements behind all of them.
+        #
+        # Autocomplete: /infill answers for any model, because it splices the
+        # prefix/suffix into the prompt regardless — so "the endpoint worked" proves
+        # nothing about the model. What decides whether an autocomplete slot is worth
+        # starting is whether the tokenizer has the holes the weights were trained to
+        # fill. None (not False) when the vocabulary could not be read: "unknown" and
+        # "no FIM tokens" are different answers and a UI that cannot tell them apart
+        # will hide a working slot.
+        "vocab_size": meta.get("vocab_size"),
+        "has_fim": bool(meta.get("fim_tokens")) if meta.get("vocab_size") else None,
+        # Speculative decoding, stated twice by a well-formed file and stored twice
+        # because a quantiser can drop a head the header still asks for — then
+        # --spec-type draft-mtp starts and buys nothing. Measured worth on this box:
+        # 36-41 tok/s to 95-99 tok/s on Qwopus 4B at the same footprint (§6.12.9),
+        # and the head costs no extra aperture because it is already in the file.
+        "nextn_layers": meta.get("nextn_layers"),
+        "draft_tensors": modelmeta.draft_tensors(head),
+        # Embedding vs reranking: the runtime refuses /rerank with 501 unless the
+        # model was built to rank. This column is the difference — pooling_type 4
+        # (qwen3-reranker, answered /rerank in 52 ms) against 1 (embeddinggemma,
+        # HTTP 501). It decides whether a RAG slot is one worker or two.
+        "pooling_type": meta.get("pooling_type"),
         "is_aux": False,
         "header_hash": _header_hash(head),
         "scanned_at": time.time(),
@@ -787,6 +813,8 @@ CREATE TABLE IF NOT EXISTS model_index (
   has_ssm_state INTEGER, has_vision INTEGER, has_mmproj INTEGER,
   sidecar_type TEXT,
   has_chat_template INTEGER, template_markers TEXT,
+  vocab_size INTEGER, has_fim INTEGER,
+  nextn_layers INTEGER, draft_tensors INTEGER, pooling_type INTEGER,
   est_weights INTEGER, est_kv INTEGER, est_total INTEGER, est_ctx INTEGER,
   est_inputs TEXT,
   scanned_at REAL, header_hash TEXT
@@ -832,6 +860,7 @@ _WRITE_COLUMNS = (
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
     "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers",
+    "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type",
     "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs",
     "scanned_at", "header_hash",
 )
@@ -1406,3 +1435,86 @@ def fits_query(need_bytes: int, limit: int = 3) -> list[dict]:
     return [dict(r) for r in conn.execute(
         "SELECT * FROM model_index WHERE est_total IS NOT NULL AND est_total <= ?"
         " ORDER BY bytes ASC LIMIT ?", (need_bytes, limit))]
+
+
+# --------------------------------------------------------------- capabilities
+POOLING_RERANK = 4        # measured: qwen3-reranker answered /rerank
+POOLING_MEAN = 1          # measured: embeddinggemma returned 501 for /rerank
+
+
+def capabilities(row: dict) -> list[dict]:
+    """What this file can be used for, and how sure we are.
+
+    Derived, never stored: the stored columns are the header's own facts
+    (`has_fim`, `draft_tensors`, `nextn_layers`, `pooling_type`), and this is the
+    one place allowed to read them together. Personality code, the models page
+    and any future slot-picking all ask here instead of re-deriving, so a rule
+    change is one edit and not four opinions.
+
+    Each entry is {"label", "tone", "note"}; `tone` is "ok" (the file can do it),
+    "warn" (the header and the weights disagree, or trying it wastes a slot) or
+    "mut" (checked and absent / not answerable). Three distinct results have to
+    stay distinct: `/infill` answers for *any* model, so a badge built on the
+    endpoint would call an embedder an autocomplete model. The tokenizer is the
+    only honest signal, and `has_fim IS NULL` means the vocabulary was
+    unreadable — which is not the same as having no FIM specials.
+    """
+    out: list[dict] = []
+
+    # Read as three states, and tolerant of the storage type: SQLite hands back 1
+    # and 0 for a BOOLEAN column, so `has_fim is True` was false for every row
+    # that came out of the table — the badge silently became "fim?" on a model
+    # whose FIM specials were known. Truthiness for the two known states,
+    # `is None` for the third.
+    # Three states, and tolerant of the storage type: SQLite hands back 1 and 0
+    # for the BOOLEAN column, so testing `has_fim is True` was false for every row
+    # read out of the table, and a model with known FIM specials got the "unknown"
+    # badge. Truthiness for the two known states, `is None` for the third.
+    has_fim = row.get("has_fim")
+    if has_fim is None:
+        out.append({"label": "fim?", "tone": "mut",
+                    "note": "vocabulary could not be read — autocomplete capability "
+                            "is unaskable here, not absent"})
+    elif has_fim:
+        out.append({"label": "autocomplete", "tone": "ok",
+                    "note": "tokenizer declares fill-in-the-middle specials — the "
+                            "weights were trained for the holes /infill splices in"})
+    else:
+        out.append({"label": "no FIM", "tone": "mut",
+                    "note": "vocabulary carries no FIM specials — /infill still "
+                            "answers, but nothing was trained for it, so an "
+                            "autocomplete slot here is wasted memory"})
+
+    layers = row.get("nextn_layers")
+    tensors = row.get("draft_tensors")
+    if layers and tensors:
+        out.append({"label": f"draft x{layers}", "tone": "ok",
+                    "note": f"carries its own speculative-decoding head "
+                            f"({tensors} blk.N.nextn.* tensors) — --spec-type "
+                            f"draft-mtp takes this one file and costs no extra "
+                            f"memory; measured 2.3x decode (§6.12.11)"})
+    elif layers and not tensors:
+        out.append({"label": "head missing", "tone": "warn",
+                    "note": f"header asks for {layers} draft layer(s) but the tensor "
+                            f"table carries none — the quantiser dropped it, and "
+                            f"--spec-type draft-mtp will start and draft nothing"})
+    elif tensors and not layers:
+        out.append({"label": f"draft x{tensors}t", "tone": "ok",
+                    "note": "tensor names carry a draft head that the metadata does "
+                            "not declare — llama.cpp finds it by name, so it works"})
+
+    pooling = row.get("pooling_type")
+    if pooling == POOLING_RERANK:
+        out.append({"label": "reranker", "tone": "ok",
+                    "note": "pooling_type 4 — /rerank works (measured 52 ms for 2 "
+                            "results); an embedder in this slot returns 501"})
+    elif pooling == POOLING_MEAN:
+        out.append({"label": "embedder", "tone": "info",
+                    "note": "pooling_type 1 — embedding model; /rerank is refused "
+                            "with 501, so a RAG slot wanting a ranker needs a "
+                            "second worker"})
+    elif pooling is not None:
+        out.append({"label": f"pool {pooling}", "tone": "mut",
+                    "note": "unrecognised pooling_type — the runtime's own enum "
+                            "value is unknown to the portal"})
+    return out

@@ -242,7 +242,7 @@ def test_estimate_of_uncomputable_model_has_none_kv_not_zero():
 # spec page. If the reader is ever updated to spec numbering, this moves with it.
 from gguf_fixture import (GGUF_ARRAY, GGUF_BOOL, GGUF_I32, GGUF_STRING,
                    GGUF_U32, _append_kv_key, _enc_str, _enc_value,
-                   _write_fake_gguf)
+                   _write_fake_gguf, _write_raw_gguf)
 
 
 def test_scan_collapses_shards_to_one_model_with_total_size(tmp_path):
@@ -1124,6 +1124,55 @@ def test_live_models_outside_the_library_are_listed_not_dropped(monkeypatch):
     assert "stranger/outside-weights:Q8" in body, "an unaccounted live model vanished"
     assert "Live but not in the library (1)" in body
 
+
+
+def test_the_models_page_says_what_a_model_can_be_used_for(monkeypatch):
+    """The capability badges have to reach the page, not just the table.
+
+    The stored columns are the file's own facts; the badges are the portal's
+    reading of them, and the page is where an operator picks which model goes in
+    an autocomplete slot. This is pinned because the break is silent: the template
+    iterates `m.caps or []`, so a route that stops computing caps renders a row
+    with a blank cell and every other cell still correct.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import main as app_main
+
+    root = mi.paths.LLAMA_MODELS
+    root.mkdir(parents=True, exist_ok=True)
+    head = {"general.architecture": "testarch"}
+    body_kv = [("testarch.block_count", 8), ("testarch.embedding_length", 256),
+               ("testarch.context_length", 4096),
+               ("testarch.attention.head_count", 4),
+               ("testarch.attention.head_count_kv", 2)]
+    for name, pairs in (("Autocomplete-Model",
+                         list(head.items()) + body_kv
+                         + [("testarch.pooling_type", 1),
+                            # Built in pieces: the literal `<|name|>` form has a
+                            # way of arriving here as an empty string (see
+                            # test_model_signals._special), and a fixture token
+                            # that silently vanishes tests nothing.
+                            ("tokenizer.ggml.tokens",
+                             ["a", "b", "<" + "|" + "fim_middle" + "|" + ">"])]),
+                        ("Promises-A-Head",
+                         list(head.items()) + body_kv
+                         + [("testarch.nextn_predict_layers", 1),
+                            ("tokenizer.ggml.tokens", ["a", "b", "c"])])):
+        (root / name).mkdir(parents=True, exist_ok=True)
+        _write_raw_gguf(root / name / f"{name}.gguf", pairs)
+    mi.rescan()
+
+    c = TestClient(app_main.create_app())
+    c.post("/login", data={"password": os.environ["AI_PORTAL_PASSWORD"]})
+    page = c.get("/models").text
+    assert 'title="tokenizer declares fill-in-the-middle specials' in page, \
+        "the autocomplete badge did not render"
+    assert ">autocomplete<" in page
+    assert ">embedder<" in page, "pooling_type 1 did not reach the page"
+    assert ">no FIM<" in page, "a model without FIM specials rendered as if silent"
+    assert ">head missing<" in page, \
+        "a header promising a draft head the weights lack went unmentioned"
 
 
 # ------------------------------------------------------ the Hugging Face cache

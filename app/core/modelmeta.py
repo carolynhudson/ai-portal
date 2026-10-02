@@ -34,7 +34,22 @@ NON_MODEL_CATEGORIES = {"configs"}
 
 
 # ------------------------------------------------------------------ GGUF
-def _gguf_read_value(mm, bo: str, offs: int, ftype: int):
+# Arrays longer than this are skipped when reading metadata, with two
+# exceptions listed in _KEEP_ARRAYS. The skip exists because a GGUF carries its
+# whole vocabulary in the metadata head — 250k strings, tens of megabytes — and
+# nothing needs them all.
+#
+# But the skip used to be absolute, and that made the one question the
+# autocomplete slot hinges on unanswerable: "does this tokenizer have FIM
+# tokens". A skipped array came back as the placeholder string
+# "<250002 strings skipped>", which is not data — `len()` of it reported a
+# vocabulary of 24. The two arrays below are read for real so the answer can be
+# derived at scan time and then dropped; nothing stores the vocabulary itself.
+_SKIP_ARRAY_OVER = 64
+_KEEP_ARRAYS = ("tokenizer.ggml.tokens", "tokenizer.ggml.added_tokens")
+
+
+def _gguf_read_value(mm, bo: str, offs: int, ftype: int, key: str = ""):
     def read_bytes(n: int) -> bytes:
         nonlocal offs
         b = bytes(mm[offs:offs + n])
@@ -50,7 +65,7 @@ def _gguf_read_value(mm, bo: str, offs: int, ftype: int):
         etype, = struct.unpack_from(bo + "I", mm, offs); offs += 4
         n, = struct.unpack_from(bo + "Q", mm, offs); offs += 8
         if etype == T_STRING:
-            if n > 64:  # e.g. giant tag lists — skip the bodies
+            if n > _SKIP_ARRAY_OVER and key not in _KEEP_ARRAYS:
                 fmt = bo + "Q"
                 for _ in range(n):
                     ln, = struct.unpack_from(fmt, mm, offs)
@@ -74,6 +89,19 @@ def _gguf_read_value(mm, bo: str, offs: int, ftype: int):
 
 
 def _gguf_parse_kv(mm, bo: str, kv_count: int, aligned: bool) -> dict:
+    return _walk_kv(mm, bo, kv_count, aligned)[0]
+
+
+def _walk_kv(mm, bo: str, kv_count: int, aligned: bool,
+             keep_arrays: bool = True) -> tuple[dict, int]:
+    """Walk the KV section once, returning both the fields and where they end.
+
+    The offset is returned because the tensor-info section follows immediately,
+    and a second reader that re-walked the KV pairs to find it is a second
+    implementation that can drift — one already did, by inventing its own key
+    sanity check that rejected every dotted key on every file and reported
+    "no draft head" for models that plainly had one.
+    """
     offs = 24
     fields: dict = {}
     for _ in range(kv_count):
@@ -85,10 +113,14 @@ def _gguf_parse_kv(mm, bo: str, kv_count: int, aligned: bool) -> dict:
         name = name.decode("utf-8", "replace")
         offs += n
         ftype, = struct.unpack_from(bo + "I", mm, offs); offs += 4
-        fields[name], offs = _gguf_read_value(mm, bo, offs, ftype)
+        # keep_arrays=False withholds the key name, which is how the value reader
+        # knows to skip a 250k-string vocabulary instead of building it. Only the
+        # metadata reader wants those arrays; a walk looking for an offset does not.
+        fields[name], offs = _gguf_read_value(mm, bo, offs, ftype,
+                                              key=name if keep_arrays else "")
         if aligned:
             offs += (-offs) % 8
-    return fields
+    return fields, offs
 
 
 def _header_buffer(f):
@@ -251,6 +283,33 @@ def sniff_gguf(path) -> dict | None:
                     # set it. This field is the header's own claim, kept separate so
                     # the two are not confused when they disagree.
                     "has_vision": bool(fields.get("mmproj")) or None,
+                    # Autocomplete eligibility, from the vocabulary rather than the
+                    # arch name. `/infill` will *run* against any model — it splices
+                    # prefix/suffix into the prompt whether or not the weights were
+                    # ever trained for it — so the endpoint answering is not the
+                    # fact. What decides whether an autocomplete slot is worth
+                    # starting is whether the tokenizer has the holes the weights
+                    # answer to. Measured here: 248320-token qwen35 vocabularies
+                    # carry /, deepseek2 carries the
+                    # fullwidth <｜fim＿begin｜> set, and gemma-embedding carries none.
+                    "vocab_size": (len(fields["tokenizer.ggml.tokens"])
+                                   if isinstance(fields.get("tokenizer.ggml.tokens"), list)
+                                   else None),
+                    "fim_tokens": _special_fim_tokens(fields),
+                    # Speculative decoding, stated twice by a well-formed file: the
+                    # architecture declares how many draft layers it wants, and the
+                    # tensor table carries their weights. Kept as two columns because
+                    # they can disagree — a quantiser can drop a head a header still
+                    # asks for, and then --spec-type draft-mtp starts and decodes
+                    # nothing. Both measured: 1 layer declared, 4 tensors present on
+                    # the three qwen35 files here, worth ~2.4x decode (§6.12.9).
+                    "nextn_layers": _as_int(_first(fields, ap, "nextn_predict_layers",
+                                                   "nextn.predict_layers")),
+                    # Embedding vs reranking. The runtime refuses /rerank with 501
+                    # unless the model was built to rank, and the header says which
+                    # one it is: pooling_type 4 on qwen3-reranker (which answered
+                    # /rerank) against 1 on embeddinggemma (which returned 501).
+                    "pooling_type": _as_int(_first(fields, ap, "pooling_type")),
                     # Params are not stated by any header on this box. Left None
                     # rather than back-computed from file size / quant, because that
                     # would be a quiet second opinion baked into a fact column — and
@@ -264,6 +323,72 @@ def sniff_gguf(path) -> dict | None:
                     mm.close()
     except (OSError, EOFError, struct.error, ValueError):
         return None
+
+
+def _special_fim_tokens(fields: dict) -> list[str]:
+    """Fill-in-the-middle specials this tokenizer declares, sorted.
+
+    A substring match on "fim" alone would fire on an ordinary BPE piece, so a
+    candidate must also look like a special token (`<...>`). The added_tokens
+    list is checked first because it is the file's own declaration of its
+    specials; the vocabulary is the fallback for exporters that put a special
+    in the table without declaring it. Fullwidth bar forms (deepseek2 writes
+    `<\uff5cfim\u2581begin\uff5c>`) match on the same substring.
+    """
+    seen: set[str] = set()
+    for src in ("tokenizer.ggml.added_tokens", "tokenizer.ggml.tokens"):
+        vals = fields.get(src)
+        if not isinstance(vals, list):
+            continue
+        for t in vals:
+            if isinstance(t, str) and "fim" in t.lower() \
+                    and t.startswith("<") and t.endswith(">"):
+                seen.add(t)
+    return sorted(seen)
+
+
+def draft_tensors(path) -> int:
+    """How many speculative-decoding head tensors a file carries.
+
+    The tensor-info section is walked for names, not read for data, so this
+    costs the same order of magnitude as the metadata head and never touches
+    the tensor bulk. The name pattern is llama.cpp's own: a draft layer lives
+    at block index n_layer and is named blk.N.nextn.*. Measured on this box:
+    Qwopus3.5-4B base, Qwopus MTP and Qwen3.8-27B each carry 4 such tensors,
+    the rest carry 0 — and the three that do are exactly the three whose KV
+    section declares `nextn_predict_layers`.
+    """
+    try:
+        with open(path, "rb") as f:
+            mm = _header_buffer(f)
+            try:
+                magic, = struct.unpack_from("<I", mm, 0)
+                if magic != GGUF_MAGIC:
+                    return 0
+                bo = ">" if (struct.unpack_from("<I", mm, 4)[0] & 0xFFFF) == 0 else "<"
+                tensor_count, kv_count = struct.unpack_from(bo + "QQ", mm, 8)
+                try:
+                    offs = _walk_kv(mm, bo, kv_count, aligned=False, keep_arrays=False)[1]
+                except (ValueError, EOFError, struct.error):
+                    offs = _walk_kv(mm, bo, kv_count, aligned=True, keep_arrays=False)[1]
+                hit = 0
+                for _ in range(tensor_count):
+                    n, = struct.unpack_from(bo + "Q", mm, offs); offs += 8
+                    name = bytes(mm[offs:offs + n]).decode("utf-8", "replace")
+                    offs += n
+                    if ".nextn." in name or name.endswith(".predict.weight"):
+                        hit += 1
+                    # name, then n_dims (u32), then n_dims x u64, then the ggml
+                    # type (u32), then the offset into the data section (u64).
+                    nd, = struct.unpack_from(bo + "I", mm, offs); offs += 4
+                    offs += 8 * nd                                        # dims
+                    offs += 4 + 8                                         # type + data offset
+                return hit
+            finally:
+                if isinstance(mm, mmap.mmap):
+                    mm.close()
+    except (OSError, EOFError, struct.error, ValueError):
+        return 0
 
 
 def _as_int(v):

@@ -170,7 +170,13 @@
          records what the file said it is), so a projector declaring something other than
          vision would not be mislabelled as vision. All 8 projectors on this box declare a
          vision encoder; none declares an audio one, so no audio column is invented. #}
-      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector ({{ m.sidecar_type or 'mmproj' }} declares clip.has_vision_encoder) — accepts image input">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if (m.shard_total or 1) > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% if not m.has_mmproj and not m.has_ssm_state and (m.shard_total or 1) <= 1 %}<span class="mut">none</span>{% endif %}</td>
+      {# The second half of this cell is modelindex.capabilities() (§4.9.3): what
+         the file can be *used* for — autocomplete, self-drafting, ranking — read
+         out of the tokenizer, the tensor names and pooling_type. Hover text is the
+         whole point of a capability badge: "no FIM" has to say why that is not the
+         same as "cannot run /infill", or the operator reads a false prohibition. #}
+      {% set lead = m.has_mmproj or m.has_ssm_state or (m.shard_total or 1) > 1 %}
+      <td class="mono">{% if m.has_mmproj %}<span title="ships a vision projector ({{ m.sidecar_type or 'mmproj' }} declares clip.has_vision_encoder) — accepts image input">vision</span>{% endif %}{% if m.has_ssm_state %}{% if m.has_mmproj %} · {% endif %}<span title="header declares recurrent state (not “is a Mamba model”): the export carries SSM state tensors">ssm</span>{% endif %}{% if (m.shard_total or 1) > 1 %}{% if m.has_mmproj or m.has_ssm_state %} · {% endif %}<span class="mut">{{ m.shard_total }}-part</span>{% endif %}{% for c in m.caps or [] %}{% if lead or not loop.first %} · {% endif %}<span class="tag {{ c.tone }}" title="{{ c.note }}">{{ c.label }}</span>{% endfor %}{% if not lead and not m.caps %}<span class="mut">none</span>{% endif %}</td>
       {# What the file says it can speak, read from the chat template it ships with
          (§4.9: facts from the file, never a verdict). A missing marker means the
          template does not declare that protocol — not that the model cannot do it.

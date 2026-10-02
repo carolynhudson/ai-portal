@@ -81,11 +81,14 @@ def _append_kv_key(path: Path, key: str, value) -> None:
     path.write_bytes(bytes(raw) + _enc_str(key) + _enc_value(bool(value)))
 
 
-def _gguf_with_tensors(path: Path, names: list[str]) -> None:
+def _gguf_with_tensors(path: Path, names: list[str], kv: dict | None = None) -> None:
     """Fixture GGUF whose tensor-info section names `names`. The KV-only writer
     emits no tensor infos, so a reader that walks tensor *names* (the draft-head
-    probe) needs this one."""
-    _write_fake_gguf(path, {"block_count": 4})
+    probe) needs this one. `kv` lets a test state the architecture fields the same
+    file declares, so "the header asks for a draft layer" and "the weights carry
+    one" can be tested against each other instead of only in the field.
+    """
+    _write_fake_gguf(path, kv if kv is not None else {"block_count": 4})
     raw = bytearray(path.read_bytes())
     struct.pack_into("<Q", raw, 8, len(names))            # tensor_count
     info = b""
@@ -94,3 +97,22 @@ def _gguf_with_tensors(path: Path, names: list[str]) -> None:
                  + struct.pack("<QQ", 8, 8) + struct.pack("<I", 10)
                  + struct.pack("<Q", 0))
     path.write_bytes(bytes(raw) + info)
+
+
+def _write_raw_gguf(path: Path, pairs: list[tuple[str, object]]) -> None:
+    """GGUF whose keys are written exactly as given, unprefixed.
+
+    _write_fake_gguf namespaces everything under the architecture because that is
+    how arch fields are looked up, but the tokenizer arrays GGUF defines —
+    `tokenizer.ggml.tokens`, `tokenizer.ggml.added_tokens` — are top-level, and a
+    capability reader that only ever saw prefixed keys could never test them.
+    """
+    hdr = (struct.pack("<4s", b"GGUF") + struct.pack("<I", 3)
+           + struct.pack("<Q", 0) + struct.pack("<Q", len(pairs)))
+    assert len(hdr) == 24, f"KV section must start at offset 24, header is {len(hdr)}"
+    out = bytearray()
+    for key, value in pairs:
+        out += _enc_str(key) + _enc_value(value)
+    path.write_bytes(hdr + bytes(out))
+
+
