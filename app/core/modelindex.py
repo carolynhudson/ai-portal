@@ -1015,6 +1015,15 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None,
         conn.execute(insert, _row_values(_est_row(m, est, fits)))
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM model_index").fetchone()[0]
+    # A cache id that will not load its own file is a problem the index can name
+    # without asking the network (modelindex.id_round_trip).
+    sib = cache_sibling_map(models)
+    for m in models:
+        risk = id_round_trip(m, sib.get(str(m["id"]).rsplit(":", 1)[0]))
+        if risk:
+            problems.append({"kind": risk["kind"], "path": m.get("path") or m["id"],
+                             "id": m["id"], "tag": risk["tag"],
+                             "would_load": risk.get("would_load", "")})
     db.event("portal", "model-index",
              f"scanned {n} model(s) — {library_n} from the library, "
              f"{n - library_n} from the hub cache; {len(problems)} problem(s)")
@@ -1442,7 +1451,7 @@ POOLING_RERANK = 4        # measured: qwen3-reranker answered /rerank
 POOLING_MEAN = 1          # measured: embeddinggemma returned 501 for /rerank
 
 
-def capabilities(row: dict) -> list[dict]:
+def capabilities(row: dict, siblings: list[str] | None = None) -> list[dict]:
     """What this file can be used for, and how sure we are.
 
     Derived, never stored: the stored columns are the header's own facts
@@ -1544,4 +1553,106 @@ def capabilities(row: dict) -> list[dict]:
         out.append({"label": f"pool {pooling}", "tone": "mut",
                     "note": "unrecognised pooling_type — the runtime's own enum "
                             "value is unknown to the portal"})
+
+    # A hub-cache row is addressed by an id the runtime invented from a file name,
+    # and that id is re-resolved by a different rule at load time. Only worth
+    # saying for cache rows — a library row is addressed by its directory.
+    if row.get("source") == "cache" and row.get("id"):
+        risk = id_round_trip(row, siblings)
+        if risk and risk["kind"] == "id-resolves-elsewhere":
+            out.append({"label": "id loads another file", "tone": "warn",
+                        "note": f"`:{risk['tag']}` resolves to {risk['would_load']}, "
+                                "not this file — name the path, or the personality "
+                                "gets weights it did not choose"})
+        elif risk:
+            out.append({"label": "id not load-safe", "tone": "warn",
+                        "note": f"the runtime lists this file as `:{risk['tag']}`, but "
+                                "loads `repo:TAG` by substring match, and that tag is "
+                                "not a quantization — a sibling file in the repo can "
+                                "win the load (measured: `:MTP` pulled a 12 GiB IQ2_S "
+                                "while IQ3_S sat cached). Load by path, or run the "
+                                "router --offline so a miss is an error, not a download"})
+    return out
+
+
+# ------------------------------------------------- id round-trip: does the id load the file?
+#
+# A cache id is a *name*, not a handle. llama.cpp prints one id when listing
+# (`llama-server --cache-list`, and our own scan_cache follows the same rule) and
+# resolves it differently when loading: find_best_model in common/download.cpp
+# takes the tag after the colon, builds the regex `TAG[.-]` case-insensitively,
+# and returns the FIRST file in the repository's listing that matches and is not a
+# sidecar name. Measured on this box (2026-10-03): loading
+# `ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP` — an id the runtime itself
+# printed for the cached IQ3_S file — started a download of
+# `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ2_S-mtp.gguf`, a different quantization of the
+# same repo, because IQ2_S-mtp sorts first and both match /MTP[.-]/. A personality
+# naming that model would quietly trade its weights for a smaller quant and pull
+# 12 GiB to get them. --offline turns the surprise into an error; this predicts it.
+_LOADER_AUX = ("mmproj", "imatrix", "mtp-", "eagle3-", "dflash-", "dspark-")
+_SHARD_OF = re.compile(r"-(\d+)-of-(\d+)\.gguf$", re.I)
+
+
+def gguf_is_model_name(path: str) -> bool:
+    """llama.cpp gguf_filename_is_model: a .gguf that is not a sidecar name.
+
+    The sidecar test is a substring test for `mtp-`, `mmproj` and friends — with
+    the dash. A file named `...-IQ3_S-mtp.gguf` (mtp as a SUFFIX) therefore counts
+    as a model to the runtime, which is how a draft-head-bearing file ends up with
+    its own cache id in the first place.
+    """
+    name = path.rsplit("/", 1)[-1].lower()
+    return name.endswith(".gguf") and not any(a in name for a in _LOADER_AUX)
+
+
+def loader_pick(filenames: list[str], tag: str) -> str | None:
+    """Which file `repo:TAG` actually resolves to, ported from find_best_model."""
+    for t in ([tag] if tag else ["Q4_K_M", "Q8_0"]):
+        pat = re.compile(re.escape(t) + r"[.-]", re.I)
+        for f in filenames:
+            if not gguf_is_model_name(f) or not pat.search(f):
+                continue
+            shard = _SHARD_OF.search(f)
+            if shard and int(shard.group(1)) != 1:
+                continue  # only shard 1 is a loadable entry point
+            return f
+    return None
+
+
+def id_round_trip(row: dict, siblings: list[str] | None = None) -> dict | None:
+    """None if `row["id"]` names this file; otherwise what is wrong with it.
+
+    Two levels of certainty, kept separate on purpose. If the runtime's own rule
+    picks a *different* file from the ones we can see, that is a fact. If the tag
+    is not a quantization at all (`:MTP`, `:Chat` — no digits, so llama.cpp's
+    closest-quant tiebreak computes 0 bits and cannot prefer anything), then the
+    id is only as safe as the repository's file list, which an offline scan cannot
+    see. Both are worth telling the operator before a personality bakes one in.
+    """
+    if ":" not in str(row["id"]):
+        return None  # a library-style name, addressed by directory, not by tag
+    tag = str(row["id"]).rsplit(":", 1)[-1]
+    own = row.get("path") or ""
+    picked = loader_pick(siblings or [own], tag)
+    if picked and own and picked != own:
+        return {"kind": "id-resolves-elsewhere", "tag": tag,
+                "would_load": picked.rsplit("/", 1)[-1]}
+    if not any(c.isdigit() for c in tag):
+        return {"kind": "id-is-not-a-quant", "tag": tag}
+    return None
+
+
+def cache_sibling_map(rows: list[dict]) -> dict[str, list[str]]:
+    """Repo -> the cache paths we can see for it, for id_round_trip.
+
+    Deliberately local-only. A rescan must not reach the network, so this cannot
+    see a sibling that is on the hub but not cached — which is exactly the ukisai
+    case. That is why id_round_trip also flags a non-quantization tag on its own:
+    the id is unsafe whether or not the competing file is here yet.
+    """
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        if r.get("source") != "cache" or not r.get("path"):
+            continue
+        out.setdefault(str(r["id"]).rsplit(":", 1)[0], []).append(r["path"])
     return out

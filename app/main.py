@@ -657,10 +657,14 @@ def create_app() -> FastAPI:
         except Exception:  # noqa: BLE001 — the light is a convenience; the page is not
             live_by_key = {}
         library_ids = set()
+        # Cache rows in the same repo compete for the same id; the page has to say
+        # so before a personality bakes one in (modelindex.id_round_trip).
+        siblings = modelindex.cache_sibling_map(indexed)
         for m in indexed:
             m["verdict"] = modelindex.verdict(m, budget)
             # Derived here, not stored: one rule for what a file can do (§4.9.2).
-            m["caps"] = modelindex.capabilities(m)
+            m["caps"] = modelindex.capabilities(
+                m, siblings.get(str(m["id"]).rsplit(":", 1)[0]))
             hit = live_by_key.get(modelindex.router_key(m["id"]))
             m["live"] = bool(hit)
             m["live_as"] = (hit or {}).get("id") or ""

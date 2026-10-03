@@ -151,7 +151,21 @@ def miss_hint(repo: str, quant: str) -> list[str]:
     out = [f"not cached as :{quant}. ids llama.cpp offers for this repo: "
            f"{sorted(have) or 'none'}"]
     if near:
-        out.append(f"the file name matches -- try :{near[0]} ({have[near[0]].name})")
+        # Vouching for an id is a claim about the LOAD path, not the listing. The
+        # runtime resolves `repo:TAG` as the regex TAG[.-] over the repo's whole file
+        # list and takes the first hit, so an id can name one file and fetch another:
+        # measured here, `...GSQ-RCO-GGUF:MTP` pulled IQ2_S-mtp.gguf while the IQ3_S
+        # file it names sat cached. Only recommend the id when it is the only match.
+        tag = near[0]
+        pat = re.compile(re.escape(tag) + r"[.-]", re.I)
+        rivals = [f["path"] for f in hub_files(repo)
+                  if pat.search(f["path"]) and modelindex.gguf_is_model_name(f["path"])]
+        if len(rivals) > 1:
+            out.append(f"the file name matches :{tag}, but {len(rivals)} hub files match "
+                       f"that tag {[r.rsplit('/', 1)[-1] for r in rivals][:3]} — the "
+                       f"loader takes the first, so use the path: {have[tag]}")
+        else:
+            out.append(f"the file name matches -- try :{tag} ({have[tag].name})")
     out.append(f"hub files matching {quant}: {hub[:4] or 'none'}")
     return out
 

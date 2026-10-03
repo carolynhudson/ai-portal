@@ -181,6 +181,19 @@ Three more facts the headers settle, all of which must agree as a *pair*:
 portal's own build, a spare port, a synthetic PNG with a known colour, and the answer recorded
 verbatim. Cost: LLM + projector + graph, ~13 GiB for an IQ3_S-class file.
 
+## An id is not a file
+
+A Hugging Face cache model is addressed as `repo:TAG`, and the runtime uses **two
+different rules** for that string: it *lists* by the last dash-separated token of the
+file name and *loads* by matching `/TAG[.-]/` (case-insensitive) against the
+repository's whole file list, first hit wins. Measured on this box: loading
+`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP` — an id the runtime printed itself —
+started a 12 GiB download of `...-IQ2_S-mtp.gguf` while the IQ3_S file it names sat
+cached, because IQ2_S-mtp sorts first and the "closest quantization" tie-break needs
+digits in the tag. So a tag with no digits (`:MTP`, `:Chat`) is a name, not an
+address. `modelindex.id_round_trip()` predicts it, the models page badges it, and
+`offline = true` in `[*]` turns the surprise into an error. Prefer a path.
+
 ## What is not a signal
 
 * **The `:TAG` in a cache model id is a file-name artefact, not a quantization.**

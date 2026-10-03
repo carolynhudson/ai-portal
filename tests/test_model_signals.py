@@ -397,3 +397,76 @@ def test_a_pooling_model_is_never_badged_as_a_generator():
                     "draft_tensors": 4, "has_chat_template": True,
                     "template_markers": "chat,system,tool-results,tools"})
     assert caps == {"reranker": "ok"}, caps
+
+
+# ------------------------------------------------- id round-trip (§4.9.4)
+#
+# The runtime prints one id when listing and resolves it by another rule when
+# loading. Both rules are ported here from common/download.cpp and pinned to what
+# this box actually did on 2026-10-03: loading `...GSQ-RCO-GGUF:MTP` — an id
+# `llama-server --cache-list` printed itself, for a 12.1 GB IQ3_S file already on
+# disk — began downloading `...-IQ2_S-mtp.gguf` instead.
+
+SWIFT_FILES = [
+    "Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ2_S-mtp.gguf",
+    "Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf",
+    "Swift-1.5-Qwen3.8-27B-GSQ-RCO-Q4_K_M.gguf",
+]
+
+
+def test_the_loader_pick_port_reproduces_the_download_we_measured():
+    # The id says MTP; two files match /MTP[.-]/ and the first one wins.
+    assert mi.loader_pick(SWIFT_FILES, "MTP") == SWIFT_FILES[0]
+    # A real quantization tag is unambiguous.
+    assert mi.loader_pick(SWIFT_FILES, "Q4_K_M") == SWIFT_FILES[2]
+    assert mi.loader_pick(SWIFT_FILES, "IQ3_S") == SWIFT_FILES[1]
+
+
+def test_the_loader_port_keeps_the_shard_and_sidecar_rules():
+    # Only shard 1 is an entry point...
+    assert mi.loader_pick(["X-IQ3_S-00002-of-00002.gguf",
+                           "X-IQ3_S-00001-of-00002.gguf"], "IQ3_S") \
+        == "X-IQ3_S-00001-of-00002.gguf"
+    # ...and a sidecar name is never a model, even when the tag matches it.
+    assert mi.loader_pick(["mmproj-BF16.gguf"], "BF16") is None
+    # `mtp` as a SUFFIX is not the `mtp-` the runtime excludes — that is the whole
+    # reason this file has a cache id at all.
+    assert mi.gguf_is_model_name("Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf")
+    assert not mi.gguf_is_model_name("mtp-Swift-1.5-Q4_K_M.gguf")
+
+
+def test_an_id_that_names_another_file_is_reported_as_a_fact():
+    row = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
+           "source": "cache", "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"}
+    risk = mi.id_round_trip(row, ["/x/" + f for f in SWIFT_FILES])
+    assert risk["kind"] == "id-resolves-elsewhere"
+    assert risk["would_load"] == SWIFT_FILES[0]
+
+
+def test_a_tag_that_is_not_a_quantization_is_flagged_even_with_no_rival_cached():
+    """The ukisai case: only IQ3_S-mtp is cached, so the local sibling check alone
+    would call the id safe while the hub still holds IQ2_S-mtp."""
+    row = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
+           "source": "cache", "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"}
+    assert mi.id_round_trip(row)["kind"] == "id-is-not-a-quant"
+    # A quantization tag with no rival is fine, and so is any library row.
+    assert mi.id_round_trip({"id": "org/M-GGUF:Q5_K_M", "source": "cache",
+                             "path": "/x/M-Q5_K_M.gguf"}) is None
+    assert mi.id_round_trip({"id": "M-Q4_K_M", "source": "library",
+                             "path": "/x/M-Q4_K_M.gguf"}) is None
+
+
+def test_the_badge_that_reaches_the_operator_names_the_risk_in_load_terms():
+    swift = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP", "source": "cache",
+             "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf",
+             "has_fim": 1, "nextn_layers": 1, "draft_tensors": 4}
+    caps = {c["label"]: c for c in mi.capabilities(swift)}
+    assert caps["id not load-safe"]["tone"] == "warn"
+    assert "IQ2_S" in caps["id not load-safe"]["note"]
+    assert caps["draft x1"]["tone"] == "ok"  # the head is still real; both can be true
+    with_rival = mi.capabilities(swift, ["/x/" + f for f in SWIFT_FILES])
+    assert any(c["label"] == "id loads another file" for c in with_rival)
+    # A normal cache row and a library row get no such badge.
+    assert not any("id " in c["label"] for c in
+                   mi.capabilities({"id": "org/M-GGUF:Q5_K_M", "source": "cache",
+                                    "path": "/x/M-Q5_K_M.gguf"}))

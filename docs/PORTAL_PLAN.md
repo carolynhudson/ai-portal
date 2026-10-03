@@ -2720,6 +2720,77 @@ Six tests in `tests/test_mmproj_probe.py`, including: an adapter named
 `mtp-Qwen3.8-27B-Q4_0.gguf` is never returned as a model, only shard part 1 is
 loadable, and an absent repo stays absent.
 
+#### 6.12.16 The id the runtime prints is not the id that loads (2026-10-03)
+
+`spec_preset_probe --measure` asked the probe router to load
+`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP` — an id **`llama-server --cache-list`
+printed itself** for a 12.12 GiB IQ3_S file sitting in the cache. It never loaded, and
+the router log says why:
+
+```
+D download task: https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF/
+    resolve/d74895b.../Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ2_S-mtp.gguf -> ~/.cache/...
+D common_download_file_single_online: no previous model file found blobs/6ce61b53...
+```
+
+It started pulling a **different quantization of the same repo** — IQ2_S, 12 GiB —
+rather than load the IQ3_S file already on disk. Two rules in llama.cpp disagree:
+
+| | rule | source |
+|---|---|---|
+| **listing** | id = last dash-separated token of the file name → `...-IQ3_S-mtp.gguf` is `:MTP` | `get_gguf_split_info`, mirrored by `modelindex._hf_split` |
+| **loading** | `repo:TAG` → regex `TAG[.-]`, case-insensitive, **first** non-sidecar match in the repo's file list wins; shards other than part 1 skipped | `find_best_model`, `common/download.cpp` |
+
+Both `...-IQ2_S-mtp.gguf` and `...-IQ3_S-mtp.gguf` match `/MTP[.-]/`, IQ2_S sorts
+first, and the tie-break that would prefer the closest quantization is disabled
+because the tag has no digits (`extract_quant_bits("MTP") == 0`). The file has an id
+at all because the sidecar filter tests for the substring `mtp-` — `mtp` as a
+**suffix** is not excluded, so a draft-head-bearing file is listed as a model.
+
+A personality naming that model would trade its chosen weights for a smaller quant
+and download 12 GiB to get them. What the portal now does about it:
+
+* `modelindex.gguf_is_model_name()` / `loader_pick()` — the load rule ported, and
+  pinned by tests against the exact repository listing above.
+* `id_round_trip(row, siblings)` — a fact when the rule picks a file we can see
+  (`id-resolves-elsewhere`), and a warning when the tag is not a quantization at all
+  (`id-is-not-a-quant`: safe only as long as the hub holds no rival, which an offline
+  rescan cannot know). One such problem on this box right now, recorded by `rescan()`.
+* `capabilities()` adds a warn badge — *id not load-safe* / *id loads another file* —
+  naming IQ2_S in the note, so the models page says it before a personality bakes it in.
+* `slot_bench.miss_hint()` no longer recommends an id that matches more than one hub
+  file; it prints the path instead. Last cycle it told the operator "try `:MTP`".
+* Both probes now start the router `--offline` by default. A bad id should be an
+  error, not a transfer. `--allow-download` opts out.
+
+**The fence available today:** `offline = true` in `[*]` is preset-eligible and
+reaches the worker as `--offline` (probe, same run). That makes the router refuse
+every download; downloads then stay a deliberate act through the portal.
+
+While this was running the same probe answered the personalities blocker:
+`spec-type = draft-mtp` **is** accepted in a per-model section and reaches the worker
+command line (`relevant args: ['--spec-type']`). Whether the draft actually runs at a
+worker started that way is stage 3 and still unmeasured — it needs a load, and the
+operator's own worker was holding 87.6 GiB of the 108 GiB aperture at the time.
+
+**Vision with a borrowed projector works.** The earlier `DID NOT ANSWER AS EXPECTED`
+was my probe, not the model: a reasoning template spent all 40 `max_tokens` inside
+the thinking block, so `content` was empty (`finish_reason=length`) while 40 tokens
+streamed as `reasoning_content`. Fixed: the probe starts `--reasoning off` and reads
+either field. Rerun on `:MTP` + unsloth's `mmproj-BF16.gguf` at ctx 16 384:
+
+```
+server says: loaded multimodal model, '.../mmproj-BF16.gguf'
+prompt tokens text-only 25 -> with image 43 (the image contributed 18)
+image question answer (content, finish=stop): 'Red'
+vision through a borrowed projector: WORKS
+```
+
+The control request (same text, no image) is what makes that a verdict: without it a
+template that silently drops the image would still look fine. 18 image tokens is the
+floor, not typical — `--image-min-tokens` is now passed through for anything harder
+than "what colour".
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

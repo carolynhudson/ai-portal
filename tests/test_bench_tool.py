@@ -307,3 +307,21 @@ def test_a_genuinely_absent_model_does_not_invent_an_id(tmp_path, monkeypatch):
     text = "\n".join(sb.miss_hint("org/Repo", "Q8_K_XL"))
     assert "ids llama.cpp offers for this repo: none" in text
     assert "try :" not in text
+
+
+def test_an_ambiguous_id_is_not_recommended_as_a_fix(tmp_path, monkeypatch):
+    """`repo:TAG` is resolved by the regex TAG[.-] over the repo's file list, first
+    match wins — measured on this box, where the runtime's own id `:MTP` for a cached
+    IQ3_S file started a 12 GiB download of IQ2_S-mtp.gguf. A hint that says "try :MTP"
+    for that repo sends the operator after the wrong weights."""
+    f = tmp_path / "Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"
+    f.write_bytes(b"GGUF")
+    monkeypatch.setattr(sb, "cached_paths", lambda repo: {"MTP": f})
+    monkeypatch.setattr(sb, "hub_files", lambda repo: [
+        {"path": "IQ2_S-mtp/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ2_S-mtp.gguf"},
+        {"path": "IQ3_S-mtp/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"},
+    ])
+    text = "\n".join(sb.miss_hint("ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF", "IQ3_S-mtp"))
+    assert "try :MTP" not in text
+    assert "2 hub files match" in text
+    assert str(f) in text, "the safe answer is the path, not the id"

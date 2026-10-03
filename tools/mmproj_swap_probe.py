@@ -115,10 +115,18 @@ def post(url: str, body: dict, timeout: int = 180):
 class Server:
     """Portal build, one slot, a spare port, and a child we always wait on."""
 
-    def __init__(self, binary: str, model: str, mmproj: str, port: int, ctx: int, log: pathlib.Path):
+    def __init__(self, binary: str, model: str, mmproj: str, port: int, ctx: int, log: pathlib.Path,
+                 image_min_tokens: int | None = None):
         cmd = [binary, "--host", "127.0.0.1", "--port", str(port), "--model", model,
                "--mmproj", mmproj, "-ngl", "99", "--ctx-size", str(ctx), "--parallel", "1",
-               "--jinja", "--no-webui"]
+               "--jinja", "--no-webui",
+               # A reasoning template spends the whole max_tokens budget inside the thinking
+               # block, which used to read as an empty answer and therefore as "vision broken".
+               # Measured: content='' while 40 reasoning tokens streamed. Turn it off here so
+               # this probe measures the projector, not the template's thinking mode.
+               "--reasoning", "off"]
+        if image_min_tokens:
+            cmd += ["--image-min-tokens", str(image_min_tokens)]
         self.log = log
         self.p = subprocess.Popen(cmd, stdout=open(log, "w"), stderr=subprocess.STDOUT,
                                   start_new_session=True)
@@ -207,6 +215,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8155)
     ap.add_argument("--ctx", type=int, default=8192)
     ap.add_argument("--header-only", action="store_true", help="predict from headers, start nothing")
+    ap.add_argument("--image-min-tokens", type=int, default=None,
+                    help="passed to llama-server; it warns that Qwen-VL wants >= 1024 for grounding")
     args = ap.parse_args()
 
     model = cached_model_file(args.model)
@@ -233,7 +243,8 @@ def main() -> int:
     before = aperture_used()
     print(f"\naperture {before:.2f} GiB used; a load costs file + projector + graph.")
     log = pathlib.Path(f"/tmp/mmproj_swap_{int(time.time())}.log")
-    srv = Server(args.binary, str(model), str(mmproj), args.port, args.ctx, log)
+    srv = Server(args.binary, str(model), str(mmproj), args.port, args.ctx, log,
+                 args.image_min_tokens)
     if not srv.wait():
         tail = [l for l in log.read_text(errors="ignore").splitlines()
                 if re.search(r"mmproj|mtmd|clip|error|abort|mismatch", l, re.I)][-8:]
@@ -254,15 +265,42 @@ def main() -> int:
             or "support" in k.lower()}
     print(f"/props vision-related keys: {caps or '(none reported)'}")
 
+    # The loader's own statement beats our header arithmetic.
+    loaded_mm = [l for l in log.read_text(errors="ignore").splitlines()
+                 if re.search(r"loaded multimodal|mtmd", l, re.I)][:3]
+    for l in loaded_mm:
+        print(f"    server says: {l.strip()[:170]}")
+
     img = png((200, 30, 30), (60, 60))
     import base64
-    q = post(f"{srv.base}/v1/chat/completions", {
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": "One short answer: what colour is the background of this image?"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(img).decode()}}]}],
-        "max_tokens": 40, "temperature": 0.0})
-    answer = (q.get("choices") or [{}])[0].get("message", {}).get("content")
-    print(f"image question answer: {str(answer)[:200]!r}")
+    url = "data:image/png;base64," + base64.b64encode(img).decode()
+    ask = "One short answer: what colour is the background of this image?"
+
+    # Control first: same text with and without the image. If the chat template drops the
+    # image (a real risk for a fine-tune that never saw one), the prompt does not grow and a
+    # lucky guess would otherwise look like working vision.
+    def ask_it(with_image: bool, max_tokens: int = 40):
+        content = [{"type": "text", "text": ask}]
+        if with_image:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        return post(f"{srv.base}/v1/chat/completions", {
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens, "temperature": 0.0})
+
+    plain = ask_it(False, max_tokens=8)
+    vision = ask_it(True)
+    t0 = (plain.get("usage") or {}).get("prompt_tokens")
+    t1 = (vision.get("usage") or {}).get("prompt_tokens")
+    if isinstance(t0, int) and isinstance(t1, int):
+        print(f"prompt tokens text-only {t0} -> with image {t1} "
+              f"(the image contributed {t1 - t0})")
+    choice = (vision.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    answer, field = msg.get("content"), "content"
+    if not answer and msg.get("reasoning_content"):
+        answer, field = msg["reasoning_content"], "reasoning_content"
+    print(f"image question answer ({field}, finish={choice.get('finish_reason')}): "
+          f"{str(answer)[:200]!r}")
     ok = bool(answer) and "red" in str(answer).lower()
     print(f"vision through a borrowed projector: {'WORKS' if ok else 'DID NOT ANSWER AS EXPECTED'}")
 

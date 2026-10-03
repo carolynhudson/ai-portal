@@ -80,17 +80,25 @@ def post(url: str, payload: dict, timeout: int = 600):
 
 
 class Router:
-    def __init__(self, binary: str, models_dir: str, ini: Path, port: int = PORT):
+    def __init__(self, binary: str, models_dir: str, ini: Path, port: int = PORT,
+                 offline: bool = True):
         self.binary, self.port, self.ini, self.models_dir = binary, port, ini, models_dir
+        self.offline = offline
         self.log = Path(f"/tmp/spec_preset_{port}.log")
         self.p = None
 
     def start(self, wait_s: int = 90) -> str:
         # --no-models-autoload is not optional: --models-dir is the blast radius, and autoload on
         # the real library would start every worker in it beside this probe.
+        # --offline is not cosmetic: a model id the router cannot resolve to a cached file does
+        # not fail, it DOWNLOADS. Measured on this box: loading ukisai/Swift-1.5-...:MTP started
+        # a 12 GiB pull of IQ2_S-mtp.gguf, a different file than the one already on disk. See
+        # docs/PORTAL_PLAN.md 6.12.16.
         cmd = [self.binary, "--host", "127.0.0.1", "--port", str(self.port),
                "--models-dir", self.models_dir, "--models-preset", str(self.ini),
                "--no-models-autoload", "-v"]
+        if self.offline:
+            cmd.append("--offline")
         self.log.write_text("")
         self.p = subprocess.Popen(cmd, stdout=open(self.log, "wb"),
                                   stderr=subprocess.STDOUT, start_new_session=True)
@@ -128,16 +136,26 @@ class Router:
         return out
 
     def load(self, model: str, timeout: int = 300) -> bool:
+        """Load, and say WHY when it does not. A bare False here once read as 'the preset worked,
+        nothing else to report' while the worker was quietly pulling 12 GiB from the hub."""
         try:
             post(f"http://127.0.0.1:{self.port}/models/load", {"model": model}, timeout=timeout)
         except Exception as e:
             print(f"    load failed: {e}")
             return False
         deadline = time.time() + timeout
+        last = None
         while time.time() < deadline:
-            if (self.models().get(model) or {}).get("state") == "loaded":
+            last = (self.models().get(model) or {}).get("state")
+            if last == "loaded":
                 return True
             time.sleep(2)
+        print(f"    still not loaded after {timeout}s (last state: {last})")
+        hints = [l.strip()[:180] for l in self.log.read_text(errors="replace").splitlines()
+                 if model.split("/")[-1] in l and re.search(r"download|error| no |fail", l, re.I)]
+        for h in (hints or [l.strip()[:180] for l in self.log.read_text(errors="replace")
+                             .splitlines() if " E " in l])[-6:]:
+            print(f"      log: {h}")
         return False
 
     def unload(self, model: str):
