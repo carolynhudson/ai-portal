@@ -2665,13 +2665,16 @@ the draft has to redo. The absolute number is what matters here: **25–30 tok/s
 the fastest decode of anything cached on this box**, 32 % above the MoE we run daily
 (23.0, §6.12.14) at **3.6× less aperture** (14.9 vs 52.7 GiB).
 
-**Second slot is nearly free; second 16 K slot is not.** 2 slots cost +0.03 GiB over
-1 slot at 8 192/slot. KV is what scales: 0.44 GiB (2 × 8 192) → 1.76 GiB (2 × 16 384),
-predicted from the header, still small for a 27B — but this file asks 0.88 GiB per
-16 K slot where Flash-Next asks 0.16. A two-head personality of *this* model is a
-~16 GiB line item; the same personality on the MoE is ~53 GiB of weights plus ~0.3 KiB
-of KV. That trade (aperture vs tokens-in-flight) is the personality decision, and the
-portal can price both sides from headers alone.
+**The second slot is almost free — in aperture.** 2 slots cost +0.03 GiB over 1 slot
+at 8 192/slot, and decode did not drop at all (27.1 vs 26.6). `--kv-unified` prices ONE
+pool, so ctx is what moves the number, not the slot count: the pool costs 0.44 GiB at
+8 192/slot and 0.88 GiB at 16 384/slot for two slots together (dry-run confirms). The
+constraint a wide personality actually hits is **tokens per slot**: at 8 192/slot the
+pp8192 probe was refused — `needs ~8256 tokens, slot serves 8192` — so a 2-slot
+personality of this model cannot take a full 8 K prompt without trimming. And per
+token this file is 5.5× the MoE's appetite: 0.88 GiB for the pool where Flash-Next
+asks 0.16 GiB for the same ctx. That trade (weights in aperture vs tokens in flight)
+is the personality decision, and both sides are priceable from headers alone.
 
 **Its tool protocol is declared *and* exercised** — `supports_tools`,
 `supports_parallel_tool_calls`, `supports_preserve_reasoning`, `supports_reasoning_effort`
