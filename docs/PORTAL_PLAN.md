@@ -2531,8 +2531,8 @@ runtime will actually ask for.
 
 **`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF` (cached: IQ3_S-mtp, 11.29 GiB) reads clean on every
 header signal**: arch `qwen35`, 65 blocks, embedding 5120, trained ctx 262 144, vocab 248 320, FIM
-specials present, `nextn_layers = 1` (the `-mtp` files carry 851 model tensors + 15 head tensors —
-free speculative decoding, no sidecar), template markers `chat,system,tool-results,tools` so the tool
+specials present, `nextn_layers = 1` and 4 `*.nextn.*` head tensors in the same file — free
+speculative decoding, no sidecar, `--spec mtp` costs 0.0 GiB of extra file, template markers `chat,system,tool-results,tools` so the tool
 protocol is declared, pooling unset (generative). Expected decode from the box's measured dense rate
 (~4.1 GiB/s of weights): 11.29 GiB → **~18 tok/s**, and with its own head at the 27B's measured
 accept ~0.62 → **~35-38 tok/s**, against unsloth Q8_K_XL's measured 7.2 / 14.8. That is the answer to
