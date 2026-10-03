@@ -152,7 +152,44 @@ tool tags — the Qwen3 reranker does both — so `capabilities()` refuses the
 generative badges for it. The columns keep the raw facts; the badge keeps the
 promise. A reranker badged `autocomplete` is a slot wasted at any speed.
 
+## Cross-file signals: may a projector be borrowed?
+
+A projector is not matched to a model by name. `mtmd.cpp:604` compares exactly one number —
+`llama_model_n_embd_inp(text)` against `clip_n_mmproj_embd(mmproj)` — and throws *"mismatch between
+text model (n_embd = X) and mmproj (n_embd = Y)"* when they differ. Both numbers are in the headers,
+so the verdict exists before a worker starts:
+
+| side | key | this box |
+|---|---|---|
+| LLM | `<arch>.embedding_length` | 5120 on both Qwen3.8-27B files (unsloth Q8_K_XL, ukisai Swift-1.5 IQ3_S) |
+| projector | `clip.vision.projection_dim` | 5120 in unsloth's `mmproj-BF16.gguf`, `projector_type = qwen3vl_merger` |
+
+Three more facts the headers settle, all of which must agree as a *pair*:
+
+* the encoder lives entirely in the projector (`clip.vision.*`: 27 blocks, 1152 hidden, 768 px,
+  patch 16, merge 2), so a text-only post-train cannot invalidate it — this is why borrowing works
+  at all when the base model is shared (`general.base_model.0.name = Qwen3.8 27B` on both sides);
+* the image splice tokens come from the **LLM's tokenizer**, not the projector: `tokenizer.ggml.tokens`
+  entries with `token_type = 3` — ``, ``, ``, ``
+  are all present in the Swift file (vocab 248 320, identical to unsloth's);
+* `tokenizer.chat_template` is the one header a post-train *does* rewrite — 8 952 bytes on Swift
+  against 9 993 on unsloth, same base model, same `chat,system,tool-results,tools` markers. Both
+  still mention vision; a template that dropped the image placeholder would still pass mtmd's
+  numeric gate and then fail at request time.
+
+`tools/mmproj_swap_probe.py` prints the header prediction first and only then starts a worker — the
+portal's own build, a spare port, a synthetic PNG with a known colour, and the answer recorded
+verbatim. Cost: LLM + projector + graph, ~13 GiB for an IQ3_S-class file.
+
 ## What is not a signal
+
+* **Provenance and safety posture are not in the file.** The CIRU "Strix Orca" package is built on
+  `orcarouter/Qwen3.8-Flash-Next-Uncensored`, described upstream as refusal-removed with no alignment
+  layer added — and nothing in a GGUF of that lineage says so. The only in-file traces worth keeping
+  are `general.license.name` (Swift 1.5: `swift-open-license-1.0`, not Apache) and
+  `general.base_model.<n>.name`/`.organization`/`.repo_url`. The rest of that story only exists over
+  the hub API (card text, base-model chain, sibling repos). A "is this safe for the coder slot" badge
+  therefore cannot come from the file, and the index should not pretend it can.
 
 * **Repository and file names.** `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF` is not a
   draft file, and the target repo is not headless: both carry the head, 441
@@ -234,6 +271,24 @@ Estimator check from the same runs: priced 31.61 GiB against a measured peak of
 31.39 with no draft (accurate), but 32.88 priced against 34.89 peak with a draft
 file, and the in-file head added ~2.6 GiB over the plain run. **A draft's own KV
 pool and compute graph are unpriced in `peak_bytes()`** — still open.
+
+## Residency flags: not model facts, but they set every number measured
+
+`-lm/--load-mode` takes `auto|mmap|none|mlock|mmap+mlock` (auto = mmap unless a backend cannot);
+`-lzm/--lazy-mode` takes `auto|on|off` — there is **no `none`** — and `on` requires mmap, applying at
+tensors over 4 GiB when `auto`. `-ngl/--gpu-layers` defaults to `auto` on b11146, which is *not* the
+same as 99: `auto` may spill layers to CPU when it must. Every decode number in this file was taken
+with the tool's defaults; the operator's router runs `-lm mmap -ngl 99 --lazy-mode on` because the
+ISTA notes advise it. Those two configurations have never been compared here.
+
+Why it matters: effective weight streaming on this box reads 29.30 GiB ÷ 7.2 tok/s = **4.07 GiB/s**
+(27B Q8_K_XL, spec off) and 4.29 GiB ÷ 55.6 tok/s = **5.56 GiB/s** (4B Q8_0, spec off — the 94.6
+figure includes its MTP head). A 256-bit bus delivers roughly 250 GB/s, so dense decode here is two
+orders of magnitude off the bus and is not HBM-bound. Something about paging, slot count, or partial
+offload is setting the ceiling. `slot_bench` now takes `--load-mode`, `--lazy-mode` and
+`--gpu-layers`; the value lists are pinned against the installed build's `--help` by test, because a
+value the runtime rejects kills the server at startup and the run would report a dead model instead
+of a wrong flag.
 
 ## Where the facts land
 

@@ -20,9 +20,11 @@ The tool is loaded by path, not imported as a package member: importing it must
 stay a no-op (no scan, no network, no subprocess).
 """
 
+import argparse
 import ast
 import importlib.util
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -213,3 +215,66 @@ def test_fim_tokens_come_from_the_vocab_not_the_card(tmp_path):
     _append_top_level(plain, "tokenizer.ggml.tokens", ["hello", "world"])
     toks, added = sb._scan_vocab(plain)
     assert toks == ["hello", "world"] and added == [], (toks, added)
+
+
+# ------------------------------------------------- residency flags (-lm / -lzm / -ngl)
+#
+# The operator runs the router with `-lm mmap -ngl 99 --lazy-mode on` because that is what the
+# ISTA release notes advise, while every number in the plan was measured without them. So the
+# bench must be able to pass them, and it must pass values the installed build actually accepts.
+
+
+def _args(sb, **over):
+    ns = argparse.Namespace(load_mode="auto", lazy_mode="auto", gpu_layers=99)
+    for k, v in over.items():
+        setattr(ns, k, v)
+    return ns
+
+
+def test_an_untouched_run_still_carries_no_residency_flags():
+    """Reports from before this flag existed stay comparable, byte for byte."""
+    assert sb.runtime_flags(_args(sb)) == []
+
+
+def test_the_operators_flags_reach_the_worker_verbatim():
+    flags = sb.runtime_flags(_args(sb, load_mode="mmap", lazy_mode="on"))
+    assert flags == ["--load-mode", "mmap", "--lazy-mode", "on"]
+
+
+def test_the_value_lists_are_the_installed_builds_and_not_invented():
+    """`--lazy-mode none` does not exist: the build takes on|auto|off. A wrong value is not
+    ignored — llama-server exits at startup and the run reports a dead model."""
+    import glob
+    builds = sorted(glob.glob("/home/cortana/ai/releases/llama.cpp-b*"))
+    if not builds:
+        import pytest
+        pytest.skip("no llama.cpp release on this box")
+    import subprocess
+    help_text = subprocess.run([builds[-1] + "/llama-server", "--help"],
+                               capture_output=True, text=True, timeout=120).stdout
+    for flag, choices in (("--load-mode", sb.LOAD_MODES), ("--lazy-mode", sb.LAZY_MODES)):
+        allowed = _help_values(help_text, flag)
+        assert allowed, f"{flag} is not in the installed build's help"
+        assert set(choices) <= allowed, f"{flag}: {set(choices) - allowed} are not accepted values"
+
+
+def _help_values(help_text: str, flag: str) -> set[str]:
+    """The value list llama.cpp prints under one option.
+
+    Scanned line by line rather than by regex block: usage strings wrap, and a wrapped tail
+    ("...may reduce\n pageouts if not using mlock") is not a value line but is not the next option
+    either. A regex repetition stops at the wrap and reports a legal value as invented.
+    """
+    lines = help_text.splitlines()
+    at = next((i for i, l in enumerate(lines)
+               if re.search(r"(^|\s)" + re.escape(flag) + r"(\s|MODE|N|$)", l)), None)
+    if at is None:
+        return set()
+    out: set[str] = set()
+    for line in lines[at + 1:]:
+        if re.match(r"^\s*-{1,2}[A-Za-z]", line) and not re.match(r"^\s+-", line):
+            break  # next option
+        m = re.match(r"^\s+- ([A-Za-z0-9+_]+)[:,]", line)
+        if m:
+            out.add(m.group(1))
+    return out

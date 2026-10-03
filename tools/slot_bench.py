@@ -972,6 +972,32 @@ def bench_attached(model_id: str, args, rec: dict) -> None:
             bench_tools(srv, rec)
 
 
+# Values are copied from b11146's own --help, and a test re-checks them against the binary on
+# this box: a value list the runtime rejects is worse than no flag at all, because llama-server
+# exits at startup and the run reports a dead model.
+LOAD_MODES = ["auto", "none", "mmap", "mlock", "mmap+mlock"]
+LAZY_MODES = ["auto", "on", "off"]
+
+
+def runtime_flags(args) -> list[str]:
+    """Residency flags, only when they differ from the build's own default.
+
+    The operator sets `-lm mmap -ngl 99 --lazy-mode on` by hand on the router because it is what
+    the ISTA release notes recommend, and every number measured so far was taken without them.
+    Both dense files measured here decoded at file-size / ~4.05 GiB/s (29.30 GiB @ 7.2 tok/s; 4.29
+    GiB @ 94.6 tok/s) — far under this GPU's bandwidth, which says something about *paging*, not
+    the bus, is setting the ceiling. These flags are named so one run per setting settles it.
+
+    They are omitted when left at auto so an untouched run stays byte-identical to earlier reports.
+    """
+    out: list[str] = []
+    if args.load_mode != "auto":
+        out += ["--load-mode", args.load_mode]
+    if args.lazy_mode != "auto":
+        out += ["--lazy-mode", args.lazy_mode]
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", action="append", default=[],
@@ -986,6 +1012,20 @@ def main() -> int:
                          "Was 8192 with --parallel 4, which handed each slot 2048 tokens and made "
                          "the pp2048 probe a guaranteed HTTP 400.")
     ap.add_argument("--parallel", type=int, default=4, help="server slots (burst handling)")
+    ap.add_argument("--load-mode", choices=LOAD_MODES, default="auto",
+                    help="-lm: how weights get resident. auto = mmap unless a backend cannot; "
+                         "none = no special loading mode; mlock = pin the file in RAM instead of "
+                         "letting the page cache evict it (side effect: the aperture and RAM both "
+                         "stop being reclaimable, so this is the one that can OOM the box)")
+    ap.add_argument("--lazy-mode", choices=LAZY_MODES, default="auto",
+                    help="-lzm: read rows of huge tensors (per-layer embeddings) from disk on "
+                         "demand instead of keeping them resident; 'on' requires mmap. auto = only "
+                         "for tensors over 4 GiB, off = always resident. Side effect: the vocabulary "
+                         "and embedding tables stop being warm, which is what a decode number then "
+                         "measures")
+    ap.add_argument("--gpu-layers", type=int, default=99,
+                    help="-ngl: layers offloaded to the GPU. 99 (this tool's default) forces all; "
+                         "the build's own default is 'auto', which spills to CPU when it must")
     ap.add_argument("--attach", metavar="URL",
                     help="bench an ALREADY RUNNING router (e.g. http://127.0.0.1:8080): "
                          "nothing is loaded, started or stopped, so it is safe while a "
@@ -1207,7 +1247,11 @@ def main() -> int:
         # makes every probe in this script reach the model it loaded.
         alias = spec
         extra = ["--ctx-size", str(ctx), "--parallel", str(args.parallel), "--kv-unified",
-                 "--n-gpu-layers", "99", "--flash-attn", "on", "--alias", alias]
+                 "--n-gpu-layers", str(args.gpu_layers), "--flash-attn", "on", "--alias", alias]
+        flags = runtime_flags(args)
+        extra += flags
+        if flags:
+            print(f" residency flags: {' '.join(flags)}")
         if args.role == "embed":
             # Measured: a plain server answers /embeddings with 501 "This server
             # does not support embeddings. Start with --embeddings", and /rerank

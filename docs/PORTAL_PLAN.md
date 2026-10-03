@@ -2525,6 +2525,62 @@ cache in the non-unified case too and prints it in the floor line
 ("(+8 runtime cache)") so the number compared against free memory is the one the
 runtime will actually ask for.
 
+#### 6.12.13 Two candidate models, one engine fork, and a borrowed projector (2026-10-03)
+
+**`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF` (cached: IQ3_S-mtp, 11.29 GiB) reads clean on every
+header signal**: arch `qwen35`, 65 blocks, embedding 5120, trained ctx 262 144, vocab 248 320, FIM
+specials present, `nextn_layers = 1` (the `-mtp` files carry 851 model tensors + 15 head tensors —
+free speculative decoding, no sidecar), template markers `chat,system,tool-results,tools` so the tool
+protocol is declared, pooling unset (generative). Expected decode from the box's measured dense rate
+(~4.1 GiB/s of weights): 11.29 GiB → **~18 tok/s**, and with its own head at the 27B's measured
+accept ~0.62 → **~35-38 tok/s**, against unsloth Q8_K_XL's measured 7.2 / 14.8. That is the answer to
+"is the Q8_K_XL really slower than an IQ3-class file" — the gap is bytes-per-token, not branding, and
+the price is a 3-bit-class quant: the card's own KLD is 0.051 at IQ3_S against ~0.002-class for Q8,
+measured **against Swift's own BF16**, at 512-token context only, and the card concedes IQ3_S is
+*worse* than ISTA's matched quant on five of seven held-out domains. MTP decoding is unmeasured by
+the author. It is a post-train ("long-horizon, agentic and coding tasks, 58.5 % fewer thinking
+tokens, +0.35 % score") — inside the fine-tune tolerance — but the derivatives around it
+(`...-Uncensored-...`, `heretic`) are not, and the licence is `swift-open-license-1.0`.
+
+**`jcbtc/Qwen3.8-Flash-CIRU-STRIX-Orca` is parked, and the gate for revisiting it is written down.**
+Four independent disqualifiers, all from its own card: (1) *"The compact expert format needs the
+matching CIRU runtime. Stock llama.cpp and Hugging Face hosted inference do not load it"* — it is not
+a llama.cpp model, it is a patched ggml fork with its own build chain (measured on NixOS); (2) files
+≈ 120 GiB (67.16 GGUF + 48.83 GiB `ple/` per-layer-embedding payload that must live on fast NVMe +
+3.85 GiB MTP draft + projector), with **87.31 GiB GPU-visible after loading** on a 128 GiB box — on a
+108 GiB aperture that leaves no room for a second slot, an embedder, or an autocomplete slot, which
+is the whole point of the router; (3) provenance: `orcarouter/Qwen3.8-Flash-Next-Uncensored`,
+"refusal-removed", no alignment layer added — refused for the coding/agentic slot by the operator's
+standing rule; (4) its evidence is self-reported and hedged by its own author ("these few runs do not
+establish…", HumanEval 0-19 subsets, a HermesAgent scorer known to miss instruction violations).
+The claims that *would* matter here — 1 251 tok/s prefill at 64 K, 59 tok/s decode with MTP depth 4 —
+are one-slot measurements; our router runs four slots.
+
+Decision, and it is an operational rule, not a preference: **the portal's llama.cpp is not replaced.**
+Any second engine is evaluated in quarantine — its own release directory, its own port, a probe that
+starts and stops only its own child, the portal's `presets.ini`/router/release dir untouched, and
+never two routers resident at once (they both answer for one aperture). Only after that probe reports
+the advertised numbers on *this* box does it earn a first-class toggle in the portal, and that toggle
+must be mutual exclusion, not two live servers.
+
+**Projector interchange is a header question** (see `MODEL_SIGNALS.md`, "Cross-file signals"):
+llama.cpp compares one number, `n_embd_text` vs the projector's `projection_dim` (`mtmd.cpp:604`).
+5120 == 5120 for Swift 1.5 + unsloth's `mmproj-BF16.gguf`, the Swift vocabulary still carries
+`///`, and its rewritten template (8 952 B vs 9 993 B) still
+mentions vision — so the borrowed projector is predicted to load. `tools/mmproj_swap_probe.py` prints
+that prediction and then asks a synthetic PNG what colour it is, using the portal's own build.
+
+**Open item — an accuracy harness, staged.** slot_bench measures speed, aperture, concurrency and
+*whether a tool call is emitted at all*; it never checks whether emitted code is correct. Proposal in
+three stages, deliberately not built yet: (1) a task pack of parameterised short functions
+(easy→hard) with hidden unit tests, executed in a rlimit'd subprocess — parameterised on purpose,
+because public HumanEval/LeetCode text is training data and a memorised answer measures nothing;
+(2) depth-aware needle-in-a-haystack recall, which is the test that actually prices a context window
+on this box (it pairs with the pp-vs-ctx curve and `--ctx-checkpoints`), scored exactly; (3) only
+then a portal "model testing" page, and only showing numbers that carry their provenance — build,
+flags, seed, date — the same rule every other portal claim follows. A leaderboard without provenance
+is opinion with a table.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
