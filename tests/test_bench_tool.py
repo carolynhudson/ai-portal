@@ -278,3 +278,32 @@ def _help_values(help_text: str, flag: str) -> set[str]:
         if m:
             out.add(m.group(1))
     return out
+
+
+# ------------------------------------------- naming a cached model (the :MTP trap)
+#
+# `ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:IQ3_S-mtp` was asked for, and the tool
+# said "not cached" while printing a hub path -- for a file sitting in the cache. The
+# tag llama.cpp uses is the last dash-separated token of the file name (`llama-server
+# --cache-list` prints `:MTP`), and a message that only lists hub files sends the
+# operator to download a model they already own.
+
+def test_a_missed_quant_names_the_ids_that_do_exist(tmp_path, monkeypatch):
+    f = tmp_path / "Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"
+    f.write_bytes(b"GGUF")
+    monkeypatch.setattr(sb, "cached_paths", lambda repo: {"MTP": f})
+    monkeypatch.setattr(sb, "hub_files", lambda repo: [{"path": "Swift-1.5-IQ3_S-mtp.gguf"}])
+    text = "\n".join(sb.miss_hint("ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF", "IQ3_S-mtp"))
+    assert "ids llama.cpp offers for this repo: ['MTP']" in text
+    assert "try :MTP" in text, "the hint must name the id that works, not just the problem"
+    reask = "\n".join(sb.miss_hint("ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF", "IQ3_S_MTP"))
+    assert "try :MTP" in reask, "- and _ spellings of one tag mean one file"
+    assert sb.cached_paths("x")["MTP"] == f
+
+
+def test_a_genuinely_absent_model_does_not_invent_an_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(sb, "cached_paths", lambda repo: {})
+    monkeypatch.setattr(sb, "hub_files", lambda repo: [{"path": "Q8_K_XL/x.gguf"}])
+    text = "\n".join(sb.miss_hint("org/Repo", "Q8_K_XL"))
+    assert "ids llama.cpp offers for this repo: none" in text
+    assert "try :" not in text

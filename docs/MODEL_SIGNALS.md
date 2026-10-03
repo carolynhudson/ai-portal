@@ -183,6 +183,16 @@ verbatim. Cost: LLM + projector + graph, ~13 GiB for an IQ3_S-class file.
 
 ## What is not a signal
 
+* **The `:TAG` in a cache model id is a file-name artefact, not a quantization.**
+  llama.cpp names a cached model by the file name's **last dash-separated token**,
+  so `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf` is
+  `ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP` (verified against
+  `llama-server --cache-list`), and unsloth's `UD-` prefix is dropped by the same
+  rule. Ask that repo for `:IQ3_S-mtp` and it reports "not cached" for a file that
+  is on disk. The quantization is a separate column (`quant = IQ3` for this file,
+  read from the tensor section), and it is the only place to read it from.
+
+
 * **Provenance and safety posture are not in the file.** The CIRU "Strix Orca" package is built on
   `orcarouter/Qwen3.8-Flash-Next-Uncensored`, described upstream as refusal-removed with no alignment
   layer added — and nothing in a GGUF of that lineage says so. The only in-file traces worth keeping

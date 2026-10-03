@@ -1664,7 +1664,9 @@ while the page still feels instant. Three things came out of measuring this one:
    detection silently while every boot-based test still passed via another
    branch. A probe that cannot fail loudly must at least be observed working.
 
-#### 6.12.13 — a draft head is worth 2.2x; a fast model with no tool protocol is not an agent (2026-10-02)
+#### 6.10.1 — a draft head is worth 2.2x; a fast model with no tool protocol is not an agent (2026-10-02)
+
+*(numbered 6.12.13 when it was written, which collided with §6.12.13 below; the content is unchanged and belongs where it sits — a note about what the pulse pane may be asked to measure.)*
 
 Four operator-driven runs, reports under `/home/cortana/ai/logs/slot-bench-20261002T21*.json`.
 
@@ -2584,6 +2586,64 @@ on this box (it pairs with the pp-vs-ctx curve and `--ctx-checkpoints`), scored 
 then a portal "model testing" page, and only showing numbers that carry their provenance — build,
 flags, seed, date — the same rule every other portal claim follows. A leaderboard without provenance
 is opinion with a table.
+
+#### 6.12.14 The daily model, re-measured at one slot; and a cache id is a file-name artefact (2026-10-03)
+
+`slot_bench --parallel 1`, `--ctx 16384`, the router idle, reports
+`slot-bench-20261003T070019Z` and `…T070212Z`. Same file
+(`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S`, 77.88 GiB across 2 shards,
+MoE 512 experts / 10 active, trained ctx 262 144, FIM specials, tool markers) run
+twice, defaults vs the residency flags from the operator's notes:
+
+| | defaults | `--load-mode mmap --lazy-mode on --gpu-layers 99` |
+|---|---|---|
+| prefill pp512 / pp2048 / pp8192 | 409 / 486 / **464** tok/s | 396 / 493 / **474** tok/s |
+| decode tg64 (same three prompts) | 23.0 / 23.0 / 20.8 tok/s | 22.9 / 23.2 / 21.0 tok/s |
+| TTFT at pp8192 | 13.12 s | 12.84 s |
+| tool round-trip | emitted, args parsed | emitted, args parsed |
+| **aperture peak** | **52.71 GiB** | **52.71 GiB** |
+| **lowest MemAvailable** | 38.88 GiB | **65.64 GiB** |
+| VmRSS peak (0.5 s poll) | 28.52 GiB | 51.60 GiB |
+
+Three things follow, and the third is a measurement warning, not a model fact.
+
+**The flags buy headroom, not speed.** Speed is inside the noise either way
+(pp8192 464 → 474), the GPU-visible footprint is identical to the hundredth of a
+GiB, and the system kept 27 GiB more free at the low point. That is the shape you
+would expect from 512 experts: most expert rows are never touched by a given
+prompt, so keeping them resident is only a larger anonymous footprint, while
+`--lazy-mode on` reads the rows through the page cache on demand. For a personality
+that co-exists with other models, `--lazy-mode on` is therefore a safety setting —
+and it was already what the hand-started router used, which is now documented
+rather than folklore.
+
+**VmRSS is not a capacity number.** The two runs report RSS 28.52 and 51.60 GiB
+while the *worse* MemAvailable belongs to the *lower*-RSS run. RSS counts mapped
+file pages (weights read through mmap — reclaimable, and excluded from
+MemAvailable by design), so the two metrics can point in opposite directions and
+both be true. `slot_bench` records `peak_rss_gib` as a 0.5-second-poll maximum; it
+is a diagnostic of what one process touched, never a number to size a personality
+with. The portal's `peak_bytes` prices aperture + MemAvailable, which is what this
+table supports; keep doing that.
+
+**A 16 K context is almost free on this architecture, and expensive to be wrong
+about everywhere else.** KV at ctx 16384 priced 0.16 GiB for one unified-pool slot
+against a trained ctx of 262 144. The same ctx on `unsloth/Qwen3.8-27B` costs an
+order of magnitude more per token. So context length is a per-model decision, not
+a personality-wide one — which is why `ctx-size` belongs to the model section of a
+preset and not the global one.
+
+**`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF` is cached as `:MTP`, not `:IQ3_S-mtp`.**
+`llama-server --cache-list` prints `ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP`
+(its own `IQ3_S-mtp.gguf`) next to `unsloth/Qwen3.8-27B-GGUF:Q8_K_XL` — the tag is
+the file name's last dash-separated token, and unsloth's `UD` prefix is dropped by
+the same rule that keeps our `mtp` suffix. Asking for `:IQ3_S-mtp` printed "not
+cached" for a file already on disk, because the message listed *hub* files only.
+`slot_bench.miss_hint()` now prints the ids llama.cpp offers and points at the
+cached file when the request matches its name, with `-`/`_` spellings folded
+together; pinned by two tests in `tests/test_bench_tool.py`. The quant itself is a
+column (`quant = IQ3` for this file), never part of the id — the id says which file
+llama.cpp will load, not what it was quantized with.
 
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 

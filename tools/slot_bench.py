@@ -130,6 +130,32 @@ def _draft_like(name: str) -> bool:
     return any(m in str(name) for m in _DRAFT_MARKERS)
 
 
+def miss_hint(repo: str, quant: str) -> list[str]:
+    """Why a `:QUANT` did not resolve, in terms the operator can act on.
+
+    A cache model is named the way llama.cpp names it, which is the last
+    dash-separated token of the file name: `Swift-1.5-...-IQ3_S-mtp.gguf` is
+    `repo:MTP` (`llama-server --cache-list` prints exactly that), not
+    `:IQ3_S-mtp`. Listing only the *hub* files — as this used to — makes a model
+    that is already downloaded look missing and invites a re-download. Say what
+    the cache offers, and when the request matches a cached file's name, name the
+    id that works. The actual quantization lives in the row's `quant` column
+    (IQ3 here), never in this tag.
+    """
+    have = cached_paths(repo)
+    # "-" and "_" are interchangeable spellings of the same tag, and the file name
+    # may use either: IQ3_S-mtp, IQ3_S_mtp, IQ3-S-MTP all ask for one file.
+    fold = lambda s: re.sub(r"[-_]", "", s.upper())
+    near = sorted(q for q, f in have.items() if fold(quant) in fold(f.name))
+    hub = [f["path"] for f in hub_files(repo) if quant.upper() in f["path"].upper()]
+    out = [f"not cached as :{quant}. ids llama.cpp offers for this repo: "
+           f"{sorted(have) or 'none'}"]
+    if near:
+        out.append(f"the file name matches -- try :{near[0]} ({have[near[0]].name})")
+    out.append(f"hub files matching {quant}: {hub[:4] or 'none'}")
+    return out
+
+
 def cached_paths(repo: str) -> dict[str, Path]:
     """What llama.cpp can already see in the HF cache, keyed by QUANT tag.
 
@@ -1110,8 +1136,8 @@ def main() -> int:
             download(repo, quant)
             path = cached_paths(repo).get(quant)
         if path is None:
-            hub = [f["path"] for f in hub_files(repo) if quant in f["path"].upper()]
-            print(f"    not cached. Hub files matching {quant}: {hub[:4] or 'none'}")
+            for line in miss_hint(repo, quant):
+                print("   ", line)
             rec["missing"] = True
             results.append(rec)
             continue
