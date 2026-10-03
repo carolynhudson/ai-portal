@@ -1470,8 +1470,15 @@ def capabilities(row: dict) -> list[dict]:
     # for the BOOLEAN column, so testing `has_fim is True` was false for every row
     # read out of the table, and a model with known FIM specials got the "unknown"
     # badge. Truthiness for the two known states, `is None` for the third.
+    # A pooling model cannot generate at all, so its tokenizer's FIM specials and
+    # its inherited chat template say nothing it could act on — the Qwen3 reranker
+    # declares both and would be badged as an autocomplete model that can take
+    # tools. The pooling badge below is the whole story for that file.
+    generative = not row.get("pooling_type")
     has_fim = row.get("has_fim")
-    if has_fim is None:
+    if not generative:
+        pass
+    elif has_fim is None:
         out.append({"label": "fim?", "tone": "mut",
                     "note": "vocabulary could not be read — autocomplete capability "
                             "is unaskable here, not absent"})
@@ -1485,8 +1492,28 @@ def capabilities(row: dict) -> list[dict]:
                             "answers, but nothing was trained for it, so an "
                             "autocomplete slot here is wasted memory"})
 
-    layers = row.get("nextn_layers")
-    tensors = row.get("draft_tensors")
+    # Whether the chat template spells out a tool protocol at all. Measured on
+    # this box: every cached row whose markers contain `tools` emitted a valid
+    # tool call under the bench probe, and the one row whose template carries
+    # only chat+system — DeepSeek-Coder-V2-Lite at 43 tok/s decode — emitted
+    # nothing at all. Fast is not usable for agents, and the header says so
+    # before a worker is started. (The runtime agrees through /props
+    # chat_template_caps, but only for a model that is already loaded.)
+    markers = set((row.get("template_markers") or "").split(",")) - {""}
+    if generative and row.get("has_chat_template") and markers:
+        if "tools" in markers:
+            out.append({"label": "tools", "tone": "ok",
+                        "note": "the chat template emits tool tags, so the weights "
+                                "were trained against a tool protocol: this is the "
+                                "file to put in the function/agent slot"})
+        else:
+            out.append({"label": "no tool protocol", "tone": "mutewarn",
+                        "note": "template carries chat/system but no tool tags — a "
+                                "tool request comes back as prose. Measured on a "
+                                "cached row: 43 tok/s and no call at all"})
+
+    layers = row.get("nextn_layers") if generative else None
+    tensors = row.get("draft_tensors") if generative else None
     if layers and tensors:
         out.append({"label": f"draft x{layers}", "tone": "ok",
                     "note": f"carries its own speculative-decoding head "

@@ -355,3 +355,45 @@ def test_a_real_sized_vocabulary_is_read_whole_by_the_reader(tmp_path):
     assert row["has_fim"] is True
     assert modelmeta.sniff_gguf(tmp_path / "real-vocab" / "real-vocab.gguf")[
         "vocab_size"] == n, "the reader and the index row disagree about the same file"
+
+
+# ------------------------------------------------- tool protocol: the badge that
+# decides which file goes in the agent slot
+
+def test_a_template_that_spells_out_tool_tags_is_the_agent_slot():
+    """Every cached row with `tools` in its markers emitted a valid tool call."""
+    caps = _labels({"has_fim": True, "has_chat_template": True,
+                    "template_markers": "chat,system,tool-results,tools"})
+    assert caps.get("tools") == "ok", caps
+    assert "no tool protocol" not in caps, caps
+
+
+def test_a_chat_template_without_tool_tags_says_so_in_the_header():
+    """bartowski/DeepSeek-Coder-V2-Lite-Instruct: 43 tok/s and no tool call at all.
+
+    The bench measured `tool_call.emitted = false`; the index had already read
+    `template_markers = chat,system`. A file can be fast, FIM-capable and still
+    useless as the function slot — and that is a header fact, not a benchmark.
+    """
+    caps = _labels({"has_fim": True, "has_chat_template": True,
+                    "template_markers": "chat,system"})
+    assert caps.get("no tool protocol") == "mutewarn", caps
+    assert "tools" not in caps, caps
+    assert caps.get("autocomplete") == "ok", "FIM stays a separate fact"
+
+
+def test_the_tool_badge_needs_a_template_to_speak_of():
+    """No template (a base model) is its own case: no claim either way."""
+    caps = _labels({"has_fim": True, "has_chat_template": False,
+                    "template_markers": ""})
+    assert "tools" not in caps and "no tool protocol" not in caps, caps
+
+
+def test_a_pooling_model_is_never_badged_as_a_generator():
+    """The Qwen3 reranker's tokenizer declares FIM specials and its template
+    inherits Qwen's tool tags. It cannot generate, so those badges would be a
+    promise the file cannot keep."""
+    caps = _labels({"pooling_type": 4, "has_fim": True, "nextn_layers": 1,
+                    "draft_tensors": 4, "has_chat_template": True,
+                    "template_markers": "chat,system,tool-results,tools"})
+    assert caps == {"reranker": "ok"}, caps

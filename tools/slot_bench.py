@@ -762,6 +762,25 @@ def find_draft(target: Path) -> Path | None:
     return near[0] if near else None
 
 
+def resolve_draft(spec_draft: str) -> tuple[Path | None, str]:
+    """Turn --spec-draft into a file, or explain why it is not one.
+
+    A repo id contains a slash too, so "has a slash" cannot tell a path from an
+    id: only an existing file or a .gguf name is a path. Aux files (mmproj, mtp)
+    are not indexed as models, so a `repo:MTP` id resolves to nothing — the path
+    form is the way to measure one.
+    """
+    cand = Path(spec_draft).expanduser()
+    if cand.is_file() or spec_draft.endswith(".gguf"):
+        return (cand, "") if cand.is_file() else (None, "not a file")
+    drepo, _, dq = spec_draft.partition(":")
+    path = cached_paths(drepo).get((dq or "" ).upper())
+    if path:
+        return path, ""
+    return None, ("neither a file nor a cached model id (aux files like mtp-*.gguf "
+                  "are not indexed; pass the path)")
+
+
 def nextn_tensors(model: Path) -> int | None:
     """How many tensors are named `*.nextn.*` — does the file carry its own head?
 
@@ -1083,20 +1102,29 @@ def main() -> int:
         head = nextn_tensors(path) if args.spec == "mtp" else None
         if args.spec == "mtp":
             if args.spec_draft:
-                # A repo id contains a slash too, so "has a slash" cannot tell a
-                # path from an id: only an existing file or a .gguf name is a path.
-                cand_path = Path(args.spec_draft).expanduser()
-                if cand_path.is_file() or args.spec_draft.endswith(".gguf"):
-                    cand = Path(args.spec_draft).expanduser()
-                    draft = cand if cand.is_file() else None
-                    if draft is None:
-                        print(f"    SKIPPED: --spec-draft {args.spec_draft} is not a file")
-                        rec["skipped"] = "draft-not-found"
-                        results.append(rec)
-                        continue
-                else:
-                    drepo, _, dq = args.spec_draft.partition(":")
-                    draft = cached_paths(drepo).get((dq or args.quant or "").upper())
+                draft, why = resolve_draft(args.spec_draft)
+                if draft is None:
+                    # An explicit --spec-draft that resolves to nothing must not
+                    # silently become "use the target's own head": that swaps the
+                    # thing being measured and the report still reads as a pass.
+                    print(f"    SKIPPED: --spec-draft {args.spec_draft} is {why}. Naming "
+                          f"a draft means measuring that draft, so refusing instead of "
+                          f"silently falling back to the target's own head.")
+                    rec["skipped"] = "draft-not-found"
+                    results.append(rec)
+                    continue
+            elif head:
+                # The target carries its own head, so no second file: a sidecar
+                # beside it (unsloth ships MTP/mtp-*.gguf next to the 27B that
+                # already contains blk.64.nextn.*) would spend 1.3 GiB to do the
+                # same job. Point at it explicitly if you want it measured.
+                draft = None
+                side = find_draft(path)
+                if side:
+                    print(f"    note: {side} sits beside the target, but the target "
+                          f"already carries its own head. Pass --spec-draft {side} "
+                          f"to measure the extra file instead (it is an aux file, "
+                          f"so it has no cached model id to name).")
             else:
                 draft = find_draft(path)
             rec["target_nextn_tensors"] = head

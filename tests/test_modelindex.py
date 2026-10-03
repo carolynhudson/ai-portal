@@ -1148,17 +1148,29 @@ def test_the_models_page_says_what_a_model_can_be_used_for(monkeypatch):
                ("testarch.attention.head_count_kv", 2)]
     for name, pairs in (("Autocomplete-Model",
                          list(head.items()) + body_kv
-                         + [("testarch.pooling_type", 1),
-                            # Built in pieces: the literal `<|name|>` form has a
-                            # way of arriving here as an empty string (see
-                            # test_model_signals._special), and a fixture token
-                            # that silently vanishes tests nothing.
+                         + [
+                            # No pooling_type on purpose: a mean-pooling
+                            # declaration makes the file an embedder, and the
+                            # badges refuse to call an embedder an autocomplete
+                            # model because it cannot generate at all. The FIM
+                            # specials below are built in pieces: the literal
+                            # `<|name|>` form has a way of arriving here as an
+                            # empty string (see test_model_signals._special), and
+                            # a fixture token that silently vanishes tests nothing.
                             ("tokenizer.ggml.tokens",
                              ["a", "b", "<" + "|" + "fim_middle" + "|" + ">"])]),
                         ("Promises-A-Head",
                          list(head.items()) + body_kv
                          + [("testarch.nextn_predict_layers", 1),
-                            ("tokenizer.ggml.tokens", ["a", "b", "c"])])):
+                            ("tokenizer.ggml.tokens", ["a", "b", "c"])]),
+                        ("Pools-For-Embeddings",
+                         list(head.items()) + body_kv
+                         + [("testarch.pooling_type", 1),
+                            # FIM specials AND a pooling declaration: the header
+                            # promises two things, and the file can only do one.
+                            # The badges have to refuse the one it cannot do.
+                            ("tokenizer.ggml.tokens",
+                             ["a", "b", "<" + "|" + "fim_middle" + "|" + ">"])])):
         (root / name).mkdir(parents=True, exist_ok=True)
         _write_raw_gguf(root / name / f"{name}.gguf", pairs)
     mi.rescan()
@@ -1170,6 +1182,13 @@ def test_the_models_page_says_what_a_model_can_be_used_for(monkeypatch):
         "the autocomplete badge did not render"
     assert ">autocomplete<" in page
     assert ">embedder<" in page, "pooling_type 1 did not reach the page"
+    # ...and a pooling file is badged for what it can actually do, even though
+    # its tokenizer declares FIM specials: it cannot generate, so an
+    # autocomplete badge on it is a promise the file cannot keep.
+    row = re.search(r"Pools-For-Embeddings.*?</tr>", page, re.S).group(0)
+    assert ">embedder<" in row, row[-200:]
+    assert ">autocomplete<" not in row and ">fim?<" not in row, \
+        "an embedder was badged as a generator"
     assert ">no FIM<" in page, "a model without FIM specials rendered as if silent"
     assert ">head missing<" in page, \
         "a header promising a draft head the weights lack went unmentioned"

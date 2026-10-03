@@ -12,6 +12,8 @@ Pure helpers only: nothing here starts a server or touches the operator's ~/ai.
 import importlib.util
 import struct
 import sys
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,3 +106,48 @@ def test_draft_markers_are_case_sensitive_the_way_the_runtime_reads_them():
     from app.core import modelindex
     assert tool._DRAFT_MARKERS == tuple(
         m for m in modelindex.NOT_A_MODEL_MARKERS if m != "mmproj")
+
+
+# ------------------------------------------------ what --spec-draft may name
+
+def test_an_unresolvable_draft_is_refused_not_silently_swapped(tmp_path):
+    """A named draft that resolves to nothing must stop the run.
+
+    Falling back to the target's own head would have measured a different thing
+    and still printed `draft: target's own nextn head` — technically honest,
+    practically a report of a run nobody asked for.
+    """
+    tool = load_tool()
+    draft, why = tool.resolve_draft(str(tmp_path / "nope.gguf"))
+    assert draft is None and "not a file" in why, (draft, why)
+    draft, why = tool.resolve_draft("some/repo:NOSUCH")
+    assert draft is None and "cached model id" in why, (draft, why)
+
+
+def test_a_cached_model_can_be_named_by_id():
+    tool = load_tool()
+    if not tool.cached_paths("Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF"):
+        pytest.skip("no cached Qwopus file on this box")
+    draft, why = tool.resolve_draft("Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0")
+    assert draft is not None and why == "", why
+    assert draft.name.endswith(".gguf")
+
+
+def test_the_own_head_rule_applies_to_a_real_pair(tmp_path):
+    """The rule's precondition, checked against bytes rather than a filename.
+
+    unsloth's Qwen3.8-27B carries blk.64.nextn.* in the main file *and* ships
+    MTP/mtp-Qwen3.8-27B-Q4_0.gguf beside it. The target's own head is used and
+    the sidecar is only named — 1.28 GiB and a second KV pool for the same job
+    is not free, and measuring it has to be an explicit request.
+    """
+    tool = load_tool()
+    target = tmp_path / "Model.gguf"
+    _gguf(target, ["blk.0.attn_q.weight", "blk.1.ffn_down.weight",
+                   "blk.2.nextn.enorm.weight", "blk.2.nextn.hnorm.weight",
+                   "blk.2.nextn.eh_proj.weight",
+                   "blk.2.nextn.shared_head_norm.weight"])
+    side = tmp_path / "mtp-Model-Q4_0.gguf"
+    _gguf(side, ["blk.0.nextn.enorm.weight"])
+    assert tool.nextn_tensors(target) == 4, "the fixture must carry its own head"
+    assert tool.find_draft(target) == side, "and the sidecar must be findable"
