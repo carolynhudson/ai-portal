@@ -1664,6 +1664,38 @@ while the page still feels instant. Three things came out of measuring this one:
    detection silently while every boot-based test still passed via another
    branch. A probe that cannot fail loudly must at least be observed working.
 
+#### 6.12.13 — a draft head is worth 2.2x; a fast model with no tool protocol is not an agent (2026-10-02)
+
+Four operator-driven runs, reports under `/home/cortana/ai/logs/slot-bench-20261002T21*.json`.
+
+| file | role / ctx | prefill | decode | aperture peak |
+|---|---|---|---|---|
+| unsloth/Qwen3.8-27B Q8_K_XL, 29.30 GiB dense | coder 8192 | 306 / 360 | **7.2** | 31.39 GiB (RSS 3.80) |
+| same, `--spec mtp` with the sidecar MTP file | | 292 / 349 | **16.2 / 16.9** | 34.89 |
+| same, target's own in-file head | | 293 / 346 | **14.8** (accept 0.62) | 34.02 |
+| same, fim role | fim 4096 | 311 | 7.3 → infill 6.4–7.1 | 31.14 |
+| bartowski/DeepSeek-Coder-V2-Lite Q8_0, 15.56 GiB MoE 64/6 | coder 8192 | **1394 / 1333** | **43.4 / 26.6** | 19.04 (RSS 1.54) |
+
+- **The head is the lever**: 7.2 → 14.8 tok/s free (in-file), → 16.2 with the
+  1.28 GiB sidecar. Accept 0.62 vs 0.55; the speed gap is inside the noise of a
+  tg64 sample. Either way the 27B dense stays out of interactive service without
+  it, and Flash-Next (no `nextn` anywhere) cannot do this at all.
+- **Fast ≠ agent**: the MoE reads 6x faster and `tool_call.emitted = false`,
+  predicted by `template_markers = chat,system`. New badge in `capabilities()`
+  (`tools` / `no tool protocol`), validated 4/4 against the bench probe.
+- **A pooling declaration cancels the generative badges**: the Qwen3 reranker
+  declares FIM specials and inherits Qwen tool tags but cannot generate. The
+  models-page fixture had `pooling_type` on the *autocomplete* row — already
+  conflating them; it has its own row now, FIM specials included so the refusal
+  is what is tested.
+- Estimator: no-draft pricing is accurate (31.61 priced / 31.39 peak), but a
+  draft file's own KV + compute graph (~2 GiB) and the in-file head (~2.6 GiB)
+  are unpriced in `peak_bytes()`. Open.
+- Tool fixes: `--spec-draft` that resolves to nothing now refuses instead of
+  silently measuring the target's own head (`resolve_draft()`); a target with
+  its own head is no longer given a sidecar unless explicitly asked. `pp8192`
+  needs `--ctx 16384` — at 8192 the probe self-skips (slot + 64 output).
+
 ### 6.11 Long actions, the venv question, and what a machine-specific Python stack
 
 means for `pip install -r requirements.txt` (2026-09-14)

@@ -124,6 +124,34 @@ preset-eligible: the whole group sits in the argument block presets cannot reach
 nothing else, so this is surfaced on the models page and deliberately *not* a
 settings control.
 
+### Tool protocol — the template's own special tokens
+
+`tokenizer.chat_template` is stored; `_template_markers()` extracts the protocols
+it can actually spell — `chat`, `system`, `tools`, `tool-results` — into
+`model_index.template_markers`. Structural match, not substring: every Jinja
+template mentions the word `tools` in a loop variable, which says nothing about
+what the weights were trained against.
+
+Measured consequence, the whole reason for the column: every cached row whose
+markers include `tools` emitted a valid tool call under the bench probe (Qwopus
+×2, the 27B, Granite-4.1-3b), while **DeepSeek-Coder-V2-Lite-Instruct — markers
+`chat,system` only — emitted nothing at all: 43 tok/s decode,
+`tool_call.emitted = false`**. A model can be 6x faster than the 27B and still
+be useless as the function slot, and the header said so before a worker started.
+`capabilities()` renders it as `tools` / `no tool protocol`.
+
+The runtime answers the same question through `/props → chat_template_caps`
+(`supports_parallel_tool_calls`, `supports_object_arguments`) — for a model that
+is already loaded. On this box that alternative costs ~50 s and 20-80 GiB.
+
+### What a pooling declaration cancels
+
+`pooling_type` set (1 mean / 4 cls) means the file cannot generate. Its
+tokenizer may still declare FIM specials and its template may still carry Qwen's
+tool tags — the Qwen3 reranker does both — so `capabilities()` refuses the
+generative badges for it. The columns keep the raw facts; the badge keeps the
+promise. A reranker badged `autocomplete` is a slot wasted at any speed.
+
 ## What is not a signal
 
 * **Repository and file names.** `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF` is not a
@@ -181,6 +209,31 @@ Two things that fall out of it and matter for slot-picking: the operator's usual
 77 GiB model (**Flash-Next**) cannot self-draft — no `nextn` declaration, no
 head tensors — while the 27B and both Qwopus files can, for free. And of the
 twelve files above, exactly one has no FIM specials: the embedder.
+
+### The same signals under load, 2026-10-02 night
+
+| file | role | prefill | decode | infill tok/s | tool call |
+|---|---|---|---|---|---|
+| Qwen3.8-27B Q8_K_XL, no spec | coder 8192 | 306 / 360 | **7.2** | 6.4–7.1 | yes |
+| same + sidecar MTP file | coder 8192 | 292 / 349 | **16.2 / 16.9** | 8.4–19.1 | yes |
+| same, own in-file head | coder 8192 | 293 / 346 | **14.8** | 8.2–16.4 | yes |
+| DeepSeek-Coder-V2-Lite Q8_0 (MoE 64/6) | coder 8192 | **1394 / 1333** | **43.4 / 26.6** | 39.9–56.2 | **no** |
+
+`slot-bench-20261002T2155*Z` … `2159*Z`. Three decisions fall straight out:
+
+- **A draft head is the biggest single lever on this box**: 7.2 → 14.8 tok/s for
+  nothing (the head is inside the target), → 16.2 for a 1.28 GiB sidecar. The
+  sidecar's speed edge over the in-file head is inside the noise of a 64-token
+  sample; its accept rate is *lower* (0.55 vs 0.62). Use the own head.
+- **Autocomplete belongs on a small model regardless of FIM quality**: the 27B
+  has FIM specials and delivers 6.4–7.1 tok/s. codegemma-2b delivers 92–103.
+- **The fast MoE is not an agent.** 1.4x the aperture headroom, 6x the decode,
+  and no tool protocol in its template — the badge that now says so.
+
+Estimator check from the same runs: priced 31.61 GiB against a measured peak of
+31.39 with no draft (accurate), but 32.88 priced against 34.89 peak with a draft
+file, and the in-file head added ~2.6 GiB over the plain run. **A draft's own KV
+pool and compute graph are unpriced in `peak_bytes()`** — still open.
 
 ## Where the facts land
 
