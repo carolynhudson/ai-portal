@@ -191,6 +191,14 @@ verbatim. Cost: LLM + projector + graph, ~13 GiB for an IQ3_S-class file.
   rule. Ask that repo for `:IQ3_S-mtp` and it reports "not cached" for a file that
   is on disk. The quantization is a separate column (`quant = IQ3` for this file,
   read from the tensor section), and it is the only place to read it from.
+* **A tag is a name, and the load path is more forgiving than the listing.**
+  `find_best_model()` (download.cpp:683) searches for the tag followed by `.` or `-`
+  **anywhere** in the file name, case-insensitively, so `:IQ3_S-MTP` and even `:IQ3_S`
+  both land on that one-file repo. That is luck about a single file, not an id: the
+  listing, the autoload set, the preset section key and `/models` all use the exact
+  tag from `get_gguf_split_info()`. Ask for `:IQ3_S` in a repo that *also* holds a
+  real IQ3_S and the loose search can hand back the wrong quant with no complaint.
+  `tools/mmproj_swap_probe.py` now resolves exact-tag-first for that reason.
 
 
 * **Provenance and safety posture are not in the file.** The CIRU "Strix Orca" package is built on

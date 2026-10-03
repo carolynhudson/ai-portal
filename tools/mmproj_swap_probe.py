@@ -40,9 +40,10 @@ import urllib.request
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from app.core import modelmeta  # noqa: E402
+from app.core import modelindex, modelmeta  # noqa: E402
 
 GIB = 1 << 30
+HUB = pathlib.Path.home() / ".cache/huggingface/hub"
 BIN_DEFAULT = sorted(glob.glob("/home/cortana/ai/releases/llama.cpp-b*"))[-1] + "/llama-server"
 
 
@@ -147,6 +148,57 @@ class Server:
                 self.p.wait()
 
 
+def cached_model_file(model_arg: str, hub: pathlib.Path = HUB) -> pathlib.Path | None:
+    """Resolve `repo:TAG` to a cached loadable GGUF, the way the router would.
+
+    Deliberately built on the portal's own cache-name parser rather than a second
+    transcription of it — `modelindex._hf_split` already mirrors llama.cpp's
+    get_gguf_split_info() (common/download.cpp:506), which derives TAG as the LAST
+    `[-.]`-delimited chunk, matched case-insensitively, uppercased. Two consequences
+    that have both bitten us on this very repo:
+
+      * `...-IQ3_S-mtp.gguf` -> TAG "MTP", never "IQ3_S-MTP". A tag cannot contain a
+        dash, so the id this tool was handed (`:IQ3_S-mtp`) names nothing.
+      * the match is icase, so the file's lowercase `-mtp` and the listed `:MTP` are
+        the same tag; a case-sensitive name comparison reports a cached model as missing.
+
+    Exact TAG match first, then llama.cpp's own lenient rule. Worth knowing the
+    lenient rule exists: find_best_model() (download.cpp:683) searches for the tag
+    followed by `.` or `-` ANYWHERE in the name, so `:IQ3_S-MTP` and even `:IQ3_S`
+    would both land on this one-file repo. That is luck, not an id — the id the
+    router lists, autoloads, keys presets by and reports in /models is the exact
+    tag. Sorting exact-first also keeps `:IQ3_S` off a repo whose only file is
+    tagged MTP, where the lenient search would quietly load a different quant.
+
+    If the tag names no MODEL file the answer is None, not "pick the biggest thing
+    in the repo": on unsloth/Qwen3.8-27B-GGUF the only MTP-tagged file is the separate
+    draft adapter, and loading that as a chat model would measure nothing about the 27B.
+    """
+    if pathlib.Path(model_arg).is_file():
+        return pathlib.Path(model_arg)
+    repo, _, tag = model_arg.partition(":")
+    folder = hub / f"models--{repo.replace('/', '--')}"
+    models = []
+    for p in sorted(glob.glob(str(folder / "snapshots" / "*" / "**" / "*.gguf"), recursive=True)):
+        path = pathlib.Path(p)
+        if any(s in modelindex._hf_path_probe(path) for s in modelindex._HF_NOT_A_MODEL):
+            continue
+        _, part, total, got = modelindex._hf_split(path.name)
+        if total > 1 and part != 1:      # part 2+ has no header; it cannot be loaded
+            continue
+        models.append((path, got))
+    if tag:
+        want = tag.upper()
+        for path, got in models:                        # the id as listed: exact tag
+            if got == want:
+                return path
+        for path, _ in models:                          # llama.cpp's fallback: TAG then . or -
+            if re.search(re.escape(want) + r"[.-]", path.name, re.I):
+                return path
+        return None
+    return models[0][0] if models else None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", required=True, help="cached model id (repo:quant) or a .gguf path")
@@ -157,17 +209,10 @@ def main() -> int:
     ap.add_argument("--header-only", action="store_true", help="predict from headers, start nothing")
     args = ap.parse_args()
 
-    hub = pathlib.Path.home() / ".cache/huggingface/hub"
-    model = pathlib.Path(args.model)
-    if not model.is_file():
-        org, _, quant = args.model.partition(":")
-        folder = hub / f"models--{org.replace('/', '--')}"
-        hits = [p for p in glob.glob(str(folder / "snapshots" / "*" / "**" + (f"/*{quant}*.gguf") if quant else "/*.gguf"), recursive=True)
-                if "mmproj" not in p.name and "mtp" not in p.name.lower()]
-        if not hits:
-            print(f"no cached file for {args.model}")
-            return 2
-        model = pathlib.Path(sorted(hits, key=lambda p: p.stat().st_size)[-1])
+    model = cached_model_file(args.model)
+    if model is None:
+        print(f"no cached file for {args.model}")
+        return 2
     mmproj = pathlib.Path(args.mmproj)
     if not mmproj.is_file():
         print(f"projector not found: {mmproj}")

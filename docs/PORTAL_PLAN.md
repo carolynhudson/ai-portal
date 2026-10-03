@@ -2645,6 +2645,78 @@ together; pinned by two tests in `tests/test_bench_tool.py`. The quant itself is
 column (`quant = IQ3` for this file), never part of the id — the id says which file
 llama.cpp will load, not what it was quantized with.
 
+#### 6.12.15 The small 27B that decodes fastest here — measured at one and two slots (2026-10-03)
+
+`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP` (11.29 GiB single file, dense 27.3 B
+params, IQ3 weights, trained ctx 262 144, `:MTP` because the head is inside it).
+Three `slot_bench` runs, `--role coder`, router idle, reports
+`slot-bench-20261003T143432Z` / `…T143538Z` / `…T143658Z`.
+
+| run | slots | ctx/slot | prefill pp512/2048/8192 | decode tg64 | accept | aperture peak |
+|---|---|---|---|---|---|---|
+| head **off** | 1 | 16 384 | 326 / 362 / 354 | **16.7 / 16.4 / 16.0** | — | 13.36 GiB |
+| head **on** (`--spec mtp`) | 1 | 16 384 | 309 / 356 / 344 | **26.6 / 25.1 / 30.3** | 0.62 / 0.56 / 0.77 | 14.83 GiB |
+| head on, wide personality | 2 | 8 192 | 318 / 366 / skipped | 27.1 / 25.3 | same | **14.86 GiB** |
+
+**The head is worth 1.57× decode for 1.5 GiB of aperture.** Compare §6.12.4 on the
+same architecture at Q8_K_XL: 7.2 → 14.8 tok/s was 2.06×. The multiplier shrinks
+because IQ3 weights stream in 3.6× faster, so a bigger share of the step is compute
+the draft has to redo. The absolute number is what matters here: **25–30 tok/s is
+the fastest decode of anything cached on this box**, 32 % above the MoE we run daily
+(23.0, §6.12.14) at **3.6× less aperture** (14.9 vs 52.7 GiB).
+
+**Second slot is nearly free; second 16 K slot is not.** 2 slots cost +0.03 GiB over
+1 slot at 8 192/slot. KV is what scales: 0.44 GiB (2 × 8 192) → 1.76 GiB (2 × 16 384),
+predicted from the header, still small for a 27B — but this file asks 0.88 GiB per
+16 K slot where Flash-Next asks 0.16. A two-head personality of *this* model is a
+~16 GiB line item; the same personality on the MoE is ~53 GiB of weights plus ~0.3 KiB
+of KV. That trade (aperture vs tokens-in-flight) is the personality decision, and the
+portal can price both sides from headers alone.
+
+**Its tool protocol is declared *and* exercised** — `supports_tools`,
+`supports_parallel_tool_calls`, `supports_preserve_reasoning`, `supports_reasoning_effort`
+all true in `/props`, and the bench's round-trip emitted `read_aperture` with valid JSON
+arguments at 7.5 s. So for a `chat`/`agent` role this file has no header-level caveat.
+
+**Infill rows are liveness in a `coder` run, but these ones carry a hint.** All eleven
+splice probes returned coherent code (c# 123 chars, lua 80, bash 125), where the daily
+MoE at the same ctx returned an empty python completion in 217 ms and a bash row that
+repeated `echo "gtt_used"` four times (§6.12.14). Both files declare the four FIM
+specials, so the header cannot tell these apart — this is exactly the gap the labelled
+task-pack is for, and it says the 27B deserves a `--role fim` run before it is ruled out
+of an autocomplete slot.
+
+**The borrowed projector passes the header gate.** `mmproj_swap_probe --header-only` on
+`unsloth/Qwen3.8-27B-GGUF`'s `mmproj-BF16.gguf` (0.87 GiB) against this file: LLM
+`embedding_length = 5120`, projector `projection_dim = 5120`, `projector_type =
+qwen3vl_merger`, and the LLM vocabulary still carries ``/``/
+`vision_start`/`vision_end`. mtmd's single numeric gate matches, so the loader will
+accept the pair; whether the post-train's chat template can place the image
+placeholder is what the live probe still has to answer. Nothing was started — the
+router was holding 87 GiB at the time.
+
+**`spec-type` is carryable in `presets.ini` on b11146 — in both scopes.**
+`tools/spec_preset_probe.py --key spec-type --value draft-mtp`, no `--measure`: a
+`[*]` section and a per-model `[ukisai/…:MTP]` section both start the router cleanly
+and the key reaches the worker command line (`--spec-type` visible in `/models`
+status args). The `mmap` control case still fails as it did in September, which is
+what makes the acceptance meaningful rather than the parser shrugging. **Not yet
+proven to engage**: that needs `--measure`, which loads a worker, and the box had no
+room. Until then a personality may set MTP, but the portal must not claim it is on.
+
+**My resolver was wrong twice on the same file, and the second error was the
+dangerous one.** First I rejected `…-IQ3_S-mtp.gguf` as a sidecar because I patterned
+`mtp` as a suffix; llama.cpp's test is a *substring* of the basename for `mtp-` with
+its trailing dash (download.cpp:661), and this file is the model with its head inside.
+Then my test caught the overcorrection: a tag-only substring search resolves `:IQ3_S`
+to the MTP-tagged file when no IQ3_S-tagged file exists — pricing one quant and
+measuring another. `cached_model_file()` now matches the exact tag from
+`modelindex._hf_split` (the portal's own transcription of `get_gguf_split_info`, reused
+rather than re-transcribed) and only then falls back to llama.cpp's lenient rule.
+Six tests in `tests/test_mmproj_probe.py`, including: an adapter named
+`mtp-Qwen3.8-27B-Q4_0.gguf` is never returned as a model, only shard part 1 is
+loadable, and an absent repo stays absent.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
