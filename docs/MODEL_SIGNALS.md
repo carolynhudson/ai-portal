@@ -233,7 +233,8 @@ separately, `/rerank` returned 501 for the first and 2 results in 48 ms for the
 second (`slot-bench-20261002T190327Z`). That is the whole argument for reading
 the header: the alternative is starting a worker to find out.
 
-What an autocomplete slot actually costs on this box, at ctx 4096 / 4 slots
+What an autocomplete slot actually costs on this box, at ctx 4096 / 4 slots (slot count is a personality choice — those were the widest-
+slot numbers, taken before slot_bench defaulted to one slot)
 (`slot-bench-20261002T190111Z`) — the first run where the concurrency probe
 measured anything, after the `/infill` payload fix:
 
@@ -289,6 +290,29 @@ offload is setting the ceiling. `slot_bench` now takes `--load-mode`, `--lazy-mo
 `--gpu-layers`; the value lists are pinned against the installed build's `--help` by test, because a
 value the runtime rejects kills the server at startup and the run would report a dead model instead
 of a wrong flag.
+
+## What each intended use asks the file to prove
+
+A slot is a *job*, not a model kind, and the jobs compose: an autocomplete slot plus a RAG slot plus a
+tool-calling slot for mixed manual/agentic coding; a conversational model plus a speciality sub-agent
+plus an embedder for memory; a long-context narrative model for roleplay, creative writing, or a
+TTRPG campaign with story memory. The point of the index is to let a person *choose* those
+combinations and see whether they fit — not to ship a fixed set of configurations.
+
+| intended use | what the header must show | what measures it here | still unmeasured |
+|---|---|---|---|
+| autocomplete (`fim`) | FIM specials in `tokenizer.ggml.tokens`; small enough to answer a keystroke | `--role fim`: pp at editor sizes, infill tok/s, burst (multi-slot only) | whether the completion is *correct* |
+| coding with a human (`coder`) | `tools` markers, big trained ctx, sane pp | `--role coder`: pp-vs-ctx curve, tool-call probe, draft head | code correctness, ctx-aware recall |
+| unattended agent (`agent`) | `tools`, long ctx, head for cheap decode | same, at the ctx the loop will actually reach | long-horizon reliability, drift |
+| memory / retrieval (`embed`) | `pooling_type` 1 or 4 (never a generative badge) | `--role embed`: dim, per-query ms, `/rerank` | retrieval quality (nDCG), which needs a corpus |
+| roleplay, story, literature | long ctx and the recall that goes with it; **no** pooling; FIM/tool badges irrelevant; licence/safety posture differs from the coding slot | speed, ctx depth, concurrency only | coherence over long context, repetition, style — and today nothing in a GGUF tells you any of it |
+
+Two honest gaps. First, everything measured so far is *capacity and speed*; none of it is *quality*,
+which is why the staged accuracy/needle-in-a-haystack harness (§6.12.13) exists as a plan rather than
+a page. Second, a role like roleplay has no header signal at all — the file cannot tell you whether a
+model is good at long fiction — so the personalities page should price the *fit* (bytes, aperture,
+slots, ctx) with confidence and leave the *taste* judgement to the measured run, labelled with the
+build and flags that produced it.
 
 ## Where the facts land
 

@@ -2554,7 +2554,11 @@ is the whole point of the router; (3) provenance: `orcarouter/Qwen3.8-Flash-Next
 standing rule; (4) its evidence is self-reported and hedged by its own author ("these few runs do not
 establish…", HumanEval 0-19 subsets, a HermesAgent scorer known to miss instruction violations).
 The claims that *would* matter here — 1 251 tok/s prefill at 64 K, 59 tok/s decode with MTP depth 4 —
-are one-slot measurements; our router runs four slots.
+are one-slot measurements. Our personalities run **up to** four models — most want two, the
+default/safe/large-model profiles want exactly one — and every speed number measured here so far
+was taken at `--parallel 4`, the configuration few personalities will actually use. slot_bench
+now defaults to one slot for that reason; the multi-slot numbers are the pessimistic end and are
+being re-measured.
 
 Decision, and it is an operational rule, not a preference: **the portal's llama.cpp is not replaced.**
 Any second engine is evaluated in quarantine — its own release directory, its own port, a probe that

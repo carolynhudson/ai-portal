@@ -459,7 +459,7 @@ def fim_payload(prefix: str, suffix: str, n_predict: int) -> dict:
             "n_predict": n_predict, "temperature": 0.0, "cache": False}
 
 
-def bench_fim(srv: Server, report: dict) -> None:
+def bench_fim(srv: Server, report: dict, slots: int = 4) -> None:
     """/infill with an editor-shaped prefix+suffix, then 4 at once.
 
     An IDE does not send one request; it sends a burst and needs the last one to
@@ -510,6 +510,16 @@ def bench_fim(srv: Server, report: dict) -> None:
         print(f"      {lang:<11} {dt*1000:6.0f} ms  "
               f"{(n_pred/dt if dt and n_pred else 0):6.1f} tok/s  {got[:60]!r}")
     report["infill_samples"] = lat
+
+    # A concurrency probe on a one-slot server measures the queue, not the model.
+    # Slot count is a personality decision (1-4 models, and most personalities want
+    # far fewer slots than that), so the burst reports why it declined instead of
+    # publishing a number that belongs to a configuration nobody runs.
+    if slots < 2:
+        report["infill_burst4"] = {"skipped": f"server has {slots} slot(s); "
+                                              "a concurrency probe needs at least 2"}
+        print(f"    burst4 skipped: {slots} slot(s)")
+        return
 
     burst = [FIM_SNIPPETS[k] for k in ("python", "rust", "typescript", "bash")]
 
@@ -967,7 +977,7 @@ def bench_attached(model_id: str, args, rec: dict) -> None:
             print(f"    HALTED: {rec['halted']}")
             return
         if args.role in ("fim", "chat", "coder", "agent"):
-            bench_fim(srv, rec)
+            bench_fim(srv, rec, slots=max(1, args.parallel))
         if args.role in ("coder", "agent") and mem_available() >= floor:
             bench_tools(srv, rec)
 
@@ -1011,7 +1021,11 @@ def main() -> int:
                     help="total context to reserve (a shared KV pool; --kv-unified). "
                          "Was 8192 with --parallel 4, which handed each slot 2048 tokens and made "
                          "the pp2048 probe a guaranteed HTTP 400.")
-    ap.add_argument("--parallel", type=int, default=4, help="server slots (burst handling)")
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="slots in the one worker this run starts (default 1: the "
+                         "default/safe/large-model personalities hold a single model "
+                         "and want one slot; pass 2-4 to price a multi-slot "
+                         "personality, which is also what the burst probe needs)")
     ap.add_argument("--load-mode", choices=LOAD_MODES, default="auto",
                     help="-lm: how weights get resident. auto = mmap unless a backend cannot; "
                          "none = no special loading mode; mlock = pin the file in RAM instead of "
@@ -1295,7 +1309,7 @@ def main() -> int:
                     bench_speed(srv, rec, slot_ctx)
                     if args.role in ("fim", "chat", "coder", "agent"):
                         if rec.get("fim_tokens"):
-                            bench_fim(srv, rec)
+                            bench_fim(srv, rec, slots=max(1, args.parallel))
                         else:
                             rec["infill"] = {"skipped": "file carries no FIM tokens"}
                             print("      /infill skipped: no FIM tokens in this vocabulary")
