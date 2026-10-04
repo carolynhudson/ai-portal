@@ -297,6 +297,35 @@ def validate_bind(service: str, host: str) -> dict:
     return {"ok": not errors, "errors": errors, "warnings": warnings}
 
 
+def auth_state(service: str, key_configured: bool | None = None) -> dict:
+    """What reaching this service over the network actually costs a stranger.
+
+    `validate_bind` warns about authentication when you *change* the bind, but the state also drifts:
+    a key set in 2026-09 and revoked in 2026-10 leaves a router answering on 0.0.0.0 that nobody
+    remembers being open. So the live exposure report carries the same fact, per service, as data:
+    kind of auth, whether the router's key exists right now, and the sentence the page shows.
+
+    `key_configured` is passed in rather than read here because `app.core.llamakey` imports this
+    module; importing it back would be a cycle.
+    """
+    conf = SERVICE_CONF[service]
+    kind = conf.get("auth_kind")
+    out = {"kind": kind, "summary": conf.get("auth"), "key_configured": key_configured,
+           "warning": None}
+    if key_configured is None and kind == "optional":
+        out["warning"] = (f"{conf['label']} authentication is unknown: ask the portal "
+                          "settings page for the router key state")
+        return out
+    if kind == "none":
+        out["warning"] = (f"{conf['label']} has no authentication at all — {conf['auth']}. "
+                          "Anything on the network can use it.")
+    elif kind == "optional" and not key_configured:
+        out["warning"] = (f"{conf['label']} has no API key set: every device that can reach the "
+                          "port can call it, list models, and load them. Set a key under "
+                          "Settings → router key, then restart the router to apply it.")
+    return out
+
+
 def set_bind(service: str, mode: str | None = None,
              address: str | None = None) -> dict:
     """Persist the bind mode (``loopback`` | ``lan`` | ``all``) for a service.

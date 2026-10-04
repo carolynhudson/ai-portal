@@ -658,11 +658,49 @@ def resolve_targets(personality: dict) -> list[dict]:
         out.append({"model": base, "config": conf})
 
     if unknown:
+        hints = "; ".join(f"{m}{_availability(m)}" for m in unknown)
         raise PersonalityError(
             f"personality {personality.get('name')!r} names models or model configs with no "
-            f"library entry and no stored config: {', '.join(unknown)}"
+            f"library entry and no stored config: {hints}"
         )
     return out
+
+
+def suggest_for(missing: str, rows: list[dict] | None = None,
+                limit: int = 3) -> dict[str, list[dict]]:
+    """What the operator could use instead, when a personality names something absent.
+
+    A refusal that only says "no such model" sends the operator to another page to find out what IS
+    here, and the honest answer to "where did Qwen3.5-0.8B go" is usually "the library is empty now;
+    everything lives in the hub cache". Two lists, because they answer different questions: closest
+    by name (did it get renamed, re-quantized, moved orgs) and smallest indexed (what can actually
+    fill a slot whose whole job is to be cheap). Sizes ride along, because "which model instead" is
+    a budget question on a box with one aperture.
+    """
+    rows = rows if rows is not None else _rows()
+    names = [str(r["id"]) for r in rows]
+    by_name = difflib.get_close_matches(str(missing), names, n=limit, cutoff=0.55)
+    # "Smallest" is only a useful answer if the thing can hold the slot. The two smallest rows on
+    # this box are an embedder and a reranker: 0.31 and 0.60 GiB, and neither serves a chat.
+    generative = [r for r in rows if not r.get("pooling_type")]
+    by_size = sorted(generative, key=lambda r: r.get("bytes") or (1 << 62))[:limit]
+    return {"by_name": [{"id": n} for n in by_name],
+            "smallest": [{"id": str(r["id"]), "bytes": r.get("bytes")} for r in by_size]}
+
+
+def _availability(missing: str) -> str:
+    """The tail of a refusal: candidates, with sizes. Never a guess presented as a fix."""
+    rows = _rows()
+    if not rows:
+        return " (the model index is empty — nothing to name)"
+    sug = suggest_for(missing, rows)
+    parts = []
+    if sug["by_name"]:
+        parts.append("closest by name: " + ", ".join(s["id"] for s in sug["by_name"]))
+    if sug["smallest"]:
+        parts.append("smallest that can serve a chat slot: " + ", ".join(
+            f"{s['id']} ({(s['bytes'] or 0) / (1024 ** 3):.2f} GiB)" for s in sug["smallest"]))
+    return (" — " + "; ".join(parts)) if parts else ""
 
 
 def resolve_models(personality: dict) -> list[str]:

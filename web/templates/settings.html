@@ -164,6 +164,8 @@ function liveHtml(key){
   }
   if(e.pending_restart)
     out += `<div style="font-size:12px;color:var(--warn)">⚠ configured open, still not reachable — restart required</div>`;
+  if(e.auth && e.auth.warning && e.mode !== 'loopback')
+    out += `<div style="font-size:12px;color:var(--bad)">⚠ ${esc(e.auth.warning)}</div>`;
   if(e.allow_command)
     out += `<div class="mut mono" style="font-size:11px;margin-top:4px">${esc(e.allow_command)}</div>`;
   if(key === 'llamacpp' && NET.router_auth && NET.router_auth.configured)

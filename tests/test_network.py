@@ -32,7 +32,7 @@ def client():
 @pytest.fixture
 def free_port():
     s = socket.socket()
-    s.bind(("0.0.0.0", 0))
+    s.bind((network.ALL, 0))
     s.listen(1)
     yield s.getsockname()[1]
     s.close()
@@ -42,7 +42,7 @@ def free_port():
 def test_bind_mode_classification():
     assert network.bind_mode("127.0.0.1") == "loopback"
     assert network.bind_mode("::1") == "loopback"
-    assert network.bind_mode("0.0.0.0") == "all"
+    assert network.bind_mode(network.ALL) == "all"
     assert network.bind_mode("::") == "all"
     assert network.bind_mode(None) == "all"        # unset must not read as loopback
     assert network.bind_mode("192.168.5.5") == "lan"
@@ -50,7 +50,7 @@ def test_bind_mode_classification():
 
 def test_resolve_bind_roundtrip():
     assert network.resolve_bind("loopback") == "127.0.0.1"
-    assert network.resolve_bind("all") == "0.0.0.0"
+    assert network.resolve_bind("all") == network.ALL
     assert network.resolve_bind("lan", "10.1.2.3") == "10.1.2.3"
     with pytest.raises(ValueError):
         network.resolve_bind("public")
@@ -89,11 +89,13 @@ def test_endpoint_urls_follow_the_bind():
     lo = network.endpoint_urls("127.0.0.1", 8080)
     assert all(u["reachable_from"] == "local" for u in lo)
     assert len(lo) == 1
-    every = network.endpoint_urls("0.0.0.0", 8080)
+    every = network.endpoint_urls(network.ALL, 8080)
     lan = [u for u in every if u["reachable_from"] == "lan"]
     if network.primary_lan():
         assert lan, "an all-interfaces bind must advertise the LAN address"
-        assert lan[0]["url"].startswith(f"http://{network.primary_lan()['address']}:8080")
+        lan0 = network.primary_lan()
+    assert lan0 is not None
+    assert lan[0]["url"].startswith(f"http://{lan0['address']}:8080")
 
 
 def test_listening_on_honours_wildcard_bind(free_port):
@@ -161,7 +163,9 @@ def test_set_bind_modes_and_persistence():
 @pytest.mark.skipif(not network.primary_lan(), reason="no LAN interface here")
 def test_set_bind_lan_uses_primary_interface():
     res = serviceconf.set_bind("portal", "lan")
-    assert res["ok"] and res["host"] == network.primary_lan()["address"]
+    lan = network.primary_lan()
+    assert lan is not None
+    assert res["ok"] and res["host"] == lan["address"]
     assert res["mode"] == "lan"
     serviceconf.set_bind("portal", "all")
 
@@ -223,9 +227,10 @@ def test_probe_host_uses_loopback_unless_lan_only():
     assert serviceconf.probe_host("comfyui") == "127.0.0.1"
     serviceconf.set_bind("comfyui", "loopback")
     assert serviceconf.probe_host("comfyui") == "127.0.0.1"
-    if network.primary_lan():
+    lan = network.primary_lan()
+    if lan:
         serviceconf.set_bind("comfyui", "lan")
-        assert serviceconf.probe_host("comfyui") == network.primary_lan()["address"]
+        assert serviceconf.probe_host("comfyui") == lan["address"]
         # base_url must be usable by the health probes
         assert serviceconf.base_url("comfyui", 8188).startswith("http://")
     serviceconf.set_bind("comfyui", "loopback")
@@ -427,3 +432,34 @@ def test_wrapper_verify_reports_a_broken_wrapper(monkeypatch, tmp_path):
     monkeypatch.setattr(units, "wrapper_path", lambda name: bad)
     res = lp.verify_wrapper_argv()
     assert res["ok"] is False and "boom" in res["error"]
+
+
+# --------------------------------- the bind report joined with the auth report
+def test_an_open_port_and_a_missing_key_are_reported_together():
+    """The two facts come from different files and drift apart on their own.
+
+    A router that was opened on purpose in one month and whose key was revoked in the next is not a
+    configuration any page displays as a single decision, unless the report makes it one.
+    """
+    open_no_key = serviceconf.auth_state("llamacpp", key_configured=False)
+    assert open_no_key["kind"] == "optional"
+    assert open_no_key["key_configured"] is False
+    assert "no API key set" in open_no_key["warning"]
+
+    open_with_key = serviceconf.auth_state("llamacpp", key_configured=True)
+    assert open_with_key["warning"] is None
+
+
+def test_the_service_with_no_auth_at_all_never_reports_itself_as_safe():
+    """ComfyUI runs arbitrary Python through /prompt; there is no key to set."""
+    comfy = serviceconf.auth_state("comfyui", key_configured=True)
+    assert comfy["kind"] == "none"
+    assert "no authentication at all" in comfy["warning"]
+    assert serviceconf.auth_state("portal", key_configured=None)["warning"] is None
+
+
+def test_the_exposure_endpoint_carries_auth_on_every_service(client):
+    report = client.get("/api/exposure").json()
+    for key, entry in report.items():
+        assert entry["auth"]["kind"] == serviceconf.SERVICE_CONF[key]["auth_kind"]
+    assert report["llamacpp"]["auth"]["key_configured"] in (True, False)

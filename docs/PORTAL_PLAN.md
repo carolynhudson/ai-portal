@@ -70,6 +70,33 @@ All three services now launch through one generated pattern (env file → wrappe
 extra args configurable with no unit edits; `install_unit` backs up any unit it
 replaces into `state/rollback/units/`.
 
+**Exposure and authentication are one fact, not two (2026-10-04).** `/api/exposure` and
+`/api/network` now carry `auth` per service — `serviceconf.auth_state(service, key_configured=…)` —
+so an entry says both that the port answers on the LAN and who can use it. `validate_bind` already
+warned about authentication, but only at the moment you *changed* the bind; the state drifts on its
+own (env file still `0.0.0.0`, key file revoked later), and a page that shows "reachable: yes" beside
+an unrelated "no key" pill never becomes a decision. ComfyUI is warned about always (`auth_kind:
+none`, arbitrary Python through `/prompt`), the router only when `llamakey.configured()` is false,
+the portal never (password + cookie). `llamakey` imports `serviceconf`, so the key boolean is passed
+in rather than read there.
+
+**Verified, not assumed, about the managed router (2026-10-04).** `AI_PORTAL_PRINT_ARGV=1
+~/ai/bin/ai-llamacpp.sh` with the two env files loaded prints:
+
+```
+/home/cortana/ai/bin/llama-server --host 0.0.0.0 --port 8080 --metrics --models-max 1
+  --models-dir /home/cortana/ai/models/llama
+  --models-preset /home/cortana/ai/config/llama/presets.ini
+```
+
+The unit is fine and complete; it is simply inactive, and the router actually answering on :8080 is
+hand-started as `llama-server --lazy-mode on` — no `--models-dir`, no `--models-preset`, no
+`--metrics`. That single difference is why personalities never reach the router in use, and why
+`/metrics` was empty during the MTP measurement (§6.12.17). Note `--models-max 1` in
+`llamacpp.env`: the managed default is one model at a time, matching the safe/default/large-model
+personalities (§6.12.13). Also note `--host 0.0.0.0` there: switching to the unit would open the LAN
+with no key set, which the exposure report now says out loud.
+
 **Phase J status:**
 
 1. ✅ `app/core/logsetup.py` — rotating `~/ai/logs/portal.log` (5 MB × 3), level
@@ -2848,6 +2875,35 @@ configs with no library entry and no stored config"), which is the fence doing i
 `Qwen3.5-0.8B.Q4_K_M`, a library model that is gone, so rendering `safe` currently raises instead
 of writing. That is correct behaviour and an operator decision to fix (retarget it, or put a small
 model back in the library), not something to paper over in code.
+
+#### 6.12.18 A personality that names a gone model refuses — now with candidates (2026-10-04)
+
+`safe` targets `Qwen3.5-0.8B.Q4_K_M`, a library model that no longer exists: `/home/cortana/ai/models/llama`
+holds only `INDEX.json`, and all 13 indexed rows come from the hub cache. `resolve_targets()` already
+refused (`personality.py`, "names models or model configs with no library entry and no stored
+config"), and the personalities page already caught it per card — so this was never a 500 and never a
+silently wrong preset. What was missing was the second half of the answer. The message now reads:
+
+```
+personality 'safe' names models or model configs with no library entry and no stored config:
+Qwen3.5-0.8B.Q4_K_M — smallest that can serve a chat slot: lmstudio-community/codegemma-2b-GGUF:Q5_K_M
+(1.71 GiB), mradermacher/Granite-4.1-3b-coder-GGUF:Q8_0 (3.37 GiB),
+Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0 (4.29 GiB)
+```
+
+Two lists from `suggest_for()`, deliberately not a fix: **closest by name** (`difflib`, cutoff 0.55 —
+this is how a rename, a re-quantization, or an org move gets recognized: `Qwen3.5-0.8B.Q4_K_M` →
+`orga/Qwen3.5-0.8B-GGUF:Q4_K_M`), and **smallest that can serve a chat slot**, sized.
+
+The filter on the second list is the part worth keeping. The two smallest rows on this box are
+`embeddinggemma-300M` (0.31 GiB) and `Qwen3-Reranker-0.6B` (0.60 GiB); both are `pooling_type` rows,
+so offering them for a chat slot would be cheap, indexed, and unable to answer a completion. Rows with
+`pooling_type` are excluded and the label says what the list is for.
+
+It stays a refusal. Substituting a model the operator did not choose is exactly the failure mode this
+portal keeps being bitten by, so the suggestions ride *beside* the error, never instead of it.
+`apply`/`preview` raise `PersonalityError` → HTTP 400 with the same text, and the page shows it on the
+card rather than dropping the card.
 
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 

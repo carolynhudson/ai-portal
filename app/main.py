@@ -1637,17 +1637,33 @@ def create_app() -> FastAPI:
             "primary_lan": network.primary_lan(),
             "lan_network": network.lan_network(),
             "firewall": network.firewall_status(),
-            "services": serviceconf.exposure(),
+            "services": _exposure(),
             "router_auth": llamakey.status(),
             "modes": list(network.MODES),
         }
 
+    def _exposure(service: str | None = None) -> dict:
+        """The bind report, joined with the authentication report.
+
+        These two facts live in different places and drift apart: the env file says `0.0.0.0`, the
+        router key file may have been revoked since. Reported separately, an open port reads as
+        "reachable" and the missing key reads as a pill somewhere else on the page.
+        """
+        report = serviceconf.exposure(service)
+        for key in ([service] if service else list(report)):
+            entry = report.get(key)
+            if entry is not None:
+                entry["auth"] = serviceconf.auth_state(
+                    key, key_configured=(llamakey.configured()
+                                         if key == "llamacpp" else None))
+        return report
+
     @app.get("/api/exposure")
     def api_exposure(service: str | None = None, _=Depends(_require_auth)):
-        """Bind + reachability report (one service or all three)."""
+        """Bind + reachability + auth report (one service or all three)."""
         if service and service not in serviceconf.SERVICE_CONF:
             raise HTTPException(404, f"unknown service {service!r}")
-        return serviceconf.exposure(service)
+        return _exposure(service)
 
     @app.post("/api/settings/services/{service}/bind")
     def api_settings_bind(service: str, body: BindBody,

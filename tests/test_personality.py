@@ -778,3 +778,55 @@ def test_generated_output_is_deterministic(library):
     a decision."""
     per = {"name": "x", "models_max": 2, "models": None}
     assert P.render(per)["text"] == P.render(per)["text"]
+
+
+# ------------------------------------------- refusing, and saying what to use instead
+def _avail_rows() -> list[dict]:
+    return [
+        {"id": "orga/Qwen3.5-0.8B-GGUF:Q4_K_M", "bytes": 512 * 1024**2, "pooling_type": None},
+        {"id": "ggml-org/embeddinggemma-300M-GGUF:Q8_0", "bytes": 320 * 1024**2,
+         "pooling_type": 1},
+        {"id": "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0", "bytes": 610 * 1024**2,
+         "pooling_type": 4},
+        {"id": "lmstudio-community/codegemma-2b-GGUF:Q5_K_M", "bytes": 1790 * 1024**2,
+         "pooling_type": None},
+    ]
+
+
+def test_a_missing_target_is_still_a_refusal_and_now_names_what_exists(tmp_path, monkeypatch):
+    """The refusal must not become a substitution.
+
+    Guessing a replacement model would write a preset for weights the operator never chose. The
+    help here is a list of candidates next to a refusal that still refuses.
+    """
+    monkeypatch.setattr(P, "_rows", lambda: _avail_rows())
+    person = {"name": "safe", "models": ["Qwen3.5-0.8B.Q4_K_M"]}
+    try:
+        P.render(person, 100 * 1024**3)
+        raise AssertionError("an absent model must still be refused")
+    except P.PersonalityError as exc:
+        message = str(exc)
+    assert "no library entry and no stored config: Qwen3.5-0.8B.Q4_K_M" in message
+    assert "closest by name: orga/Qwen3.5-0.8B-GGUF:Q4_K_M" in message
+
+
+def test_the_size_list_only_offers_models_that_can_hold_the_slot():
+    """The two smallest rows in the real index are an embedder and a reranker.
+
+    Offering them for a chat slot is the kind of helpful-looking wrong answer this portal keeps
+    getting bitten by: cheap, indexed, and unable to serve a completion.
+    """
+    sug = P.suggest_for("nothing-remotely-like", _avail_rows())
+    assert [s["id"] for s in sug["smallest"]] == [
+        "orga/Qwen3.5-0.8B-GGUF:Q4_K_M", "lmstudio-community/codegemma-2b-GGUF:Q5_K_M"]
+    assert sug["smallest"][0]["bytes"] == 512 * 1024**2   # ascending, and neither is a pooler
+
+
+def test_an_empty_index_says_so_rather_than_listing_nothing():
+    monkeypatch_rows = P._rows
+    try:
+        P._rows = lambda: []
+        message = P._availability("Qwen3.5-0.8B.Q4_K_M")
+    finally:
+        P._rows = monkeypatch_rows
+    assert "model index is empty" in message
