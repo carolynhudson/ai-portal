@@ -188,6 +188,7 @@ def test_the_two_draft_readers_agree_on_every_cached_model():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "slot_bench", Path(__file__).resolve().parents[1] / "tools" / "slot_bench.py")
+    assert spec and spec.loader
     sb = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sb)
 
@@ -439,6 +440,7 @@ def test_an_id_that_names_another_file_is_reported_as_a_fact():
     row = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
            "source": "cache", "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"}
     risk = mi.id_round_trip(row, ["/x/" + f for f in SWIFT_FILES])
+    assert risk is not None
     assert risk["kind"] == "id-resolves-elsewhere"
     assert risk["would_load"] == SWIFT_FILES[0]
 
@@ -448,7 +450,8 @@ def test_a_tag_that_is_not_a_quantization_is_flagged_even_with_no_rival_cached()
     would call the id safe while the hub still holds IQ2_S-mtp."""
     row = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
            "source": "cache", "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"}
-    assert mi.id_round_trip(row)["kind"] == "id-is-not-a-quant"
+    risk = mi.id_round_trip(row)
+    assert risk is not None and risk["kind"] == "id-is-not-a-quant"
     # A quantization tag with no rival is fine, and so is any library row.
     assert mi.id_round_trip({"id": "org/M-GGUF:Q5_K_M", "source": "cache",
                              "path": "/x/M-Q5_K_M.gguf"}) is None
@@ -470,3 +473,19 @@ def test_the_badge_that_reaches_the_operator_names_the_risk_in_load_terms():
     assert not any("id " in c["label"] for c in
                    mi.capabilities({"id": "org/M-GGUF:Q5_K_M", "source": "cache",
                                     "path": "/x/M-Q5_K_M.gguf"}))
+
+
+def test_an_id_that_resolves_here_today_says_so_rather_than_leaving_the_field_blank():
+    """`:MTP` with only one matching file on disk is a fence, not a confirmed misfire.
+
+    The rescan problem used to carry `would_load: ""`, which read identically for "the id loads a
+    different file" and for "we could not tell". The distinction is the whole message: one is a
+    live defect, the other guards the day a sibling appears.
+    """
+    row = {"id": "ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
+           "source": "cache", "path": "/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"}
+    risk = mi.id_round_trip(row, ["/x/Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"])
+    assert risk is not None
+    assert risk["kind"] == "id-is-not-a-quant"
+    assert risk["picks_this_file"] is True
+    assert risk["would_load"] == "Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"

@@ -194,6 +194,24 @@ digits in the tag. So a tag with no digits (`:MTP`, `:Chat`) is a name, not an
 address. `modelindex.id_round_trip()` predicts it, the models page badges it, and
 `offline = true` in `[*]` turns the surprise into an error. Prefer a path.
 
+### Switching a head on: the flag is carryable (measured 2026-10-04)
+
+`spec-type = draft-mtp` written into a model's section in `presets.ini` reaches the worker's
+command line and the draft runs — 18 drafts, 54 draft tokens, 44 accepted, accept 0.815 on a
+Qwopus 4B Q8_0 at ctx 8192, confirmed by both `/metrics` and the worker's own log line. So a
+personality can turn speculative decoding on for one model and leave it off for another; a nextn
+head in the file is only half the story, the other half is a key in the section.
+
+Two listing rules decide what a personality can even name:
+
+* several cached files whose names reduce to the same tag become **one** model id, and the
+  load-time matcher (§6.12.16 of PORTAL_PLAN) picks which file that id means;
+* a preset section named exactly like a cached model **replaces** that model's own entry in the
+  router's listing.
+
+`offline = true` in `[*]` is the fence: with it, an id that resolves to no local file is an error
+instead of a 12 GiB transfer, and never a silently wrong file.
+
 ## What is not a signal
 
 * **The `:TAG` in a cache model id is a file-name artefact, not a quantization.**

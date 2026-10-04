@@ -338,7 +338,10 @@ class Server:
             self.min_mem = min(self.min_mem, mem_available())
             self.peak_gtt = max(self.peak_gtt, used)
             try:
-                for line in Path(f"/proc/{self.proc.pid}/status").read_text().splitlines():
+                proc = self.proc
+                if proc is None:
+                    continue
+                for line in Path(f"/proc/{proc.pid}/status").read_text().splitlines():
                     if line.startswith("VmRSS:"):
                         self.peak_rss = max(self.peak_rss, int(line.split()[1]) * 1024)
             except OSError:
@@ -659,6 +662,7 @@ def bench_speed(srv: Server, report: dict, slot_ctx: int | None,
             out[f"{pp}+{tg}"] = {"error": rec_short(e)}
             unhealthy = True
             print(f"      pp{pp:<5} tg{tg:<4} FAILED {rec_short(e)} -- stopping speed probes")
+            continue   # no body, no wall: falling through here would be a NameError, not a measurement
         d = deltas(before, counters(srv))
         if not d:
             d, src = _timings(body), "response.timings"
@@ -1049,7 +1053,7 @@ def runtime_flags(args) -> list[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
     ap.add_argument("--model", action="append", default=[],
                     help="repo[:QUANT], repeatable. e.g. IFM/K2-Horizon-MoVA-36B-A4B-GGUF:Q4_K_M")
     ap.add_argument("--role", choices=["fim", "chat", "coder", "agent", "embed"],

@@ -127,7 +127,7 @@ def kv_bytes_at(meta: dict, ctx: int, dtype: str = DEFAULT_KV_DTYPE) -> int | No
             # and silently deletes 50 of gemma4's 60 layers from its own estimate.
             total = sum(kvh * (min(ctx, window) if flag else ctx)
                         * head * 2 * dsize
-                        for kvh, flag in zip(kv_layers_list, windows))
+                        for kvh, flag in zip(kv_layers_list, windows, strict=False))  # shorter wins
             return _whole(total)
 
         # No window pattern. An array can still coexist with
@@ -244,7 +244,6 @@ def ctx_that_fits(meta: dict, weight_bytes: int, budget_bytes: int,
     # sum over headers: cheap enough to run per row, and it can never be off by more
     # than one doubling. `cap` bounds the search so a model cannot be offered more
     # context than it was trained for.
-    lo = 0
     hi = cap if cap >= 1 else 1 << 40
     best = 0
     ctx = 1
@@ -328,7 +327,7 @@ def scan_library(models_dir: Path | None = None) -> tuple[list[dict], list[dict]
 
 
 def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> None:
-    ggufs = [p for p in sorted(entry.glob("*.gguf"))]
+    ggufs = sorted(entry.glob("*.gguf"))
     if not ggufs:
         return
 
@@ -923,7 +922,7 @@ def _safe_columns(cols: tuple[str, ...]) -> str:
 
 def _insert_sql() -> str:
     """The INSERT, built once from _WRITE_COLUMNS via the allowlist above."""
-    return (f"INSERT OR REPLACE INTO model_index ({_safe_columns(_WRITE_COLUMNS)})"
+    return (f"INSERT OR REPLACE INTO model_index ({_safe_columns(_WRITE_COLUMNS)})"  # noqa: S608
             f" VALUES ({', '.join('?' * len(_WRITE_COLUMNS))})")
 
 
@@ -1023,7 +1022,11 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None,
         if risk:
             problems.append({"kind": risk["kind"], "path": m.get("path") or m["id"],
                              "id": m["id"], "tag": risk["tag"],
-                             "would_load": risk.get("would_load", "")})
+                             "would_load": risk.get("would_load", ""),
+                             # the difference between "this id loads a different file" and "this id
+                             # loads the right file today" is the whole message; an empty would_load
+                             # left operators guessing which one they were being warned about
+                             "picks_this_file": risk.get("picks_this_file", False)})
     db.event("portal", "model-index",
              f"scanned {n} model(s) — {library_n} from the library, "
              f"{n - library_n} from the hub cache; {len(problems)} problem(s)")
@@ -1253,9 +1256,10 @@ def ram_total_bytes() -> int | None:
     RAM -- the shape of "it should fit but the kernel killed it".
     """
     try:
-        for line in open("/proc/meminfo"):
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) * 1024
+        with open("/proc/meminfo") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
     except (OSError, ValueError):
         return None
     return None
@@ -1638,7 +1642,13 @@ def id_round_trip(row: dict, siblings: list[str] | None = None) -> dict | None:
         return {"kind": "id-resolves-elsewhere", "tag": tag,
                 "would_load": picked.rsplit("/", 1)[-1]}
     if not any(c.isdigit() for c in tag):
-        return {"kind": "id-is-not-a-quant", "tag": tag}
+        # Nothing here competes for the id right now — the local rule picks this very file. But the
+        # tag is not a quantization, so llama.cpp's closest-quant tiebreak cannot *prefer* it, and
+        # a sibling that exists only on the hub (invisible to an offline scan) would take the id.
+        # Saying "would load <this file>" is the honest version of an empty field.
+        here = (picked or own).rsplit("/", 1)[-1] if (picked or own) else ""
+        return {"kind": "id-is-not-a-quant", "tag": tag, "would_load": here,
+                "picks_this_file": bool(picked) and picked == own}
     return None
 
 

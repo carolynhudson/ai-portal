@@ -2791,6 +2791,64 @@ template that silently drops the image would still look fine. 18 image tokens is
 floor, not typical — `--image-min-tokens` is now passed through for anything harder
 than "what colour".
 
+#### 6.12.17 A preset section really does turn MTP on — and three instruments were blind while claiming to measure it (2026-10-04)
+
+The stage-3 question was whether `spec-type = draft-mtp` written into a per-model section of
+`presets.ini` survives the router→worker hop and actually drafts, or whether speculative decoding
+is one of those flags that only works on the command line. It works. One completion against
+`Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0`, ctx 8192, temperature 0, section `[Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0]`:
+
+```
+--spec-type present in the loaded worker's argv            yes
+/metrics delta    drafts 18   draft tokens 54   accepted 44      accept 0.815
+worker's own log  draft acceptance = 0.81481 (44 accepted / 54 generated), mean len 3.44
+decode            79 tok/s
+```
+
+The two accounting channels agree token for token, which is the reason both are kept: `/metrics`
+needs a flag, the log line does not.
+
+**What was wrong before the answer was believable.** Every defect below reported `None`, and a
+column of `None`s reads as "the draft generated nothing" — a confident wrong answer:
+
+* `/metrics` is refused unless the server started with `--metrics`
+  (`server-context.cpp:4670`, "Start it with `--metrics`"). The probe never passed it.
+* The counter names are `llamacpp:spec_decode_num_drafts_total`,
+  `..._draft_tokens_total`, `..._accepted_tokens_total` (`server-task.cpp:1554+`, and the
+  Prometheus writer adds the `llamacpp:` prefix). The probe first parsed
+  `llama:spec_drafts_total`, which no build has ever published, then the unprefixed names.
+* A router **proxies** `/metrics` to a worker (`server.cpp:216`, `models_routes->proxy_get`),
+  so with more than one model in play the request has to name the model. Same rule as
+  `/completion`: an unnamed request is refused, and every earlier run of this probe ended in an
+  `HTTP 400` traceback for exactly that reason.
+* A fresh worker counts from zero, so a failed *before* reading must not void the verdict; it is
+  reported as a single reading instead.
+
+**Two id rules in the listing, measured on a throwaway hub (`/tmp/fakehub`, never the library).**
+Both explain why the same probe input printed `True` on one run and `False` on another:
+
+* Several cached files that reduce to the same tag collapse into **one** model. Two files named
+  `Muse-IQ2_S-mtp.gguf` and `Muse-IQ3_S-mtp.gguf` produced a single `[cache] orga/Muse-MTP-GGUF:MTP`.
+  Which file that id reaches is decided by the load-time matcher of §6.12.16, not by the listing.
+* A preset section and a cache entry with the same name are **not both listed**: the section wins
+  and the `[cache]` line disappears. So `[ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP]` in
+  `presets.ini` is simultaneously the intended way to configure that cached file and a way to hide
+  the file's own registration.
+
+**The phantom section, and why the portal cannot produce one.** A `[name]` section whose model
+resolves to no file makes the router *advertise* that model; asking for it spawns a worker that
+never loads — state stays `loading`, no error, and under `offline = true` no download either.
+Verified by accident on the throwaway hub, where the only "model" was my own section. The portal
+cannot write this: `resolve_targets()` refuses (`personality.py:661`, "names models or model
+configs with no library entry and no stored config"), which is the fence doing its job. Hand-edited
+`presets.ini` has no such fence.
+
+**Box state noted while checking that refusal:** `/home/cortana/ai/models/llama` now holds only
+`INDEX.json` — 12 index rows, all `source=cache`. The builtin `safe` personality still targets
+`Qwen3.5-0.8B.Q4_K_M`, a library model that is gone, so rendering `safe` currently raises instead
+of writing. That is correct behaviour and an operator decision to fix (retarget it, or put a small
+model back in the library), not something to paper over in code.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
