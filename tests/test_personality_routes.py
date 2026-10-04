@@ -43,7 +43,10 @@ from app.core import db, modelindex as mi, paths  # noqa: E402
 from app.core import personality as P  # noqa: E402
 from app.core import presets_store, systemd, updater  # noqa: E402
 from app.main import app  # noqa: E402
-from tests.test_modelindex import _write_fake_gguf  # noqa: E402
+from tests.gguf_fixture import _write_fake_gguf, seed_hub_model  # noqa: E402
+# (was: `from tests.test_modelindex import ...` — importing another test module wins that
+# module's AI_PORTAL_HOME/AI_PORTAL_PASSWORD setdefault for the whole session; the shared
+# fixture module carries no env of its own.)
 
 GiB = 1 << 30
 
@@ -78,19 +81,30 @@ def library():
                 shutil.rmtree(child, ignore_errors=True)
             else:
                 child.unlink(missing_ok=True)
-    # SAFE names one specific model, so the library has to contain it or `safe` has no
+    # SAFE names one specific model, so the sandbox has to contain it or `safe` has no
     # budget to render — legitimately, because a fallback that points at a model that is
     # not on disk is a broken fallback. Naming it here is what lets the budget line be
     # asserted for both cards instead of one.
+    #
+    # It may name a hub-cache model (`repo:TAG`), which is not a directory name: putting one under
+    # LLAMA_MODELS creates nested directories and a row named something else. Cache-form ids go in
+    # the hub cache, which rescan() also reads — and the cache has to be cleared first for the same
+    # reason the library does: this fixture owns its inventory.
+    kv = {"attention.head_count": 4, "attention.head_count_kv": 2,
+          "embedding_length": 256, "context_length": 4096}
+    hub = mi.hub_dir()
+    if hub.is_dir():
+        shutil.rmtree(hub, ignore_errors=True)
+    hub.mkdir(parents=True, exist_ok=True)
     names = ((P.SAFE["models"][0], 8, 4000), ("Big-30B", 48, 9000))
     for name, blocks, pad in names:
+        body = dict(kv, block_count=blocks)
+        if ":" in name:
+            seed_hub_model(hub, name, body, pad=pad)
+            continue
         d = paths.LLAMA_MODELS / name
         d.mkdir(parents=True, exist_ok=True)
-        _write_fake_gguf(d / "m.gguf", {
-            "block_count": blocks, "attention.head_count": 4,
-            "attention.head_count_kv": 2, "embedding_length": 256,
-            "context_length": 4096,
-        }, pad=pad)
+        _write_fake_gguf(d / "m.gguf", body, pad=pad)
     mi.rescan()
     return sorted(r["id"] for r in mi.rows())
 

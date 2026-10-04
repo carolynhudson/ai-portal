@@ -2905,6 +2905,52 @@ portal keeps being bitten by, so the suggestions ride *beside* the error, never 
 `apply`/`preview` raise `PersonalityError` → HTTP 400 with the same text, and the page shows it on the
 card rather than dropping the card.
 
+#### 6.12.19 `safe` and `default` generated the same presets.ini — what a personality cannot do (2026-10-04)
+
+After retargeting `safe` (its model had been deleted; the operator chose
+`Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0`, 4.29 GiB, cached), `render(safe)["text"] ==
+render(default)["text"]` — byte for byte. Both were `[*]` with `lazy-mode/stop-timeout/threads` and
+no model sections at all, because:
+
+  * a bare model entry means "that file, llama.cpp's own defaults, nothing added" (§4.10.4), so it
+    emits no section; and
+  * `default` names every model and sets nothing for any of them, so it emits none either.
+
+**What this establishes about the design.** `presets.ini` carries *settings per model*, never an
+allow-list. The router discovers models from `--models-dir` and the hub cache; a personality naming
+one model does not hide the other twelve. That was already implied by the refusal of `[*]`
+model-scoped keys (§4.10.2, "[*] applies to every model the router *discovers*"), and now it is
+stated where a person choosing a personality will read it. A personality on this box can set: global
+floor keys, per-model settings for models it names, and — only via the launcher, not the preset —
+`--models-max` (measured earlier: `models-max = 1` inside the preset file did not stop either model
+from loading, §4.10.2).
+
+**The bug it exposed: "active" could be true for several personalities at once.** The page marks a
+personality active when `render()` equals the file on disk. Identical bodies made `safe` and
+`default` both active — a state the router cannot be in. `render()` now writes
+`# personality: <name>` into the header, so the file records who wrote it and at most one
+personality matches. Two personalities that legitimately produce the same body are still the same
+router behaviour; the file no longer claims to be two things.
+
+**Measured, not assumed: cache ids are legal section names.** A probe router on :8145 with
+`--models-dir ~/ai/models/llama` (which holds no models) and `--models-preset` pointing at a file
+containing `[Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0]` listed:
+
+```
+Available models (13):
+  [     cache] ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S
+  [    preset] Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0
+```
+
+so `sections[<repo:TAG>]` is honored and the generated header comment — which told the reader section
+names "MUST match directory names under ~/ai/models/llama" — was wrong on a cache-only box. The
+header now says directory names *or* cache model ids, with the measurement next to it. `check_generated`
+accepts a cache id when it is indexed and refuses it when it is not (control asserted in the test).
+
+`safe` is also now defined as *chat-capable smallest*, not smallest: the two smallest indexed rows are
+`embeddinggemma-300M` (0.31 GiB) and `Qwen3-Reranker-0.6B` (0.60 GiB), both `pooling_type`, neither
+able to answer the completion a fallback exists to answer.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

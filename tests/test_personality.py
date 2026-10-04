@@ -830,3 +830,47 @@ def test_an_empty_index_says_so_rather_than_listing_nothing():
     finally:
         P._rows = monkeypatch_rows
     assert "model index is empty" in message
+
+
+def test_safe_holds_exactly_one_model_and_the_slot_for_it():
+    """`safe` is the state you fall back to when everything else failed.
+
+    A fallback that needs three models and two slots is not one, and one that names a pooling model
+    cannot answer the completion that made the operator reach for it. The shape is checked here,
+    against the builtin rather than the box, so it does not quietly depend on what is cached today.
+    """
+    safe = next(b for b in P.builtins() if b.get("name") == "safe")
+    assert safe["models_max"] == 1
+    assert len(safe["models"]) == 1
+    assert (safe.get("overrides") or {}).get(safe["models"][0]) in (None, {})
+
+
+# ------------------------------------------------ the file records who wrote it
+def test_the_generated_file_says_which_personality_wrote_it():
+    """Two personalities can legitimately produce the same body.
+
+    A preset section carries settings, not an allow-list, so a personality naming one model and one
+    naming three both emit just `[*]` when nobody set anything per model. "Is this personality live?"
+    is answered by comparing the file against what render() would write, so without a name in the
+    file several personalities are live at once — a state the router cannot be in.
+    """
+    one = P.render({"name": "solo", "models_max": 1, "models": ["small"]})
+    many = P.render({"name": "wide", "models_max": 1, "models": ["small", "medium", "huge"]})
+    assert "# personality: solo" in one["text"]
+    assert "# personality: wide" in many["text"]
+    assert one["text"] != many["text"]
+    assert P.check_generated(one["text"], {"small"}) == []
+
+
+def test_a_section_named_by_a_cache_id_is_not_reported_as_a_typo():
+    """The runtime discovers models in two places, and a section must be able to name either.
+
+    Measured on this box: a section spelled `[Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0]` is listed by
+    the router as `[ preset]` against that cached file, so the cache id is a legal section name even
+    though it is not a directory under ~/ai/models/llama.
+    """
+    body = "[orga/Muse-GGUF:IQ3_S]\nthreads = 16\n"
+    assert P.check_generated(body, {"orga/Muse-GGUF:IQ3_S"}) == []
+    # The control: the same section is a typo when nothing by that name is indexed. Accepting it
+    # above is about the id being known, not about any section name passing.
+    assert P.check_generated(body, {"small"}) != []

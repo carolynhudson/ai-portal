@@ -33,6 +33,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from tests.gguf_fixture import seed_hub_model  # noqa: E402
 import httpx
 import pytest
 
@@ -101,8 +102,17 @@ def ui_server():
     # the page correctly reports that the fallback cannot start — but it renders `safe` with
     # no budget, so a UI assertion about the budget figure would be describing only `default`
     # and would pass even if the fallback card stopped computing one.
-    (home / "ai" / "models" / "llama" / SAFE_MODEL).mkdir(parents=True)
-    _seed_gguf(home / "ai" / "models" / "llama" / SAFE_MODEL / f"{SAFE_MODEL}.gguf", pad=1024)
+    #
+    # The fallback may name a hub-cache model (`repo:TAG`), which is a name token, not a directory:
+    # as a path under models/llama it becomes nested directories and a differently named row.
+    if ":" in SAFE_MODEL:
+        seed_hub_model(home / ".cache" / "huggingface" / "hub", SAFE_MODEL,
+                       {"block_count": 24, "attention.head_count": 4,
+                        "attention.head_count_kv": 2, "embedding_length": 256,
+                        "context_length": 4096}, pad=1024)
+    else:
+        (home / "ai" / "models" / "llama" / SAFE_MODEL).mkdir(parents=True)
+        _seed_gguf(home / "ai" / "models" / "llama" / SAFE_MODEL / f"{SAFE_MODEL}.gguf", pad=1024)
 
     env = dict(os.environ)
     env.update(

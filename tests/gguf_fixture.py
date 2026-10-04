@@ -116,3 +116,25 @@ def _write_raw_gguf(path: Path, pairs: list[tuple[str, object]]) -> None:
     path.write_bytes(hdr + bytes(out))
 
 
+
+
+def seed_hub_model(hub_root: Path, model_id: str, kv: dict, *, pad: int = 0,
+                   commit: str = "a" * 40) -> Path:
+    """Put a GGUF in a hub cache so the scanner yields exactly `model_id`.
+
+    A cache id is not a directory name: it is decoded from the folder (`models--<org>--<repo>`)
+    plus the last dash-separated token of the file name, and `refs/main` has to name the snapshot
+    or neither the runtime nor `scan_cache` treats the revision as current. So the file name is
+    built back out of the id here rather than guessed by the caller — the fixture that gets this
+    wrong produces a row named something else, and then asserts against a model that never existed.
+    """
+    repo_id, tag = model_id.split(":", 1)
+    org, _, name = repo_id.partition("/")
+    folder = hub_root / f"models--{org.replace('/', '--')}--{name}"
+    (folder / "refs").mkdir(parents=True, exist_ok=True)
+    (folder / "refs" / "main").write_text(commit + "\n", encoding="utf-8")
+    snap = folder / "snapshots" / commit
+    snap.mkdir(parents=True, exist_ok=True)
+    path = snap / f"{name}-{tag}.gguf"
+    _write_fake_gguf(path, kv, pad=pad)
+    return path
