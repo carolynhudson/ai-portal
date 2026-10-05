@@ -1333,6 +1333,154 @@ def headroom_after(row: dict, budget_bytes: int | None = None,
     return budget - peak
 
 
+AUTO_PARALLEL_SLOTS = 4      # server.cpp:161-166 -- what "auto" resolves to, measured here
+
+
+def free_pool_bytes() -> tuple[int, str]:
+    """What the aperture has left right now, and how that was measured.
+
+    fit measures free device memory, not the size of the aperture, so a prediction that uses the
+    total answers a question the runtime is not asking. Free is the honest default; when the used
+    gauge is unreadable the total is used and said out loud, because a silent optimism here is
+    the same class of error as a silent 64 GiB budget (§6.12.0).
+    """
+    total = _pool_bytes()
+    try:
+        from .. import metrics
+        g = metrics.gpu() or {}
+        used = int(g.get("pool_used") or 0)
+        total = int(g.get("pool_total") or total)
+        if total and used:
+            return max(0, total - used), f"free aperture now: {_gi(max(0, total - used))} of {_gi(total)}"
+        return total, f"aperture total: {_gi(total)} (used gauge unreadable)"
+    except Exception:  # noqa: BLE001 -- a probe failure is a weaker budget, not a failure
+        return total, f"aperture total: {_gi(total)} (gpu probe unusable)"
+
+
+def _gi(x: int) -> str:
+    """Bytes as a person would read them. Local, and only ever given a real number."""
+    return f"{(x or 0) / (1 << 30):.1f} GiB"
+
+
+def context_window(row: dict, settings: dict | None = None,
+                   budget_bytes: int | None = None) -> dict:
+    """The context a client will be given for this model, and **who decided it**.
+
+    The number a client reads is `n_ctx_slot()` -- `min(llama_n_ctx_seq, --kv-unified-per-slot,
+    n_ctx_train)` (server-context.cpp:4246-4254), reported by /props, /slots and /v1/models. It is
+    not a setting; it is the result of up to three settings plus a chooser, which is why "the
+    router says this model has half the context it used to report" was hard to trace
+    (docs/PORTAL_PLAN.md §6.12.20, which carries the measurement table this encodes).
+
+    * slots **auto** -> unified KV: one pool, and every slot can reach all of it.
+    * slots **named** -> KV is not unified: `n_ctx_seq = pool / slots` (llama-context.cpp:295), so
+      naming slots divides the number every client reads.
+    * `ctx-size` **unset** -> llama.cpp sizes the pool for the trained context and `--fit` shrinks
+      it when the aperture cannot pay, logging at trace level only. The silent case.
+    * `ctx-size` **pinned** -> fit is locked out and the written number is the ceiling.
+
+    `window` is None when the model cannot be priced. "Cannot predict" is reported as such; an
+    optimistic guess about a client's context window is the thing this function exists to prevent.
+    """
+    s = settings or {}
+    trained = modelmeta._as_int(row.get("ctx_trained")) or 0
+    slots_raw = modelmeta._as_int(s.get("parallel")) or 0
+    slots_named = slots_raw > 0
+    slots = slots_raw if slots_named else AUTO_PARALLEL_SLOTS
+    per_slot = modelmeta._as_int(s.get("kv-unified-per-slot")) or 0
+    ctx_set = modelmeta._as_int(s.get("ctx-size")) or 0
+
+    kvu = str(s.get("kv-unified") or "auto").lower()
+    unified = True if kvu == "on" else False if kvu == "off" else (not slots_named)
+
+    if ctx_set:
+        pool_want = ctx_set
+    elif per_slot:
+        pool_want = slots * per_slot
+    else:
+        pool_want = trained if unified else trained * slots
+
+    out: dict = {
+        "trained": trained, "slots": slots, "slots_named": slots_named, "kv_unified": unified,
+        "ctx_size": ctx_set or None, "kv_unified_per_slot": per_slot or None,
+        "pool_want": pool_want, "pool": None, "window": None,
+        "reduced": None, "by": "unpriced", "notes": [], "budget_bytes": None, "budget_note": "",
+    }
+    if pool_want < 1:
+        out["notes"].append("no trained context in the header and no ctx-size written")
+        return out
+
+    budget = modelmeta._as_int(budget_bytes) or 0
+    if budget:
+        out["budget_note"] = f"the budget you passed: {_gi(budget)}"
+    else:
+        budget, out["budget_note"] = free_pool_bytes()
+    peak = peak_bytes(row, pool_want)
+    pool = pool_want
+    shrunk = False
+    if peak is None:
+        out["notes"].append("cannot price this model's cache, so its window is not predictable")
+        out["pool"] = pool
+        return out
+    if budget and peak > budget:
+        pool = 0
+        c = 1
+        while c <= pool_want:
+            p = peak_bytes(row, c)
+            if p is None:
+                break
+            if p <= budget:
+                pool = c
+            else:
+                break
+            c <<= 1
+        shrunk = pool < pool_want
+        priced = peak_bytes(row, pool) if pool else 0
+        out["notes"].append(
+            f"{slots} slot(s) at the trained context cost {_gi(peak)} against {_gi(budget)} of "
+            f"aperture -- fit sizes the pool to {_gi(priced or 0)} and logs the reduction at "
+            f"trace level only, so nothing in the router's log says the context changed")
+
+    if pool < 1:
+        # Nothing fits, not even one token. Say that, rather than take a min over an empty set.
+        out["pool"] = 0
+        out["window"] = None
+        out["reduced"] = True
+        out["by"] = ("does not fit this box at any context -- the weights alone are over the "
+                     "budget, so ctx-size is not the decision to make here")
+        out["notes"].append(
+            f"weights + the smallest cache cost more than {_gi(budget)} "
+            f"({out['budget_note']})")
+        return out
+
+    seq = pool if unified else pool // slots
+    window = min(v for v in (seq, per_slot or seq, trained or seq) if v > 0)
+    out["pool"] = pool or None
+    out["window"] = window or None
+    out["reduced"] = bool(trained) and window < trained
+
+    if ctx_set:
+        out["by"] = "ctx-size (written): fit is locked out, so this is the ceiling"
+    elif per_slot:
+        out["by"] = "kv-unified-per-slot (written): the window is that number"
+    elif shrunk:
+        out["by"] = ("fit, because ctx-size is unset and the trained context does not fit -- "
+                     "writing ctx-size takes the decision back")
+    elif out["reduced"]:
+        out["by"] = "slots divide the pool: parallel is written, so KV is not unified"
+    else:
+        out["by"] = "the model's trained context, afforded"
+
+    if slots_named and not unified and ctx_set:
+        out["notes"].append(
+            f"ctx-size {ctx_set} across {slots} named slots is a {window}-token window per "
+            "client -- naming slots turns the unified pool off and divides it "
+            "(llama-context.cpp:295)")
+    if out["reduced"] and trained:
+        out["notes"].append(f"window {window} is below the model's trained {trained}")
+    return out
+
+
 def router_key(name: str) -> str:
     """Key a library directory and a router model id agree on.
 

@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Help · AI Portal{% endblock %}
+{% block body %}
+<style>
+/* The knowledge base page. Two ways in: search a term, or follow a § citation from a
+   setting. Both land on the same section view, so a citation and a search are the same act. */
+.kb-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.kb-bar input[type=search]{flex:1 1 260px;min-width:200px;padding:8px 10px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg,#12161b);color:inherit}
+.kb-docs{font-size:12px;color:var(--mut);margin:0 0 14px;display:flex;gap:14px;flex-wrap:wrap}
+.kb-hit{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.kb-hit h4{margin:0 0 4px;font-size:14px}
+.kb-hit .kb-addr{color:var(--acc);font-size:12px;font-family:ui-monospace,monospace}
+.kb-hit .kb-meta{font-size:12px;color:var(--mut);margin:0 0 6px}
+.kb-hit .kb-ex{font-size:13px;color:var(--mut)}
+.kb-toc{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 14px;
+  max-height:220px;overflow-y:auto;font-size:12px;columns:2;column-gap:18px}
+.kb-toc a{display:block;color:inherit;text-decoration:none;padding:1px 0;opacity:.85}
+.kb-toc a:hover{color:var(--acc);opacity:1}
+.kb-toc .l3{padding-left:10px;opacity:.75}
+.kb-toc .l4{padding-left:20px;opacity:.62}
+#kb-section{border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 14px}
+#kb-section h3{margin:0 0 2px;font-size:16px}
+#kb-section .kb-addr{color:var(--acc);font-size:12px;font-family:ui-monospace,monospace}
+.kb-nav{display:flex;gap:10px;font-size:12px;margin:6px 0 0}
+.help h2,.help h3,.help h4,.help h5,.help h6{margin:14px 0 4px;font-size:14px}
+.help p{margin:6px 0;font-size:13.5px;line-height:1.5}
+.help ul{margin:6px 0 6px 18px;font-size:13.5px;line-height:1.5}
+.help pre{white-space:pre-wrap;background:#0e1216;border:1px solid var(--line);border-radius:6px;
+  padding:8px;font-size:12px;overflow-x:auto}
+.help code{font-family:ui-monospace,monospace;font-size:12.5px;background:#0e1216;padding:1px 4px;border-radius:4px}
+.help table{border-collapse:collapse;font-size:12.5px;margin:8px 0}
+.help th,.help td{border:1px solid var(--line);padding:4px 8px;text-align:left}
+.help a.kbref{color:var(--acc)}
+.mut{color:var(--mut)}
+</style>
+
+<div class="card help">
+  <h3>Help &amp; knowledge base</h3>
+  <p class="mut" style="margin:0 0 10px">
+    The portal's settings pages keep a setting's detail short and cite the measurement behind it
+    (“§6.12.6”). This page is what those citations point at: every documented section, searchable,
+    with a stable address taken from its own heading.
+  </p>
+
+  <div class="kb-docs">
+    {% for name, title in docs %}<span><b>{{ name }}</b> — {{ title }}</span>{% endfor %}
+    <span>{{ count }} sections indexed</span>
+  </div>
+
+  <form class="kb-bar" method="get" action="/help">
+    <input id="kb-search" type="search" name="q" value="{{ q }}" placeholder="search the docs — “kv unified”, “fit ctx”, “cache id”">
+    <button type="submit">Search</button>
+  </form>
+
+  {% if q %}
+  <p class="mut" id="kb-status" style="margin:0 0 8px">{{ hits|length }} section{{ "" if hits|length == 1 else "s" }}
+    for “{{ q }}”</p>
+  <div id="kb-results">
+    {% if not hits %}<p class="mut">Nothing matched. Try fewer words.</p>{% endif %}
+    {% for h in hits %}
+    <div class="kb-hit">
+      <h4><a class="kbref" href="/help#{{ h.id }}">{{ h.title }}</a></h4>
+      <div class="kb-meta">{{ h.doc }} · <span class="kb-addr">§{{ h.id }}</span> · line {{ h.line }}</div>
+      <div class="kb-ex">{{ h.excerpt }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="kb-toc" id="kb-toc">
+    {% for t in toc %}
+    <a class="l{{ t.level }}" href="/help#{{ t.id }}">§{{ t.id }} {{ t.title }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div id="kb-section" hidden>
+    <div class="kb-addr" id="kb-sec-addr"></div>
+    <h3 id="kb-sec-title"></h3>
+    <p class="mut" id="kb-sec-meta"></p>
+    <div id="kb-sec-body"></div>
+    <div class="kb-nav">
+      <button type="button" class="ghost" id="kb-close">close</button>
+      <a href="/help" id="kb-permalink">permalink</a>
+    </div>
+  </div>
+
+  <p class="mut" style="margin-top:14px;font-size:12px">
+    Section numbers are the headings themselves — a link made here keeps pointing at the same
+    prose after the docs grow, which is why setting help cites a number and not a sentence.
+  </p>
+</div>
+
+<script>
+(function(){
+  const SEC = 'kb-section';
+  const $ = (id) => document.getElementById(id);
+
+  // The section body arrives as HTML from the portal's own renderer, and this page does not
+  // paste fetched markup into the document. It is parsed, every node is checked against an
+  // allowlist, and only survivors are mounted as nodes. Scripts, event handler attributes and
+  // non-http hrefs are dropped here as well as server-side, so neither side has to be trusted
+  // alone -- docs/ is repo content, and repo content is not a reason to skip the check.
+  const ALLOWED = {A:['href','class'],P:['class'],UL:['class'],OL:['class'],LI:['class'],PRE:['class'],
+    CODE:['class'],B:['class'],STRONG:[],I:[],EM:[],TABLE:['class'],THEAD:[],TBODY:[],TR:[],
+    TH:['class'],TD:['class'],H2:['class'],H3:['class'],H4:['class'],H5:['class'],H6:['class'],
+    BR:[],SPAN:['class'],DIV:['class'],BLOCKQUOTE:['class']};
+  const SAFE_HREF = /^(https?:|mailto:|#|\/)/i;
+
+  function sanitize(node){
+    const out = document.createDocumentFragment();
+    (Array.from(node.childNodes)).forEach((child) => {
+      if(child.nodeType === 3){ out.appendChild(document.createTextNode(child.nodeValue)); return; }
+      if(child.nodeType !== 1) return;
+      const tag = child.tagName.toUpperCase();
+      if(!(tag in ALLOWED)) return;
+      const el = document.createElement(tag);
+      (ALLOWED[tag] || []).forEach((attr) => {
+        const v = child.getAttribute && child.getAttribute(attr);
+        if(v == null) return;
+        if(attr === 'href' && !SAFE_HREF.test(v)) return;
+        if(/^on/i.test(attr)) return;
+        el.setAttribute(attr, v);
+      });
+      el.appendChild(sanitize(child));
+      out.appendChild(el);
+    });
+    return out;
+  }
+
+  function mount(el, html){
+    el.textContent = '';
+    if(!html) return;
+    let doc;
+    try{ doc = new DOMParser().parseFromString(String(html), 'text/html'); }
+    catch(e){ el.textContent = String(html); return; }
+    if(!doc || !doc.body){ el.textContent = String(html); return; }
+    el.appendChild(sanitize(doc.body));
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  async function openSection(ref){
+    const box = $(SEC);
+    if(!ref){ if(box) box.hidden = true; return; }
+    const r = await fetch('/api/help/section/' + encodeURIComponent(ref), {credentials:'same-origin'});
+    const d = await r.json().catch(() => ({}));
+    if(!r.ok){
+      box.hidden = false;
+      $('kb-sec-addr').textContent = '§' + ref;
+      $('kb-sec-title').textContent = 'No such section';
+      $('kb-sec-meta').textContent = (d && d.detail) || 'the citation names nothing in docs/';
+      mount($('kb-sec-body'), '');
+      return;
+    }
+    box.hidden = false;
+    $('kb-sec-addr').textContent = '§' + d.id;
+    $('kb-sec-title').textContent = d.title;
+    $('kb-sec-meta').textContent = d.doc + ' · heading level ' + d.level;
+    mount($('kb-sec-body'), d.html || '');
+    // Scroll if the browser can. scrollIntoView is absent in some DOMs (jsdom has no
+    // layout), and a page script must not throw over a nicety like smooth scrolling.
+    if (typeof box.scrollIntoView === 'function') box.scrollIntoView({block: 'start'});
+  }
+
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a.kbref');
+    if(!a) return;
+    const href = a.getAttribute('href') || '';
+    const hash = href.indexOf('#');
+    if(hash < 0) return;
+    const ref = href.slice(hash + 1);
+    if(!ref) return;
+    e.preventDefault();
+    history.replaceState(null, '', '#'+ref);
+    openSection(ref);
+  });
+
+  const close = $('kb-close');
+  if(close) close.addEventListener('click', () => {
+    $(SEC).hidden = true;
+    history.replaceState(null, '', window.location.pathname);
+  });
+
+  window.addEventListener('hashchange', () => openSection(decodeURIComponent(location.hash.slice(1))));
+  if(location.hash) openSection(decodeURIComponent(location.hash.slice(1)));
+})();
+</script>
+{% endblock %}

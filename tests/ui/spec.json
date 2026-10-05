@@ -953,6 +953,26 @@
         }
       ],
       "tabGroups": []
+    },
+    {
+      "name": "help",
+      "path": "/help",
+      "expectTitle": "Help",
+      "expectRequests": [],
+      "expectVisible": [
+        "#kb-search",
+        "#kb-toc",
+        "#kb-sec-addr",
+        "#kb-sec-title",
+        "#kb-sec-meta",
+        "#kb-sec-body",
+        "#kb-close",
+        "#kb-permalink"
+      ],
+      "expectHidden": [
+        "#kb-section"
+      ],
+      "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
     }
   ]
 }

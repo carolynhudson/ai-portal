@@ -604,13 +604,6 @@ ATTACH_PROBES = ((512, 64), (2048, 64))
 BIG_PROBES = ((512, 64), (2048, 64), (8192, 64))
 
 
-def mem_available() -> int:
-    for line in Path("/proc/meminfo").read_text().splitlines():
-        if line.startswith("MemAvailable:"):
-            return int(line.split()[1]) * 1024
-    return 0
-
-
 def _timings(body: dict) -> dict:
     """Per-request rates straight out of the response.
 

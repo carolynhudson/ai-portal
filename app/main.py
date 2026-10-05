@@ -34,7 +34,7 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, modeladd, model_config, modelindex, paths, personality, presets_store
+from .core import db, health, kb, modeladd, model_config, modelindex, paths, personality, presets_store
 from .core import systemd, updater
 from . import providers
 from .providers import PROVIDERS, get as get_provider
@@ -720,6 +720,23 @@ def create_app() -> FastAPI:
     def settings_page(request: Request, _=Depends(_require_auth)):
         return templates.TemplateResponse(request, "settings.html", {})
 
+    @app.get("/help")
+    def help_page(request: Request, q: str = "", _=Depends(_require_auth)):
+        """The project's own docs, searchable, addressed by the numbers the UI cites.
+
+        A setting's help says "§6.12.6"; this page is what that pointer means. Search returns
+        ranked sections, and a section id is a stable address -- parsed from the heading, so a
+        page link cannot drift away from the document it names.
+        """
+        hits = kb.search(q, limit=40) if q.strip() else []
+        return templates.TemplateResponse(request, "help.html", {
+            "q": q,
+            "hits": hits,
+            "toc": kb.toc(),
+            "docs": kb.docs_available(),
+            "count": len(kb.sections()),
+        })
+
     def _health_page(refresh: bool = False) -> dict:
         """Health pane data: host probes plus the deployed build's provenance.
 
@@ -800,6 +817,19 @@ def create_app() -> FastAPI:
             "gpu_mem": gpu_mem,
         }
         return bundle
+
+    @app.get("/api/help")
+    def api_help(q: str = "", _=Depends(_require_auth)):
+        return {"query": q, "hits": kb.search(q, limit=40)}
+
+    @app.get("/api/help/section/{ref}")
+    def api_help_section(ref: str, _=Depends(_require_auth)):
+        """One section's rendered body. 404 is the honest answer to a citation of nothing."""
+        s = kb.find(ref)
+        if not s:
+            raise HTTPException(status_code=404, detail=f"no documented section {ref!r}")
+        return {"id": s["id"], "doc": s["doc"], "title": s["title"], "level": s["level"],
+                "html": kb.render_markdown(s["body"])}
 
     @app.get("/api/status")
     def api_status(_=Depends(_require_auth)):

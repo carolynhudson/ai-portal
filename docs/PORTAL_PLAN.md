@@ -2951,6 +2951,152 @@ accepts a cache id when it is indexed and refuses it when it is not (control ass
 `embeddinggemma-300M` (0.31 GiB) and `Qwen3-Reranker-0.6B` (0.60 GiB), both `pooling_type`, neither
 able to answer the completion a fallback exists to answer.
 
+#### 6.12.20 The context a client sees is three settings plus a silent chooser (2026-10-04)
+
+The operator's report: on the portal-launched router, a model reported **about half** the context
+window it had always reported, with "whatever config or preset settings it was running under",
+while the same model under a hand-started router was fine. The ask that came with it is the
+design rule this section exists for: *the default profile must not artificially limit a model's
+context, and where a setting limits it as a side effect, that setting's help must say so.*
+
+There is no single knob called "context per slot", which is why it was hard to find. The number a
+client is given is computed at load from three settings and one chooser:
+
+```
+window = min(llama_n_ctx_seq, --kv-unified-per-slot (if set), n_ctx_train)
+```
+
+`tools/server/server-context.cpp:4246-4254` (`n_ctx_slot()`), and that same function is what
+`/props`, `/slots` and `/v1/models` report (`:4419`, `:4775`, `:4825`) — so this is the number
+clients and the Web UI read, not an internal one.
+
+**1. `--parallel` decides whether the pool is shared or divided.** With slots left **auto**, the
+server turns on the unified KV cache and each slot can use the whole pool:
+
+```
+n_parallel is set to auto, using n_parallel = 4 and kv_unified = true
+n_ctx_seq = 262144            # 4 slots, window 262144
+```
+
+Set slots **explicitly** and the unified cache is off (`common/common.h:578` defaults
+`kv_unified = false`; `common/arg.cpp:1726` says "default: enabled if number of slots is auto"),
+and ctx-size is divided across the slots:
+
+```
+--parallel 2 -c 32768   -> n_ctx_seq = 16384   # 32768 / 2
+n_ctx_seq (16384) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+```
+
+`src/llama-context.cpp:293` is the branch: unified ⇒ `n_ctx_seq = n_ctx`; not unified ⇒
+`n_ctx_seq = n_ctx / n_seq_max`. **Requesting slots is the setting that halves the per-slot
+window** — the most surprising thing measured here, because "more slots" reads as capacity and is
+also a division of the one number every client reads.
+
+**2. Leaving `ctx-size` unset makes llama.cpp choose, and the choice is priced by `--fit`.**
+Unset means "size the pool so every slot can have the trained context" — `trained × slots` — and
+`--fit` (on by default, target 1024 MiB free) pays for that by shrinking the pool when the
+aperture cannot:
+
+```
+common/fit.cpp:267,271   n_ctx_max = n_ctx_train * n_streams; n_ctx = n_ctx_max
+common/fit.cpp:393-430   linear interpolation down toward --fit-ctx * n_streams, rounded to 256*n_streams
+common/common.h:483      fit_params_min_ctx = 4096        # the floor, -fitc/--fit-ctx
+```
+
+The reduction is logged with `LOG_TRC` — trace level. In a normal router log the context
+**shrinks and leaves no trace**, which is exactly the report: a smaller window, "I never set a
+context size", and nothing in the log about one.
+
+**3. Pinning ctx-size locks the chooser out.** `common/arg.cpp:1643-1645` sets
+`fit_params_min_ctx = UINT32_MAX` when `-c` is given, and `fit.cpp:459` prints
+`context size set by user to N -> no change`. This is why the hand-started router
+(`-c 262144`, `-fa on`, `-ngl 99`, `--lazy-mode on`) never showed the shrink.
+
+**4. `--kv-unified-per-slot` is the lever for naming the window directly** (new in this build;
+`common/arg.cpp:1648-1655`, `tools/server/server.cpp:169-177`): with ctx-size unset, the pool is
+sized to `slots × N` and the window is `N`.
+
+Measured on this box (b11396, `Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0`, 4.29 GiB, trained 262144,
+probe on loopback with no presets; the 4.3 GiB model is a probe subject, not the 177B):
+
+| settings | slots | window a client sees |
+|---|---|---|
+| (none — what a personality emits today) | 4 auto | 262144 |
+| `parallel = 2` | 2 | 262144 (pool auto-extended to 524288) |
+| `parallel = 2`, `ctx-size = 32768` | 2 | **16384** |
+| `parallel = 2`, `ctx-size = 32768`, `kv-unified` | 2 | 32768 |
+| `kv-unified-per-slot = 8192` | 4 auto | **8192** |
+
+**Why the 177B is the case that shows it.** Its trained context is 262144 and it is the
+heaviest resident here (~78 GiB of weights, 84 GiB with its estimate). Full per-slot context
+costs a 262144-token pool *per slot*, so 4 slots need a pool ~4× the KV. On a 108.00 GiB
+aperture, `fit` pays for the weights first and the pool is what is left — so the window lands
+below trained, and it lands there quietly.
+
+**Preset eligibility, measured on the build the router runs** (`tools/preset_eligibility_probe.py`
+with `mmap` as the positive control, which is rejected as it must be): `temp`, `top-k`, `top-p`,
+`min-p`, `presence-penalty`, `repeat-penalty`, `dry-multiplier`, `kv-unified-per-slot` and
+`fit-ctx` are all accepted in a preset section. So a personality *can* carry a model's upstream
+"recommended llama settings" — it just could not name them, because the registry had 20 keys and
+none of these were among them.
+
+**What the portal does with this.** `modelindex.context_window()` computes the window and names
+**who decided it** (`ctx-size`, `kv-unified-per-slot`, `slots divide the pool`, or `fit, because
+ctx-size is unset`). Eleven tests in `tests/test_context_window.py` pin it to the four rows above,
+plus the fit-shrink and the cannot-price cases. A registry entry now cites this section, and
+`/help` carries the prose.
+
+**What the portal did not get.** The registry did not gain the keys above. Measured in §6.12.21:
+the build this box runs refuses 22 of them, so they are not writable here.
+
+#### 6.12.21 The settings registry offered flags the running server refuses (2026-10-04)
+
+**Why this audit.** A key in the registry is a line the generator writes into `presets.ini`. If
+`llama-server` does not know the flag, the router hands it down and the model never loads. The
+settings editor would be a button that stops the router. So every key must be checked against the
+binary that runs, not against a source tree.
+
+**How it was measured.** One process per key:
+
+```
+llama-server --model codegemma-2b-Q5_K_M.gguf --offline --host 127.0.0.1 --port <free> \
+             -ngl 0 --ctx-size 1024 --parallel 1 --<key> [sample value]
+```
+
+Accepted means the log printed `llama_server: listening on`. Refused means
+`error: invalid argument: --<key>`. A control key, `--definitely-not-a-flag`, produced the same
+refusal line, so "refused" means "unknown", not "my value was wrong". Scripts:
+`/tmp/registry_flag_audit.py` (all 30 keys, 12 at a time), `/tmp/probe2.py`, `/tmp/probe3.py`.
+
+**What it found.**
+
+1. **All 30 registry keys are accepted** by `llama.cpp-b11396`, except three the registry already
+   declares router-only: `load-on-startup`, `stop-timeout`, `dedup-cache-models`. Those are not
+   server flags, so there is nothing to accept them.
+2. **`--kv-unified` takes no value on this build.** `--kv-unified true`, `false`, `1`, `0`, `on`,
+   and `auto` were all refused. `--kv-unified` bare and `--no-kv-unified` were both accepted. The
+   registry lists `kv-unified` as a choice of `on|off|auto`, which is the shape the operator can
+   type. Whether a `kv-unified = on` line in `presets.ini` survives is a **preset-layer**
+   question, not an argv question — the preset path is `common_preset`, not the argument parser —
+   and it is not measured yet. Do not write that line until it is.
+3. **22 flags documented in the newer source at `~/ai/llama.cpp` do not exist in b11396:**
+   `mlock`, `no-mmap`, `cache-type-q`, `keep-echo`, `top-a`, `chat-escape`, `chat-regex`,
+   `top-p-slg`, `ctx-read`, `cache-ram-buffers`, `prefill-verify`, `prefill-min-tokens`,
+   `context-patterns`, `pool-want`, `parallel.slots`, `mrope`, `grammar-debug`,
+   `chat-completion-suffix`, `chat-render`, `chat-template-obj`, `no-default-weights`,
+   `fallback-padding-off`. They read perfectly plausibly in the source, which is why "the source
+   documents it" is not a test.
+
+**The guard.** `tests/test_personality.py` now pins the registry to the measured list
+(`AUDITED_B11396_ACCEPTS`) and keeps the 22 refused flags in `FLAGGED_NOT_IN_B11396`. Adding a
+key without measuring it fails the suite; so does taking one of the refused flags. Verified by
+putting `mlock` in the registry: both tests failed, naming it.
+
+**The lesson worth keeping.** Two ways to learn what a binary accepts, and both can lie.
+`llama-server --help` prints no server-params section on this build, so a help-text check gives
+false negatives for server-only keys. And the source tree is newer than the deployed build, so a
+source check accepts flags the box cannot load. Start the server and read its log.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

@@ -874,3 +874,62 @@ def test_a_section_named_by_a_cache_id_is_not_reported_as_a_typo():
     # The control: the same section is a typo when nothing by that name is indexed. Accepting it
     # above is about the id being known, not about any section name passing.
     assert P.check_generated(body, {"small"}) != []
+
+# ------------------------------------------------- registry eligibility (measured)
+#
+# A key in this registry is a line the generator can put in presets.ini. If llama-server does
+# not know the flag, the router hands it down and the model fails to load — the settings editor
+# would be offering a way to stop the router. So the registry is pinned to what the deployed
+# binary was measured to accept, not to what a source tree documents.
+#
+# Measured 2026-10-04 on /home/cortana/ai/releases/llama.cpp-b11396: each key was passed to
+# `llama-server --model codegemma-2b-Q5_K_M.gguf --offline -ngl 0 --ctx-size 1024 --parallel 1
+# --<key> [sample value]` on a loopback port, one process per key. Accepted = the server printed
+# "listening on". Refused = "error: invalid argument: --<key>", the same line an invented flag
+# (`--definitely-not-a-flag`) produced. Full-run scripts: /tmp/registry_flag_audit.py, /tmp/probe2.py.
+#
+# Two things this measurement settled. `--kv-unified` takes NO value on this build: `--kv-unified
+# true|false|1|0|on|auto` were all refused, `--kv-unified` bare and `--no-kv-unified` were both
+# accepted. And 22 keys present in the newer source checkout at ~/ai/llama.cpp are absent here
+# (see FLAGGED), including --mlock, --no-mmap, --top-a, --chat-escape, --prefill-verify.
+AUDITED_B11396_ACCEPTS = frozenset({
+    "cache-idle-slots", "cache-prompt", "cache-ram", "checkpoint-min-step", "ctx-checkpoints",
+    "ctx-size", "dry-multiplier", "fit", "fit-ctx", "fit-target", "flash-attn", "jinja", "keep",
+    "kv-unified", "kv-unified-per-slot", "lazy-mode", "min-p", "n-gpu-layers", "parallel",
+    "presence-penalty", "reasoning-budget", "reasoning-effort", "repeat-penalty", "temp",
+    "threads", "top-k", "top-p",
+})
+
+#: Keys that are not llama-server flags at all. The router owns these, and the header comment in
+#: presets.ini says so. They are exempt from the flag test because there is no flag to test.
+FLAGGED_NOT_IN_B11396 = frozenset({
+    "mlock", "no-mmap", "cache-type-q", "keep-echo", "top-a", "chat-escape", "chat-regex",
+    "top-p-slg", "ctx-read", "cache-ram-buffers", "prefill-verify", "prefill-min-tokens",
+    "context-patterns", "pool-want", "parallel.slots", "mrope", "grammar-debug",
+    "chat-completion-suffix", "chat-render", "chat-template-obj", "no-default-weights",
+    "fallback-padding-off",
+})
+
+
+def test_every_registry_key_was_measured_on_the_binary_that_runs():
+    """A key the server refuses is a button that stops the router. It may not be in the registry.
+
+    If you added a key: measure it first (`llama-server --model <file> --offline --port <free>
+    --<key> [value]`, look for "listening on" vs "invalid argument"), then add it here with the
+    build name in the constant's name.
+    """
+    exempt = set(P.ROUTER_ONLY_KEYS)
+    unmeasured = set(P.SETTINGS) - AUDITED_B11396_ACCEPTS - exempt
+    assert not unmeasured, f"registry keys with no measurement on b11396: {sorted(unmeasured)}"
+    for key in sorted(exempt):
+        assert key in P.SETTINGS, f"{key} is declared router-only but is not in the registry"
+
+
+def test_keys_from_the_newer_source_tree_stay_out_of_the_registry():
+    """These are documented in ~/ai/llama.cpp and refused by the build this box runs.
+
+    Writing one into presets.ini stops the model loading. If the box upgrades past the build that
+    added one, delete it from this list and measure it before the registry takes it.
+    """
+    present = sorted(FLAGGED_NOT_IN_B11396 & set(P.SETTINGS))
+    assert not present, f"registry took flags the deployed server does not accept: {present}"

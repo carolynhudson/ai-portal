@@ -89,6 +89,21 @@ SERVER_DEFAULTS: dict[str, Any] = {
     # the false *is* the unset state and writing it is noise. `on` is the decision -- and it is only
     # safe in a model section, which is why render() refuses it anywhere else.
     "load-on-startup": False,
+    # Added 2026-10-04, read from the binary this box runs (b11396 --help), for the keys the
+    # registry gained with §6.12.20. Two things to know before trusting these numbers: they are
+    # b11396's, and the block above is b10964's, so this table now spans two builds; and the
+    # sampling defaults are the reason the sampling keys are worth having -- a model recommended
+    # at temperature 1.0 is running the server's 0.80 unless somebody says otherwise.
+    "kv-unified": "auto",          # false in common.h:578, enabled when slots are auto
+    "kv-unified-per-slot": 0,      # common.h:636
+    "fit-ctx": 4096,               # common.h:483
+    "temp": 0.80,
+    "top-k": 40,
+    "top-p": 0.95,
+    "min-p": 0.05,
+    "presence-penalty": 0.00,
+    "repeat-penalty": 1.00,
+    "dry-multiplier": 0.00,
 }
 
 #: Deliberately absent: `dedup-cache-models`. Its behaviour lives in the router's preset reader
@@ -146,9 +161,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": 8192,
-        "help": "Prompt cache limit in MiB of host RAM. llama.cpp defaults to 8192; 0 disables it, "
-                "-1 removes the limit. Not GPU memory: on this box it is the same physical RAM the "
-                "GTT aperture is carved from.",
+        "help": "Prompt cache limit, in MiB of system RAM. Default 8192. 0 disables it. This is not GPU memory.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.6",
         "side_effects": "Charged against host RAM, which on this box is the same memory the "
                         "aperture is carved from. Raising it does not spend GPU memory, it spends "
                         "the machine.",
@@ -158,12 +172,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": 32,
-        "help": "Context checkpoints per slot, each a host-RAM copy of KV state. llama.cpp only "
-                "makes them for sliding-window / hybrid models (the flag is aliased "
-                "--swa-checkpoints). Measured on this box: 19.3 MiB each for Qwen3.5-0.8B and "
-                "50.3 MiB for Qwythos-9B, identical at contexts from 16384 to 131072. They appear "
-                "after a request finishes rather than at load, which is why RSS climbs when a "
-                "model looks idle.",
+        "help": "Copies of a slot's cache, kept in system RAM. 32 per slot by default. Each costs 19-50 MiB here.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.6",
         "side_effects": "Cost is per slot and constant -- it does not scale with context size or "
                         "with how long a session runs, and it lands in host RAM, not the aperture "
                         "(§6.12.6).",
@@ -173,8 +183,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": 8192,
-        "help": "Minimum tokens between checkpoints. It changes how often they are created, not "
-                "how large each one is -- the measured size did not move with it or with context.",
+        "help": "Minimum tokens between cache checkpoints. Changes how often they are made, not how big each is.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.6",
         "side_effects": "Lower spacing means more checkpoints alive at once. The multiplier is this "
                         "number, not the context length.",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
@@ -183,8 +193,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "bool",
         "section": "both",
         "default": True,
-        "help": "Save an idle slot's state into the prompt cache when a new task starts. Costs "
-                "host RAM inside the cache-ram limit, and needs cache-ram enabled to do anything.",
+        "help": "Save an idle slot's state when a new task starts. Costs system RAM, and needs cache-ram set.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.6",
         "side_effects": "This is what lets a finished conversation keep holding RAM. Leaving it on "
                         "is the reason an idle model can cost more than an active one.",
         "accepts": lambda v: isinstance(v, bool),
@@ -193,8 +203,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": -1,
-        "help": "CPU threads used during generation. -1 lets llama.cpp pick. The global "
-                "section on this box sets 16.",
+        "help": "CPU threads for the prompt pass. Threads 1 is the fastest value measured here, so set it on purpose.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.6",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
     "fit": {
@@ -202,22 +212,57 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "on",
         "choices": ("on", "off"),
-        "help": "Adjust arguments that were not set so the model fits in device memory. It does "
-                "measure what other processes already hold on the device, and it will shrink the "
-                "context to make room -- but it decides per load, at load time, only touches "
-                "arguments left unset, and its projection omits the compute buffers allocated "
-                "afterwards. It bounds nothing about a plan. See §6.12.7.",
+        "help": "Shrink unset settings so the model fits the device. It reads what other programs hold. It can cut your context.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.7",
         "side_effects": "May silently choose a smaller context than the model can address. A load "
                         "can satisfy fit's target and still fail, because fit's projection omits the "
                         "compute graph allocated after it (§6.12.7).",
         "accepts": lambda v: v in ("on", "off"),
+    },
+    "kv-unified": {
+        "kind": "choice",
+        "section": "both",
+        "default": "auto",
+        "choices": ("on", "off", "auto"),
+        "help": "Shares one cache pool across slots. On: a client can use the whole pool. Off: it gets one slice.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.15, llama-cpp.cpp:353-361",
+        "side_effects": "Decides whether ctx-size is a window each slot can reach or a total to "
+                        "be divided: unified, window = pool; sliced, window = pool / slots. The "
+                        "measured difference on the same file and the same ctx-size is 32768 "
+                        "versus 16384 (§6.12.20).",
+        "accepts": lambda v: v in ("on", "off", "auto"),
+    },
+    "kv-unified-per-slot": {
+        "kind": "int",
+        "section": "both",
+        "default": 0,
+        "help": "Tokens each slot may use. With ctx-size unset, the pool is slots x this number.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.15",
+        "side_effects": "It caps a slot below the model's trained context by design -- that is "
+                        "the point, and the cost: KV paid per slot caps each client, and a value "
+                        "above the pool's per-slot share is reported as having no effect. Set "
+                        "ctx-size alongside it to price the pool you mean (§6.12.20).",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
+    },
+    "fit-ctx": {
+        "kind": "int",
+        "section": "both",
+        "default": 4096,
+        "help": "The smallest context fit may shrink a slot to. Works only when ctx-size is unset.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.7",
+        "side_effects": "It is the floor of a reduction nobody sees in a normal log: with "
+                        "ctx-size unset and the aperture short, fit interpolates the pool down "
+                        "toward slots x this number and logs it at trace level only. Lower it and "
+                        "a tight box can be allowed to shrink a model further (§6.12.20).",
+        "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "fit-target": {
         "kind": "int",
         "section": "both",
         "default": 1024,
         "help": "Margin in MiB the fit adjustment leaves per device. Comma-separated for "
-                "a per-device list; one value applies to every device.",
+                "a per-device list; one value applies to every device.",        "cite": "docs/PORTAL_PLAN.md sec 6.12.7",
+
         "side_effects": "Raising it makes fit shrink context sooner. It reserves aperture, not host "
                         "RAM -- and the prompt cache and checkpoints live in host RAM, so a generous "
                         "target does not prevent the kills this box actually gets.",
@@ -229,7 +274,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": 10,
         "preset_only": True,
         "help": "Seconds to wait after a requested unload before forcing termination. "
-                "Preset-exclusive: it is not a command-line argument at all.",
+                "Preset-exclusive: it is not a command-line argument at all.",        "cite": "tools/server/server-models.cpp:43 (router-only key)",
+
         "side_effects": "A deadline that ends in a force-kill: unloading at the timeout stops a "
                         "generation in flight rather than waiting for it (§6.12.2).",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
@@ -239,9 +285,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "model",
         "default": False,
         "preset_only": True,
-        "help": "Load this model when the server starts rather than on first request. "
-                "Only read at startup: after a preset reload a newly added model is "
-                "listed but not loaded.",
+        "help": "Load this model when the server starts, not on the first request. Read at startup only.",
+        "cite": "tools/server/server-models.cpp:43 (router-only key)",
         "side_effects": "Decides what is resident before the first request. Startup loads are not "
                         "capped by models-max -- measured, two began with models-max = 1 in the same "
                         "file. It belongs in a model's own section: in [*] it reaches cached models "
@@ -254,7 +299,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "default": False,
         "preset_only": True,
         "help": "When a preset's hf-repo points at a model already downloaded, hide the "
-                "cached entry from GET /models. Preset-exclusive.",
+                "cached entry from GET /models. Preset-exclusive.",        "cite": "tools/server/server-models.cpp (router-only key)",
+
         "side_effects": "Only the listing changes: the model stays on disk and still resolvable.",
         "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
     },
@@ -262,20 +308,24 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "model",
         "default": 0,
-        "help": "Prompt context. 0 means take it from the model. Not emitted by default: "
-                "a hard-coded ctx cap below a model's trained context silently removes "
-                "capability, which is what the old per-model sections on this box did.",
-        "side_effects": "This is the model's ceiling until somebody edits the line. Nothing raises "
-                        "it back, and fit will not touch it, because it is no longer an unset "
-                        "argument (§4.10.1).",
+        "help": "Total tokens the server shares among its slots. A client gets this divided by the slot count.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.20",
+        "side_effects": "Two opposite silences, in both directions (§6.12.20). UNSET: fit sizes "
+                        "the pool to slots x trained when it can afford it and interpolates it "
+                        "DOWN when it cannot, logging the reduction at trace level only -- that "
+                        "is the report of 'the router says this model has half the context it "
+                        "used to report', with no setting set. SET: fit is locked out "
+                        "(arg.cpp:1643-1645) and this becomes the model's ceiling; nothing "
+                        "raises it back, and a value below the trained context removes "
+                        "capability quietly (§4.10.1).",
         "accepts": lambda v: isinstance(v, int) and v >= 0,
     },
     "n-gpu-layers": {
         "kind": "choice-or-int",
         "section": "both",
         "default": "auto",
-        "help": "How many layers live in VRAM: a number, 'auto', or 'all'. The lever that "
-                "trades GPU for system RAM on an oversized model.",
+        "help": "Layers loaded to the GPU: 99 loads all of them. Lower numbers move work to system RAM.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.18",
         "side_effects": "Weight layers moved out of the aperture become anonymous, unreclaimable RAM "
                         "that cannot be paged out -- the signature every OOM kill in this box's "
                         "journal carries (§6.12).",
@@ -286,8 +336,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "auto",
         "choices": ("on", "off", "auto"),
-        "help": "Flash Attention. On this box it is the setting most likely to matter for "
-                "large-context models on ROCm.",
+        "help": "Speeds up attention. Needs v4: on a v3 GPU it makes output worse, not faster.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.19",
         "side_effects": "A performance lever with a capacity side effect: it changes the attention "
                         "path a long context is allocated through.",
         "accepts": lambda v: v in ("on", "off", "auto"),
@@ -296,21 +346,92 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": -1,
-        "help": "Number of request slots. -1 = auto, and auto resolves to 4 slots with a "
-                "unified KV pool (server.cpp), so the pool is shared rather than copied per "
-                "slot. Set it explicitly, or price KV per slot only when KV is not unified.",
-        "side_effects": "Slots share the KV pool, but checkpoints and idle-slot caches are counted "
-                        "per slot -- more slots means more copies of those (§6.12.6).",
+        "help": "Slot count. Each slot gets its own window, so 2 slots halves what one client gets.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.20, server.cpp:161-166",
+        "side_effects": "THIS SETTING DIVIDES THE CONTEXT, and only when you set it. Naming a "
+                        "slot count turns the unified pool off (kv_unified defaults false), and "
+                        "ctx-size is then shared out: ctx-size 32768 at 2 slots is a 16384-token "
+                        "window per client, with llama.cpp logging 'the full capacity of the model "
+                        "will not be utilized'. It also multiplies the per-slot caches (§6.12.6). "
+                        "Leave it auto, or set kv-unified with it (§6.12.20).",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
+    },
+    # A model's upstream "recommended llama settings" are made of these. They are per-model
+    # facts about how the weights were sampled, which is why a personality must be able to carry
+    # them: a file that was trained to be used at temperature 1.0 is not well served by a router
+    # running the server's default 0.80, and a personality that cannot say so is not a
+    # personality. Eligibility measured on b11396 (§6.12.20): all of these are accepted in a
+    # preset section.
+    "temp": {
+        "kind": "float",
+        "section": "both",
+        "default": 0.80,
+        "help": "0.0 repeats the same answer. 1.0 wanders. 0.7 sits between.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+        "side_effects": "Quality, not capacity. Nothing here limits context.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= float(v) <= 2.0,
+    },
+    "top-k": {
+        "kind": "int",
+        "section": "both",
+        "default": 40,
+        "help": "Pick from the N most likely next words. 40 is the default; 0 means no limit.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    },
+    "top-p": {
+        "kind": "float",
+        "section": "both",
+        "default": 0.95,
+        "help": "Sample from the smallest set of tokens whose cumulative probability reaches p; "
+                "1.0 disables.",        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= float(v) <= 1.0,
+    },
+    "min-p": {
+        "kind": "float",
+        "section": "both",
+        "default": 0.05,
+        "help": "Drop answers below this odds. 0.05 keeps more words than 0.1.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= float(v) <= 1.0,
+    },
+    "presence-penalty": {
+        "kind": "float",
+        "section": "both",
+        "default": 0.00,
+        "help": "Penalty on tokens already present in the context.",        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    },
+    "repeat-penalty": {
+        "kind": "float",
+        "section": "both",
+        "default": 1.00,
+        "help": "Push down words you just used. 1.0 is off.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
+    },
+    "dry-multiplier": {
+        "kind": "float",
+        "section": "both",
+        "default": 0.00,
+        "help": "Penalise phrases you repeat. 1.0 is off. 1.5 stops loops sooner.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.5",
+        "side_effects": "Quality, not capacity.",
+        "accepts": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
     },
     "cache-prompt": {
         "kind": "bool",
         "section": "both",
         "default": True,
-        "help": "Keep finished slot states in the prompt cache so a similar next request is "
-                "faster. This is where the OOM usually lands on this box: upstream reported an "
-                "idle slot saving a 2.6 GiB state and the kernel killing the worker five "
-                "seconds later (llama.cpp discussion #22372), on the same machine class.",
+        "help": "Keep a finished slot's state so a similar request answers faster. Paid in host RAM after the request ends.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.19",
         "side_effects": "The speed it buys is paid for in host RAM held after the request ends.",
         "accepts": lambda v: isinstance(v, bool),
     },
@@ -318,11 +439,9 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": -1,
-        "help": "Token budget for thinking: -1 unrestricted (the default), 0 stops thinking "
-                "immediately. Reasoning tokens are the largest source of prompt growth in a "
-                "long session, and prompt growth is what makes checkpoints and prompt-cache "
-                "saves expensive. It changes what a session costs, not what a model costs to "
-                "load.",
+        "help": "Tokens the model may spend on private reasoning. -1 means no limit. The server rejects 0.",
+        "cite": "docs/PORTAL_PLAN.md sec 4.10.3",
+        "cite": "docs/PORTAL_PLAN.md sec 4.10.3, server.cpp:360-363",
         "side_effects": "Session cost, not load cost: it cannot make a model cheaper to bring up.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
     },
@@ -331,9 +450,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "default",
         "choices": ("default", "minimal", "low", "medium", "high", "xhigh", "max"),
-        "help": "Reasoning level handed to the chat template. This is the knob Qwen3.8-Flash-"
-                "Next actually obeys: its template reads `reasoning_effort` and branches on "
-                "'low' / 'medium' / 'high' / 'xhigh'.",
+        "help": "Reasoning level passed to the chat template. Qwen3.8-Flash-Next obeys this one, not reasoning-budget.",
+        "cite": "docs/PORTAL_PLAN.md sec 4.10.3",
         "side_effects": "Session cost, not load cost -- and only honoured at all if the model's "
                         "template reads the field.",
         "accepts": lambda v: v in ("default", "minimal", "low", "medium", "high", "xhigh", "max"),
@@ -342,8 +460,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "bool",
         "section": "both",
         "default": True,
-        "help": "Use the model's embedded chat template. Tool calling needs it: a model "
-                "whose template declares tools is unusable with jinja off.",
+        "help": "Serve the model's own chat template, with tool calling. Off, tool calls stop working.",
+        "cite": "docs/PORTAL_PLAN.md sec 4.10.5",
         "side_effects": "Off removes the template's role and tool handling: the tokens are still in "
                         "the prompt, nothing interprets them.",
         "accepts": lambda v: isinstance(v, bool) or v in (0, 1),
@@ -352,7 +470,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "kind": "int",
         "section": "both",
         "default": 0,
-        "help": "Tokens kept from the initial prompt. -1 keeps all.",
+        "help": "Keep the last N tokens of a conversation. 0 ends a session when it runs out of room.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.19",
         "side_effects": "Pinned tokens are charged against the slot's context for the whole "
                         "session, not for the turns that used them.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,
@@ -362,12 +481,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "auto",
         "choices": ("on", "off", "auto"),
-        "help": "Read large tensors from disk on demand instead of keeping them resident. "
-                "`auto` (the server default) applies it only above 4 GiB; `on` applies it to "
-                "every such tensor and requires mmap. On this box it is the key most likely to "
-                "matter for the multi-hundred-GiB models: keeping weights resident is what "
-                "competes with the GTT aperture. Not emitted by default, because a router started "
-                "by hand can already set it on the command line, and CLI beats presets.ini.",
+        "help": "Read big tensors from disk when needed, not from memory. auto applies above 4 GiB. on applies always.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.18",
         "side_effects": "Measured on this box: 80.5 GiB of aperture with lazy-mode unset against "
                         "54.5 GiB with it on, same model and build -- weights stay in reclaimable "
                         "page cache instead of pinned buffers. A kernel upgrade landed at the same "
@@ -874,10 +989,8 @@ def _ini_value(value: Any) -> str:
     would produce a file the router might reject at load time — which is the failure shape the
     whole presets pipeline exists to prevent.
     """
-    if value is True:
-        return "on"
-    if value is False:
-        return "off"
+    if isinstance(value, bool):
+        return "on" if value else "off"
     return str(value)
 
 
@@ -1637,11 +1750,13 @@ def validate(personality: dict, budget_bytes: int | None = None) -> list[dict]:
                        f"is unbounded: {', '.join(b.unpriced[:4])}",
         })
     if b.fits_ram is FITS_NO:
+        worst = b.worst_case_bytes or 0
+        caches = b.host_cache_bytes or 0
         findings.append({
             "severity": "bad", "kind": "personality",
             "message": (
-                f"worst case {_gib(b.worst_case_bytes)} plus {_gib(b.host_cache_bytes)} of "
-                f"host-side caches = {_gib(b.worst_case_bytes + b.host_cache_bytes)} exceeds the "
+                f"worst case {_gib(worst)} plus {_gib(caches)} of "
+                f"host-side caches = {_gib(worst + caches)} exceeds the "
                 f"{_gib(b.ram_total_bytes)} of RAM this machine has: the aperture is not the only "
                 f"ceiling, and llama.cpp's prompt cache and context checkpoints live in the same "
                 f"physical memory the aperture is carved from"
