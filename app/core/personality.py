@@ -224,12 +224,16 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "auto",
         "choices": ("on", "off", "auto"),
-        "help": "Shares one cache pool across slots. On: a client can use the whole pool. Off: it gets one slice.",
-        "cite": "docs/PORTAL_PLAN.md sec 6.12.15, llama-cpp.cpp:353-361",
+        "help": "Shares one cache pool across slots. On: a client can use the whole pool. Off: "
+                "it gets one slice. Auto also turns it on — measured, not server-decided. To let "
+                "the server decide, remove this key from the preset.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.21, llama-cpp.cpp:353-361",
         "side_effects": "Decides whether ctx-size is a window each slot can reach or a total to "
                         "be divided: unified, window = pool; sliced, window = pool / slots. The "
                         "measured difference on the same file and the same ctx-size is 32768 "
-                        "versus 16384 (§6.12.20).",
+                        "versus 16384 (§6.12.20). In a preset the server rewrites the value: on, "
+                        "true and auto all reach the worker as the bare --kv-unified; off reaches "
+                        "it as --no-kv-unified (§6.12.21).",
         "accepts": lambda v: v in ("on", "off", "auto"),
     },
     "kv-unified-per-slot": {

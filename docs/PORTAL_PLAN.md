@@ -3066,7 +3066,7 @@ llama-server --model codegemma-2b-Q5_K_M.gguf --offline --host 127.0.0.1 --port 
 Accepted means the log printed `llama_server: listening on`. Refused means
 `error: invalid argument: --<key>`. A control key, `--definitely-not-a-flag`, produced the same
 refusal line, so "refused" means "unknown", not "my value was wrong". Scripts:
-`/tmp/registry_flag_audit.py` (all 30 keys, 12 at a time), `/tmp/probe2.py`, `/tmp/probe3.py`.
+`tools/registry_flag_audit.py` (all 30 keys, committed 2026-10-05: `--list`, `--keys a,b`, `--json`, private temp work dir, kernel-assigned ports), plus `/tmp/probe2.py` and `/tmp/probe3.py` for the flag-shape checks.
 
 **What it found.**
 
@@ -3075,10 +3075,22 @@ refusal line, so "refused" means "unknown", not "my value was wrong". Scripts:
    server flags, so there is nothing to accept them.
 2. **`--kv-unified` takes no value on this build.** `--kv-unified true`, `false`, `1`, `0`, `on`,
    and `auto` were all refused. `--kv-unified` bare and `--no-kv-unified` were both accepted. The
-   registry lists `kv-unified` as a choice of `on|off|auto`, which is the shape the operator can
-   type. Whether a `kv-unified = on` line in `presets.ini` survives is a **preset-layer**
-   question, not an argv question — the preset path is `common_preset`, not the argument parser —
-   and it is not measured yet. Do not write that line until it is.
+   registry lists `kv-unified` as a choice of `on|off|auto`, so the open question was the preset
+   layer: does a `kv-unified = <value>` line in `presets.ini` survive `common_preset`, and what
+   argv does it become? **Measured 2026-10-05** with `tools/spec_preset_probe.py` against
+   `codegemma-2b-GGUF:Q5_K_M` (report: `/tmp/spec_preset_report.json`):
+
+   | `presets.ini` line | argv the worker received | model loaded |
+   | --- | --- | --- |
+   | `kv-unified = on` | `--kv-unified` | yes, 59 chars at 98.5 tok/s |
+   | `kv-unified = true` | `--kv-unified` | yes, 98.2 tok/s |
+   | `kv-unified = off` | `--no-kv-unified` | yes, 98.3 tok/s |
+   | `kv-unified = auto` | `--kv-unified` | yes, 98.3 tok/s |
+
+   The preset parser rewrites the value into the flag form the server accepts, so the registry's
+   `on|off|auto` choice is safe to write. Two facts follow, and the registry help now states both.
+   **`auto` is not "unset" — it turns unification on**, and `auto` is the registry default, so
+   naming this key at all unifies the pool. To leave the decision to the server, remove the key.
 3. **22 flags documented in the newer source at `~/ai/llama.cpp` do not exist in b11396:**
    `mlock`, `no-mmap`, `cache-type-q`, `keep-echo`, `top-a`, `chat-escape`, `chat-regex`,
    `top-p-slg`, `ctx-read`, `cache-ram-buffers`, `prefill-verify`, `prefill-min-tokens`,
@@ -3096,6 +3108,67 @@ putting `mlock` in the registry: both tests failed, naming it.
 `llama-server --help` prints no server-params section on this build, so a help-text check gives
 false negatives for server-only keys. And the source tree is newer than the deployed build, so a
 source check accepts flags the box cannot load. Start the server and read its log.
+
+#### 6.12.22 The window sweep: trained context is the cap (2026-10-05, b11396)
+
+**Why this run.** `modelindex.context_window()` predicts the tokens a client gets. It was fitted
+on one model (Qwopus, trained 262144). Predicting from one measurement is a guess, so the operator
+ran eight setting combinations on a model with a small trained context and read the window back
+from the server's own `/props`.
+
+**The sweep.** `lmstudio-community/codegemma-2b-GGUF:Q5_K_M` — 1.71 GiB, trained 8192. Each server
+started `--offline` on its own port, `sleep 14`, then `/props` was read:
+
+| settings typed | slots reported | window reported |
+| --- | --- | --- |
+| (nothing) | 4 | 8192 |
+| `--parallel 2 -c 32768` | 2 | 8192 |
+| `--parallel 2 -c 32768 --kv-unified` | 2 | 8192 |
+| `--parallel 2` | 2 | 8192 |
+| `--kv-unified-per-slot 8192` | 4 | 8192 |
+| `--parallel 2 --kv-unified-per-slot 8192` | 2 | 8192 |
+| `-c 8192` | 4 | 8192 |
+| `--parallel 4 -c 131072` | 4 | 8192 |
+
+**What it proves.** A slot gets `min(n_ctx_seq, kv-unified-per-slot, n_ctx_train)`
+(`server-context.cpp:4246-4254`). Trained 8192 sits below every pool in the table, so every row
+reads 8192 — pools of 32768 and 131072 included. **A bigger pool buys slots, not tokens per
+client.** Rows 2, 3, 6 and 8 are the discriminating ones: a predictor without the trained-context
+cap reports 16384 for row 2 and 32768 for row 8, and both are wrong on the measurement.
+
+**For the recommended settings.** `--parallel 2 -c 32768` on a model trained for 8192 gives two
+slots of 8192 each, priced at two slots. It does not give either client a 32768-token window. Ask
+the same question of a big-trained model and the answer changes: Qwopus (trained 262144) served
+`slot_ctx=16384` at `--ctx-size 16384`, and `slot_ctx=32768` at `--ctx-size 32768 --parallel 2`.
+
+**The big-trained rows, from `tools/slot_bench.py` (router stopped, 2026-10-05):**
+
+| run | served | decode tok/s | notes |
+| --- | --- | --- | --- |
+| Qwopus Q8_0, ctx 16384, 1 slot | 16384 | 41.7 | prefill 1605–1928 tok/s, tool call OK |
+| Qwopus MTP Q8_0, ctx 16384, `--spec mtp` | 16384 | 94.1–97.1 | draft 47–48 of 16 tokens, accept 0.98–1.00 |
+| Qwopus Q8_0, ctx 32768, 2 slots | 32768 | 40.1–41.7 | 4/4 concurrent `/infill`: 0.78, 1.77, 2.51, 1.93 s |
+| codegemma Q5_K_M, ctx 4096 (`--role fim`) | 4096 | 102.3–104.5 | `pp8192` skipped: slot ctx 4096 is below 8192 |
+| embeddinggemma-300M Q8_0, ctx 2048 | 2048 | — | embeddings dim 768 in 45.9 ms; `/rerank` → 501 |
+| Qwen3-Reranker-0.6B Q8_0, ctx 16384 | 16384 | — | embeddings dim 1024 in 22.4 ms; `/rerank` 2 results in 36.9 ms |
+
+**Speculative decoding, measured.** The MTP file took decode from 41.7 to 94–97 tok/s — 2.3x — with
+acceptance 0.98 to 1.00 and 47–48 draft tokens per 16-token step. It costs nothing extra in
+aperture (peak 6.28 GiB against 6.69 GiB for the plain file) because the head is the target's own.
+One catch the index now shows: **the MTP file has no vision tower.** The portal reports
+`vision=True` for `Qwopus3.5-4B-Coder-GGUF:Q8_0` and `vision=False` for the MTP file of the same
+weights. A vision job must load the plain file.
+
+**Capability rule, checked live.** The rule that `pooling_type 4` means `/rerank` works and
+`pooling_type 1` means 501 was measured from the server's answers, not inferred: embeddinggemma
+returned 501, Qwen3-Reranker returned 2 ranked results in 36.9 ms.
+
+**The guard.** `tests/test_context_window.py` pins all eight sweep rows plus the divide notes.
+Verified by breaking the code: removing the trained-context cap failed 1 test; treating named
+slots as unified failed 3. Both mutations restored, suite clean.
+
+**Reports kept:** `/home/cortana/ai/logs/slot-bench-20261005T1511*.json` and `.logs`,
+`/tmp/spec_preset_report.json`.
 
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 

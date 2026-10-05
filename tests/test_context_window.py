@@ -178,3 +178,71 @@ def test_junk_from_a_header_becomes_unpriced_not_a_crash():
     r = mi.context_window({"ctx_trained": "wide", "est_weights": 1},
                           {"parallel": "two", "ctx-size": "lots"}, budget_bytes=10 * GIB)
     assert r["window"] is None and r["by"] == "unpriced"
+
+
+# ------------------------------------------------------------------- the 2026-10-05 sweep
+#
+# The operator ran eight setting combinations against lmstudio-community/
+# codegemma-2b-GGUF:Q5_K_M (1.71 GiB, trained 8192) on b11396, and read the window back
+# from the server's own /props. Every combination reported 8192 — including pools of 32768
+# and 131072. The trained context is the cap: the server hands a slot
+# min(n_ctx_seq, kv-unified-per-slot, n_ctx_train), so a bigger pool buys slots, not tokens.
+# The predictor must reproduce all eight rows; rows 2, 3, 6 and 8 are the ones a predictor
+# without the trained-context cap gets wrong.
+# docs/PORTAL_PLAN.md sec 6.12.22 carries the run.
+
+CG_INPUTS = {"block_count": 18, "attention_count": 8, "attention_kv_count": 1,
+             "embedding_length": 2048}
+CG_TRAINED = 8192
+CG_WEIGHTS = 1_835_008_000                       # 1.71 GiB, measured from the file
+
+
+def cg_row():
+    kv = mi.kv_bytes_at(CG_INPUTS, CG_TRAINED)
+    return {"id": "lmstudio-community/codegemma-2b-GGUF:Q5_K_M", "ctx_trained": CG_TRAINED,
+            "est_ctx": CG_TRAINED, "est_weights": CG_WEIGHTS, "est_kv": kv,
+            "layers": CG_INPUTS["block_count"], "kv_heads": CG_INPUTS["attention_kv_count"],
+            "attention_heads": CG_INPUTS["attention_count"],
+            "embedding_length": CG_INPUTS["embedding_length"], "est_inputs": dict(CG_INPUTS)}
+
+
+# Each row is what the operator typed on the command line, plus the slots and window the
+# server reported. `parallel` appears only where it was typed: a row that reports 4 slots
+# with no `--parallel` got them from auto, and auto is what keeps KV unified.
+
+MEASURED_2026_10_05 = [
+    ({}, 4, 8192),
+    ({"parallel": 2, "ctx-size": 32768}, 2, 8192),
+    ({"parallel": 2, "ctx-size": 32768, "kv-unified": "on"}, 2, 8192),
+    ({"parallel": 2}, 2, 8192),
+    ({"kv-unified-per-slot": 8192}, 4, 8192),
+    ({"parallel": 2, "kv-unified-per-slot": 8192}, 2, 8192),
+    ({"ctx-size": 8192}, 4, 8192),
+    ({"parallel": 4, "ctx-size": 131072}, 4, 8192),
+]
+
+
+def test_the_predictor_reproduces_every_row_of_the_sweep():
+    """Every row capped at 8192, in pools from 8192 to 131072.
+
+    Drop the trained-context cap and row 2 predicts 16384 and row 8 predicts 32768.
+    Drop the auto/unified rule and the two rows that typed no `--parallel` predict 2048.
+    Both are numbers the server reported, not reasoning.
+    """
+    for settings, slots, window in MEASURED_2026_10_05:
+        pred = mi.context_window(cg_row(), dict(settings), budget_bytes=100 * GIB)
+        assert pred["slots"] == slots, (settings, pred["slots"], pred["slots_named"])
+        assert pred["window"] == window, (settings, pred["window"], pred["by"])
+        assert pred["reduced"] is False, (settings, pred["window"], pred["trained"])
+
+
+def test_the_sweep_rows_that_divide_say_who_divided_them():
+    """Rows 2, 6 and 8 name the settings that split the pool.
+
+    The window number alone cannot tell an operator why it halved. The note does, and it
+    only exists when slots are named with ctx-size written.
+    """
+    for settings in ({"parallel": 2, "ctx-size": 32768}, {"parallel": 4, "ctx-size": 131072}):
+        pred = mi.context_window(cg_row(), settings, budget_bytes=100 * GIB)
+        hits = [n for n in pred["notes"] if "naming slots turns the unified pool off" in n]
+        assert len(hits) == 1, (settings, pred["notes"])
