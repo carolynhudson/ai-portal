@@ -18,10 +18,18 @@ in its own process group, and kills them. Point AI_PORTAL_HOME at a throwaway di
 to keep the portal's own state out of it.
 
 Verdicts:
-    accepts   the server started with the flag
-    refuses   the server named the flag invalid and exited
-    exit(N)   the server died for another reason (usually memory) — read the log
-    timeout   the server never reported "listening" — read the log
+    accepts     the server started with the flag
+    refuses     the server named the flag invalid and exited
+    exit(N)     the server died for another reason (usually memory) — read the log
+    timeout     the server never reported "listening" — read the log
+    preset-only the key has no command-line form at all: a preset-only key, or a value the
+                preset parser maps to a flag (`--kv-unified auto` is refused on the CLI and
+                written as the bare flag from a preset). Measured by
+                tools/spec_preset_probe.py, not here.
+
+The probe model is the smallest *generative* cached file. An embedder is usually the
+smallest file on a box, and loading one aborts in `llama_context::output_reserve` on
+b11429 — every key would come back `exit(-6)`, which is a statement about the model.
 """
 import argparse
 import contextlib
@@ -37,7 +45,7 @@ import tempfile
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from app.core import paths                                   # noqa: E402
+from app.core import modelindex, modelmeta, paths             # noqa: E402
 from app.core import personality as P                      # noqa: E402
 
 TIMEOUT_SECONDS = 45
@@ -54,7 +62,9 @@ def registry_rows():
     for key in sorted(P.SETTINGS):
         meta = P.SETTINGS[key]
         yield {"key": key, "kind": meta.get("kind"), "section": meta.get("section"),
-               "default": meta.get("default"), "choices": list(meta.get("choices") or ())}
+               "default": meta.get("default"), "choices": list(meta.get("choices") or ()),
+               "preset_only": bool(meta.get("preset_only")),
+               "preset_mapped": bool(meta.get("preset_mapped"))}
 
 
 def argv_for(key: str, meta: dict, value=None) -> list[str]:
@@ -79,14 +89,37 @@ def argv_for(key: str, meta: dict, value=None) -> list[str]:
 
 # ---------------------------------------------------------------- running one probe
 def smallest_cached_model(hub_cache: pathlib.Path) -> pathlib.Path | None:
-    """The cheapest GGUF the box can already see — the audit needs a model, not a good one."""
+    """The cheapest *generative* GGUF the box can already see.
+
+    Two rules, both measured:
+      - sidecars (mmproj) and stubs are skipped, as before;
+      - pooled models are skipped. An embedder is the smallest file in most caches, and on
+        b11429 loading one aborts in `llama_context::output_reserve` —
+        `GGML_ASSERT(n_outputs_max <= cparams.n_outputs_max)` — because its output count is
+        the embedding width. The audit would report `exit(-6)` for every key, which says
+        nothing about any flag. Use the portal's own index column (pooling_type), not a
+        second naming rule.
+    """
     best = None
     for p in hub_cache.rglob("*.gguf"):
         try:
             size = p.stat().st_size
         except OSError:
             continue
-        if "mmproj" in p.name.lower() or size < 10 * 1024 * 1024:
+        # The index's own rules, not a second copy of them: sidecars (mmproj, mtp-,
+        # draft-, ...) and shards are not models. Loading an MTP draft as a model
+        # segfaults (rc=-11, measured on b11429), and a probe that dies says nothing
+        # about the flag it was started with.
+        # NOT_A_MODEL_MARKERS is a substring test and covers every prefix _is_aux
+        # matches, so one rule does the naming; _shard_of covers multi-part files.
+        if modelindex._shard_of(p.name):
+            continue
+        if any(m in p.name.lower() for m in modelindex.NOT_A_MODEL_MARKERS):
+            continue
+        if size < 10 * 1024 * 1024:
+            continue
+        meta = modelmeta.sniff_gguf(p)
+        if (meta or {}).get("pooling_type"):
             continue
         if best is None or size < best[0]:
             best = (size, p)
@@ -117,6 +150,15 @@ def free_port() -> int:
 
 def run_one(binary: str, model: pathlib.Path, row: dict, work: pathlib.Path) -> dict:
     """Start the server with this key's flag and report what the build said."""
+    # A preset-only key never reaches a command line, and a value-mapped key is mapped by
+    # the preset parser: `--kv-unified auto` is refused on the CLI while the preset writes
+    # the bare flag. Probing either on the command line measures the probe, not the build.
+    if row.get("preset_only") or row.get("preset_mapped"):
+        return {"key": row["key"], "kind": row["kind"], "section": row["section"],
+                "argv": [], "verdict": "preset-only",
+                "why": "no command-line form; probe it through a preset "
+                       "(tools/spec_preset_probe.py)", "log": ""}
+
     argv = argv_for(row["key"], row)
     port = free_port()
     log = work / f"{row['key']}.log"
@@ -220,13 +262,22 @@ def main() -> int:
                   f"{'  <- ' + rec['why'] if rec['why'] else ''}")
 
     results.sort(key=lambda r: r["key"])
-    refuses = [r for r in results if r["verdict"] != "accepts"]
+    # A declined key is not a finding: it has no command-line form to accept. Counting it
+    # as a refusal makes a clean audit exit 1, and a nightly run then reports four defects
+    # that were measured away months ago.
+    refuses = [r for r in results if r["verdict"] == "refuses"]
+    declined = [r for r in results if r["verdict"] == "preset-only"]
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(
             {"build": binary, "model": str(model), "mem_available_gib": mem_free,
              "keys": len(results), "results": results}, indent=1))
         print(f"\nreport: {args.json}")
-    print(f"\naccepted {len(results) - len(refuses)} of {len(results)}")
+    print(f"\naccepted {len(results) - len(refuses) - len(declined)} of {len(results)}"
+          f" ({len(declined)} declined: no command-line form)")
+    if declined:
+        print("keys with no command-line form (measured by tools/spec_preset_probe.py):")
+        for r in declined:
+            print(f"  {r['key']:<26} {r['why'][:80]}")
     if refuses:
         print("keys the build did not accept:")
         for r in refuses:

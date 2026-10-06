@@ -224,6 +224,10 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": "auto",
         "choices": ("on", "off", "auto"),
+        # The preset parser maps the value to a flag; the flag itself takes no value.
+        # Measured on the CLI: `--kv-unified auto` is refused, `--kv-unified` is accepted.
+        # So this key is probed through a preset, never on a command line.
+        "preset_mapped": True,
         "help": "Shares one cache pool across slots. On: a client can use the whole pool. Off: "
                 "it gets one slice. Auto also turns it on — measured, not server-decided. To let "
                 "the server decide, remove this key from the preset.",

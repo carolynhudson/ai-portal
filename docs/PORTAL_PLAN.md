@@ -3239,6 +3239,40 @@ a heading that said "Live metrics". They now print their sample time and the pol
 own time. `tests/test_ui_contract.py` fails if the sample time disappears; the mutation check
 produced `assert 0 >= 2`. The literal `location.href = '/login'` is now
 `gotoInternal('/login')`, which rejects scheme, authority, and `//` prefixes.
+
+#### 6.12.25 Re-auditing on b11429, and the three things the audit itself got wrong
+
+The operator's `~/ai/bin/llama-server` moved from b11396 to b11429, so the registry's
+eligibility claims went from measured to two-builds-old. Re-running `tools/registry_flag_audit.py`
+produced 3 refusals and a wall of `exit(-6)`/`exit(-11)` — all of them artifacts. Fixed, then
+re-measured: **26 accepted, 4 declined, 0 refused, exit 0.**
+
+**Artifact 1 — preset-only keys probed on a command line.** `stop-timeout`, `load-on-startup`,
+`dedup-cache-models` are read from presets by the server's preset parser; `--stop-timeout` is not
+a CLI flag and never was. `kv-unified` is value-mapped the same way: the CLI refuses
+`--kv-unified auto` because the flag takes no value, while a preset writes the bare
+`--kv-unified`. The registry now marks it `preset_mapped`, and the audit declines these keys
+with the name of the tool that can measure them.
+
+**Artifact 2 — the probe model.** The picker took the smallest cached file. The smallest is an
+embedder, and b11429 aborts loading one:
+`GGML_ASSERT(n_outputs_max <= cparams.n_outputs_max)` in `llama_context::output_reserve`
+(`src/llama-context.cpp:2275`) — its output count is the embedding width. That is the `exit(-6)`.
+The next pick was an MTP draft, which segfaults as a model (`rc=-11`). A probe that dies says
+nothing about the flag it carried. The picker now reuses the portal's own rules —
+`modelindex.NOT_A_MODEL_MARKERS` (substring, covers every `_is_aux` prefix) and `_shard_of` —
+plus `pooling_type` from `modelmeta.sniff_gguf`. It lands on `codegemma-2b-Q5_K_M`.
+
+**Artifact 3 — a clean audit exited 1.** "Declined" counted as "did not accept" made four keys
+print under *keys the build did not accept*. A nightly run on that exit code alerts on four
+working keys forever. Declined is now its own verdict, listed separately, exit 0.
+
+**Measured 2026-10-05 on b11429, 30 keys, probe model `codegemma-2b-Q5_K_M` (1.71 GiB),
+`-ngl 0 --ctx-size 1024 --parallel 1`, 4 probes in flight:** accepted 26, declined 4
+(`kv-unified`, `stop-timeout`, `load-on-startup`, `dedup-cache-models`), refused 0.
+
+**The audit rule this pins.** When a build moves, re-run the audit; read a `declined` line as
+"not measurable this way", never as a defect.
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

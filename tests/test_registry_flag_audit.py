@@ -94,3 +94,109 @@ def test_a_missing_binary_says_which_path_it_tried(tmp_path):
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 2, (r.returncode, r.stdout[-200:])
     assert "no llama-server at" in r.stdout, r.stdout[-200:]
+
+
+# ------------------------------------------- what a CLI probe cannot measure (b11429 run)
+#
+# A CLI audit answers one question: does this build accept this flag. Two things in the
+# b11429 run made answers that were not about the flag: a key with no command-line form at
+# all, and a probe model the server cannot build a context for.
+
+def test_a_key_with_no_command_line_form_is_not_probed_on_the_command_line(tmp_path, monkeypatch):
+    """`stop-timeout` is read from a preset by the router; `--kv-unified auto` is refused on
+    the CLI and accepted from a preset, because the preset parser maps the value to a flag.
+
+    Both are real registry keys. Probing either on a command line produces a refusal that
+    says nothing about the portal's setting, and a reader who trusts the verdict turns off a
+    working key. The tool must decline, and name the tool that can measure it.
+    """
+    tool = _tool()
+
+    def no_spawn(*a, **k):  # any spawn here is the bug
+        raise AssertionError("a preset-only key was spawned on a command line")
+
+    monkeypatch.setattr(tool.subprocess, "Popen", no_spawn)
+    rows = {r["key"]: r for r in tool.registry_rows()}
+    for key in ("stop-timeout", "load-on-startup", "kv-unified"):
+        rec = tool.run_one("/nonexistent/llama-server", pathlib.Path("x.gguf"),
+                           rows[key], tmp_path)
+        assert rec["verdict"] == "preset-only", (key, rec)
+        assert rec["argv"] == [], (key, rec["argv"])
+        assert "spec_preset_probe" in rec["why"], (key, rec["why"])
+
+
+def test_the_probe_model_skips_a_pooled_file(tmp_path):
+    """The smallest cached file is the wrong probe model, and there are two ways it is wrong.
+
+    An embedder aborts on b11429 — `GGML_ASSERT(n_outputs_max <= cparams.n_outputs_max)` in
+    `llama_context::output_reserve` — because its output count is the embedding width. An MTP
+    draft segfaults (rc=-11) when loaded as a model. Both made the audit report every key as
+    dead, which is a wall of failures and not one measurement. The picker therefore reuses
+    the portal's own rules: modelindex._is_aux / _shard_of / NOT_A_MODEL_MARKERS for the
+    naming, modelmeta.sniff_gguf's pooling_type for the header. No second rulebook.
+    """
+    tool = _tool()
+    sys.path.insert(0, str(ROOT / "tests"))
+    from gguf_fixture import _write_fake_gguf
+
+    hub = tmp_path / "hub"
+    pooled = hub / "models--orga--Embed-GGUF" / "snapshots" / ("a" * 40)
+    side = hub / "models--orga--Big-GGUF" / "snapshots" / ("c" * 40)
+    gen = hub / "models--orga--Gen-GGUF" / "snapshots" / ("b" * 40)
+    pooled.mkdir(parents=True)
+    side.mkdir(parents=True)
+    gen.mkdir(parents=True)
+    # The fixture writes `general.architecture` itself and prefixes the rest with
+    # `testarch.`, so keys here are bare — `pooling_type` becomes `testarch.pooling_type`.
+    # All three decoys are smaller than the file that must win, so only the rules decide.
+    _write_fake_gguf(pooled / "embed.gguf", {"name": "Embed", "pooling_type": 1},
+                     pad=12 * 1024 * 1024)
+    _write_fake_gguf(side / "mtp-Qwen-Draft.gguf", {"name": "Draft", "context_length": 512},
+                     pad=14 * 1024 * 1024)
+    _write_fake_gguf(gen / "gen.gguf", {"name": "Gen", "context_length": 512},
+                     pad=20 * 1024 * 1024)
+
+    picked = tool.smallest_cached_model(hub)
+    assert picked is not None and picked.name == "gen.gguf", (
+        picked.name if picked else None,
+        "the picker took a decoy: pooled, sidecar, or shard beats the only real model")
+
+
+def test_a_declined_key_does_not_make_the_audit_fail(tmp_path, monkeypatch, capsys):
+    """A key with no command-line form is not a defect, and must not read like one.
+
+    Four registry keys are read from presets, not argv. On b11429 the audit reported
+    "accepted 26 of 30" with four entries under "keys the build did not accept", exit 1 —
+    the shape of a run that found problems, when it found none. A nightly check built on
+    this tool would alert on the same four keys every night until someone turned them off,
+    and the keys work.
+    """
+    tool = _tool()
+    # main() wipes its work directory, so the probe file cannot live in it.
+    probe_model = tmp_path / "probe" / "m.gguf"
+    probe_model.parent.mkdir(parents=True)
+    probe_model.write_bytes(b"GGUF" + b"\0" * 4096)  # main() stats the probe file
+    monkeypatch.setattr(tool.sys, "argv", ["prog", "--work", str(tmp_path / "work")])
+    monkeypatch.setattr(tool, "registry_rows", lambda: [
+        {"key": "temp", "kind": "float", "section": "both", "default": 0.8, "choices": [],
+         "preset_only": False, "preset_mapped": False},
+        {"key": "stop-timeout", "kind": "int", "section": "both", "default": 10,
+         "choices": [], "preset_only": True, "preset_mapped": False},
+    ])
+    monkeypatch.setattr(tool, "mem_available", lambda: 40 * tool.GIB)
+    monkeypatch.setattr(tool, "smallest_cached_model", lambda hub: probe_model)
+    monkeypatch.setattr(pathlib.Path, "is_file", lambda self: True)
+    # the one CLI-probed key "accepts": the server reaches "listening"
+    monkeypatch.setattr(tool, "run_one",
+                        lambda b, m, row, work: {"key": row["key"], "kind": row["kind"],
+                                                 "section": row["section"], "argv": [],
+                                                 "verdict": "preset-only"
+                                                 if (row.get("preset_only")
+                                                     or row.get("preset_mapped"))
+                                                 else "accepts",
+                                                 "why": "", "log": ""})
+    rc = tool.main()
+    out = capsys.readouterr().out
+    assert rc == 0, (rc, out)
+    assert "did not accept" not in out, out
+    assert "stop-timeout" in out and "no command-line form" in out, out
