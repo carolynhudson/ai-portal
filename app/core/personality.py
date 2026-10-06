@@ -1816,6 +1816,7 @@ def describe(personality: dict, budget_bytes: int | None = None) -> dict:
         "built_in": name.lower() in RESERVED_NAMES,
         "configs": [],
         "findings": [],
+        "context": [],
         "generated_at": time.time(),
     }
     # One try for the whole evaluation: models_max parsing, model resolution and budget
@@ -1831,8 +1832,83 @@ def describe(personality: dict, budget_bytes: int | None = None) -> dict:
         out["configs"] = [{"name": t["config"], "model": t["model"]} for t in targets
                           if t["config"]]
         out["findings"] = validate(personality, budget_bytes)
+        # Context per model, from the same predictor the context-window tests pin. Rendered
+        # as "what a client gets here", so the number an operator is buying is visible next
+        # to the number the box pays for it (sec 6.12.22).
+        out["context"] = context_for(personality, targets=targets, budget_bytes=budget_bytes)
     except PersonalityError as exc:
         out["models"] = []
         out["error"] = str(exc)
         out["findings"] = [{"severity": "bad", "kind": "personality", "message": str(exc)}]
+    return out
+
+
+# --------------------------------------------------- what a personality costs a client
+CTX_KEYS = ("parallel", "ctx-size", "kv-unified", "kv-unified-per-slot")
+
+
+def context_for(personality: dict, targets: list[dict] | None = None,
+                rows: list[dict] | None = None,
+                budget_bytes: int | None = None) -> list[dict]:
+    """Tokens each model hands a client, who decided it, and what that cache costs.
+
+    A personality names models and settings. Until now the page showed the *worst-case
+    resident cost* and nothing about the context a client gets, so an operator choosing
+    between two personalities could not see that one hands 16384 tokens per request and
+    the other 2048 -- the number that decides whether a coding session fits at all
+    (docs/PORTAL_PLAN.md sec 6.12.22 measures how a window is set).
+
+    Uses the portal's existing measuring code, not a second formula:
+    `modelindex.context_window()` for the window (the same predictor `tests/
+    test_context_window.py` pins to measured server output) and `_conservative_peak()`
+    for the cost, which is the sanctioned fallback when the index cannot reprice a
+    context. Both directions of that fallback err toward over-estimating, which is the
+    only safe direction for a capacity number shown next to an Apply button.
+
+    A model that cannot be priced says so. `window: None` with a reason beats an
+    optimistic token count.
+    """
+    targets = targets if targets is not None else resolve_targets(personality)
+    if rows is None:
+        rows = modelindex.rows()
+    by_key = {}
+    for r in rows:
+        by_key.setdefault(modelindex.router_key(r.get("id") or ""), r)
+    layered_all = _layered_settings(personality, targets)
+    pool = budget_bytes if budget_bytes is not None else modelindex._pool_bytes()
+
+    out: list[dict] = []
+    for target in targets:
+        model = target["model"]
+        row = by_key.get(modelindex.router_key(model))
+        per = layered_all.get(model) or {}
+        settings = {k: _effective(personality, model, k, None, layered=per) for k in CTX_KEYS}
+        settings = {k: v for k, v in settings.items() if v is not None and v != ""}
+        entry: dict = {"model": model, "window": None, "by": "", "cost": None,
+                       "priced": False, "notes": [], "settings": settings}
+        if not row:
+            entry["by"] = "not in the model index, so nothing is known about this model"
+            entry["notes"].append("rescan the index (Models page) so the header can be read")
+            out.append(entry)
+            continue
+        pred = modelindex.context_window(row, settings, budget_bytes=pool,
+                                       price=_conservative_peak)
+        window = modelmeta._as_int(pred.get("window")) or 0
+        entry["window"] = window or None
+        entry["by"] = pred.get("by") or ""
+        entry["notes"] = list(pred.get("notes") or [])
+        entry["kv_unified"] = pred.get("kv_unified")
+        entry["slots"] = pred.get("slots")
+        entry["pool"] = modelmeta._as_int(pred.get("pool"))
+        if window > 0:
+            cost = _conservative_peak(row, window)
+            if cost is None:
+                cost = modelindex.peak_bytes(row, window)
+            if cost:
+                entry["cost"] = cost
+                entry["priced"] = True
+        if not entry["priced"]:
+            entry["notes"].append("cache cost is not predictable for this file "
+                                  "(no weights or cache figure in the index)")
+        out.append(entry)
     return out

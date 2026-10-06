@@ -3170,6 +3170,42 @@ slots as unified failed 3. Both mutations restored, suite clean.
 **Reports kept:** `/home/cortana/ai/logs/slot-bench-20261005T1511*.json` and `.logs`,
 `/tmp/spec_preset_report.json`.
 
+
+#### 6.12.23 The personality page states tokens per client, and links its own evidence (2026-10-05)
+
+**What changed.** A personality card reported what the box pays (worst-case resident GiB)
+and never said what a client gets. Two personalities, one handing 16384 tokens per request
+and one handing 8192, looked identical. `personality.context_for()` now returns the window,
+who decided it, and the loaded cost per model. The card renders them as a table.
+
+**No new ruler.** The window comes from `modelindex.context_window()`, the same predictor
+`tests/test_context_window.py` pins to server output. The cost comes from
+`personality._conservative_peak()`, the existing over-estimating fallback.
+
+**The gap the feature exposed.** `peak_bytes()` prices only the context the index stored. A
+pinned `ctx-size` asks for a different context, so the predictor answered `unpriced`.
+`context_window()` now takes a `price` callable; `context_for()` passes
+`_conservative_peak`. Measured with the fixture: `ctx-size 32768` over 2 named slots is a
+16384-token window, not 32768.
+
+**Who decides, named.** Naming slots divides the pool. Naming `ctx-size` locks fit out.
+Leaving both unset gives the trained context, capped. The row says which of the three it is,
+because the number alone cannot explain itself (§6.12.20).
+
+**Citations became links.** `kb.ref_of()` reduces a citation string to a section id, and the
+settings table prints `why (§6.12.20)` for the 27 keys that cite a section. Keys citing
+source lines only render no link. `tests/test_personality_routes.py` fails if any link opens
+nothing. Mutation check: matching the first number in a citation instead of `sec N` produced
+`citation links that open nothing: ['43']`.
+
+**Unpriced is an answer.** A model with no header geometry reports `window: None` and says
+the index cannot price it. It is never shown with a guessed token count.
+
+**Suite isolation, measured.** Running an ad-hoc subset in a custom order produced 6
+help-page failures (401 and missing sections). Each module passes alone; the canonical
+`tests/` run is 758 passed, 3 skipped, and `scripts/check-ui.sh` exits 0. Order artifacts are
+diagnosed by running the module alone, then the full suite, before treating a failure as a
+feature defect.
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

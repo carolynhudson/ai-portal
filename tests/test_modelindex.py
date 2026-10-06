@@ -24,9 +24,12 @@ import json
 import os
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 # Throwaway home before the app is imported (same pattern as test_smoke.py).
 os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-mi-"))
@@ -1576,11 +1579,13 @@ def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
     _hub_repo(hub, "org/Half-GGUF", _REV_B, {rel: _KV for rel in _HALF_SHARDS})
 
     env = {**os.environ, "HF_HUB_CACHE": str(hub)}
+    out = None
     try:
         out = subprocess.run([binary, "--cache-list"], env=env, capture_output=True,
                              text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         pytest.skip(f"could not run {binary}: {e}")
+    assert out is not None, "the cache-list run produced no result"
     # "   3. org/Muse-GGUF:IQ3_S" — and nothing else. llama.cpp also logs with a
     # dotted timestamp, so the pattern has to be the numbering, not "starts with a
     # digit".
@@ -1606,3 +1611,17 @@ def test_the_portal_and_the_runtime_agree_on_what_the_cache_holds(tmp_path):
         f"it listed {sorted(listed)}")
     assert mine == listed - halves, (
         f"portal says {sorted(mine)}, llama.cpp says {sorted(listed - halves)}")
+
+
+def test_the_literal_insert_matches_the_write_columns():
+    """The executed INSERT is a literal, and it is the one the column list produces.
+
+    `_row_values()` fills `_WRITE_COLUMNS` positionally, so if the literal written into the
+    source and the builder ever disagree, every scan writes values into the wrong columns —
+    silently, because sqlite accepts any 37 parameters. This is the guard that makes the
+    literal safe to execute.
+    """
+    built = mi._insert_sql()
+    assert built == mi._INSERT_SQL, ("_WRITE_COLUMNS and the literal INSERT have drifted")
+    assert mi._INSERT_SQL.count("?") == len(mi._WRITE_COLUMNS), (
+        mi._INSERT_SQL.count("?"), len(mi._WRITE_COLUMNS))

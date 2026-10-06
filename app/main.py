@@ -899,6 +899,11 @@ def create_app() -> FastAPI:
                                                            for c in configs},
                                            "settings": personality.SETTINGS,
                                            "setting_names": personality.setting_names(),
+                                           # Each key's citation, reduced to the section id the help page
+                                           # opens. A key whose cite names no section gets no link: a
+                                           # link to nothing is worse than a link that 404s.
+                                           "help_refs": {k: kb.ref_of(v.get("cite"))
+                                                        for k, v in personality.SETTINGS.items()},
                                            "pool_h": _human(budget),
                                            # The editor's model list comes from the index rather than
                                            # from the personality cards: a per-model section only means

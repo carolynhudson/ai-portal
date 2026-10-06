@@ -28,6 +28,7 @@ import math
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import db, modelmeta, paths
@@ -926,6 +927,16 @@ def _insert_sql() -> str:
             f" VALUES ({', '.join('?' * len(_WRITE_COLUMNS))})")
 
 
+# The INSERT, written out. `_insert_sql()` builds this from `_WRITE_COLUMNS` through the
+# allowlist above, and `test_the_literal_insert_matches_the_write_columns` pins the two
+# together: the executed text is a literal, so no reader or scanner has to prove that the
+# joined identifier list cannot carry model data, and the builder stays the drift check.
+_INSERT_SQL = (
+    'INSERT OR REPLACE INTO model_index ("id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name", "quant", "ctx_trained", "layers", "kv_heads", "attention_heads", "embedding_length", "full_attention_interval", "rope_dimension_count", "expert_count", "expert_used_count", "is_moe", "has_ssm_state", "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers", "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type", "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs", "scanned_at", "header_hash") VALUES '
+    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+)
+
+
 def _row_values(row: dict) -> list:
     """Values for _insert_sql, positionally.
 
@@ -1002,16 +1013,15 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None,
     budget = budget_bytes or _pool_bytes()
     conn = db._conn()
     conn.execute("DELETE FROM model_index")
-    # Built once, outside the loop. The string interpolation inside is over
-    # _WRITE_COLUMNS — a module-level tuple of literal identifiers, validated by
-    # _insert_sql() itself — and every value goes in as a `?` parameter. Hoisting
-    # it also makes the shape obvious here: no model data reaches the SQL text.
-    insert = _insert_sql()
+    # The SQL text below is `_INSERT_SQL` — a literal, 37 columns, 37 `?` placeholders.
+    # `_insert_sql()` derives the same string from `_WRITE_COLUMNS` through the identifier
+    # allowlist, and a test pins the two together, so a column added to the write list breaks
+    # loudly instead of shifting a value into the wrong column.
     for m in models:
         meta = m.pop("_meta")
         est = est_total(meta, m["bytes"], m.get("ctx_trained") or 4096)
         fits = ctx_that_fits(meta, m["bytes"] + m.get("mmproj_bytes", 0), budget)
-        conn.execute(insert, _row_values(_est_row(m, est, fits)))
+        conn.execute(_INSERT_SQL, _row_values(_est_row(m, est, fits)))
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM model_index").fetchone()[0]
     # A cache id that will not load its own file is a problem the index can name
@@ -1363,7 +1373,8 @@ def _gi(x: int) -> str:
 
 
 def context_window(row: dict, settings: dict | None = None,
-                   budget_bytes: int | None = None) -> dict:
+                   budget_bytes: int | None = None,
+                   price: Callable[[dict, int], int | None] | None = None) -> dict:
     """The context a client will be given for this model, and **who decided it**.
 
     The number a client reads is `n_ctx_slot()` -- `min(llama_n_ctx_seq, --kv-unified-per-slot,
@@ -1381,7 +1392,22 @@ def context_window(row: dict, settings: dict | None = None,
 
     `window` is None when the model cannot be priced. "Cannot predict" is reported as such; an
     optimistic guess about a client's context window is the thing this function exists to prevent.
+
+    Args:
+        row: An index row for the model (see `rows()`).
+        settings: The settings that will be in force for it, as written in `presets.ini`. Absent
+            keys are treated as unset, which is what llama.cpp sees.
+        budget_bytes: Free aperture. Measured from this box when omitted.
+        price: Cost model used to price a context, `f(row, ctx) -> bytes | None`. Defaults to
+            `peak_bytes`, which can only price a context the index stored geometry for; callers
+            that need an arbitrary context pass a conservative estimator
+            (`personality._conservative_peak`), and get a window instead of `None`.
+
+    Returns:
+        dict: `window` (tokens a client gets, or None), `by` (what set it), `pool`, `slots`,
+        `kv_unified`, `reduced` (below trained), and `notes` for the human reading it.
     """
+    cost = price or peak_bytes
     s = settings or {}
     trained = modelmeta._as_int(row.get("ctx_trained")) or 0
     slots_raw = modelmeta._as_int(s.get("parallel")) or 0
@@ -1415,7 +1441,7 @@ def context_window(row: dict, settings: dict | None = None,
         out["budget_note"] = f"the budget you passed: {_gi(budget)}"
     else:
         budget, out["budget_note"] = free_pool_bytes()
-    peak = peak_bytes(row, pool_want)
+    peak = cost(row, pool_want)
     pool = pool_want
     shrunk = False
     if peak is None:
@@ -1426,7 +1452,7 @@ def context_window(row: dict, settings: dict | None = None,
         pool = 0
         c = 1
         while c <= pool_want:
-            p = peak_bytes(row, c)
+            p = cost(row, c)
             if p is None:
                 break
             if p <= budget:
@@ -1435,7 +1461,7 @@ def context_window(row: dict, settings: dict | None = None,
                 break
             c <<= 1
         shrunk = pool < pool_want
-        priced = peak_bytes(row, pool) if pool else 0
+        priced = cost(row, pool) if pool else 0
         out["notes"].append(
             f"{slots} slot(s) at the trained context cost {_gi(peak)} against {_gi(budget)} of "
             f"aperture -- fit sizes the pool to {_gi(priced or 0)} and logs the reduction at "

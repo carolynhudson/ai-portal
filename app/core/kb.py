@@ -329,3 +329,18 @@ def warm() -> int:
     """Parse the docs once (at startup) so the first /help request does not pay for it."""
     n = len(sections())
     return n
+
+
+def ref_of(cite: str | None) -> str | None:
+    """The section id inside a citation string, for building a `/help#id` link.
+
+    Citations in the registry read `docs/PORTAL_PLAN.md sec 6.12.20, server.cpp:161-166`:
+    prose plus source lines. A link needs only the section number, and taking the first
+    `sec N.N` match is what keeps a multi-part citation from turning `161-166` into a
+    section request that 404s. Returns None when the citation names no section, so the
+    caller renders text without a link instead of a link to nothing.
+    """
+    if not cite:
+        return None
+    m = re.search(r"\bsec(?:tion)?\s+(\d+(?:\.\d+)*)", str(cite))
+    return m.group(1) if m else None

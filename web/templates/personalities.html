@@ -121,6 +121,31 @@ h2{margin:18px 0 6px}
       </div>
     {% endif %}
 
+    {# Tokens per client, per model. Predicted from this personality's own settings plus the
+       file's header, by the same predictor tests/test_context_window.py pins to measured server
+       output -- so the page and the bench tool read the same ruler. A model that cannot be
+       priced says "unknown"; it is never shown with a guessed number. #}
+    {% if c.context %}
+      <h4>Context each model gives a client</h4>
+      <table class="keys">
+        <thead><tr><th>model</th><th>tokens per client</th><th>who decides it</th><th>loaded cost</th></tr></thead>
+        <tbody>
+        {% for x in c.context %}
+          <tr>
+            <td class="mono">{{ x.model }}</td>
+            <td class="mono">{% if x.window %}{{ x.window }}
+              {% if x.slots %}<div class="mut">{{ x.slots }} slot(s), {% if x.kv_unified %}one shared pool{% else %}pool divided by slots{% endif %}</div>{% endif %}
+              {% else %}<span class="mut">unknown</span>{% endif %}</td>
+            <td>{{ x.by }}</td>
+            <td class="mono">{% if x.cost %}{{ (x.cost / 1073741824) | round(2) }} GiB{% else %}<span class="mut">unpriced</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="mut">Predicted from these settings and each file's header -- not a reading of a
+        running slot. <a href="/help#6.12.22">How a context window is decided</a> (§6.12.22).</p>
+    {% endif %}
+
     <h4>presets.ini it would write</h4>
     {% if g.get('error') %}
       <p class="sev bad">cannot be generated: {{ g.error }}</p>
@@ -160,7 +185,8 @@ h2{margin:18px 0 6px}
       <td>{{ s.kind }}{% if s.choices %} ({{ s.choices|join(' | ') }}){% endif %}</td>
       <td>{{ 'model only' if s.section == 'model' else 'global and per-model' }}</td>
       <td class="mono">{{ s.default if s.default is not none else '—' }}</td>
-      <td class="h">{{ s.help }}{% if s.side_effects %}<div class="mut">side effect: {{ s.side_effects }}</div>{% endif %}</td>
+      <td class="h">{{ s.help }}{% if s.side_effects %}<div class="mut">side effect: {{ s.side_effects }}</div>{% endif %}
+        {% if help_refs.get(k) %}<div><a class="mut" href="/help#{{ help_refs.get(k) }}">why (§{{ help_refs.get(k) }})</a></div>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
@@ -194,20 +220,22 @@ h2{margin:18px 0 6px}
       {% set s = settings[k] %}
       {% if s.section != 'model' %}
       <div class="ed-field" data-key="{{ k }}">
-        <label for="ed-g-{{ k }}" class="mono">{{ k }}</label>
-        {% if s.choices %}
-        <select id="ed-g-{{ k }}">
+        {# One id per key *per control shape*: the enum, bool and numeric branches are mutually
+           exclusive at render time, and suffixing by branch keeps every id unique in the file as
+           well as in the page, so the label's `for` can never point at a sibling branch. #}
+        {% set pick = s.choices or s.kind == 'bool' %}
+        <label for="ed-g-{{ k }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ k }}</label>
+        {% if pick %}
+        <select id="ed-g-{{ k }}-sel">
           <option value="">leave as is</option>
-          {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
-        </select>
-        {% elif s.kind == 'bool' %}
-        <select id="ed-g-{{ k }}">
-          <option value="">leave as is</option>
-          <option value="1">on</option>
-          <option value="0">off</option>
+          {% if s.kind == 'bool' %}
+            <option value="1">on</option><option value="0">off</option>
+          {% else %}
+            {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+          {% endif %}
         </select>
         {% else %}
-        <input id="ed-g-{{ k }}" type="text" inputmode="numeric"
+        <input id="ed-g-{{ k }}-val" type="text" inputmode="numeric"
                placeholder="leave as is (default {{ s.default }})">
         {% endif %}
         <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
@@ -228,20 +256,19 @@ h2{margin:18px 0 6px}
     {% for k in setting_names %}
       {% set s = settings[k] %}
       <div class="ed-field" data-key="{{ k }}">
-        <label for="ed-m-{{ k }}" class="mono">{{ k }}</label>
-        {% if s.choices %}
-        <select id="ed-m-{{ k }}">
+        {% set pick = s.choices or s.kind == 'bool' %}
+        <label for="ed-m-{{ k }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ k }}</label>
+        {% if pick %}
+        <select id="ed-m-{{ k }}-sel">
           <option value="">unset</option>
-          {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
-        </select>
-        {% elif s.kind == 'bool' %}
-        <select id="ed-m-{{ k }}">
-          <option value="">unset</option>
-          <option value="1">on</option>
-          <option value="0">off</option>
+          {% if s.kind == 'bool' %}
+            <option value="1">on</option><option value="0">off</option>
+          {% else %}
+            {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+          {% endif %}
         </select>
         {% else %}
-        <input id="ed-m-{{ k }}" type="text" inputmode="numeric" placeholder="unset">
+        <input id="ed-m-{{ k }}-val" type="text" inputmode="numeric" placeholder="unset">
         {% endif %}
         <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
       </div>

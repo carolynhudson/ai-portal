@@ -64,23 +64,28 @@ def _index_row(mid: str, *, est_total: int, est_weights: int | None = None,
     # assembled from a list: the previous version built the column list with an f-string
     # and was correct, but it asked every reader (and every scanner) to re-derive that
     # the joined list was a literal. Values are still parameters, never interpolated.
-    sql = ("INSERT OR REPLACE INTO model_index"
-           " (id, path, bytes, shard_total, est_weights, est_kv, est_total, est_ctx,"
-           "  ctx_trained, scanned_at)"
-           " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     vals = (mid, f"/nonexistent/{mid}.gguf", est_total, 1, est_weights,
             est_total - (est_weights or est_total), est_total, est_ctx, ctx_trained,
             time.time())
     # The fixture this file hangs on: ten columns, ten placeholders, ten values. Assert
     # the count here so a column added to model_index breaks loudly instead of sqlite
     # raising deep inside an unrelated test.
-    assert sql.count("?") == 10 and len(vals) == 10, "fixture drift vs model_index schema"
     # shard_total is not optional in practice even though the column allows NULL: the
     # models page renders `m.shard_total > 1`, and Jinja raises TypeError on None > 1.
     # Leaving it out of a seeded row was enough to break page rendering in a *different*
     # test file, because these rows outlive this module in the shared portal.db.
     assert vals[3] is not None, "shard_total must be an int for the models page to render"
-    conn.execute(sql, vals)
+    assert len(vals) == 10, "fixture drift vs model_index: ten columns, ten values"
+    # The SQL text is written here, not assembled: ten ? placeholders, ten bound values, and every
+    # value arrives as a parameter. A joined column list was correct before, but it asked every
+    # reader and every scanner to re-derive that the text was a literal.
+    conn.execute(
+        "INSERT OR REPLACE INTO model_index"
+        " (id, path, bytes, shard_total, est_weights, est_kv, est_total, est_ctx,"
+        "  ctx_trained, scanned_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        vals,
+    )
     conn.commit()
 
 
@@ -486,7 +491,7 @@ def test_no_setting_is_defined_twice_in_the_registry():
             if not isinstance(node.value, ast.Dict):
                 continue
             keys = [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
-            dupes = sorted({k for k, c in collections.Counter(keys).items() if c > 1})
+            dupes = sorted({str(k) for k, c in collections.Counter(keys).items() if c > 1})
             if dupes:
                 offenders[name] = dupes
     assert offenders == {}, f"later definitions silently overwrote earlier ones: {offenders}"
@@ -825,7 +830,7 @@ def test_the_size_list_only_offers_models_that_can_hold_the_slot():
 def test_an_empty_index_says_so_rather_than_listing_nothing():
     monkeypatch_rows = P._rows
     try:
-        P._rows = lambda: []
+        P._rows = list  # called -> []
         message = P._availability("Qwen3.5-0.8B.Q4_K_M")
     finally:
         P._rows = monkeypatch_rows
@@ -933,3 +938,74 @@ def test_keys_from_the_newer_source_tree_stay_out_of_the_registry():
     """
     present = sorted(FLAGGED_NOT_IN_B11396 & set(P.SETTINGS))
     assert not present, f"registry took flags the deployed server does not accept: {present}"
+
+
+# ------------------------------------------------ what a personality costs a client
+#
+# The page has to say how many tokens a client gets, not only what the box pays. These pin
+# the numbers to the predictor that tests/test_context_window.py pins to measured server
+# output, so the personality page and the bench tool cannot end up quoting different rules.
+
+CTX_ROW = {
+    "id": "testorg/Test-4B-GGUF:Q8_0", "ctx_trained": 262144, "est_ctx": 8192,
+    "est_weights": 4_294_967_296, "est_kv": 751_619_072, "layers": 32, "kv_heads": 8,
+    "attention_heads": 32, "embedding_length": 4096,
+}
+CTX_TARGETS = [{"model": "testorg/Test-4B-GGUF:Q8_0", "config": None}]
+BUDGET = 100 * (1 << 30)
+
+
+def test_context_for_reports_the_window_and_who_decided_it():
+    """No ctx-size written: the trained context is the window, and the page says so."""
+    entry = P.context_for({"name": "plain"}, targets=CTX_TARGETS, rows=[dict(CTX_ROW)],
+                          budget_bytes=BUDGET)[0]
+    assert entry["window"] == 262144, entry
+    assert "trained" in entry["by"], entry["by"]
+    assert entry["slots"] == 4 and entry["kv_unified"] is True, entry
+    assert entry["cost"] > 4_294_967_296, "cost must exceed the weights alone"
+
+
+def test_writing_parallel_shows_the_halved_window_the_client_gets():
+    """ctx-size 32768 over 2 named slots is a 16384-token window: the divided pool.
+
+    A page that showed 32768 here would be quoting the setting instead of the window, which
+    is the exact confusion that made "half my context" impossible to trace
+    (docs/PORTAL_PLAN.md sec 6.12.20).
+    """
+    per = {"testorg/Test-4B-GGUF:Q8_0": {"ctx-size": 32768, "parallel": 2}}
+    entry = P.context_for({"name": "x", "overrides": per}, targets=CTX_TARGETS,
+                          rows=[dict(CTX_ROW)], budget_bytes=BUDGET)[0]
+    assert entry["window"] == 16384, entry
+    assert entry["kv_unified"] is False and entry["slots"] == 2, entry
+    assert any("divides" in n or "divided" in n for n in entry["notes"]), entry["notes"]
+
+
+def test_context_for_refuses_to_price_a_file_the_index_cannot_price():
+    """No geometry in the index: say it. A token count next to an Apply button is a promise."""
+    thin = {"id": "testorg/Test-4B-GGUF:Q8_0", "ctx_trained": None, "est_ctx": None,
+            "est_weights": None, "est_kv": None}
+    entry = P.context_for({"name": "x"}, targets=CTX_TARGETS, rows=[thin],
+                          budget_bytes=BUDGET)[0]
+    assert entry["window"] is None, entry
+    assert entry["priced"] is False and entry["cost"] is None, entry
+    assert any("not predictable" in n for n in entry["notes"]), entry["notes"]
+
+
+def test_a_model_the_index_never_saw_is_named_as_unknown():
+    entry = P.context_for({"name": "x"}, targets=CTX_TARGETS, rows=[],
+                          budget_bytes=BUDGET)[0]
+    assert entry["window"] is None and not entry["priced"], entry
+    assert "model index" in entry["by"], entry["by"]
+
+
+def test_describe_carries_the_context_rows_the_page_renders():
+    """describe() is what the page consumes: the rows must be there, not only in context_for.
+
+    An empty list here is not a rendering detail — the page shows no context line at all, so a
+    personality whose models resolve would look like it has no context to report.
+    """
+    _index_row("testorg/Test-4B-GGUF:Q8_0", est_total=5 * 2 ** 30,
+               est_weights=4 * 2 ** 30, est_ctx=8192, ctx_trained=262144)
+    d = P.describe({"name": "ctx-check", "models": ["testorg/Test-4B-GGUF:Q8_0"]},
+                   budget_bytes=BUDGET)
+    assert any(e["model"] == "testorg/Test-4B-GGUF:Q8_0" for e in d["context"]), d["context"]

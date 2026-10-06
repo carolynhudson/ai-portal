@@ -38,7 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+import re  # noqa: E402
+
 from app.core import config as cfg  # noqa: E402
+from app.core import kb  # noqa: E402
 from app.core import db, modelindex as mi, paths  # noqa: E402
 from app.core import personality as P  # noqa: E402
 from app.core import presets_store, systemd, updater  # noqa: E402
@@ -482,6 +485,7 @@ def test_apply_runs_as_a_job_and_writes_through_the_snapshot(client, presets_fil
     _settle()
 
     row = updater.job(job_id)
+    assert row is not None, "the job row is gone: the job was never recorded"
     assert row["status"] == "success", row["log"]
     assert "snapshotted presets.ini" in row["log"]
     assert "wrote" in row["log"]
@@ -510,6 +514,7 @@ def test_apply_refusal_surfaces_as_a_failed_job_not_a_500(client, presets_file, 
     job_id = r.json()["job"]
     _settle()
     row = updater.job(job_id)
+    assert row is not None, "the job row is gone: the job was never recorded"
     assert row["status"] == "failed", row["log"]
     assert "refusing to write" in row["log"]
     assert paths.PRESETS_INI.read_text() == presets_file, "a refused apply must not write"
@@ -609,6 +614,7 @@ def test_rollback_of_an_unknown_stamp_fails_the_job_without_touching_the_file(
     job_id = r.json()["job"]
     _settle()
     row = updater.job(job_id)
+    assert row is not None, "the job row is gone: the job was never recorded"
     assert row["status"] == "failed", row["log"]
     assert "nothing to restore" in row["log"]
     assert paths.PRESETS_INI.read_text() == before
@@ -641,3 +647,43 @@ def test_lazy_mode_is_registered_and_emitted(client, library):
         "a key this box needs must reach the generated file, not just the registry"
 
 
+
+
+# ----------------------------------------------- the context line: tokens per client, per model
+#
+# The card used to report only what the box pays (worst-case resident GiB). "What does a
+# request get?" was nowhere, so a personality that halves every client's context looked
+# identical to one that does not. docs/PORTAL_PLAN.md sec 6.12.22 carries the sweep that
+# pins the predictor behind this line.
+
+def test_the_page_shows_tokens_per_client_for_each_priced_model(client, library):
+    """The card names the window and who decides it — in the fixture's own numbers."""
+    page = client.get("/personalities").text
+    assert "Context each model gives a client" in page, "the context block is missing"
+    row = page[page.index("Context each model gives a client"):]
+    assert "tokens per client" in row, row[:400]
+    # Every model the fixture seeds is trained at 4096, and nothing pins ctx-size, so the
+    # trained context is the window. A page quoting the setting instead of the window would
+    # show a number that is not 4096.
+    assert "4096" in row, row[:400]
+    assert "trained" in row, "who decided the window is not stated"
+
+
+def test_the_page_links_every_documented_setting_to_the_help_section_that_proves_it(client):
+    """Each key's citation becomes a working link — the prose is not the evidence.
+
+    The keys whose citations name source lines only (no section) are expected to render no
+    link: a link to a section that does not exist is the failure this guard is about, and it
+    is the failure mode the help page already had once.
+    """
+    page = client.get("/personalities").text
+    table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
+    links = re.findall(r'href="/help#([\d.]+)"', table)
+    assert links, "the settings table carries no citation links"
+    missing = sorted({r for r in links if not kb.find(r)})
+    assert not missing, f"citation links that open nothing: {missing}"
+    # One link per key that cites a section. Keys citing source lines only are expected to
+    # render none, and that count is the difference between the two numbers below.
+    keys_with_cites = sum(1 for v in P.SETTINGS.values() if kb.ref_of(v.get("cite")))
+    assert len(links) == keys_with_cites, (len(links), keys_with_cites,
+                                           len(P.SETTINGS) - keys_with_cites)
