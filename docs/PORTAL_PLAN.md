@@ -3206,6 +3206,39 @@ help-page failures (401 and missing sections). Each module passes alone; the can
 `tests/` run is 758 passed, 3 skipped, and `scripts/check-ui.sh` exits 0. Order artifacts are
 diagnosed by running the module alone, then the full suite, before treating a failure as a
 feature defect.
+
+#### 6.12.24 What the monitoring pages cost, measured on the running portal (2026-10-05)
+
+**Why.** The operator's note: the metrics page is visited only during testing, and the
+refresh ticks should follow need, load created, and importance. The audit measured first.
+
+**Server cost per request, median of 3, live portal at :8090:**
+
+| Endpoint | Median | Polled by |
+| --- | --- | --- |
+| `/api/router` | 0.6 ms | dashboard, every 2.5 s |
+| `/api/metrics` | 0.6 ms | metrics page, every 2.0 s |
+| `/api/health` | 0.5 ms | health page |
+| `/api/hf/status` | 219 ms, one cold call 16.2 s | dashboard, **on page load and on button, never on a timer** |
+
+**Read.** The four hot endpoints are sub-millisecond: cached state, sysfs reads, no
+subprocess. The one expensive endpoint is not polled. So dashboard polling is not the load.
+
+**Where real cost sits.** `metrics.gpu()` shells out to `rocm-smi` — measured 77 ms per
+refresh, cached 5 s (`_GPU_TTL`). The metrics page polls every 2 s, so 3 of every 5 polls
+re-read CPU, memory, and disk only, and rocm-smi runs at most every 5 s. Opening the
+dashboard costs the server about 220 ms of subprocess work for the huggingface panel.
+
+**CPU percent depends on the interval.** `metrics.cpu_percent()` is a delta between
+successive calls. The poll interval *is* the measurement window: at 2 s it is a 2 s average,
+at 5 s a 5 s average. Faster polling does not make the number more current, it makes it
+noisier.
+
+**Fixed in the same pass.** Disk and GPU on `/metrics` are rendered once, at page load, under
+a heading that said "Live metrics". They now print their sample time and the poll reports its
+own time. `tests/test_ui_contract.py` fails if the sample time disappears; the mutation check
+produced `assert 0 >= 2`. The literal `location.href = '/login'` is now
+`gotoInternal('/login')`, which rejects scheme, authority, and `//` prefixes.
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password

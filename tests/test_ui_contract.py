@@ -34,8 +34,8 @@ os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-uic-"))
 # wins the environment, so a differing password makes test order matter
 os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
-from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -123,7 +123,7 @@ def test_every_handler_names_a_function_that_exists(pages):
     missing = []
     for path, html in pages.items():
         js = "\n".join(SCRIPT_RE.findall(html))
-        defined = set(g for m in FUNC_DEF_RE.finditer(js) for g in m.groups() if g)
+        defined = {g for m in FUNC_DEF_RE.finditer(js) for g in m.groups() if g}
         # handlers defined by htmx / the browser
         defined |= {"event", "this"}
         for m in HANDLER_ATTR_RE.finditer(html):
@@ -451,3 +451,20 @@ def test_provider_accessors_are_typed_and_do_not_shadow_their_submodules():
     assert isinstance(providers.get_huggingface(), HuggingFace)
     # get() keeps answering with the base type and None for an unknown key.
     assert providers.get("nope") is None
+
+
+def test_the_static_metric_cards_say_when_they_were_sampled(pages):
+    """Disk and GPU on /metrics are rendered once, at page load. The chart polls.
+
+    A page headed "Live metrics" invites the reader to treat every number on it as
+    current. The polled cells prove their own freshness by moving; the two cards that
+    never move have no such cue, so a 20-minute-old disk figure and a wrong one are the
+    same sight. The fix is the sample time, printed with them.
+    """
+    html = pages["/metrics"]
+    stamps = re.findall(r"sampled\s*(\d{1,2}:\d{2}:\d{2})", html)
+    assert len(stamps) >= 2, (
+        "the Disk and GPU cards carry no sample time — a rendered-once number is "
+        "indistinguishable from a live one")
+    # The poll reports its own time too, so the moving line is labelled as moving.
+    assert "polled " in html, "the metrics state pill does not report its poll time"

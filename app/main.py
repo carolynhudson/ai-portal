@@ -712,8 +712,11 @@ def create_app() -> FastAPI:
         gpu = snap.get("gpu")
         gpu_txt = ("GPU {use_percent}%".format(use_percent=gpu["use_percent"])
                    if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
+        # The Disk and GPU cards below are rendered once, at page load. Say when, so a
+        # reader can tell a stale number from a wrong one; the chart keeps polling.
+        sampled = datetime.now().strftime("%H:%M:%S")
         return templates.TemplateResponse(request, "metrics.html",
-                                          {"disk": disk, "gpu": gpu_txt,
+                                          {"disk": disk, "gpu": gpu_txt, "sampled": sampled,
                                            "settings": db.current_settings()})
 
     @app.get("/settings")

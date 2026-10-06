@@ -1,978 +1,979 @@
 {
-  "_comment": [
-    "Declarative part of the UI contract. Everything that can be derived by",
-    "driving the page (no JS errors, no missing ids, no dead controls, tab",
-    "bijection, confirm-gating, no endpoint errors) is asserted by run.mjs",
-    "for every page automatically; this file only adds what cannot be derived:",
-    "which endpoints a page must have called, which tabs form a group, which",
-    "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
-    "fails if the app serves an HTML page with no spec."
-  ],
-  "blockMutations": [
-    ".*"
-  ],
-  "allowHttpErrors": [],
-  "expectInert": [],
-  "fixtures": [
+ "_comment": [
+  "Declarative part of the UI contract. Everything that can be derived by",
+  "driving the page (no JS errors, no missing ids, no dead controls, tab",
+  "bijection, confirm-gating, no endpoint errors) is asserted by run.mjs",
+  "for every page automatically; this file only adds what cannot be derived:",
+  "which endpoints a page must have called, which tabs form a group, which",
+  "controls must not be stuck disabled, and what a destructive request must",
+  "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
+  "fails if the app serves an HTML page with no spec."
+ ],
+ "blockMutations": [
+  ".*"
+ ],
+ "allowHttpErrors": [],
+ "expectInert": [],
+ "fixtures": [
+  {
+   "_comment": "per-job polling by id; /api/jobs/active is the global bar and stays real (the jobbar-* pages fixture it)",
+   "path": "^/api/jobs/\\d+$",
+   "status": 200,
+   "body": {
+    "id": 4242,
+    "kind": "harness",
+    "status": "success",
+    "target": "harness-job",
+    "log": "[harness] job finished",
+    "started": 1,
+    "finished": 2
+   }
+  }
+ ],
+ "pages": [
+  {
+   "name": "dashboard",
+   "path": "/",
+   "expectTitle": "Status",
+   "expectRequests": [
+    "/api/router",
+    "/api/comfyui",
+    "/api/services",
+    "/api/updates/llamacpp",
+    "/api/updates/comfyui",
+    "/api/hf/status",
+    "/api/gpu"
+   ],
+   "expectVisible": [
+    "#router-state",
+    "#tps",
+    "#router-feed",
+    "#comfy-state",
+    "#comfy-feed",
+    "#update-llamacpp",
+    "#update-comfyui",
+    "#update-huggingface",
+    "#update-python",
+    "#update-gpu",
+    "#build-select",
+    "#upd-btn",
+    "#build-count",
+    "#switch-build-btn",
+    "#delete-build-btn",
+    "#pulse-lanes",
+    "#pulse-dot",
+    "#pulse-switch",
+    "#pulse-signals",
+    "#attention-toggle",
+    "#model-loaded",
+    "#pulse-sub",
+    "#tps-now"
+   ],
+   "expectEnabled": [
+    "#update-llamacpp button.btn-primary-sm",
+    "#upd-btn",
+    "#comfy-upd-btn",
+    "#hf-upd-btn",
+    ".update-tab"
+   ],
+   "expectAbsent": [
+    "#upd-releases",
+    "#upd-sdk",
+    "#lanes-none"
+   ],
+   "expectDisabled": [
+    "#switch-build-btn",
+    "#delete-build-btn"
+   ],
+   "_selectCases_comment": [
+    "The delete button's entire safety story is which selection unlocks",
+    "it: the build the router is running must never be deletable or",
+    "switchable to, and any other stored build must be both."
+   ],
+   "selectCases": [
     {
-      "_comment": "per-job polling by id; /api/jobs/active is the global bar and stays real (the jobbar-* pages fixture it)",
-      "path": "^/api/jobs/\\d+$",
-      "status": 200,
-      "body": {
-        "id": 4242,
-        "kind": "harness",
-        "status": "success",
-        "target": "harness-job",
-        "log": "[harness] job finished",
-        "started": 1,
-        "finished": 2
-      }
+     "select": "#build-select",
+     "note": "current build is locked",
+     "choose": {
+      "labelContains": "current"
+     },
+     "expectDisabled": [
+      "#switch-build-btn",
+      "#delete-build-btn"
+     ]
+    },
+    {
+     "select": "#build-select",
+     "note": "a stored build is unlocked",
+     "choose": {
+      "labelNotContaining": "current"
+     },
+     "expectEnabled": [
+      "#switch-build-btn",
+      "#delete-build-btn"
+     ],
+     "expectDisabled": [],
+     "then_click": [
+      "#switch-build-btn",
+      "#delete-build-btn"
+     ],
+     "_then_click_comment": [
+      "Destructive endpoints behind a selection-dependent button are clicked",
+      "here, against a known selection; the sweep only reaches them in whatever",
+      "state the select was left in."
+     ]
     }
-  ],
-  "pages": [
+   ],
+   "_fixtures_comment": [
+    "GET fixtures for the update tabs: they make the deploy/rollback buttons",
+    "live so their requests can be asserted, and make the dashboard render",
+    "the same way on any machine. The real endpoints are covered by",
+    "tests/test_updates.py."
+   ],
+   "fixtures": [
     {
-      "name": "dashboard",
-      "path": "/",
-      "expectTitle": "Status",
-      "expectRequests": [
-        "/api/router",
-        "/api/comfyui",
-        "/api/services",
-        "/api/updates/llamacpp",
-        "/api/updates/comfyui",
-        "/api/hf/status",
-        "/api/gpu"
+     "path": "^/api/updates/llamacpp$",
+     "body": {
+      "current": "llama.cpp-b10913",
+      "current_commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
+      "repo_head": "4a899373541900000000000000000000000000",
+      "vulkan_sdk": "/home/tester/ai/sdk/vulkan/1.4.341.0",
+      "remote": {
+       "master_head": "4a899373541900000000000000000000000000",
+       "latest_release": "llama.cpp-b11000",
+       "behind_master": 28,
+       "behind_release": 1,
+       "update_available": true,
+       "release_url": "https://github.com/ggml-org/llama.cpp/releases/tag/v0.4.0",
+       "stale": false
+      },
+      "releases": [
+       {
+        "name": "llama.cpp-b10913",
+        "commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
+        "built_at": "2026-09-01T10:00:00",
+        "active": true,
+        "path": "/home/tester/ai/releases/llama.cpp-b10913",
+        "size_bytes": 440401920,
+        "version": "10913"
+       },
+       {
+        "name": "llama.cpp-b10900",
+        "commit": "1111111111111111111111111111111111111111",
+        "built_at": "2026-08-01T10:00:00",
+        "active": false,
+        "path": "/home/tester/ai/releases/llama.cpp-b10900",
+        "size_bytes": 440401920,
+        "version": "10900"
+       },
+       {
+        "name": "llama.cpp-b10888",
+        "commit": "2222222222222222222222222222222222222222",
+        "built_at": "2026-07-01T10:00:00",
+        "active": false,
+        "path": "/home/tester/ai/releases/llama.cpp-b10888",
+        "size_bytes": 440401920,
+        "version": "10888"
+       }
       ],
-      "expectVisible": [
-        "#router-state",
-        "#tps",
-        "#router-feed",
-        "#comfy-state",
-        "#comfy-feed",
-        "#update-llamacpp",
-        "#update-comfyui",
-        "#update-huggingface",
-        "#update-python",
-        "#update-gpu",
-        "#build-select",
-        "#upd-btn",
-        "#build-count",
-        "#switch-build-btn",
-        "#delete-build-btn",
-        "#pulse-lanes",
-        "#pulse-dot",
-        "#pulse-switch",
-        "#pulse-signals",
-        "#attention-toggle",
-        "#model-loaded",
-        "#pulse-sub",
-        "#tps-now"
-      ],
-      "expectEnabled": [
-        "#update-llamacpp button.btn-primary-sm",
-        "#upd-btn",
-        "#comfy-upd-btn",
-        "#hf-upd-btn",
-        ".update-tab"
-      ],
-      "expectAbsent": [
-        "#upd-releases",
-        "#upd-sdk",
-        "#lanes-none"
-      ],
-      "expectDisabled": [
-        "#switch-build-btn",
-        "#delete-build-btn"
-      ],
-      "_selectCases_comment": [
-        "The delete button's entire safety story is which selection unlocks",
-        "it: the build the router is running must never be deletable or",
-        "switchable to, and any other stored build must be both."
-      ],
-      "selectCases": [
-        {
-          "select": "#build-select",
-          "note": "current build is locked",
-          "choose": {
-            "labelContains": "current"
-          },
-          "expectDisabled": [
-            "#switch-build-btn",
-            "#delete-build-btn"
-          ]
-        },
-        {
-          "select": "#build-select",
-          "note": "a stored build is unlocked",
-          "choose": {
-            "labelNotContaining": "current"
-          },
-          "expectEnabled": [
-            "#switch-build-btn",
-            "#delete-build-btn"
-          ],
-          "expectDisabled": [],
-          "then_click": [
-            "#switch-build-btn",
-            "#delete-build-btn"
-          ],
-          "_then_click_comment": [
-            "Destructive endpoints behind a selection-dependent button are clicked",
-            "here, against a known selection; the sweep only reaches them in whatever",
-            "state the select was left in."
-          ]
-        }
-      ],
-      "_fixtures_comment": [
-        "GET fixtures for the update tabs: they make the deploy/rollback buttons",
-        "live so their requests can be asserted, and make the dashboard render",
-        "the same way on any machine. The real endpoints are covered by",
-        "tests/test_updates.py."
-      ],
-      "fixtures": [
-        {
-          "path": "^/api/updates/llamacpp$",
-          "body": {
-            "current": "llama.cpp-b10913",
-            "current_commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
-            "repo_head": "4a899373541900000000000000000000000000",
-            "vulkan_sdk": "/home/tester/ai/sdk/vulkan/1.4.341.0",
-            "remote": {
-              "master_head": "4a899373541900000000000000000000000000",
-              "latest_release": "llama.cpp-b11000",
-              "behind_master": 28,
-              "behind_release": 1,
-              "update_available": true,
-              "release_url": "https://github.com/ggml-org/llama.cpp/releases/tag/v0.4.0",
-              "stale": false
-            },
-            "releases": [
-              {
-                "name": "llama.cpp-b10913",
-                "commit": "43f3dda6237a453a587a8f00230d52decfeaa8e5",
-                "built_at": "2026-09-01T10:00:00",
-                "active": true,
-                "path": "/home/tester/ai/releases/llama.cpp-b10913",
-                "size_bytes": 440401920,
-                "version": "10913"
-              },
-              {
-                "name": "llama.cpp-b10900",
-                "commit": "1111111111111111111111111111111111111111",
-                "built_at": "2026-08-01T10:00:00",
-                "active": false,
-                "path": "/home/tester/ai/releases/llama.cpp-b10900",
-                "size_bytes": 440401920,
-                "version": "10900"
-              },
-              {
-                "name": "llama.cpp-b10888",
-                "commit": "2222222222222222222222222222222222222222",
-                "built_at": "2026-07-01T10:00:00",
-                "active": false,
-                "path": "/home/tester/ai/releases/llama.cpp-b10888",
-                "size_bytes": 440401920,
-                "version": "10888"
-              }
-            ],
-            "job": null,
-            "release_count": 3,
-            "total_bytes": 1321205760,
-            "strays": [],
-            "stray_bytes": 0,
-            "unexpected_builds": [],
-            "stray_error": null
-          }
-        },
-        {
-          "path": "^/api/updates/comfyui$",
-          "body": {
-            "commit": "abc1234567890abcdef1234567890abcdef123456",
-            "remote": {
-              "remote_head": "9999999fffffff000000000000000000000000",
-              "behind": 3,
-              "update_available": true
-            },
-            "recent": [
-              {
-                "sha": "abc1234",
-                "subject": "fix something",
-                "date": "2026-09-01"
-              },
-              {
-                "sha": "def5678",
-                "subject": "another commit",
-                "date": "2026-08-20"
-              }
-            ],
-            "venv": {
-              "python": "3.12.6",
-              "torch": "2.8.0"
-            },
-            "job": null
-          }
-        },
-        {
-          "path": "^/api/hf/status$",
-          "body": {
-            "cli_path": "/home/tester/.local/bin/hf",
-            "cli_venv": "/home/tester/.hf-cli/venv",
-            "cli_version": "0.34.0",
-            "hub_portal": "0.34.0",
-            "hub_os": "0.30.0",
-            "python_portal": "3.12.6",
-            "cache": "/home/tester/.cache/huggingface",
-            "cache_size": 1234567890,
-            "repos": [
-              {
-                "name": "models--x--y"
-              }
-            ],
-            "pypi_latest": "1.0.0",
-            "stale": false,
-            "update_available": true
-          }
-        }
-      ],
-      "expectStylesheets": [
-        "/static/tabs.css"
-      ],
-      "tabGroups": [
-        {
-          "tabs": ".update-tab",
-          "panels": ".update-tab-content",
-          "expectTabs": 5,
-          "expectPanels": 5
-        }
-      ],
-      "requireConfirmFor": [
-        "^/api/services/llamacpp/(stop|restart)$",
-        "^/api/services/comfyui/(stop|restart)$",
-        "^/api/updates/llamacpp$",
-        "^/api/updates/llamacpp/rollback$",
-        "^/api/updates/llamacpp/delete$",
-        "^/api/updates/comfyui$",
-        "^/api/updates/hf$"
-      ],
-      "expectText": [
-        {
-          "_comment": "The pulse pane has to say something a person can act on. These strings come from tests/ui/bin/journalctl, the sandbox's stand-in router journal: one slot mid-generation, one just truncated, two warnings and an error. Order matters for mutation reports: the most specific assertion of a given state comes first."
-        },
-        {
-          "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
-        },
-        {
-          "selector": "#pulse-lanes .lane",
-          "minCount": 2
-        },
-        {
-          "selector": "#pulse-lanes",
-          "contains": "generating"
-        },
-        {
-          "selector": "#pulse-lanes",
-          "contains": "context limit"
-        },
-        {
-          "selector": "#pulse-signals",
-          "contains": "requests"
-        },
-        {
-          "selector": "#tps-now",
-          "matches": "\\d"
-        },
-        {
-          "selector": "#router-feed .ln",
-          "contains": "prompt cache pressure"
-        },
-        {
-          "selector": "#attention-count",
-          "matches": "\\d"
-        }
-      ],
-      "expectHidden": [
-        "#stray-row",
-        "#stray-hint"
-      ]
+      "job": null,
+      "release_count": 3,
+      "total_bytes": 1321205760,
+      "strays": [],
+      "stray_bytes": 0,
+      "unexpected_builds": [],
+      "stray_error": null
+     }
     },
     {
-      "_comment": [
-        "The global job bar, seen from an ordinary page: an update started on",
-        "Status must stay visible after navigating anywhere, and must lock the",
-        "controls that would clash with it while it runs. The fixture is the",
-        "server's own payload shape, so a rename on either side breaks here."
+     "path": "^/api/updates/comfyui$",
+     "body": {
+      "commit": "abc1234567890abcdef1234567890abcdef123456",
+      "remote": {
+       "remote_head": "9999999fffffff000000000000000000000000",
+       "behind": 3,
+       "update_available": true
+      },
+      "recent": [
+       {
+        "sha": "abc1234",
+        "subject": "fix something",
+        "date": "2026-09-01"
+       },
+       {
+        "sha": "def5678",
+        "subject": "another commit",
+        "date": "2026-08-20"
+       }
       ],
-      "name": "jobbar",
-      "extends": "dashboard",
-      "path": "/",
-      "expectTitle": "Status",
-      "expectEnabled": [
-        ".update-tab"
-      ],
-      "fixtures": [
-        {
-          "path": "^/api/jobs/active$",
-          "status": 200,
-          "body": {
-            "running": [
-              {
-                "id": 77,
-                "kind": "comfyui",
-                "label": "ComfyUI update",
-                "target": "master",
-                "status": "running",
-                "started_at": 1700000000,
-                "elapsed_s": 125,
-                "step": "holding 4 machine-specific package(s)",
-                "log_tail": "[10:00:01] holding 4 machine-specific package(s)"
-              }
-            ],
-            "blocker": {
-              "id": 77,
-              "kind": "comfyui",
-              "label": "ComfyUI update",
-              "target": "master",
-              "status": "running",
-              "started_at": 1700000000,
-              "elapsed_s": 125,
-              "step": "holding 4 machine-specific package(s)",
-              "log_tail": ""
-            },
-            "last": null
-          }
-        }
-      ],
-      "expectVisible": [
-        "#jobbar",
-        "#jobbar-text",
-        "#jobbar-toggle"
-      ],
-      "expectText": [
-        {
-          "_comment": "names the job, not just 'something is running'",
-          "selector": "#jobbar-text",
-          "contains": "ComfyUI update"
-        },
-        {
-          "_comment": "the current step, so a long silent phase is distinguishable",
-          "selector": "#jobbar-text",
-          "contains": "holding 4 machine-specific package(s)"
-        },
-        {
-          "_comment": "elapsed time is formatted, not a raw second count",
-          "selector": "#jobbar-text",
-          "matches": "2m 05s"
-        },
-        {
-          "_comment": "the log opens from the bar, on any page, without a request",
-          "selector": "#jobbar-toggle",
-          "contains": "view log"
-        }
-      ],
-      "_disabled_comment": [
-        "These three are enabled by the dashboard's own fixtures and locked only",
-        "by the bar: this is the bar's doing, not the page's. The restore path is",
-        "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
-        "static spec cannot see a lock that was never released, so it has to be",
-        "broken in the template to know it is tested."
-      ],
-      "expectDisabled": [
-        "#comfy-upd-btn",
-        "#hf-upd-btn",
-        "#upd-btn"
-      ],
-      "_body_comment": [
-        "data-jobbusy is the machine-wide lock and must still be set after every",
-        "control has been driven: a panel re-rendering its own buttons can clear",
-        "`disabled`, and only a re-asserted end-state catches a bar that forgot."
-      ],
-      "_busy_scope": [
-        "Checked at load and again after the whole sweep. In between, driving a",
-        "select case runs the dashboard's own panel renderer, which repaints its",
-        "buttons and owns this attribute until the bar's next poll."
-      ],
-      "expectBodyAttr": {
-        "data-jobbusy": "1"
-      }
+      "venv": {
+       "python": "3.12.6",
+       "torch": "2.8.0"
+      },
+      "job": null
+     }
     },
     {
-      "_comment": [
-        "The other half of the bar: the job finished, possibly while you were",
-        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
-        "controls must be usable again."
+     "path": "^/api/hf/status$",
+     "body": {
+      "cli_path": "/home/tester/.local/bin/hf",
+      "cli_venv": "/home/tester/.hf-cli/venv",
+      "cli_version": "0.34.0",
+      "hub_portal": "0.34.0",
+      "hub_os": "0.30.0",
+      "python_portal": "3.12.6",
+      "cache": "/home/tester/.cache/huggingface",
+      "cache_size": 1234567890,
+      "repos": [
+       {
+        "name": "models--x--y"
+       }
       ],
-      "name": "jobbar-finished",
-      "extends": "dashboard",
-      "path": "/",
-      "expectTitle": "Status",
-      "fixtures": [
-        {
-          "path": "^/api/jobs/active$",
-          "status": 200,
-          "body": {
-            "running": [],
-            "blocker": null,
-            "last": {
-              "id": 78,
-              "kind": "llamacpp",
-              "label": "llama.cpp build",
-              "target": "HEAD",
-              "status": "failed",
-              "started_at": 1700000000,
-              "elapsed_s": 640,
-              "step": "FAILED: cmake exit 1",
-              "log_tail": ""
-            }
-          }
-        }
-      ],
-      "expectVisible": [
-        "#jobbar",
-        "#jobbar-text",
-        "#jobbar-toggle",
-        "#jobbar.failed"
-      ],
-      "expectAbsent": [
-        "#jobbar.done"
-      ],
-      "expectText": [
-        {
-          "selector": "#jobbar-text",
-          "contains": "llama.cpp build"
-        },
-        {
-          "selector": "#jobbar-text",
-          "contains": "FAILED"
-        },
-        {
-          "selector": "#jobbar.failed",
-          "_comment": "styled as a failure, not a success",
-          "contains": "after 10m 40s"
-        }
-      ],
-      "expectEnabled": [
-        "#comfy-upd-btn",
-        "#hf-upd-btn"
-      ],
-      "expectBodyAttr": {
-        "data-jobbusy": ""
-      }
-    },
-    {
-      "name": "models",
-      "path": "/models",
-      "expectTitle": "Models",
-      "expectRequests": [],
-      "expectVisible": [
-        "#tab-search",
-        "#tab-download",
-        "#model-tab-download",
-        "#search-query",
-        "#search-model-type",
-        "#add-src",
-        "#add-name",
-        "#add-dir",
-        "#add-cat"
-      ],
-      "expectStylesheets": [
-        "/static/tabs.css"
-      ],
-      "expectScrollContainers": [
-        "#library-table"
-      ],
-      "expectStickyColumns": [
-        "#library-table"
-      ],
-      "tabGroups": [
-        {
-          "tabs": ".model-tab",
-          "panels": ".model-tab-content",
-          "expectTabs": 2,
-          "expectPanels": 2
-        }
-      ],
-      "fixtures": [
-        {
-          "path": "^/api/models/search$",
-          "status": 200,
-          "body": {
-            "count": 3,
-            "results": [
-              {
-                "id": "TheBloke/UiT-Huge-GGUF",
-                "downloads": 1234,
-                "likes": 56,
-                "pipeline_tag": "text-generation",
-                "tags": [
-                  "gguf",
-                  "llama"
-                ],
-                "has_gguf": true
-              },
-              {
-                "id": "stabilityai/stable-diffusion-xl",
-                "downloads": 99,
-                "likes": 4,
-                "pipeline_tag": "text-to-image",
-                "tags": [
-                  "safetensors"
-                ],
-                "has_safetensors": true
-              },
-              {
-                "id": "evil/Injected-Model",
-                "downloads": 1,
-                "likes": 1,
-                "pipeline_tag": "text-generation",
-                "tags": [
-                  "</div><img id=xss-probe src=x onerror=alert(1)>",
-                  "<script>bad</script>"
-                ],
-                "has_gguf": true
-              }
-            ]
-          },
-          "methods": [
-            "POST"
-          ]
-        }
-      ],
-      "requireConfirmFor": [],
-      "expectNoInjectedMarkup": [
-        {
-          "selectors": "#search-results",
-          "mustContainEscaped": [
-            "&lt;/div&gt;&lt;img id=xss-probe"
-          ],
-          "triggerForm": "form[onsubmit^=\"searchModels\"]",
-          "triggerFill": [
-            {
-              "select": "#search-query",
-              "value": "inject-probe"
-            }
-          ],
-          "mustNotCreate": [
-            "#xss-probe",
-            "img[onerror]",
-            "script"
-          ],
-          "mustNotHaveAttr": [
-            {
-              "select": "[onclick]",
-              "attr": "onclick",
-              "forbidden": [
-                "'><",
-                "\"><img",
-                "alert("
-              ]
-            }
-          ]
-        }
-      ],
-      "expectInert": [
-        "selectModel\\('evil/Injected-Model"
-      ]
-    },
-    {
-      "name": "metrics",
-      "path": "/metrics",
-      "expectTitle": "Metrics",
-      "expectRequests": [
-        "/api/metrics"
-      ],
-      "expectVisible": [
-        "#chart",
-        "#cpu",
-        "#mem",
-        "#load",
-        "#gpu",
-        "#mstate"
-      ],
-      "tabGroups": []
-    },
-    {
-      "name": "health",
-      "path": "/health",
-      "expectTitle": "Health",
-      "_comment_requests": "the pane is server-rendered and read-only: it must not reach the update endpoints (that is how a view accidentally starts a git fetch on page load)",
-      "expectRequests": [],
-      "expectNoRequests": [
-        "/api/updates/llamacpp",
-        "/api/updates/comfyui",
-        "/api/health/detail"
-      ],
-      "expectVisible": [
-        "#attention",
-        "#gpu-stack",
-        "#deployed",
-        "#vulkan",
-        "#updates",
-        "#disk",
-        "#model-store"
-      ],
-      "expectText": [
-        {
-          "_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."
-        },
-        {
-          "selector": "#attention h3",
-          "contains": "Needs attention"
-        },
-        {
-          "selector": "#attention",
-          "contains": "amdrocm-base9.9"
-        },
-        {
-          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
-        },
-        {
-          "selector": "#gpu-stack .kv",
-          "matches": "ROCm installed \\(apt\\)\\s*9\\.9\\.0"
-        },
-        {
-          "selector": "#deployed",
-          "contains": "ROCm it was built for"
-        },
-        {
-          "selector": "#vulkan",
-          "contains": "latest known upstream"
-        },
-        {
-          "selector": "#updates",
-          "contains": "never runs"
-        },
-        {
-          "selector": "#disk",
-          "contains": "cmake build trees"
-        },
-        {
-          "_comment": "Sizes must arrive formatted: the tree table exists to be compared at a glance, and 581000000000 is comparable to nothing."
-        },
-        {
-          "selector": "#disk table td.mono",
-          "matches": "\\d(\\.\\d)?[KMGTP]"
-        },
-        {
-          "selector": "#model-store",
-          "contains": "invisible to llama.cpp"
-        }
-      ],
-      "tabGroups": []
-    },
-    {
-      "name": "settings",
-      "path": "/settings",
-      "expectTitle": "Settings",
-      "expectRequests": [
-        "/api/settings/services",
-        "/api/network"
-      ],
-      "expectVisible": [
-        "#ld-lib-path",
-        "#svc-ports",
-        "#net-summary",
-        "#net-firewall",
-        "#bind-llamacpp",
-        "#bind-comfyui",
-        "#bind-portal",
-        "#port-llamacpp",
-        "#port-comfyui",
-        "#port-portal",
-        "#save-llamacpp",
-        "#save-comfyui",
-        "#save-portal",
-        "#key-state",
-        "#key-body"
-      ],
-      "expectEnabled": [
-        "#save-llamacpp",
-        "#ld-lib-path",
-        "#bind-llamacpp"
-      ],
-      "blockMutations": [
-        "^/api/services/",
-        "^/api/updates/",
-        "^/api/models/",
-        "^/api/portal/"
-      ],
-      "requireConfirmFor": [
-        "^/api/services/",
-        "^/api/settings/llamacpp/apikey$"
-      ],
-      "requireConfirmUnlessBodyContains": {
-        "^/api/settings/llamacpp/apikey$": "generate"
-      }
-    },
-    {
-      "name": "login",
-      "path": "/login",
-      "auth": false,
-      "expectTitle": "Sign in",
-      "expectRequests": [],
-      "expectVisible": [
-        "form[action='/login']",
-        "input[name=password]",
-        "button[type=submit]"
-      ],
-      "tabGroups": []
-    },
-    {
-      "name": "builds-strays",
-      "extends": "dashboard",
-      "path": "/",
-      "_comment": [
-        "Build directories the registry never recorded. One is in use through a",
-        "broken link in ~/ai/bin and must never be purgeable; the other is dead",
-        "weight and must be. The fixture patches the dashboard payload rather",
-        "than copying it, so these assertions cannot quietly start describing a",
-        "state the base page no longer serves."
-      ],
-      "fixtures": [
-        {
-          "path": "^/api/updates/llamacpp$",
-          "merge": true,
-          "body": {
-            "strays": [
-              {
-                "name": "llama.cpp-b10921",
-                "path": "/home/tester/ai/releases/llama.cpp-b10921",
-                "bytes": 405012480,
-                "build": 10921,
-                "ahead": true,
-                "built_dir": "2026-09-13T04:11:09+00:00",
-                "held_by": [
-                  "llama-cli"
-                ],
-                "pids": [],
-                "proc_read": true,
-                "purgeable": false,
-                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
-              },
-              {
-                "name": "llama.cpp-b10796",
-                "path": "/home/tester/ai/releases/llama.cpp-b10796",
-                "bytes": 431296512,
-                "build": 10796,
-                "ahead": false,
-                "built_dir": "2026-09-13T04:11:09+00:00",
-                "held_by": [],
-                "pids": [],
-                "proc_read": true,
-                "purgeable": true,
-                "why_not": null
-              }
-            ],
-            "stray_bytes": 836308992
-          }
-        }
-      ],
-      "+expectVisible": [
-        "#stray-row",
-        "#stray-select",
-        "#purge-stray-btn"
-      ],
-      "+expectDisabled": [
-        "#purge-stray-btn"
-      ],
-      "+expectText": [
-        {
-          "_comment": "an unregistered build is reported with what it costs to keep",
-          "selector": "#stray-label",
-          "contains": "798 MB"
-        },
-        {
-          "_comment": "a directory the router is configured to run says so in the dropdown, next to the locked button",
-          "selector": "#stray-select",
-          "contains": "in use"
-        }
-      ],
-      "+selectCases": [
-        {
-          "select": "#stray-select",
-          "note": "an in-use build is never purgeable",
-          "choose": {
-            "labelContains": "in use"
-          },
-          "expectDisabled": [
-            "#purge-stray-btn"
-          ]
-        },
-        {
-          "select": "#stray-select",
-          "note": "a stray nothing uses can be purged",
-          "choose": {
-            "labelNotContaining": "in use"
-          },
-          "expectEnabled": [
-            "#purge-stray-btn"
-          ],
-          "then_click": [
-            "#purge-stray-btn"
-          ],
-          "_then_click_comment": [
-            "Purge deletes a directory permanently. This click is expected to stop",
-            "at the confirm dialog: requireConfirmFor is what proves the request",
-            "never leaves the page without one."
-          ]
-        }
-      ],
-      "+requireConfirmFor": [
-        "^/api/updates/llamacpp/purge$"
-      ],
-      "expectHidden": [
-        "#stray-hint"
-      ],
-      "+expectShown": [
-        "#stray-row",
-        "#stray-select",
-        "#purge-stray-btn"
-      ]
-    },
-    {
-      "_comment": [
-        "Personalities (plan section 4.7, phase N4). The page itself is still inert: it fetches",
-        "nothing on load and the write routes stay unrequested. What changed is that the page now",
-        "contains an editor, so the invariant is no longer 'there is no write control' but 'the",
-        "write control cannot fire by itself' -- Apply starts disabled, no control is a submit",
-        "button, and no action= or href= points at a write route. expectRequests stays empty",
-        "because a view that quietly POSTs on load is still the exact accident this phase prevents."
-      ],
-      "name": "personalities",
-      "path": "/personalities",
-      "expectTitle": "Personalities",
-      "expectRequests": [],
-      "expectNoRequests": [
-        "/api/personalities/apply",
-        "/api/personalities/write",
-        "/api/services/llamacpp/restart",
-        "/api/updates/llamacpp"
-      ],
-      "expectVisible": [
-        "#pers-safe",
-        "#pers-default",
-        "#keys-table",
-        "#keys-wrap",
-        "#editor",
-        "#pers-editor",
-        "#ed-persona",
-        "#ed-global",
-        "#ed-model",
-        "#ed-preview",
-        "#ed-apply",
-        "#ed-summary"
-      ],
-      "expectText": [
-        {
-          "_comment": [
-            "The budget figure, asserted as a formatted number rather than a selector.",
-            "The template once read b.get('worst_bytes') while Budget.as_dict() calls it",
-            "worst_case_bytes; Jinja answered the missing key with undefined, the {% if %}",
-            "never fired, and the page rendered both cards with no budget at all -- 200 OK,",
-            "correct markup, no number. A selector check would have passed."
-          ],
-          "selector": "#pers-default",
-          "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB \\([-\\d.]+ spare\\)"
-        },
-        {
-          "_comment": "a diff is a proposal, and the page has to say which",
-          "selector": "#pers-safe",
-          "contains": "presets.ini it would write"
-        },
-        {
-          "_comment": [
-            "the settings table is the definition a future editor renders; an empty",
-            "table would mean the page explains nothing about what a key does"
-          ],
-          "selector": "#keys-table tbody tr",
-          "minCount": 10
-        },
-        {
-          "selector": "#keys-table",
-          "contains": "stop-timeout"
-        },
-        {
-          "_comment": [
-            "Apply must start disabled. The button is only reachable from a preview that came",
-            "back clean, which is what makes 'the write is always preceded by a diff the operator",
-            "saw' a property of the page rather than a habit of the operator."
-          ],
-          "selector": "#ed-apply",
-          "contains": "Apply"
-        },
-        {
-          "_comment": [
-            "Controls are generated from the settings registry, not hand-listed, so the editor",
-            "cannot offer a key the validator would refuse. Field count tracks the registry: if a",
-            "key is added to SETTINGS and the editor stops showing it, this is what notices."
-          ],
-          "selector": "#ed-global .ed-field",
-          "minCount": 12
-        },
-        {
-          "_comment": [
-            "Every per-model key is offerable per model, including the model-only ones, so a",
-            "load-on-startup or ctx-size can be set where it belongs."
-          ],
-          "selector": "#ed-model-fields .ed-field",
-          "minCount": 14
-        },
-        {
-          "selector": "#ed-summary",
-          "contains": "no edits proposed"
-        }
-      ],
-      "expectNoInjectedMarkup": [
-        {
-          "_comment": [
-            "A personality name and a model id reach this page from the index and from",
-            "personality definitions, and model directory names are the one part of that",
-            "chain a download can influence. The hostile fixture below is a library row,",
-            "so this proves the page escapes index-derived text rather than trusting it."
-          ],
-          "selectors": [
-            "#pers-default"
-          ],
-          "mustNotCreate": [
-            "#pers-xss",
-            "img[onerror]",
-            "script"
-          ],
-          "mustNotHaveAttr": [
-            {
-              "select": "[onclick]",
-              "attr": "onclick",
-              "forbidden": [
-                "'><",
-                "\"><img",
-                "alert("
-              ]
-            }
-          ]
-        }
-      ],
-      "tabGroups": []
-    },
-    {
-      "name": "help",
-      "path": "/help",
-      "expectTitle": "Help",
-      "expectRequests": [],
-      "expectVisible": [
-        "#kb-search",
-        "#kb-toc",
-        "#kb-sec-addr",
-        "#kb-sec-title",
-        "#kb-sec-meta",
-        "#kb-sec-body",
-        "#kb-close",
-        "#kb-permalink"
-      ],
-      "expectHidden": [
-        "#kb-section"
-      ],
-      "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
+      "pypi_latest": "1.0.0",
+      "stale": false,
+      "update_available": true
+     }
     }
-  ]
+   ],
+   "expectStylesheets": [
+    "/static/tabs.css"
+   ],
+   "tabGroups": [
+    {
+     "tabs": ".update-tab",
+     "panels": ".update-tab-content",
+     "expectTabs": 5,
+     "expectPanels": 5
+    }
+   ],
+   "requireConfirmFor": [
+    "^/api/services/llamacpp/(stop|restart)$",
+    "^/api/services/comfyui/(stop|restart)$",
+    "^/api/updates/llamacpp$",
+    "^/api/updates/llamacpp/rollback$",
+    "^/api/updates/llamacpp/delete$",
+    "^/api/updates/comfyui$",
+    "^/api/updates/hf$"
+   ],
+   "expectText": [
+    {
+     "_comment": "The pulse pane has to say something a person can act on. These strings come from tests/ui/bin/journalctl, the sandbox's stand-in router journal: one slot mid-generation, one just truncated, two warnings and an error. Order matters for mutation reports: the most specific assertion of a given state comes first."
+    },
+    {
+     "selector": "#pulse-lanes .lane.s-generate .lane-detail",
+     "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
+    },
+    {
+     "selector": "#pulse-lanes .lane",
+     "minCount": 2
+    },
+    {
+     "selector": "#pulse-lanes",
+     "contains": "generating"
+    },
+    {
+     "selector": "#pulse-lanes",
+     "contains": "context limit"
+    },
+    {
+     "selector": "#pulse-signals",
+     "contains": "requests"
+    },
+    {
+     "selector": "#tps-now",
+     "matches": "\\d"
+    },
+    {
+     "selector": "#router-feed .ln",
+     "contains": "prompt cache pressure"
+    },
+    {
+     "selector": "#attention-count",
+     "matches": "\\d"
+    }
+   ],
+   "expectHidden": [
+    "#stray-row",
+    "#stray-hint"
+   ]
+  },
+  {
+   "_comment": [
+    "The global job bar, seen from an ordinary page: an update started on",
+    "Status must stay visible after navigating anywhere, and must lock the",
+    "controls that would clash with it while it runs. The fixture is the",
+    "server's own payload shape, so a rename on either side breaks here."
+   ],
+   "name": "jobbar",
+   "extends": "dashboard",
+   "path": "/",
+   "expectTitle": "Status",
+   "expectEnabled": [
+    ".update-tab"
+   ],
+   "fixtures": [
+    {
+     "path": "^/api/jobs/active$",
+     "status": 200,
+     "body": {
+      "running": [
+       {
+        "id": 77,
+        "kind": "comfyui",
+        "label": "ComfyUI update",
+        "target": "master",
+        "status": "running",
+        "started_at": 1700000000,
+        "elapsed_s": 125,
+        "step": "holding 4 machine-specific package(s)",
+        "log_tail": "[10:00:01] holding 4 machine-specific package(s)"
+       }
+      ],
+      "blocker": {
+       "id": 77,
+       "kind": "comfyui",
+       "label": "ComfyUI update",
+       "target": "master",
+       "status": "running",
+       "started_at": 1700000000,
+       "elapsed_s": 125,
+       "step": "holding 4 machine-specific package(s)",
+       "log_tail": ""
+      },
+      "last": null
+     }
+    }
+   ],
+   "expectVisible": [
+    "#jobbar",
+    "#jobbar-text",
+    "#jobbar-toggle"
+   ],
+   "expectText": [
+    {
+     "_comment": "names the job, not just 'something is running'",
+     "selector": "#jobbar-text",
+     "contains": "ComfyUI update"
+    },
+    {
+     "_comment": "the current step, so a long silent phase is distinguishable",
+     "selector": "#jobbar-text",
+     "contains": "holding 4 machine-specific package(s)"
+    },
+    {
+     "_comment": "elapsed time is formatted, not a raw second count",
+     "selector": "#jobbar-text",
+     "matches": "2m 05s"
+    },
+    {
+     "_comment": "the log opens from the bar, on any page, without a request",
+     "selector": "#jobbar-toggle",
+     "contains": "view log"
+    }
+   ],
+   "_disabled_comment": [
+    "These three are enabled by the dashboard's own fixtures and locked only",
+    "by the bar: this is the bar's doing, not the page's. The restore path is",
+    "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
+    "static spec cannot see a lock that was never released, so it has to be",
+    "broken in the template to know it is tested."
+   ],
+   "expectDisabled": [
+    "#comfy-upd-btn",
+    "#hf-upd-btn",
+    "#upd-btn"
+   ],
+   "_body_comment": [
+    "data-jobbusy is the machine-wide lock and must still be set after every",
+    "control has been driven: a panel re-rendering its own buttons can clear",
+    "`disabled`, and only a re-asserted end-state catches a bar that forgot."
+   ],
+   "_busy_scope": [
+    "Checked at load and again after the whole sweep. In between, driving a",
+    "select case runs the dashboard's own panel renderer, which repaints its",
+    "buttons and owns this attribute until the bar's next poll."
+   ],
+   "expectBodyAttr": {
+    "data-jobbusy": "1"
+   }
+  },
+  {
+   "_comment": [
+    "The other half of the bar: the job finished, possibly while you were",
+    "elsewhere, and said it failed. The bar must still say so \u2014 and the",
+    "controls must be usable again."
+   ],
+   "name": "jobbar-finished",
+   "extends": "dashboard",
+   "path": "/",
+   "expectTitle": "Status",
+   "fixtures": [
+    {
+     "path": "^/api/jobs/active$",
+     "status": 200,
+     "body": {
+      "running": [],
+      "blocker": null,
+      "last": {
+       "id": 78,
+       "kind": "llamacpp",
+       "label": "llama.cpp build",
+       "target": "HEAD",
+       "status": "failed",
+       "started_at": 1700000000,
+       "elapsed_s": 640,
+       "step": "FAILED: cmake exit 1",
+       "log_tail": ""
+      }
+     }
+    }
+   ],
+   "expectVisible": [
+    "#jobbar",
+    "#jobbar-text",
+    "#jobbar-toggle",
+    "#jobbar.failed"
+   ],
+   "expectAbsent": [
+    "#jobbar.done"
+   ],
+   "expectText": [
+    {
+     "selector": "#jobbar-text",
+     "contains": "llama.cpp build"
+    },
+    {
+     "selector": "#jobbar-text",
+     "contains": "FAILED"
+    },
+    {
+     "selector": "#jobbar.failed",
+     "_comment": "styled as a failure, not a success",
+     "contains": "after 10m 40s"
+    }
+   ],
+   "expectEnabled": [
+    "#comfy-upd-btn",
+    "#hf-upd-btn"
+   ],
+   "expectBodyAttr": {
+    "data-jobbusy": ""
+   }
+  },
+  {
+   "name": "models",
+   "path": "/models",
+   "expectTitle": "Models",
+   "expectRequests": [],
+   "expectVisible": [
+    "#tab-search",
+    "#tab-download",
+    "#model-tab-download",
+    "#search-query",
+    "#search-model-type",
+    "#add-src",
+    "#add-name",
+    "#add-dir",
+    "#add-cat"
+   ],
+   "expectStylesheets": [
+    "/static/tabs.css"
+   ],
+   "expectScrollContainers": [
+    "#library-table"
+   ],
+   "expectStickyColumns": [
+    "#library-table"
+   ],
+   "tabGroups": [
+    {
+     "tabs": ".model-tab",
+     "panels": ".model-tab-content",
+     "expectTabs": 2,
+     "expectPanels": 2
+    }
+   ],
+   "fixtures": [
+    {
+     "path": "^/api/models/search$",
+     "status": 200,
+     "body": {
+      "count": 3,
+      "results": [
+       {
+        "id": "TheBloke/UiT-Huge-GGUF",
+        "downloads": 1234,
+        "likes": 56,
+        "pipeline_tag": "text-generation",
+        "tags": [
+         "gguf",
+         "llama"
+        ],
+        "has_gguf": true
+       },
+       {
+        "id": "stabilityai/stable-diffusion-xl",
+        "downloads": 99,
+        "likes": 4,
+        "pipeline_tag": "text-to-image",
+        "tags": [
+         "safetensors"
+        ],
+        "has_safetensors": true
+       },
+       {
+        "id": "evil/Injected-Model",
+        "downloads": 1,
+        "likes": 1,
+        "pipeline_tag": "text-generation",
+        "tags": [
+         "</div><img id=xss-probe src=x onerror=alert(1)>",
+         "<script>bad</script>"
+        ],
+        "has_gguf": true
+       }
+      ]
+     },
+     "methods": [
+      "POST"
+     ]
+    }
+   ],
+   "requireConfirmFor": [],
+   "expectNoInjectedMarkup": [
+    {
+     "selectors": "#search-results",
+     "mustContainEscaped": [
+      "&lt;/div&gt;&lt;img id=xss-probe"
+     ],
+     "triggerForm": "form[onsubmit^=\"searchModels\"]",
+     "triggerFill": [
+      {
+       "select": "#search-query",
+       "value": "inject-probe"
+      }
+     ],
+     "mustNotCreate": [
+      "#xss-probe",
+      "img[onerror]",
+      "script"
+     ],
+     "mustNotHaveAttr": [
+      {
+       "select": "[onclick]",
+       "attr": "onclick",
+       "forbidden": [
+        "'><",
+        "\"><img",
+        "alert("
+       ]
+      }
+     ]
+    }
+   ],
+   "expectInert": [
+    "selectModel\\('evil/Injected-Model"
+   ]
+  },
+  {
+   "name": "metrics",
+   "path": "/metrics",
+   "expectTitle": "Metrics",
+   "expectRequests": [
+    "/api/metrics"
+   ],
+   "expectVisible": [
+    "#chart",
+    "#cpu",
+    "#mem",
+    "#load",
+    "#gpu",
+    "#mstate",
+    "#sampled"
+   ],
+   "tabGroups": []
+  },
+  {
+   "name": "health",
+   "path": "/health",
+   "expectTitle": "Health",
+   "_comment_requests": "the pane is server-rendered and read-only: it must not reach the update endpoints (that is how a view accidentally starts a git fetch on page load)",
+   "expectRequests": [],
+   "expectNoRequests": [
+    "/api/updates/llamacpp",
+    "/api/updates/comfyui",
+    "/api/health/detail"
+   ],
+   "expectVisible": [
+    "#attention",
+    "#gpu-stack",
+    "#deployed",
+    "#vulkan",
+    "#updates",
+    "#disk",
+    "#model-store"
+   ],
+   "expectText": [
+    {
+     "_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."
+    },
+    {
+     "selector": "#attention h3",
+     "contains": "Needs attention"
+    },
+    {
+     "selector": "#attention",
+     "contains": "amdrocm-base9.9"
+    },
+    {
+     "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
+    },
+    {
+     "selector": "#gpu-stack .kv",
+     "matches": "ROCm installed \\(apt\\)\\s*9\\.9\\.0"
+    },
+    {
+     "selector": "#deployed",
+     "contains": "ROCm it was built for"
+    },
+    {
+     "selector": "#vulkan",
+     "contains": "latest known upstream"
+    },
+    {
+     "selector": "#updates",
+     "contains": "never runs"
+    },
+    {
+     "selector": "#disk",
+     "contains": "cmake build trees"
+    },
+    {
+     "_comment": "Sizes must arrive formatted: the tree table exists to be compared at a glance, and 581000000000 is comparable to nothing."
+    },
+    {
+     "selector": "#disk table td.mono",
+     "matches": "\\d(\\.\\d)?[KMGTP]"
+    },
+    {
+     "selector": "#model-store",
+     "contains": "invisible to llama.cpp"
+    }
+   ],
+   "tabGroups": []
+  },
+  {
+   "name": "settings",
+   "path": "/settings",
+   "expectTitle": "Settings",
+   "expectRequests": [
+    "/api/settings/services",
+    "/api/network"
+   ],
+   "expectVisible": [
+    "#ld-lib-path",
+    "#svc-ports",
+    "#net-summary",
+    "#net-firewall",
+    "#bind-llamacpp",
+    "#bind-comfyui",
+    "#bind-portal",
+    "#port-llamacpp",
+    "#port-comfyui",
+    "#port-portal",
+    "#save-llamacpp",
+    "#save-comfyui",
+    "#save-portal",
+    "#key-state",
+    "#key-body"
+   ],
+   "expectEnabled": [
+    "#save-llamacpp",
+    "#ld-lib-path",
+    "#bind-llamacpp"
+   ],
+   "blockMutations": [
+    "^/api/services/",
+    "^/api/updates/",
+    "^/api/models/",
+    "^/api/portal/"
+   ],
+   "requireConfirmFor": [
+    "^/api/services/",
+    "^/api/settings/llamacpp/apikey$"
+   ],
+   "requireConfirmUnlessBodyContains": {
+    "^/api/settings/llamacpp/apikey$": "generate"
+   }
+  },
+  {
+   "name": "login",
+   "path": "/login",
+   "auth": false,
+   "expectTitle": "Sign in",
+   "expectRequests": [],
+   "expectVisible": [
+    "form[action='/login']",
+    "input[name=password]",
+    "button[type=submit]"
+   ],
+   "tabGroups": []
+  },
+  {
+   "name": "builds-strays",
+   "extends": "dashboard",
+   "path": "/",
+   "_comment": [
+    "Build directories the registry never recorded. One is in use through a",
+    "broken link in ~/ai/bin and must never be purgeable; the other is dead",
+    "weight and must be. The fixture patches the dashboard payload rather",
+    "than copying it, so these assertions cannot quietly start describing a",
+    "state the base page no longer serves."
+   ],
+   "fixtures": [
+    {
+     "path": "^/api/updates/llamacpp$",
+     "merge": true,
+     "body": {
+      "strays": [
+       {
+        "name": "llama.cpp-b10921",
+        "path": "/home/tester/ai/releases/llama.cpp-b10921",
+        "bytes": 405012480,
+        "build": 10921,
+        "ahead": true,
+        "built_dir": "2026-09-13T04:11:09+00:00",
+        "held_by": [
+         "llama-cli"
+        ],
+        "pids": [],
+        "proc_read": true,
+        "purgeable": false,
+        "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
+       },
+       {
+        "name": "llama.cpp-b10796",
+        "path": "/home/tester/ai/releases/llama.cpp-b10796",
+        "bytes": 431296512,
+        "build": 10796,
+        "ahead": false,
+        "built_dir": "2026-09-13T04:11:09+00:00",
+        "held_by": [],
+        "pids": [],
+        "proc_read": true,
+        "purgeable": true,
+        "why_not": null
+       }
+      ],
+      "stray_bytes": 836308992
+     }
+    }
+   ],
+   "+expectVisible": [
+    "#stray-row",
+    "#stray-select",
+    "#purge-stray-btn"
+   ],
+   "+expectDisabled": [
+    "#purge-stray-btn"
+   ],
+   "+expectText": [
+    {
+     "_comment": "an unregistered build is reported with what it costs to keep",
+     "selector": "#stray-label",
+     "contains": "798 MB"
+    },
+    {
+     "_comment": "a directory the router is configured to run says so in the dropdown, next to the locked button",
+     "selector": "#stray-select",
+     "contains": "in use"
+    }
+   ],
+   "+selectCases": [
+    {
+     "select": "#stray-select",
+     "note": "an in-use build is never purgeable",
+     "choose": {
+      "labelContains": "in use"
+     },
+     "expectDisabled": [
+      "#purge-stray-btn"
+     ]
+    },
+    {
+     "select": "#stray-select",
+     "note": "a stray nothing uses can be purged",
+     "choose": {
+      "labelNotContaining": "in use"
+     },
+     "expectEnabled": [
+      "#purge-stray-btn"
+     ],
+     "then_click": [
+      "#purge-stray-btn"
+     ],
+     "_then_click_comment": [
+      "Purge deletes a directory permanently. This click is expected to stop",
+      "at the confirm dialog: requireConfirmFor is what proves the request",
+      "never leaves the page without one."
+     ]
+    }
+   ],
+   "+requireConfirmFor": [
+    "^/api/updates/llamacpp/purge$"
+   ],
+   "expectHidden": [
+    "#stray-hint"
+   ],
+   "+expectShown": [
+    "#stray-row",
+    "#stray-select",
+    "#purge-stray-btn"
+   ]
+  },
+  {
+   "_comment": [
+    "Personalities (plan section 4.7, phase N4). The page itself is still inert: it fetches",
+    "nothing on load and the write routes stay unrequested. What changed is that the page now",
+    "contains an editor, so the invariant is no longer 'there is no write control' but 'the",
+    "write control cannot fire by itself' -- Apply starts disabled, no control is a submit",
+    "button, and no action= or href= points at a write route. expectRequests stays empty",
+    "because a view that quietly POSTs on load is still the exact accident this phase prevents."
+   ],
+   "name": "personalities",
+   "path": "/personalities",
+   "expectTitle": "Personalities",
+   "expectRequests": [],
+   "expectNoRequests": [
+    "/api/personalities/apply",
+    "/api/personalities/write",
+    "/api/services/llamacpp/restart",
+    "/api/updates/llamacpp"
+   ],
+   "expectVisible": [
+    "#pers-safe",
+    "#pers-default",
+    "#keys-table",
+    "#keys-wrap",
+    "#editor",
+    "#pers-editor",
+    "#ed-persona",
+    "#ed-global",
+    "#ed-model",
+    "#ed-preview",
+    "#ed-apply",
+    "#ed-summary"
+   ],
+   "expectText": [
+    {
+     "_comment": [
+      "The budget figure, asserted as a formatted number rather than a selector.",
+      "The template once read b.get('worst_bytes') while Budget.as_dict() calls it",
+      "worst_case_bytes; Jinja answered the missing key with undefined, the {% if %}",
+      "never fired, and the page rendered both cards with no budget at all -- 200 OK,",
+      "correct markup, no number. A selector check would have passed."
+     ],
+     "selector": "#pers-default",
+     "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB \\([-\\d.]+ spare\\)"
+    },
+    {
+     "_comment": "a diff is a proposal, and the page has to say which",
+     "selector": "#pers-safe",
+     "contains": "presets.ini it would write"
+    },
+    {
+     "_comment": [
+      "the settings table is the definition a future editor renders; an empty",
+      "table would mean the page explains nothing about what a key does"
+     ],
+     "selector": "#keys-table tbody tr",
+     "minCount": 10
+    },
+    {
+     "selector": "#keys-table",
+     "contains": "stop-timeout"
+    },
+    {
+     "_comment": [
+      "Apply must start disabled. The button is only reachable from a preview that came",
+      "back clean, which is what makes 'the write is always preceded by a diff the operator",
+      "saw' a property of the page rather than a habit of the operator."
+     ],
+     "selector": "#ed-apply",
+     "contains": "Apply"
+    },
+    {
+     "_comment": [
+      "Controls are generated from the settings registry, not hand-listed, so the editor",
+      "cannot offer a key the validator would refuse. Field count tracks the registry: if a",
+      "key is added to SETTINGS and the editor stops showing it, this is what notices."
+     ],
+     "selector": "#ed-global .ed-field",
+     "minCount": 12
+    },
+    {
+     "_comment": [
+      "Every per-model key is offerable per model, including the model-only ones, so a",
+      "load-on-startup or ctx-size can be set where it belongs."
+     ],
+     "selector": "#ed-model-fields .ed-field",
+     "minCount": 14
+    },
+    {
+     "selector": "#ed-summary",
+     "contains": "no edits proposed"
+    }
+   ],
+   "expectNoInjectedMarkup": [
+    {
+     "_comment": [
+      "A personality name and a model id reach this page from the index and from",
+      "personality definitions, and model directory names are the one part of that",
+      "chain a download can influence. The hostile fixture below is a library row,",
+      "so this proves the page escapes index-derived text rather than trusting it."
+     ],
+     "selectors": [
+      "#pers-default"
+     ],
+     "mustNotCreate": [
+      "#pers-xss",
+      "img[onerror]",
+      "script"
+     ],
+     "mustNotHaveAttr": [
+      {
+       "select": "[onclick]",
+       "attr": "onclick",
+       "forbidden": [
+        "'><",
+        "\"><img",
+        "alert("
+       ]
+      }
+     ]
+    }
+   ],
+   "tabGroups": []
+  },
+  {
+   "name": "help",
+   "path": "/help",
+   "expectTitle": "Help",
+   "expectRequests": [],
+   "expectVisible": [
+    "#kb-search",
+    "#kb-toc",
+    "#kb-sec-addr",
+    "#kb-sec-title",
+    "#kb-sec-meta",
+    "#kb-sec-body",
+    "#kb-close",
+    "#kb-permalink"
+   ],
+   "expectHidden": [
+    "#kb-section"
+   ],
+   "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
+  }
+ ]
 }

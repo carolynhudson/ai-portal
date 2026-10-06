@@ -16,13 +16,13 @@
 
 <div class="grid" style="margin-top:14px">
   <div class="card">
-    <h3>Disk</h3>
+    <h3>Disk <span class="mut" id="sampled">sampled {{ sampled }}</span></h3>
     {% for d in disk %}
     <div class="kv"><span class="k">{{ d[0] }}</span><span class="mono">{{ d[1] }}</span></div>
     {% endfor %}
   </div>
   <div class="card">
-    <h3>GPU (best-effort)</h3>
+    <h3>GPU (best-effort) <span class="mut">sampled {{ sampled }}</span></h3>
     <div class="mono">{{ gpu }}</div>
     <div class="kv" style="margin-top:8px"><span class="k">live</span><span class="mono" id="gpu">—</span></div>
   </div>
@@ -44,10 +44,15 @@ function draw(){
   line(hist.map(h=>h.cpu), '#5aa9ff');
   line(hist.map(h=>h.mem), '#d29922');
 }
+// The target is a literal path, never a value from the response. Say it in code the
+// reader can check: only a leading-slash path with no authority, scheme, or '//'.
+function gotoInternal(path){
+  if (path.charAt(0) === '/' && path.slice(0, 2) !== '//') location.href = path;
+}
 async function tick(){
   try{
     const r = await fetch('/api/metrics', {credentials:'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     const m = await r.json();
     const cpu = m.cpu_percent ?? 0;
     const mem = (m.memory && m.memory.percent) ?? 0;
@@ -62,6 +67,14 @@ async function tick(){
     draw();
   }catch(e){ document.getElementById('mstate').textContent = 'error'; }
 }
-tick(); setInterval(tick, (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.metrics_poll_ms) || 2000);
+function stamp() {
+  // The pill reports the time of the poll, not the time of the page. Disk and GPU
+  // above are one sample taken at load; only this line moves.
+  const el = document.getElementById('mstate');
+  el.textContent = 'polled ' + new Date().toLocaleTimeString();
+}
+tick(); stamp();
+setInterval(() => { tick(); stamp(); },
+            (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.metrics_poll_ms) || 2000);
 </script>
 {% endblock %}
