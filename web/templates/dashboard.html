@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Status · AI Portal{% endblock %}
 {% block body %}
+<!-- gotoInternal lives in /static/safe.js, loaded above: portal-path check, then an
+     origin check against this page, then navigation by method. A page that redirects
+     does not get to write its own validator. -->
 <script>window.PORTAL_SETTINGS = {router_poll_ms: {{ settings.router_poll_ms }}, metrics_poll_ms: {{ settings.metrics_poll_ms }}, router_metrics: {{ 'true' if settings.router_metrics else 'false' }}};</script>
 <style>
 .router-hero{border-color:var(--acc)}
@@ -150,7 +153,7 @@
   </div>
 
   {# a model swap is the one thing that looks like a hang and isn't #}
-  <div class="switch-line" id="pulse-switch"{% if not m.get('switching') %} hidden{% endif %}>
+  <div class="switch-line" id="pulse-switch" {{ "hidden" if not m.get("switching") else "" }}>
     <span class="spin" aria-hidden="true"></span>
     <span id="pulse-switch-text">{% if m.get('switching') %}{{ 'waiting for a free slot to load' if m.get('waiting_for_slot') else 'loading' }} <span class="mono">{{ m.get('loading') }}</span> — the first token waits for the weights{% else %}loading{% endif %}</span>
     <span class="mut" id="pulse-switch-age">{{ ('· ' ~ m.get('loading_age_s') ~ 's in') if m.get('loading_age_s') else '' }}</span>
@@ -209,7 +212,7 @@
     <button class="btn-sm toggle" id="attention-toggle" type="button"
             title="switch between curated lines and the raw journal tail">all lines</button>
   </div>
-  <pre id="router-feed" class="feed feed-quiet">{% for a in p.get('attention', []) %}<span class="ln {{ a.level }}"><span class="age">{{ a.age_text }} · </span>{{ a.text }}{% if a.count > 1 %} <b class="ct">×{{ a.count }}</b>{% endif %}</span>{% else %}<span class="ln mut">nothing unusual in the recent journal</span>{% endfor %}</pre>
+  <pre id="router-feed" class="feed feed-quiet">{% for a in p.get('attention', []) %}<span class="ln {{ a.level }}"><span class="age">{{ a.age_text }} · </span>{{ a.text }}{% if a.count >= 2 %} <b class="ct">×{{ a.count }}</b>{% endif %}</span>{% else %}<span class="ln mut">nothing unusual in the recent journal</span>{% endfor %}</pre>
 </div>
 
 {# ---- live ComfyUI: the other running thing on this box ---- #}
@@ -249,12 +252,45 @@
 </div>
 
 {# only the reboot badge earns a line of its own; the SDK inventory lives in the
-   GPU Drivers / SDKs tab and the nav already links to Metrics #}
+   GPU Drivers / SDKs tab #}
 {% if health.reboot_required %}
 <div class="sysline">
   <span class="badge">reboot required</span>
 </div>
 {% endif %}
+
+{# ---- Machine detail ---- #}
+{# The old /metrics page was a superset of this dashboard that you visited only while
+   testing. Its sections live here, collapsed: disk and GPU are read once, at page load,
+   and say when; the CPU/memory chart is the one part with a real time signal, so it
+   polls (docs/PORTAL_PLAN.md sec 6.13). #}
+<details class="card" id="machine-detail" style="margin-top:14px">
+  <summary>Machine detail <span class="mut">CPU · memory · disk · GPU</span></summary>
+  <div style="margin-top:10px">
+    <canvas id="machine-chart" width="1000" height="140"></canvas>
+    <div class="kv" style="margin-top:8px"><span class="k">CPU</span>
+      <span class="mono" id="machine-cpu">—</span>
+      <span class="mut" id="machine-polled">not polled yet</span></div>
+    <div class="kv"><span class="k">Memory</span><span class="mono" id="machine-mem">—</span></div>
+    <div class="kv"><span class="k">Load (1/5/15)</span><span class="mono" id="machine-load">—</span></div>
+    <div class="grid" style="margin-top:10px">
+      <div class="card">
+        <h3>Disk <span class="mut" id="disk-sampled">sampled {{ sampled }}</span></h3>
+        {% for d in disk %}
+        <div class="kv"><span class="k">{{ d[0] }}</span><span class="mono">{{ d[1] }}</span></div>
+        {% else %}
+        <div class="kv"><span class="mut">no mounts reported</span></div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <h3>GPU (best-effort) <span class="mut" id="gpu-sampled">sampled {{ sampled }}</span></h3>
+        <div class="mono">{{ gpu }}</div>
+        <div class="kv" style="margin-top:8px"><span class="k">live</span>
+          <span class="mono" id="machine-gpu">—</span></div>
+      </div>
+    </div>
+  </div>
+</details>
 
 {# ---- Tool Repository Update Status ---- #}
 <h2>Tool Repository Update Status</h2>
@@ -506,8 +542,8 @@ function renderLanes(slots){
       node = document.createElement('div');
       node.className = 'lane';
       node.dataset.slot = key;
-      node.innerHTML = '<span class="lane-id"></span><span class="lane-phase"></span>'
-                     + '<span class="lane-bar"><i></i></span><span class="lane-detail"></span>';
+      safeSet(node, '<span class="lane-id"></span><span class="lane-phase"></span>'
+                     + '<span class="lane-bar"><i></i></span><span class="lane-detail"></span>');
       box.appendChild(node);
     }
     delete have[key];
@@ -589,23 +625,23 @@ function renderSignals(p){
   if (s.prompt_tps_avg != null) out.push('<b>' + Math.round(s.prompt_tps_avg) + '</b> t/s in');
   if (s.cache_keep_avg != null) out.push('prompt cache <b>' + s.cache_keep_avg + '%</b> reused');
   out.push('<b>' + (s.errors || 0) + '</b> errors · <b>' + (s.warns || 0) + '</b> warnings in window');
-  el.innerHTML = out.map(x => '<span>' + x + '</span>').join('');
+  safeSet(el, out.map(x => '<span>' + x + '</span>').join(''));
 }
 function renderFeed(d){
   const feed = document.getElementById('router-feed');
   if (!feed) return;
   if (feedView === 'all'){
     const acts = (d.activity || []).slice().reverse();
-    feed.innerHTML = acts.length
+    safeSet(feed, acts.length
       ? acts.map(ev => '<span class="ln ' + esc(ev.kind) + '">' + esc(ev.text) + '</span>').join('')
-      : '<span class="ln mut">no recent log lines captured</span>';
+      : '<span class="ln mut">no recent log lines captured</span>');
   } else {
     const items = (d.pulse && d.pulse.attention) || [];
-    feed.innerHTML = items.length
+    safeSet(feed, items.length
       ? items.map(a => '<span class="ln ' + esc(a.level) + '"><span class="age">'
           + (a.age_text || fmtAge(a.age_s)) + ' · </span>' + esc(a.text)
           + (a.count > 1 ? ' <b class="ct">×' + a.count + '</b>' : '') + '</span>').join('')
-      : '<span class="ln mut">nothing unusual in the recent journal</span>';
+      : '<span class="ln mut">nothing unusual in the recent journal</span>');
   }
   feed.scrollTop = 0;
 }
@@ -690,7 +726,7 @@ async function tick(){
     // every couple of seconds and the log lines are most of the bytes
     const res = await fetch('/api/router' + (feedView === 'all' ? '?raw=1' : ''),
                             {credentials:'same-origin'});
-    if (res.status === 401) { location.href = '/login'; return; }
+    if (res.status === 401) { gotoInternal('/login'); return; }
     renderRouter(await res.json());
   }catch(e){ /* keep last good state on a transient error */ }
 }
@@ -706,8 +742,68 @@ function toggleFeedView(){
 const _toggleBtn = document.getElementById('attention-toggle');
 if (_toggleBtn) _toggleBtn.addEventListener('click', function(){ toggleFeedView(); });
 const _poll = (window.PORTAL_SETTINGS && window.PORTAL_SETTINGS.router_poll_ms) || 2500;
+
+// A background tab is not a reader. Every loop on this page goes through `every`,
+// which skips ticks while the page is hidden: the server cost of an open tab is then
+// the cost of the tab you are looking at (docs/PORTAL_PLAN.md sec 6.13).
+function every(ms, fn){
+  const run = () => { if (!document.hidden) fn(); };
+  run();
+  setInterval(run, ms);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) run(); });
+}
+
+// The machine detail panel is the one part of this page with a real time signal (the
+// CPU/memory chart), so it polls: 5 s, the cache age of the GPU numbers it shows, and
+// only while the panel is open. Disk and GPU at page load do not poll.
+const MACHINE_POLL_MS = 5000;
+const machineHist = []; const MACHINE_MAX = 90;
+let machineTimer = null;
+async function machineTick(){
+  try{
+    const r = await fetch('/api/metrics', {credentials:'same-origin'});
+    if (r.status === 401) { gotoInternal('/login'); return; }
+    const m = await r.json();
+    const cpu = m.cpu_percent ?? 0;
+    const mem = (m.memory && m.memory.percent) ?? 0;
+    machineHist.push({cpu, mem}); if (machineHist.length > MACHINE_MAX) machineHist.shift();
+    setText('machine-cpu', cpu.toFixed(1) + '%');
+    setText('machine-mem', mem.toFixed(1) + '% (' + (m.memory.used/1e9).toFixed(0) + '/'
+                       + (m.memory.total/1e9).toFixed(0) + ' GB)');
+    setText('machine-load', m.load['1'].toFixed(2) + ' / ' + m.load['5'].toFixed(2)
+                       + ' / ' + m.load['15'].toFixed(2));
+    setText('machine-polled', 'polled ' + new Date().toTimeString().slice(0, 8));
+    if (m.gpu && m.gpu.use_percent != null) setText('machine-gpu', m.gpu.use_percent + '%');
+    const cv = document.getElementById('machine-chart');
+    if (cv) {
+      const cx = cv.getContext('2d'), W = cv.width, H = cv.height;
+      cx.clearRect(0, 0, W, H);
+      const line = (data, color) => {
+        cx.beginPath(); cx.strokeStyle = color; cx.lineWidth = 2;
+        data.forEach((v, i) => { const x = i/(MACHINE_MAX-1)*W;
+          const y = H - (Math.min(v, 100)/100)*H; i ? cx.lineTo(x, y) : cx.moveTo(x, y); });
+        cx.stroke();
+      };
+      line(machineHist.map(h => h.cpu), '#5aa9ff');
+      line(machineHist.map(h => h.mem), '#d29922');
+    }
+  }catch(e){ /* keep the last good sample */ }
+}
+function startMachinePoll(){
+  if (machineTimer) return;
+  machineTimer = setInterval(() => {
+    const d = document.getElementById('machine-detail');
+    if (d && d.open && !document.hidden) machineTick();
+  }, MACHINE_POLL_MS);
+}
+(function(){
+  const d = document.getElementById('machine-detail');
+  if (!d) return;
+  d.addEventListener('toggle', () => { if (d.open) { machineTick(); startMachinePoll(); } });
+})();
+
 tick();
-setInterval(tick, _poll);
+every(_poll, tick);
 </script>
 <script>
 // ComfyUI hero — mirrors the router hero's polling (5s; ComfyUI is
@@ -733,15 +829,14 @@ async function comfyTick(){
     const feed = document.getElementById('comfy-feed');
     if (feed){
       const lines = (d.activity || []).map(l => typeof l === 'string' ? l : (l && l.text) || '');
-      feed.innerHTML = lines.length
+      safeSet(feed, lines.length
         ? lines.map(l => '<span class="ln">' + esc(l) + '</span>').join('')
-        : '<span class="ln mut">no recent log lines captured</span>';
+        : '<span class="ln mut">no recent log lines captured</span>');
       feed.scrollTop = feed.scrollHeight;
     }
   }catch(e){ /* keep last good state on a transient error */ }
 }
-comfyTick();
-setInterval(comfyTick, 5000);
+every(5000, comfyTick);
 </script>
 <script>
 // Phase B: service controls — start/stop/restart managed user units.
@@ -779,7 +874,7 @@ const HF_UPD = {job: null, timer: null};
 async function loadUpd(){
   try{
     const r = await fetch('/api/updates/llamacpp', {credentials:'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) return;
     const d = await r.json();
     const pill = document.getElementById('upd-pill');
@@ -803,10 +898,10 @@ async function loadUpd(){
 function renderUpdJob(j){
   const el = document.getElementById('upd-job');
   if (!el) return;
-  if (!j) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
+  if (!j) { safeSet(el, ''); return; }
+  safeSet(el, '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
     '</span><span class="mono">' + esc(j.target || '') + '</span></div>' +
-    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>';
+    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>');
   const pre = el.querySelector('.scrollable-logs pre');
   if (pre) pre.scrollTop = pre.scrollHeight;
 }
@@ -876,7 +971,7 @@ async function updCheck(){
   try{
     const r = await fetch('/api/updates/llamacpp/check',
                           {method: 'POST', credentials: 'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       alert('check failed: ' + (d.detail || r.status));
@@ -951,7 +1046,7 @@ function renderBuilds(d){
     BUILDS.set(e.name, Object.assign({}, e, {
       active: e.active != null ? !!e.active : (e.name === d.current) })));
   const keep = sel.value;
-  sel.innerHTML = '';
+  safeSet(sel, '');
   const blank = document.createElement('option');
   blank.value = '';
   blank.textContent = ordered.length ? '— select a build —' : '— no stored builds —';
@@ -1056,7 +1151,7 @@ function renderStrays(d){
   row.hidden = list.length === 0;
   if (!list.length) return;
   const keep = sel.value;
-  sel.innerHTML = '';
+  safeSet(sel, '');
   const blank = document.createElement('option');
   blank.value = '';
   blank.textContent = `— ${list.length} director${list.length === 1 ? 'y' : 'ies'} —`;
@@ -1119,7 +1214,24 @@ async function purgeStray(){
 const buildSelectEl = document.getElementById('build-select');
 if (buildSelectEl) buildSelectEl.addEventListener('change', syncBuildButtons);
 
-loadUpd();
+// The llama.cpp release check costs 92 ms of server time (git ls-remote against a
+// remote): the most expensive call this page makes. It runs when its tab is opened,
+// not at page load. The Check button is the other way in.
+const panelLoaded = {};
+function loadPanelOnce(tab){
+  if (panelLoaded[tab]) return;
+  panelLoaded[tab] = true;
+  if (tab === 'llamacpp') {
+    loadUpd();
+    setInterval(function(){ if (!document.hidden && !UPD.job) loadUpd(); }, 10 * 60 * 1000);
+  }
+  if (tab === 'comfyui') loadComfyUpd();
+  if (tab === 'huggingface') loadHfUpd();
+  if (tab === 'python') loadPythonInfo();
+  if (tab === 'gpu') loadGpuInfo();
+}
+// The llama.cpp tab is the one displayed at page load, so it earns its fetch now.
+loadPanelOnce('llamacpp');
 </script>
 <script>
 // Tab switching for update status. The clicked element is passed in rather
@@ -1141,13 +1253,14 @@ function switchUpdateTab(tab, el){
   const panel = document.getElementById('update-' + tab);
   if (!panel) { console.error('switchUpdateTab: no panel #update-' + tab); return; }
   panel.classList.add('active');
+  loadPanelOnce(tab);
 }
 
 // ComfyUI update functions
 async function loadComfyUpd(){
   try{
     const r = await fetch('/api/updates/comfyui', {credentials:'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) return;
     const d = await r.json();
     // backend fields: commit (local HEAD), remote.{remote_head,behind,update_available}, recent[], venv{}
@@ -1182,12 +1295,12 @@ async function loadComfyUpd(){
     // recent commits list (the comfyui equivalent of the llama.cpp release list)
     const rel = document.getElementById('comfy-releases');
     if (rel) {
-      rel.innerHTML = '<div class="kv" style="margin-top:8px"><span class="k">recent commits</span><span></span></div>' +
+      safeSet(rel, '<div class="kv" style="margin-top:8px"><span class="k">recent commits</span><span></span></div>' +
         (d.recent || []).map(rc =>
           '<div class="kv"><span class="mono">' + esc(rc.sha) + '</span><span>' +
           esc(rc.subject).slice(0, 70) + ' · ' + esc(rc.date) +
           (rc.sha === (d.commit || '').slice(0, 7) ? ' <span class="pill ok">current</span>' : '') +
-          '</span></div>').join('');
+          '</span></div>').join(''));
     }
     renderComfyJob(d.job);
     // resume polling if a job is mid-flight (page reload during an update)
@@ -1202,10 +1315,10 @@ async function loadComfyUpd(){
 function renderComfyJob(j){
   const el = document.getElementById('comfy-job');
   if (!el) return;
-  if (!j) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
+  if (!j) { safeSet(el, ''); return; }
+  safeSet(el, '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
     '</span><span class="mono">' + esc(j.target || '') + '</span></div>' +
-    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>';
+    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>');
   const pre = el.querySelector('.scrollable-logs pre');
   if (pre) pre.scrollTop = pre.scrollHeight;
 }
@@ -1213,7 +1326,7 @@ async function comfyCheck(){
   try{
     const r = await fetch('/api/updates/comfyui/check',
                           {method: 'POST', credentials: 'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       alert('check failed: ' + (d.detail || r.status));
@@ -1252,7 +1365,7 @@ loadComfyUpd();
 async function loadHfUpd(force){
   try{
     const r = await fetch('/api/hf/status' + (force ? '?force=true' : ''), {credentials:'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) return;
     const d = await r.json();
     setText('hf-cli-version', (d.cli_version || '—') + (d.pypi_latest ? (' · PyPI latest ' + d.pypi_latest + (d.stale ? ' (stale — offline)' : '')) : ''));
@@ -1261,8 +1374,8 @@ async function loadHfUpd(force){
     if (box && !HF_UPD.job) {
       const repos = (d.repos || []).length;
       const sizeGb = d.cache_size != null ? (d.cache_size / 1073741824).toFixed(1) + ' G' : '—';
-      box.innerHTML = '<span class="mut">cache: ' + esc(d.cache || '—') + ' · ' + sizeGb + ' · ' + repos + ' repo(s)</span>' +
-        (d.update_available ? '<div style="margin-top:6px"><span class="pill bad">update available</span></div>' : '');
+      safeSet(box, '<span class="mut">cache: ' + esc(d.cache || '—') + ' · ' + sizeGb + ' · ' + repos + ' repo(s)</span>' +
+        (d.update_available ? '<div style="margin-top:6px"><span class="pill bad">update available</span></div>' : ''));
     }
     const btn = document.getElementById('hf-upd-btn');
     if (btn) {
@@ -1274,10 +1387,10 @@ async function loadHfUpd(force){
 function renderHfJob(j){
   const el = document.getElementById('hf-job');
   if (!el) return;
-  if (!j) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
+  if (!j) { safeSet(el, ''); return; }
+  safeSet(el, '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
     '</span><span class="mono">' + esc(j.target || '') + '</span></div>' +
-    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>';
+    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>');
   const pre = el.querySelector('.scrollable-logs pre');
   if (pre) pre.scrollTop = pre.scrollHeight;
 }
@@ -1296,7 +1409,7 @@ async function pollHfJob(){
 }
 async function hfCheckUpdates(){
   const box = document.getElementById('hf-job');
-  if (box) box.innerHTML = '<span class="mut">checking PyPI for huggingface-cli updates…</span>';
+  if (box) safeSet(box, '<span class="mut">checking PyPI for huggingface-cli updates…</span>');
   await loadHfUpd(true);
 }
 async function hfDeployUpdate(){
@@ -1311,13 +1424,12 @@ async function hfDeployUpdate(){
     renderHfJob({id: d.job, status: 'running', target: 'upgrade-hf-cli', log: ''});
   }catch(e){ alert('update failed to start: ' + e); }
 }
-loadHfUpd();
 
 // Python / venv information (real data from /api/hf/status)
 async function loadPythonInfo(){
   try{
     const r = await fetch('/api/hf/status', {credentials:'same-origin'});
-    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.status === 401) { gotoInternal('/login'); return; }
     if (!r.ok) return;
     const d = await r.json();
     setText('py-hf-version', d.hub_portal || '—');
@@ -1330,24 +1442,23 @@ async function checkPythonUpdates(){
   // fresh probe (the endpoint caches) and reports; upgrading huggingface-cli is
   // the huggingface-cli tab's button, which asks first.
   const box = document.getElementById('python-job');
-  if (box) box.innerHTML = '<span class="mut">re-reading the portal venv…</span>';
+  if (box) safeSet(box, '<span class="mut">re-reading the portal venv…</span>');
   try{
     const r = await fetch('/api/hf/status?force=true', {credentials:'same-origin'});
     const d = await r.json().catch(() => ({}));
     if (!r.ok){
-      if (box) box.innerHTML = '<span class="mut">' + esc(d.detail || ('HTTP ' + r.status)) + '</span>';
+      if (box) safeSet(box, '<span class="mut">' + esc(d.detail || ('HTTP ' + r.status)) + '</span>');
       return;
     }
     setText('py-hf-version', d.hub_portal || '—');
     setText('py-hf-os-version', d.hub_os || '—');
     setText('py-venv-python', d.python_portal || '—');
-    if (box) box.innerHTML = '<span class="mut">portal venv: python ' + esc(d.python_portal || '?') +
+    if (box) safeSet(box, '<span class="mut">portal venv: python ' + esc(d.python_portal || '?') +
       ', huggingface-hub ' + esc(d.hub_portal || '?') +
       (d.update_available ? ' — huggingface-cli ' + esc(d.pypi_latest || '?') + ' is available (update it on the huggingface-cli tab)'
-                          : ' — nothing pending') + '</span>';
-  }catch(e){ if (box) box.innerHTML = '<span class="mut">check failed: ' + esc(String(e)) + '</span>'; }
+                          : ' — nothing pending') + '</span>');
+  }catch(e){ if (box) safeSet(box, '<span class="mut">check failed: ' + esc(String(e)) + '</span>'); }
 }
-loadPythonInfo();
 
 // GPU Drivers / SDKs information (read-only probe; OS-managed via amdgpu-install)
 async function loadGpuInfo(){
@@ -1362,7 +1473,6 @@ async function loadGpuInfo(){
     setText('gpu-hip-sdk', d.rocm_version ? ('HIP bundled with ROCm ' + d.rocm_version) : '—');
   }catch(e){ /* keep last good state */ }
 }
-loadGpuInfo();
 
 // Arriving from the global job bar's "open" link: show the panel for the job the
 // bar was talking about, whether the target came from the hash (a link followed

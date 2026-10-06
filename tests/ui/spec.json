@@ -40,9 +40,7 @@
     "/api/comfyui",
     "/api/services",
     "/api/updates/llamacpp",
-    "/api/updates/comfyui",
-    "/api/hf/status",
-    "/api/gpu"
+    "/api/updates/comfyui"
    ],
    "expectVisible": [
     "#router-state",
@@ -67,13 +65,16 @@
     "#attention-toggle",
     "#model-loaded",
     "#pulse-sub",
-    "#tps-now"
+    "#tps-now",
+    "#machine-detail",
+    "#machine-cpu",
+    "#disk-sampled",
+    "#machine-chart"
    ],
    "expectEnabled": [
     "#update-llamacpp button.btn-primary-sm",
     "#upd-btn",
     "#comfy-upd-btn",
-    "#hf-upd-btn",
     ".update-tab"
    ],
    "expectAbsent": [
@@ -379,8 +380,6 @@
     "broken in the template to know it is tested."
    ],
    "expectDisabled": [
-    "#comfy-upd-btn",
-    "#hf-upd-btn",
     "#upd-btn"
    ],
    "_body_comment": [
@@ -452,13 +451,11 @@
      "contains": "after 10m 40s"
     }
    ],
-   "expectEnabled": [
-    "#comfy-upd-btn",
-    "#hf-upd-btn"
-   ],
+   "expectEnabled": [],
    "expectBodyAttr": {
     "data-jobbusy": ""
-   }
+   },
+   "expectDisabled": []
   },
   {
    "name": "models",
@@ -574,24 +571,6 @@
    "expectInert": [
     "selectModel\\('evil/Injected-Model"
    ]
-  },
-  {
-   "name": "metrics",
-   "path": "/metrics",
-   "expectTitle": "Metrics",
-   "expectRequests": [
-    "/api/metrics"
-   ],
-   "expectVisible": [
-    "#chart",
-    "#cpu",
-    "#mem",
-    "#load",
-    "#gpu",
-    "#mstate",
-    "#sampled"
-   ],
-   "tabGroups": []
   },
   {
    "name": "health",

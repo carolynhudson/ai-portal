@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}AI Portal{% endblock %}</title>
 <script src="/static/htmx.min.js"></script>
+{# shared markup sanitizer: every panel insert goes through safeSet #}
+<script src="/static/safe.js"></script>
 {# tab geometry lives in one shared stylesheet; test_ui_contract requires every
    page that has tabs to load it, and to define no tab geometry of its own #}
 <link rel="stylesheet" href="/static/tabs.css">
@@ -73,7 +75,6 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   <span class="brand">AI Portal</span>
   <a href="/">Status</a>
   <a href="/models">Models</a>
-  <a href="/metrics">Metrics</a>
   <a href="/health">Health</a>
   <a href="/personalities">Personalities</a>
   <a href="/settings">Settings</a>

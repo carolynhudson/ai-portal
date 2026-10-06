@@ -624,9 +624,20 @@ def create_app() -> FastAPI:
         # NameError happens
         hb = _health_bundle()
         snap = router_mod.snapshot()
+        # The machine detail section (disk, GPU) renders once, at page load: these are
+        # seconds-scale numbers with no second-scale signal in them. They carry the time
+        # they were read, and the poll below reports the time of its own sample.
+        msnap = metrics.snapshot()
+        disk = [[k, f"{_human(v['used'])} / {_human(v['total'])} ({v['percent']:.0f}%)"]
+                for k, v in (msnap["disk"] or {}).items() if v]
+        gpu = msnap.get("gpu")
+        gpu_txt = ("GPU {use_percent}%".format(use_percent=gpu["use_percent"])
+                   if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
         return templates.TemplateResponse(request, "dashboard.html",
                                           {"providers": providers, "health": hb,
                                            "r": snap, "comfy": comfy_snapshot(),
+                                           "disk": disk, "gpu": gpu_txt,
+                                           "sampled": datetime.now().strftime("%H:%M:%S"),
                                            "settings": db.current_settings()})
 
     @app.get("/models")
@@ -703,21 +714,6 @@ def create_app() -> FastAPI:
                                            "comfy_categories": cp.categories() if cp else [],
                                            "comfyroot": str(paths.COMFY_MODELS),
                                            "home": str(paths.HOME)})
-
-    @app.get("/metrics")
-    def metrics_page(request: Request, _=Depends(_require_auth)):
-        snap = metrics.snapshot()
-        disk = [[k, f"{_human(v['used'])} / {_human(v['total'])} ({v['percent']:.0f}%)"]
-                for k, v in (snap["disk"] or {}).items() if v]
-        gpu = snap.get("gpu")
-        gpu_txt = ("GPU {use_percent}%".format(use_percent=gpu["use_percent"])
-                   if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
-        # The Disk and GPU cards below are rendered once, at page load. Say when, so a
-        # reader can tell a stale number from a wrong one; the chart keeps polling.
-        sampled = datetime.now().strftime("%H:%M:%S")
-        return templates.TemplateResponse(request, "metrics.html",
-                                          {"disk": disk, "gpu": gpu_txt, "sampled": sampled,
-                                           "settings": db.current_settings()})
 
     @app.get("/settings")
     def settings_page(request: Request, _=Depends(_require_auth)):

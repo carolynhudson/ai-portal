@@ -3308,6 +3308,165 @@ passed, 1 skipped**, twice in a row, where before it was nondeterministic.
 the directory the thread would scan. It now rescans itself. The workaround was the tell: a test that
 has to guess which directory a background thread is about to read is a test that depends on it.
 
+### 6.14 Design briefs from the operator audit (2026-10-06)
+
+These are directions, not work orders. They are written down so the next session starts
+from the same picture. Each has a first slice small enough to ship in one commit.
+
+#### 6.14.1 The personalities page: a deck, an editor, and a settings table
+
+The screenshot measured 3672 x 16720 px. A page that long is a document, not a console.
+The settings editor is the worst part of it: 30 rows, each with a paragraph of help prose
+inline, repeated per model, with a `Side effect.` sentence the size of a table cell.
+
+What the operator asked for, in order:
+
+1. **A stacked deck of personality cards.** Every card shows its title strip. Only the
+   selected card shows its body. Clicking a title raises that card. The card raised on
+   page load is the active personality. Raising a card does not activate it — selection
+   and activation stay separate, and the page says which is which.
+2. **The long prose leaves the form.** The help text belongs in the knowledgebase
+   (`/help`), reached by the citation links that already exist. The form keeps the short
+   line. This is the rule from §6.12.21, applied to the editor.
+3. **The editor is a flow, not a wall.** Three steps are visible: choose an existing
+   personality or start a new one; set the global settings; attach model settings.
+   A personality is a container: global settings plus any number of named per-model
+   settings, and it may hold none.
+4. **Settings become data, not code.** The registry row grows the fields a renderer needs:
+   name, alias, param kind (switch, bool, number, string, path, list), default, allowed
+   scope (global, model, both), validation rule, allowed values or range, help text, help
+   link, visibility rule, and substitutions. llama.cpp grows flags; a new build should
+   need a data edit, not a page edit.
+5. **Row layout is fixed.** Upper left: `NAME [control] (default)`. Below: one short
+   line. Below that: a collapsible detail area that opens the knowledgebase section.
+6. **Visibility is measured, not asserted.** A setting shows when the model's metadata
+   says it applies — FIM specials, pooling type, nextn tensors, template markers. The
+   index (§4.9 Phase N) already reads those facts; the editor asks it.
+
+First slice, smallest shippable: split the existing 30 registry dicts into a row
+structure with `kind`, `scope`, `default`, `accepts`, `help`, `cite`, and a
+`visible_when` key naming an index fact. Render one row type from it. No visual change
+yet — the data drives the same page. Second slice: the row layout in §3/§5. Third: the
+deck. `tools/registry_flag_audit.py` (§6.12.21) is the tool that keeps the table honest
+after a llama.cpp upgrade: 30 keys measured against the deployed build in one run.
+
+#### 6.14.2 The knowledgebase becomes a documentation site
+
+`/help` today is a mono column with panels — the shape of every other portal page. The
+operator wants the common docs shape: an outline table of contents fixed on the left,
+and search results or the current section on the right.
+
+The sequence:
+
+1. Left rail with the section tree, right pane with content. Deep links keep working —
+   the section ids are the links, and 102 links are guarded by a test.
+2. Split the living documents into pages by topic. Today `PORTAL_PLAN.md` is 3400 lines
+   of plan, history, reasoning, and measurement logs in one file. The manual is the
+   outline; the history stays linked from it.
+3. Search stays server-side over section bodies (`app/core/kb.py`), with the result list
+   in the right pane and the outline filtered on the left.
+4. Lists the operator wants kept findable: tools in the project, measured runs,
+   decisions and the evidence behind them, commits. Those become sections with ids, so
+   a settings row, a status page, and a commit message can all point at the same place.
+
+The shape to aim at: the portal manages itself, the knowledgebase explains it, and the
+agent projects (§7 roadmap) mount on the same frame. That is the difference between a
+management portal and a workplace hub: the hub carries work in progress, not just
+service state.
+
+
+### 6.15 Commit attribution correction (2026-10-06)
+
+Fourteen commits carry `Co-Authored-By: Claude Opus 4.4 <noreply@anthropic.com>`. That
+signature is false. The agent writing them runs a Qwen 3.8 Flash derived model inside pi;
+it is not Claude and not made by Anthropic. The operator's ruling: leave the history
+alone, because docs in this file cite those hashes and a rewrite changes every one of
+them, and sign forward as `Co-Authored-By: Flash, the portal gremlin`.
+
+The rule that came out of it is short: do not claim an identity the model running the
+session does not have. It applies to commit messages, docstrings, and any text that
+outlives the session.
+
+
+
+## 6.14 Design briefs from the operator (2026-10-06)
+
+Two briefs, recorded here so the next session starts from the same picture. Both are
+directions for the polish phase, not work orders for today. Each has a first slice that
+can ship alone.
+
+### 6.14.1 The personalities page: a deck, a flow, and a settings table
+
+Measured first: the page renders 3672 x 16720 px. That is a document, not a console. The
+settings editor is the long part — every key the portal knows, with a paragraph of help
+prose, repeated per model, inside a form.
+
+What the operator asked for:
+
+1. **A stacked deck of personality cards.** Every card shows its title strip. Only the
+   selected card shows its body. Clicking a title raises that card. The card raised on
+   page load is the active personality; raising a card is not activating it. Those are
+   two verbs and the page says which one happened.
+2. **The editor is a flow, not a wall.** Three visible steps: pick an existing
+   personality or start a new one; set global settings; attach model settings. A
+   personality is a container — global settings plus any number of named per-model
+   settings, and it may hold none.
+3. **The prose leaves the form.** The knowledgebase holds the explanation; the row shows
+   one short line and a link to the section that proves it (§6.12.21 already built the
+   citation links and the guard that keeps them opening).
+4. **Settings become data.** The registry row grows the fields a renderer needs: name,
+   alias, param kind (switch, bool, number, string, path, list), default, scope (global,
+   model, both), validation rule, allowed values or range, help text, help link, a
+   visibility rule, and substitutions for measured facts (cpu and gpu thread counts, a
+   model's reasoning levels). llama.cpp grows flags and changes meanings; a data edit is
+   the target, not a page edit.
+5. **Row layout is fixed.** Upper left: `NAME [control] (default)`. Below: one short
+   line. Below that: a collapsible detail area that opens the help section.
+6. **Visibility is measured, not asserted.** A setting shows when the model's metadata
+   says it applies — FIM specials, pooling type, nextn tensors, chat-template markers.
+   The header index (§4.9) already reads those facts; the editor asks it.
+
+First slice, smallest shippable: express the 30 registry entries in that row structure
+(`kind`, `scope`, `default`, `accepts`, `help`, `cite`, `visible_when`) and render one
+row type from it. The page looks the same. The data is what changes, and everything
+after it — the deck, the flow, the per-model settings editor — reads from the same
+structure. `tools/registry_flag_audit.py` (§6.12.21) is the tool that keeps the table
+honest after a llama.cpp upgrade: 30 keys, one run, flags the build refused.
+
+Reusable pieces the operator wants kept reusable, named here so the split is deliberate:
+the personality card, the settings row, the citation link, and the sizing ruler
+(`modelindex.context_window`) that the page, the bench tool, and the probe all read.
+
+### 6.14.2 The knowledgebase becomes a documentation site
+
+`/help` today is one column with panels — the shape of every other portal page. The
+operator wants the common docs shape: an outline table of contents fixed on the left;
+search results, or the section you are reading, on the right.
+
+The sequence:
+
+1. Left rail with the section tree, right pane with content. Deep links keep working —
+   section ids are the links, and the guard over them covers 102 links today.
+2. Split the living documents by topic. `PORTAL_PLAN.md` is 3400 lines of plan, history,
+   reasoning, and measurement logs in one file. The manual is the outline; the history
+   stays linked from it, not deleted.
+3. Search stays server-side over section bodies (`app/core/kb.py`), results in the right
+   pane, outline filtered on the left.
+4. Lists the operator wants findable as sections with ids: the project's tools, the
+   measured runs, the decisions and the evidence behind them, commits. A settings row, a
+   status page, and a commit message can then point at the same place.
+
+### 6.14.3 The portal as a workplace hub
+
+The difference between a management portal and a hub: the hub carries work in progress.
+The next surface is the pi agent harness — active agent projects visible to anyone on the
+local network, from any system, not only this machine's OS GUI. That is a §7 roadmap item.
+The pieces it leans on are the ones being built for the portal itself: a knowledgebase
+that can be linked into, a settings layer that is data, and a model index that measures
+rather than asserts. The pi harness stays an add-on with a side-car (`add-on/`,
+`add-on/side-car/`); it is not portal core.
+
+
 ## 7. Build-out roadmap
 
 | Phase | Deliverable | Exit criteria |

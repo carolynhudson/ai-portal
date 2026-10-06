@@ -67,7 +67,7 @@ def test_login_then_status_and_models():
 def test_pages_render():
     c = TestClient(app)
     c.post("/login", data={"password": "test-password-123"})
-    for path in ("/", "/models", "/metrics"):
+    for path in ("/", "/models"):
         r = c.get(path)
         assert r.status_code == 200, path
         assert "<html" in r.text.lower()

@@ -39,7 +39,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
-PAGES = {"/": "dashboard", "/models": "models", "/metrics": "metrics", "/settings": "settings"}
+# The old /metrics page is on the dashboard now (docs/PORTAL_PLAN.md sec 6.13), so the
+# monitored set is the pages that exist, not the pages that once did.
+PAGES = {"/": "dashboard", "/models": "models", "/settings": "settings"}
 SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
 HANDLER_ATTR_RE = re.compile(r"\bon(?:click|change|submit|input)=\"\s*([A-Za-z_$][\w$]*)\s*\(")
 FUNC_DEF_RE = re.compile(r"(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|[a-z]+\s*=>)")
@@ -196,11 +198,18 @@ def test_no_unrendered_template_or_none_values_in_markup(pages):
 # The dashboard hero cards are for the two services. Two things crept in that
 # were not: a second Metrics link (the nav is right there) and the Vulkan SDK
 # path, which is inventory and belongs in the GPU Drivers / SDKs tab.
-def test_dashboard_does_not_duplicate_the_navigation(pages):
+def test_dashboard_does_not_link_a_page_that_no_longer_exists(pages):
+    """The Metrics page was a superset of the dashboard, so it is gone.
+
+    A nav link to a deleted page is a 404 the operator finds by clicking, and the
+    audit that removed the page has to remove its links in the same change.
+    """
     html = pages["/"]
-    assert html.count('href="/metrics"') == 1, (
-        "Metrics is in the top nav; a repeated link under a hero card is noise, "
-        "not navigation")
+    assert 'href="/metrics"' not in html, (
+        "the dashboard still links /metrics — the merge left a dead link behind")
+    assert 'id="machine-detail"' in html, (
+        "the dashboard has no machine detail section, so the merge left disk, GPU "
+        "and the chart with nowhere to live")
 
 
 def test_sdk_inventory_lives_in_the_gpu_tab():
@@ -454,17 +463,92 @@ def test_provider_accessors_are_typed_and_do_not_shadow_their_submodules():
 
 
 def test_the_static_metric_cards_say_when_they_were_sampled(pages):
-    """Disk and GPU on /metrics are rendered once, at page load. The chart polls.
+    """Disk and GPU in the dashboard's machine detail are rendered once, at page load.
 
     A page headed "Live metrics" invites the reader to treat every number on it as
     current. The polled cells prove their own freshness by moving; the two cards that
     never move have no such cue, so a 20-minute-old disk figure and a wrong one are the
     same sight. The fix is the sample time, printed with them.
     """
-    html = pages["/metrics"]
+    html = pages["/"]
     stamps = re.findall(r"sampled\s*(\d{1,2}:\d{2}:\d{2})", html)
     assert len(stamps) >= 2, (
         "the Disk and GPU cards carry no sample time — a rendered-once number is "
         "indistinguishable from a live one")
-    # The poll reports its own time too, so the moving line is labelled as moving.
-    assert "polled " in html, "the metrics state pill does not report its poll time"
+    # The polled line labels itself as polled, so the two kinds of number read apart.
+    assert 'id="machine-polled"' in html, "the chart line does not report its poll time"
+
+# ------------------------------------------------- what the polls are allowed to cost
+# Measured on this box (docs/PORTAL_PLAN.md sec 6.13): the router snapshot is 0.6 ms,
+# /api/metrics 0.9 ms, the service list 11 ms, the GPU probe 24 ms, the llama.cpp
+# release check 92 ms, and the huggingface-cli check 219 ms. Only the first two are
+# cheap enough to run every few seconds, and only the panels that show a change over
+# time are worth polling at all.
+def test_the_dashboard_polls_only_what_moves_and_only_while_you_are_looking():
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    # A background tab must not generate server traffic.
+    assert "document.hidden" in tpl, (
+        "no visibility guard: an open background tab keeps polling the server")
+    assert "setInterval(tick," not in tpl, "the router loop ignores page visibility"
+    assert "setInterval(comfyTick," not in tpl, "the ComfyUI loop ignores page visibility"
+    # The tab panels are fetched when their tab opens, not paid at page load. The
+    # ComfyUI hero card is not a tab panel: it fills from loadComfyUpd() at page load,
+    # which costs 3.3 ms and shows a service state the operator watches.
+    for call in ("loadPythonInfo();", "loadGpuInfo();", "loadHfUpd();"):
+        assert f"\n{call}" not in tpl, (
+            f"{call} runs at page load: the tab that shows it is the place to fetch it")
+    assert "loadPanelOnce('llamacpp')" in tpl, (
+        "the llama.cpp tab is displayed at page load, so its fetch has to happen there")
+    # The huggingface-cli check is the most expensive call on the portal (219 ms,
+    # measured) and the panel it fills is inventory: button press only.
+    assert "setInterval(loadHfUpd" not in tpl, (
+        "the huggingface-cli panel has a polling timer; 219 ms a request is a "
+        "button press, not a loop")
+    assert "hfCheckUpdates" in tpl, (
+        "the huggingface-cli panel has no Check button, so its data is unreachable "
+        "without a page reload")
+    # The machine detail is the panel with a time signal; its poll is gated on the panel.
+    assert "d.open && !document.hidden" in tpl, (
+        "the machine-detail poll runs while the panel is closed — it is the only "
+        "reason the panel can say 'polled 12:03:11'")
+
+# --------------------------------------------------- locked before it has data
+def test_update_buttons_ship_locked_in_the_markup():
+    """A control that acts on machine data is disabled in the template, not enabled
+    and then disabled by a callback.
+
+    The UI harness also checks button state at page settle, which is a race with the
+    panel fetch: a panel that fills faster wins, and the assertion flips for reasons
+    that have nothing to do with the page. The template is the place where "locked
+    until there is something to act on" is a fact, so it is asserted there.
+    """
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    for btn in ("upd-btn", "comfy-upd-btn", "hf-upd-btn", "switch-build-btn",
+                "delete-build-btn", "purge-stray-btn"):
+        tag = next((ln for ln in tpl.splitlines() if f'id="{btn}"' in ln), None)
+        assert tag is not None, f"button {btn} is not on the dashboard"
+        assert "disabled" in tag, (
+            f"{btn}: ships enabled, so it is clickable before the page knows the "
+            "machine state; the attribute belongs on the button, not on a callback")
+
+def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
+    """The lock is released where the data arrives, not somewhere the data can reach
+    by luck.
+
+    The dashboard fetches its tab panels the first time each tab opens (§6.13). So the
+    code that enables a panel's button has to live in that panel's loader: if it sat in
+    a page-load path, the button would unlock for a panel with nothing in it, and a
+    fixture that changes the panel's data would change the button's state for reasons
+    the page does not control.
+    """
+    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    pairs = {"#comfy-upd-btn": "loadComfyUpd", "#hf-upd-btn": "loadHfUpd"}
+    for sel, loader in pairs.items():
+        start = tpl.index("function " + loader + "(")
+        end = next(i for i in range(start + 1, len(tpl)) if tpl[i:i + 9] == "function ")
+        body = tpl[start:end]
+        btn = sel.lstrip("#")
+        assert btn in body, (
+            f"{sel} is enabled outside {loader}(), so its lock is not tied to its panel")
+        assert re.search(r"getElementById\('" + btn + r"'\)", body), (
+            f"{loader}() fills the panel without touching {btn}")
