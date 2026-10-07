@@ -178,15 +178,24 @@ h2{margin:18px 0 6px}
 <table class="keys" id="keys-table">
   <thead><tr><th>key</th><th>type</th><th>where</th><th>default</th><th>what it does</th></tr></thead>
   <tbody>
-  {% for k in setting_names %}
-    {% set s = settings[k] %}
-    <tr>
-      <td class="k mono">{{ k }}</td>
-      <td>{{ s.kind }}{% if s.choices %} ({{ s.choices|join(' | ') }}){% endif %}</td>
-      <td>{{ 'model only' if s.section == 'model' else 'global and per-model' }}</td>
-      <td class="mono">{{ s.default if s.default is not none else '—' }}</td>
-      <td class="h">{{ s.help }}{% if s.side_effects %}<div class="mut">side effect: {{ s.side_effects }}</div>{% endif %}
-        {% if help_refs.get(k) %}<div><a class="mut" href="/help#{{ help_refs.get(k) }}">why (§{{ help_refs.get(k) }})</a></div>{% endif %}</td>
+  {# One row type, rendered from the registry's row data (app/core/settingrows.py, plan §6.14.1).
+     Nothing here decides what a key means: the kind, the scope, the rule sentence, the default,
+     the help link and the visibility facts all arrive on the row, so the page and the generator
+     cannot drift apart and a new key is a data edit. #}
+  {% for r in keys_rows %}
+    {# Attribute branches stay out of the tag: the checker reads a conditional attribute, and a
+       tag split across lines, as malformed markup. An empty data-visible-when means "no rule", #}
+    <tr data-key="{{ r.key }}" data-scope="{{ r.scope }}" data-kind="{{ r.kind }}" data-visible-when="{{ r.visible_when|join('+') }}">
+      <td class="k mono">{{ r.key }}
+        {% if r.aliases %}<div class="mut">{{ r.aliases|join(', ') }}</div>{% endif %}</td>
+      <td>{{ r.rule }}</td>
+      <td>{{ 'model only' if r.scope == 'model' else ('global and per-model' if r.scope == 'both' else 'global only') }}
+        {% if not r.writable %}<div class="mut">the router sets this</div>{% endif %}</td>
+      <td class="mono">{% if r.default is not none %}{{ r.default }}{% if r.unit %} <span class="mut">{{ r.unit }}</span>{% endif %}{% else %}—{% endif %}</td>
+      <td class="h">{{ r.help }}
+        {% if r.detail %}<div class="mut">side effect: {{ r.detail }}</div>{% endif %}
+        {% if r.help_ref %}<div><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></div>{% endif %}
+        {% if r.visible_when %}<div class="mut">offerable per model when the file has {{ r.visible_when|join(' + ') }}</div>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

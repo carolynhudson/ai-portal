@@ -42,7 +42,7 @@ import re  # noqa: E402
 
 from app.core import config as cfg  # noqa: E402
 from app.core import kb  # noqa: E402
-from app.core import db, modelindex as mi, paths  # noqa: E402
+from app.core import db, modelindex as mi, paths, settingrows  # noqa: E402
 from app.core import personality as P  # noqa: E402
 from app.core import presets_store, systemd, updater  # noqa: E402
 from app.main import app  # noqa: E402
@@ -667,6 +667,41 @@ def test_the_page_shows_tokens_per_client_for_each_priced_model(client, library)
     # show a number that is not 4096.
     assert "4096" in row, row[:400]
     assert "trained" in row, "who decided the window is not stated"
+
+
+def test_the_keys_table_is_the_registry_row_data_rendered(client):
+    """The page renders rows, so it cannot explain a key differently from the generator.
+
+    This is the guard for §6.14.1's first slice. The template used to decide what to show: the
+    kind string, the scope wording, the default, and whether a key was model-only were all worked
+    out in Jinja from `SETTINGS`. If those are computed in the template, a key added to the
+    registry needs a template edit, and a template can disagree with `accepts()` quietly. So the
+    page's row attributes are compared against `settingrows.rows()` -- and a template that
+    hardcodes a value stops matching.
+    """
+    page = client.get("/personalities").text
+    table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
+    found = re.findall(
+        r'<tr data-key="([a-z0-9-]+)" data-scope="([a-z-]+)" data-kind="([a-z]+)" '
+        r'data-visible-when="([a-z_+]*)"', table)
+    assert found, "the settings table renders no row data -- the template is deciding again"
+    rendered = {k: (scope, kind, when.split('+') if when else []) for k, scope, kind, when in found}
+    rows = {r["key"]: r for r in settingrows.rows()}
+    assert set(rendered) == set(rows), \
+        f"page rows and registry rows differ: {sorted(set(rendered) ^ set(rows))[:6]}"
+    for key, (scope, kind, when) in rendered.items():
+        r = rows[key]
+        assert scope == r["scope"], (key, scope, r["scope"])
+        assert kind == r["kind"], (key, kind, r["kind"])
+        assert when == r["visible_when"], (key, when, r["visible_when"])
+    # Measured spellings and units reach the page, because a setting without its unit is a number
+    # the operator has to guess the meaning of.
+    assert "-ctxcp" in table and "--swa-checkpoints" in table, "the checkpoint row lost its spellings"
+    assert "8192" in table and "MiB" in table, "cache-ram lost its unit"
+    # A row the router owns says so on the row; the table shows such keys, the editor must not.
+    for key in ("metrics", "model", "mmproj"):
+        if key in rows:
+            assert rows[key]["writable"] is False
 
 
 def test_the_page_links_every_documented_setting_to_the_help_section_that_proves_it(client):

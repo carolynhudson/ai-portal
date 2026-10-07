@@ -34,8 +34,8 @@ import httpx
 from . import __version__, metrics, router as router_mod
 from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
 from .core import serviceenv
-from .core import db, health, kb, modeladd, model_config, modelindex, paths, personality, presets_store
-from .core import systemd, updater
+from .core import (db, health, kb, modeladd, model_config, modelindex, paths, personality,
+                   presets_store, settingrows, systemd, updater)
 from . import providers
 from .providers import PROVIDERS, get as get_provider
 
@@ -445,7 +445,7 @@ def comfy_snapshot() -> dict:
 #: Warm-up threads started by `create_app()`, kept reachable so a test can join the one it started
 #: instead of racing it. They are daemon threads: nothing in production waits for them, which is
 #: precisely what makes them a problem in a test suite that shares one `model_index` table.
-INDEX_STARTUP_THREADS: list["threading.Thread"] = []
+INDEX_STARTUP_THREADS: list[threading.Thread] = []
 
 
 def create_app() -> FastAPI:
@@ -911,6 +911,12 @@ def create_app() -> FastAPI:
                                            "model_ids": [r["id"] for r in modelindex.rows()],
                                            "router_unit": paths.ROUTER_UNIT,
                                            "presets_path": str(paths.PRESETS_INI),
+                                           # The keys table renders one row type from the registry's row
+                                           # data (app/core/settingrows.py, plan §6.14.1): kind, scope,
+                                           # rule, default, unit, aliases, help link and visibility facts
+                                           # all arrive on the row, so the page cannot explain a key
+                                           # differently from the way the generator validates it.
+                                           "keys_rows": settingrows.rows(),
                                            "home": str(paths.HOME)})
 
     @app.get("/api/personalities")
