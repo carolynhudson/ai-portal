@@ -39,6 +39,21 @@ pre.diff .hunk{color:#8fb4ff}
 table.keys{border-collapse:collapse;width:100%;font-size:.82rem}
 table.keys th,table.keys td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 table.keys th{background:var(--panel2);position:sticky;top:0}
+/* The settings row (§6.14.1): NAME [control] (default) on one line, the short line under it, and a
+   collapsible detail carrying the rule, the side effect, the build's own spellings, the model facts
+   the row needs and the help link. Hidden rows are rows the selected file cannot use. */
+.ed-field{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:baseline;
+  border-bottom:1px solid var(--line);padding:8px 0}
+.ed-field label{font-weight:600}
+.ed-field select,.ed-field input{grid-column:2;max-width:300px}
+.ed-default{grid-column:2;font-size:.78rem}
+.ed-field .mut.h{grid-column:1 / -1}
+.ed-detail{grid-column:1 / -1}
+.ed-detail summary{font-size:.75rem;color:var(--mut);cursor:pointer;list-style:none}
+.ed-detail summary:before{content:"\25b8 "}
+.ed-detail[open] summary:before{content:"\25be "}
+.ed-detail p{margin:4px 0;font-size:.8rem}
+.ed-field[hidden]{display:none}
 table.keys td.k{font-family:var(--mono,monospace);white-space:nowrap}
 table.keys td.h{color:var(--mut)}
 .wrap{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:6px}
@@ -225,29 +240,43 @@ h2{margin:18px 0 6px}
 
   <h3>Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
-    {% for k in setting_names %}
-      {% set s = settings[k] %}
-      {% if s.section != 'model' %}
-      <div class="ed-field" data-key="{{ k }}">
-        {# One id per key *per control shape*: the enum, bool and numeric branches are mutually
+    {# The row component (§6.14.1): NAME [control] (default), one short line, and a collapsible
+       detail that carries the rule, the side effect, the spellings b11429 declares for the key, the
+       model facts the row needs, and the link to the /help section that proves it. Nothing here
+       decides what a key means -- control shape comes from the row's renderer kind, the default and
+       unit from its data, the rule sentence from its bounds. #}
+    {% for r in editor_rows %}
+      {% if r.scope != 'model' %}
+      <div class="ed-field" data-key="{{ r.key }}" data-scope="{{ r.scope }}" data-kind="{{ r.kind }}" data-visible-when="{{ r.visible_when|join('+') }}">
+        {# One id per key *per control shape*: the select and the input branches are mutually
            exclusive at render time, and suffixing by branch keeps every id unique in the file as
            well as in the page, so the label's `for` can never point at a sibling branch. #}
-        {% set pick = s.choices or s.kind == 'bool' %}
-        <label for="ed-g-{{ k }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ k }}</label>
+        {% set pick = r.kind == 'switch' or r.kind == 'choice' %}
+        <label for="ed-g-{{ r.key }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ r.key }}</label>
         {% if pick %}
-        <select id="ed-g-{{ k }}-sel">
+        <select id="ed-g-{{ r.key }}-sel">
           <option value="">leave as is</option>
-          {% if s.kind == 'bool' %}
+          {% if r.kind == 'switch' %}
             <option value="1">on</option><option value="0">off</option>
           {% else %}
-            {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+            {% for ch in r.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
           {% endif %}
         </select>
         {% else %}
-        <input id="ed-g-{{ k }}-val" type="text" inputmode="numeric"
-               placeholder="leave as is (default {{ s.default }})">
+        <input id="ed-g-{{ r.key }}-val" type="text" inputmode="numeric" placeholder="leave as is">
         {% endif %}
-        <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
+        {% if r.default is not none %}
+        <span class="ed-default mut">default {{ r.default }}{% if r.unit %} {{ r.unit }}{% endif %}</span>
+        {% endif %}
+        <span class="mut h">{{ r.help }}</span>
+        <details class="ed-detail">
+          <summary>detail</summary>
+          <p class="mut">{{ r.rule }}</p>
+          {% if r.detail %}<p class="mut">side effect: {{ r.detail }}</p>{% endif %}
+          {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}
+          {% if r.visible_when %}<p class="mut" data-when>needs {{ r.visible_when|join(' + ') }} in the model's header</p>{% endif %}
+          {% if r.help_ref %}<p><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></p>{% endif %}
+        </details>
       </div>
       {% endif %}
     {% endfor %}
@@ -257,29 +286,44 @@ h2{margin:18px 0 6px}
   <div class="ed-row">
     <label for="ed-model">model</label>
     <select id="ed-model">
-      {% for m in model_ids %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+      {% for m in model_ids %}<option value="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>{{ m }}</option>{% endfor %}
     </select>
     <button type="button" id="ed-clear-model">clear this model's edits</button>
   </div>
   <div class="ed-grid" id="ed-model-fields">
-    {% for k in setting_names %}
-      {% set s = settings[k] %}
-      <div class="ed-field" data-key="{{ k }}">
-        {% set pick = s.choices or s.kind == 'bool' %}
-        <label for="ed-m-{{ k }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ k }}</label>
+    {# Same row component. These rows are filtered by the client as the model changes: a row whose
+       facts the selected file does not provide is hidden, and its detail says which fact is
+       missing. The limits arrive from the index (`model_row_limits`), because the naming rules live
+       in the row layer and a browser copy of them would be a second, weaker statement about the
+       same files. #}
+    {% for r in editor_rows %}
+      <div class="ed-field" data-key="{{ r.key }}" data-scope="{{ r.scope }}" data-kind="{{ r.kind }}" data-visible-when="{{ r.visible_when|join('+') }}">
+        {% set pick = r.kind == 'switch' or r.kind == 'choice' %}
+        <label for="ed-m-{{ r.key }}-{{ 'sel' if pick else 'val' }}" class="mono">{{ r.key }}</label>
         {% if pick %}
-        <select id="ed-m-{{ k }}-sel">
+        <select id="ed-m-{{ r.key }}-sel">
           <option value="">unset</option>
-          {% if s.kind == 'bool' %}
+          {% if r.kind == 'switch' %}
             <option value="1">on</option><option value="0">off</option>
           {% else %}
-            {% for ch in s.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+            {% for ch in r.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
           {% endif %}
         </select>
         {% else %}
-        <input id="ed-m-{{ k }}-val" type="text" inputmode="numeric" placeholder="unset">
+        <input id="ed-m-{{ r.key }}-val" type="text" inputmode="numeric" placeholder="unset">
         {% endif %}
-        <span class="mut h">{{ s.help }}{% if s.side_effects %} <em>Side effect: {{ s.side_effects }}</em>{% endif %}</span>
+        {% if r.default is not none %}
+        <span class="ed-default mut">default {{ r.default }}{% if r.unit %} {{ r.unit }}{% endif %}</span>
+        {% endif %}
+        <span class="mut h">{{ r.help }}</span>
+        <details class="ed-detail">
+          <summary>detail</summary>
+          <p class="mut">{{ r.rule }}</p>
+          {% if r.detail %}<p class="mut">side effect: {{ r.detail }}</p>{% endif %}
+          {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}
+          {% if r.visible_when %}<p class="mut" data-when>needs {{ r.visible_when|join(' + ') }} in the model's header</p>{% endif %}
+          {% if r.help_ref %}<p><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></p>{% endif %}
+        </details>
       </div>
     {% endfor %}
   </div>
@@ -328,6 +372,10 @@ h2{margin:18px 0 6px}
     if (!captured) return;
     const body = {};
     for (const f of modelFields) {
+      // A row the selected file cannot use contributes nothing, whatever is sitting in its input:
+      // the same controls are reused across models, so a value typed for a model that supports the
+      // setting is still in the box when a model that does not is selected.
+      if (f.hidden) continue;
       const key = f.dataset.key;
       const control = f.querySelector('select, input');
       if (control && control.value !== '') body[key] = control.value;
@@ -336,12 +384,44 @@ h2{margin:18px 0 6px}
     else modelEdits.delete(captured);
   }
 
+  // Which rows the selected file cannot use, and why. Computed on the server from the model index
+  // (`_model_row_limits`, built from `settingrows.hidden_reason`) and carried on the option, so the
+  // page filters on facts the portal measured rather than on naming rules re-derived in JavaScript.
+  // An unreadable limits blob shows every row: a row that is offered and refused on the preview is
+  // a visible refusal, where a row that silently disappears is a setting nobody can find.
+  function limitsFor(name) {
+    for (const o of $('ed-model').options) {
+      if (o.value !== name) continue;
+      try {
+        const parsed = JSON.parse(o.dataset.limits || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  function applyVisibility(name) {
+    const limits = limitsFor(name);
+    for (const f of modelFields) {
+      const why = limits[f.dataset.key];
+      f.hidden = Boolean(why);
+      const when = f.querySelector('[data-when]');
+      if (when && why) when.textContent = why;
+    }
+  }
+
   function loadModel(name) {
     captured = name;
+    applyVisibility(name);
     const saved = modelEdits.get(name) || {};
     for (const f of modelFields) {
       const control = f.querySelector('select, input');
-      if (control) control.value = saved[f.dataset.key] || '';
+      if (!control) continue;
+      // Hidden rows are cleared, not just hidden: the control is reused across models, and a stale
+      // value in a row this file cannot use must never reach the payload.
+      control.value = f.hidden ? '' : (saved[f.dataset.key] || '');
     }
     summarize();
   }

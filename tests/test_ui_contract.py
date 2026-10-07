@@ -34,8 +34,9 @@ os.environ.setdefault("AI_PORTAL_HOME", tempfile.mkdtemp(prefix="aipp-uic-"))
 # wins the environment, so a differing password makes test order matter
 os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
-from app.main import app  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -552,3 +553,30 @@ def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
             f"{sel} is enabled outside {loader}(), so its lock is not tied to its panel")
         assert re.search(r"getElementById\('" + btn + r"'\)", body), (
             f"{loader}() fills the panel without touching {btn}")
+
+
+def test_the_editor_grids_render_rows_and_hide_what_a_file_cannot_use():
+    """The editor is the row component, and a hidden row cannot reach the payload.
+
+    Two properties of the page source, both of which the rendered page alone would not prove:
+
+    - The grids loop over `editor_rows`. They used to loop over `setting_names` and compute the
+      control shape from `SETTINGS` in the template, which is the duplication §6.14.1 exists to
+      delete: a registry key needed a template edit, and the template's idea of a key could drift
+      from the generator's.
+    - The client treats a hidden row as absent. The per-model controls are one set of inputs reused
+      across every model, so a value typed for a model that supports a setting is still sitting in
+      the box when a model that does not is selected. If capture read hidden rows, the page would
+      propose a key the file cannot use; if load left a stale value in one, the same.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    ed = tpl[tpl.index('id="editor"'):]
+    assert "setting_names" not in ed, "the editor is looping the registry names again"
+    assert ed.count("for r in editor_rows") == 2, \
+        "both grids must render rows; one of them is still hand-built"
+    assert "if (f.hidden) continue;" in ed, "capture reads hidden rows"
+    assert "control.value = f.hidden ? '' : (saved[f.dataset.key] || '');" in ed, \
+        "loadModel leaves a stale value in a row the model cannot use"
+    assert "applyVisibility(name);" in ed, "visibility is computed but never applied on load"
+    # The reason text is what an operator reads; a row that vanishes silently is the failure.
+    assert "when.textContent = why;" in ed, "the row says nothing about why it is hidden"

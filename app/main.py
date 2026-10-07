@@ -331,6 +331,28 @@ def _ctxlen(n: object) -> str:
     return f"{v:.0f}"
 
 
+def _model_row_limits(index_rows: list[dict]) -> dict[str, dict[str, str]]:
+    """Per model id: which editor rows that file cannot use, and the fact it is missing.
+
+    Computed from the index on the server, because the naming rules live in the row layer
+    (`settingrows.VISIBLE_FACTS`) and a browser copy of them is a second, weaker statement about
+    the same files -- the same class of duplication §6.14.1 exists to delete. The reason text comes
+    from `settingrows.hidden_reason`, so what the page says a row needs is exactly what the row
+    layer checks, and a row that vanishes says why it vanished instead of reading as a build that
+    lacks the setting.
+    """
+    rows = settingrows.editable_rows()
+    out: dict[str, dict[str, str]] = {}
+    for mrow in index_rows:
+        limits = {}
+        for r in rows:
+            why = settingrows.hidden_reason(r, mrow)
+            if why:
+                limits[r["key"]] = why
+        out[str(mrow.get("id"))] = limits
+    return out
+
+
 def _human(n: object) -> str:
     """Byte count as "71.0G". Anything we cannot read as a finite number — None,
     zero, a string from a registry entry, an inf from a counter that wrapped —
@@ -870,6 +892,9 @@ def create_app() -> FastAPI:
         restart.
         """
         budget = modelindex._pool_bytes()
+        # Read once: the editor's model list and the per-model row limits must come from the same
+        # index snapshot, or the page can offer a model its own limits table does not know.
+        index_rows = modelindex.rows()
         people = personality.all_personalities()
         cards = [personality.describe(p, budget) for p in people]
         generated = []
@@ -896,8 +921,6 @@ def create_app() -> FastAPI:
                                            "config_uses": {c["name"]: model_config
                                                            .assigned_personalities(c["name"])
                                                            for c in configs},
-                                           "settings": personality.SETTINGS,
-                                           "setting_names": personality.setting_names(),
                                            # Each key's citation, reduced to the section id the help page
                                            # opens. A key whose cite names no section gets no link: a
                                            # link to nothing is worse than a link that 404s.
@@ -908,7 +931,12 @@ def create_app() -> FastAPI:
                                            # from the personality cards: a per-model section only means
                                            # something if it names a directory the router can see, and
                                            # normalize_proposed() refuses any name that does not.
-                                           "model_ids": [r["id"] for r in modelindex.rows()],
+                                           "model_ids": [r["id"] for r in index_rows],
+                                           # The editor grids render rows, not SETTINGS lookups: control
+                                           # shape, default, unit, rule, help link and visibility facts
+                                           # all arrive on the row (app/core/settingrows.py, §6.14.1).
+                                           "editor_rows": settingrows.editable_rows(),
+                                           "model_row_limits": _model_row_limits(index_rows),
                                            "router_unit": paths.ROUTER_UNIT,
                                            "presets_path": str(paths.PRESETS_INI),
                                            # The keys table renders one row type from the registry's row

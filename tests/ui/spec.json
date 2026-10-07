@@ -899,6 +899,42 @@
      "minCount": 14
     },
     {
+     "_comment": [
+      "Slice 2 of plan sec 6.14.1: every row carries its own detail block. The short line is the",
+      "help sentence; the rule, the side effect, the build's own spellings and the help link live",
+      "in the collapsible detail. A grid of rows with no detail is the page being 16,720 px tall",
+      "again, which is the reason the slice exists."
+     ],
+     "selector": "#ed-model-fields .ed-field .ed-detail",
+     "minCount": 14
+    },
+    {
+     "selector": "#ed-global .ed-field .ed-detail",
+     "minCount": 12
+    },
+    {
+     "_comment": [
+      "The default is stated on the row, with the unit the row declares. A bare number on a page",
+      "is a number the operator has to guess the meaning of: 8192 is MiB here and tokens elsewhere."
+     ],
+     "selector": "#ed-model-fields .ed-field[data-key=\"cache-ram\"] .ed-default",
+     "contains": "default 8192 MiB"
+    },
+    {
+     "_comment": [
+      "Per-model visibility is computed from the model index on the server and rides on the option."
+     ],
+     "selector": "#ed-model option[data-limits]",
+     "minCount": 1
+    },
+    {
+     "_comment": [
+      "A row whose facts the selected file does not provide says which fact is missing, on the row."
+     ],
+     "selector": "#ed-model-fields .ed-field[data-key=\"jinja\"] [data-when]",
+     "contains": "needs"
+    },
+    {
      "selector": "#ed-summary",
      "contains": "no edits proposed"
     }

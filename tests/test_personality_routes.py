@@ -36,9 +36,11 @@ import sys  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fastapi.testclient import TestClient  # noqa: E402
-
+import html  # noqa: E402
+import json  # noqa: E402
 import re  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core import config as cfg  # noqa: E402
 from app.core import kb  # noqa: E402
@@ -290,7 +292,7 @@ def test_the_pages_write_control_cannot_fire_by_itself(client):
     # Enter while someone was typing a number.
     editor = body.split('id="pers-editor"', 1)[1] if 'id="pers-editor"' in body else ""
     assert editor, "the editor section is missing"
-    buttons = [b for b in editor.split("<button")[1:]]
+    buttons = list(editor.split("<button")[1:])
     assert buttons, "the editor renders no buttons"
     untyped = [b.split(">", 1)[0] for b in buttons if 'type="button"' not in b.split(">", 1)[0]]
     assert not untyped, f"buttons without type=button: {untyped}"
@@ -667,6 +669,141 @@ def test_the_page_shows_tokens_per_client_for_each_priced_model(client, library)
     # show a number that is not 4096.
     assert "4096" in row, row[:400]
     assert "trained" in row, "who decided the window is not stated"
+
+
+def _grid(page: str, grid_id: str) -> str:
+    """One editor grid's markup, from its opening div to the row after it ends.
+
+    `#ed-summary` sits below both grids, so it bounds the model grid; the global grid is bounded by
+    the model grid's own id. Done by string bounds rather than a DOM parse because the assertion is
+    about markup this template emits, and a parser that repairs the page hides the failure.
+    """
+    start = page.index(f'id="{grid_id}"')
+    stop = (page.index('id="ed-model-fields"') if grid_id == "ed-global"
+            else page.index('id="ed-summary"'))
+    return html.unescape(page[start:stop])
+
+
+def _rows_of(region: str) -> dict[str, str]:
+    """{key: the row's own markup}, keyed in document order.
+
+    Editor rows are `<div class="ed-field" ...>`; keys-table rows are `<tr data-key=...>`. Both are
+    split on their own opening tag -- a helper that only knows one of them reports a key as absent,
+    which is a worse failure to write a test against than the assertion it is checking.
+    """
+    parts = re.split(r'<div class="ed-field" |<tr ', region)
+    out = {}
+    for chunk in parts[1:]:
+        m = re.search(r'data-key="([a-z0-9-]+)"', chunk)
+        if m:
+            out[m.group(1)] = chunk
+    return out
+
+
+def test_the_editor_rows_carry_their_default_their_rule_and_their_proof(client):
+    """The editor's rows are the row layer's data rendered, not a template's opinion.
+
+    Slice 2 of §6.14.1 puts a fixed row component in the editor grids: NAME [control] (default),
+    one short line, and a collapsible detail. The guard is per row, against `settingrows` -- which
+    key is offered, whether the row states its default (and only when it has one), the rule sentence
+    derived from its bounds, the side effect, the spellings b11429 declares for it, and the help link
+    for the section that proves it. A template that hardcodes any of that stops matching.
+    """
+    page = client.get("/personalities").text
+    rows = {r["key"]: r for r in settingrows.editable_rows()}
+
+    model_rows = _rows_of(_grid(page, "ed-model-fields"))
+    assert list(model_rows) == list(rows), (
+        f"the editor offers {len(model_rows)} rows, the registry says {len(rows)}: "
+        f"{sorted(set(model_rows) ^ set(rows))[:6]}")
+    global_rows = _rows_of(_grid(page, "ed-global"))
+    want = [k for k, r in rows.items() if r["scope"] != "model"]
+    assert list(global_rows) == want, f"global grid: {sorted(set(global_rows) ^ set(want))[:6]}"
+
+    for key, chunk in model_rows.items():
+        r = rows[key]
+        # The default is on the row, and a row with no default does not claim one. "default None"
+        # and an invented default are both lies the page would tell about the binary.
+        has_default = "ed-default" in chunk
+        assert has_default == (r["default"] is not None), key
+        if r["default"] is not None:
+            assert f"default {r['default']}" in chunk, key
+            if r["unit"]:
+                assert r["unit"] in chunk, f"{key}: a number with no unit is a number to guess at"
+        assert r["rule"] in chunk, f"{key}: the row lost the rule its own bounds produce: {r['rule']}"
+        assert 'class="ed-detail"' in chunk, f"{key}: no detail block, nowhere for the prose to go"
+        if r["detail"]:
+            assert r["detail"] in chunk, f"{key}: the side effect is not on the row"
+        for alias in r["aliases"]:
+            assert alias in chunk, f"{key}: the build spells it {alias} and the page does not say so"
+        ref = r["help_ref"]
+        assert (f'href="/help#{ref}"' in chunk) == bool(ref), (
+            f"{key}: help link and citation disagree" if ref else f"{key}: a link to no section")
+        # A row the file may not support states the fact it needs, on the row.
+        if r["visible_when"]:
+            assert "data-when" in chunk, f"{key}: names {r['visible_when']} but never says so"
+
+
+def test_the_page_says_which_rows_a_model_cannot_use_and_which_fact_is_missing(client):
+    """Per-model visibility is computed from the index, and its absence is an explanation.
+
+    A setting that vanishes reads as a build that lacks it. So the limits ride on the model option,
+    and every entry names the model-index fact the header did not provide. Compared against
+    `settingrows.hidden_reason` for the same index rows -- the page and the row layer cannot then
+    disagree about a file, and a rule added to VISIBLE_FACTS shows up here the moment it is added.
+    """
+    page = client.get("/personalities").text
+    # `tojson` renders its JSON as already-safe markup, so the attribute holds raw double quotes
+    # inside single quotes and Jinja escapes the apostrophes the reason text contains to \u0027.
+    # That is what makes a single-quoted attribute with a JSON body parseable here.
+    opts = re.findall(r"<option value=\"([^\"]+)\" data-limits='([^']*)'", page)
+    ids = [r["id"] for r in mi.rows()]
+    assert sorted(m for m, _ in opts) == sorted(ids), "the editor's models and the index disagree"
+    limits = {m: json.loads(raw) for m, raw in opts}
+
+    for mrow in mi.rows():
+        want = {}
+        for r in settingrows.editable_rows():
+            why = settingrows.hidden_reason(r, mrow)
+            if why:
+                want[r["key"]] = why
+        assert limits[mrow["id"]] == want, mrow["id"]
+
+    # Non-vacuous, on this fixture: neither seeded file declares a chat template or sliding-window
+    # layers, so `jinja`, `ctx-checkpoints` and `checkpoint-min-step` must be listed as unusable --
+    # with the reason naming the fact, which is the part an operator reads.
+    listed = sorted({k for v in limits.values() for k in v})
+    assert "jinja" in listed and "ctx-checkpoints" in listed, f"nothing was hidden: {listed}"
+    for v in limits.values():
+        for key, why in v.items():
+            assert why.startswith("needs ") and "header" in why, (key, why)
+
+
+def test_a_key_the_router_owns_is_explained_and_never_offered_a_control(client, monkeypatch):
+    """`editable_rows` is the whole refusal story, so it gets a case where it has teeth.
+
+    Today the registry contains no non-writable key -- every key in SETTINGS is one the portal can
+    emit, and `rows()` and `editable_rows()` render identically. That makes "the editor offers only
+    writable keys" a claim no page test can detect: mutating the route to `rows()` passed every
+    assertion in this file, which is an equivalent mutation and a real hole in the guard, found by
+    breaking the code on purpose. So the case is constructed: `setting_is_writable` is made to refuse
+    one key, and the page must show that key in the keys table with the refusal stated, and offer no
+    control for it in either grid. A control that changes nothing is the artifact the operator will
+    rely on, which is why the keys table may show it and the editor may not.
+    """
+    real = P.setting_is_writable
+    monkeypatch.setattr(P, "setting_is_writable",
+                        lambda key: False if key == "flash-attn" else real(key))
+    page = client.get("/personalities").text
+
+    assert "flash-attn" not in _rows_of(_grid(page, "ed-model-fields")), \
+        "the editor offered a control for a key the router overwrites"
+    assert "flash-attn" not in _rows_of(_grid(page, "ed-global")), \
+        "the global grid offered a control for a key the router overwrites"
+    keys_table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
+    assert "flash-attn" in keys_table, "the keys table dropped a key instead of explaining it"
+    chunk = _rows_of(keys_table).get("flash-attn", "")
+    assert "the router sets this" in chunk, "the refusal is not stated on the row"
 
 
 def test_the_keys_table_is_the_registry_row_data_rendered(client):

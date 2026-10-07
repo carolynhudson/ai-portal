@@ -3467,6 +3467,50 @@ link, the writable refusal). The rules it enforces:
 The keys table on `/personalities` renders from `settingrows.rows()` and nothing else. The editor's
 grids and the deck are the next slices.
 
+##### 6.14.1a The editor becomes the row component (2026-10-07)
+
+**What changed.** Both editor grids now render `settingrows.editable_rows()` in the fixed row layout:
+NAME, the control, `default 8192 MiB`, one short help line, and a collapsible detail carrying the
+rule sentence, the side effect, the spellings b11429 declares for the key, the model facts the row
+needs, and the link to the /help section that proves it. Long prose went into the detail, which is
+what keeps the grid readable -- the page was 16,720 px tall because nothing was collapsible (§6.12.21).
+Control ids are unchanged (`ed-g-<key>-sel|val`, `ed-m-<key>-sel|val`), so the jsdom harness drives
+the same controls it always drove, and six cases pass.
+
+**Per-model visibility, measured from the index.** `_model_row_limits` walks the index rows and asks
+`settingrows.hidden_reason` for each row, and the result rides on the model `<option>` as JSON. The
+client hides the rows the selected file cannot use and writes the missing fact into the row:
+`jinja` on a file with no chat template says so rather than disappearing. Computing this on the
+server is deliberate -- the naming rules are `VISIBLE_FACTS`, and a JavaScript copy is a second,
+weaker statement about the same files.
+
+**The rule that makes hidden rows harmless.** The per-model controls are one set of inputs reused
+across every model, so a value typed for a model that supports a setting is still in the box when a
+model that does not is selected. `captureCurrent` skips hidden rows and `loadModel` clears them, so
+a row the file cannot use contributes nothing to the payload. The limits blob is fail-open on purpose
+(a parse failure shows every row): a row offered and refused on the preview is a visible refusal,
+where a row that silently vanishes is a setting nobody can find.
+
+**An equivalent mutation, found by breaking the code.** Five guards were mutation-checked. Four fired.
+The fifth -- passing `settingrows.rows()` where the route passes `editable_rows()` -- passed every
+assertion in `tests/test_personality_routes.py` and `tests/test_ui_contract.py`. Nothing is wrong
+with the test: the registry currently contains no non-writable key, so the two calls return the same
+rows and the page cannot show a difference. "The editor offers only writable keys" was an
+unfalsifiable claim. `test_a_key_the_router_owns_is_explained_and_never_offered_a_control` fixes that
+by constructing the case: `setting_is_writable` is made to refuse `flash-attn`, and the page must
+show the key in the keys table with *the router sets this* on the row and offer no control for it in
+either grid. With that test in place the same mutation fails.
+
+**Enforcement.** `tests/test_personality_routes.py::test_the_editor_rows_carry_their_default_their_rule_and_their_proof`
+compares every rendered row against the row layer -- which keys are offered, whether the default is
+stated (and only when one exists), the derived rule sentence, the side effect, the aliases, the help
+link, and the presence of a visibility line. `test_the_page_says_which_rows_a_model_cannot_use_and_which_fact_is_missing`
+compares the page's limits against `hidden_reason` for the same index rows. `test_ui_contract` checks
+the two page-source properties the rendered page cannot prove: the grids loop `editor_rows` and not
+`setting_names`, and the client treats a hidden row as absent. `tests/ui/spec.json` pins the detail
+blocks (14 per-model, 12 global), the unit in the default line, `data-limits` on the options, and the
+missing-fact line. Suite 807 passed / 3 skipped.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
