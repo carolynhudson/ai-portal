@@ -3441,6 +3441,32 @@ Reusable pieces the operator wants kept reusable, named here so the split is del
 the personality card, the settings row, the citation link, and the sizing ruler
 (`modelindex.context_window`) that the page, the bench tool, and the probe all read.
 
+**First slice shipped 2026-10-06** (`app/core/settingrows.py`). The registry rows — 32 now —
+carry `aliases`, `range`, `values`, `specials`, `unit`, `visible_when` and `substitutions` in a
+presentation table merged into `SETTINGS`, so there is one table to read and not two to keep in
+step; `settingrows.row()` derives the rest (renderer `kind`, `scope`, the rule sentence, the help
+link, the writable refusal). The rules it enforces:
+
+- **A visibility rule names an index fact or raises.** `VISIBLE_FACTS` is built only from columns
+  the index stores, so `ctx-checkpoints` and `checkpoint-min-step` drop per model when
+  `full_attention_interval` is 1 (checkpoints are gated per model, §6.12.6) and `jinja` drops for a
+  file with no chat template. `reasoning` is deliberately *not* a fact: the index has no column for
+  template reasoning fields, so `reasoning-effort` has no visibility rule, and inventing one would
+  be an assertion about a column that does not exist.
+- **A quoted number comes from the table the budget prices.** `{cache_ram_mib}` resolves to
+  `SERVER_DEFAULTS["cache-ram"]`, `{threads_default}` to `GLOBAL_DEFAULTS`, `{ctx_trained}` to the
+  model row. A help line with its own copy of 8192 is a second ruler.
+- **A declared bound is the bound `accepts` enforces.** `tests/test_settingrows.py` probes every
+  range against the validator, one step outside the lower bound included. It caught a real one on
+  arrival: `n-gpu-layers` had been given `range: (-1, None)` because llama.cpp's CLI takes -1 for
+  auto, while this portal's validator accepts `auto`/`all`/`int >= 0` and refuses -1.
+- **A new key is a data edit.** `spec-type` and `spec-draft-sampling` are the proof: defaults
+  quoted from b11429's own help (§6.12.26), acceptance measured with `tools/registry_flag_audit.py`
+  and recorded in `AUDITED_B11429_ACCEPTS`, no template touched.
+
+The keys table on `/personalities` renders from `settingrows.rows()` and nothing else. The editor's
+grids and the deck are the next slices.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

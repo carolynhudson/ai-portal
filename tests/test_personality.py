@@ -486,7 +486,8 @@ def test_no_setting_is_defined_twice_in_the_registry():
         else:
             continue
         for name in names:
-            if name not in ("SETTINGS", "SERVER_DEFAULTS", "GLOBAL_DEFAULTS"):
+            if name not in ("SETTINGS", "SERVER_DEFAULTS", "GLOBAL_DEFAULTS",
+                            "SETTING_PRESENTATION"):
                 continue
             if not isinstance(node.value, ast.Dict):
                 continue
@@ -933,6 +934,16 @@ AUDITED_B11396_ACCEPTS = frozenset({
     "threads", "top-k", "top-p",
 })
 
+# Measured 2026-10-06 on the build this box runs now -- b11429, which IS the v0.6.0 tag -- with
+# `tools/registry_flag_audit.py --keys spec-type,spec-draft-sampling,ctx-checkpoints`:
+# probe model codegemma-2b-Q5_K_M.gguf (1.71 GiB), `--offline` on a loopback port, accepted =
+# "listening on". All three accepted; the third is here as the control that proves the run
+# measured something (ctx-checkpoints was accepted on b11396 too).
+#
+# Keys added after b11396 are listed here rather than folded into the constant above: that list is
+# a record of one build's answer, and mixing builds is how "measured" stops meaning anything.
+AUDITED_B11429_ACCEPTS = frozenset({"spec-type", "spec-draft-sampling"})
+
 #: Keys that are not llama-server flags at all. The router owns these, and the header comment in
 #: presets.ini says so. They are exempt from the flag test because there is no flag to test.
 FLAGGED_NOT_IN_B11396 = frozenset({
@@ -947,13 +958,18 @@ FLAGGED_NOT_IN_B11396 = frozenset({
 def test_every_registry_key_was_measured_on_the_binary_that_runs():
     """A key the server refuses is a button that stops the router. It may not be in the registry.
 
-    If you added a key: measure it first (`llama-server --model <file> --offline --port <free>
-    --<key> [value]`, look for "listening on" vs "invalid argument"), then add it here with the
-    build name in the constant's name.
+    If you added a key: measure it first, then add it here with the build name in the constant's
+    name. The committed way to measure is `tools/registry_flag_audit.py --keys a,b,c` (§6.12.21),
+    which starts its own probes on spare ports against the build in use and prints accepted /
+    declined / refused; defaults come from `tools/registry_defaults_audit.py` (§6.12.26). A key
+    the server refuses is not a settings bug, it is a preset that stops the router from loading
+    the model, and presets.ini is read by something that will not explain itself.
     """
     exempt = set(P.ROUTER_ONLY_KEYS)
-    unmeasured = set(P.SETTINGS) - AUDITED_B11396_ACCEPTS - exempt
-    assert not unmeasured, f"registry keys with no measurement on b11396: {sorted(unmeasured)}"
+    measured = AUDITED_B11396_ACCEPTS | AUDITED_B11429_ACCEPTS
+    unmeasured = set(P.SETTINGS) - measured - exempt
+    assert not unmeasured, \
+        f"registry keys with no measurement on any measured build: {sorted(unmeasured)}"
     for key in sorted(exempt):
         assert key in P.SETTINGS, f"{key} is declared router-only but is not in the registry"
 

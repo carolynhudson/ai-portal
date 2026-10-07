@@ -100,6 +100,10 @@ SERVER_DEFAULTS: dict[str, Any] = {
     # b11396's, and the block above is b10964's, so this table now spans two builds; and the
     # sampling defaults are the reason the sampling keys are worth having -- a model recommended
     # at temperature 1.0 is running the server's 0.80 unless somebody says otherwise.
+    # Read from b11429 --help (§6.12.26): `--spec-type` defaults to none, so writing none is a
+    # restatement; `--spec-draft-sampling` defaults to greedy for the same reason.
+    "spec-type": "none",
+    "spec-draft-sampling": "greedy",
     "kv-unified": "auto",          # false in common.h:578, enabled when slots are auto
     "kv-unified-per-slot": 0,      # common.h:636
     "fit-ctx": 4096,               # common.h:483
@@ -157,6 +161,14 @@ GLOBAL_DEFAULTS: dict[str, Any] = {
 # in every preset the router reports but the router derives them itself — it writes the
 # section header, the model path and the projector path — so emitting them is the portal
 # asserting something the router has already decided.
+#: The speculative-decoding types b11429 accepts, quoted from its own --help. Named once: the
+#: validator and the row's allowed-values list read the same tuple, so a key cannot accept what
+#: its own help says it does not.
+_SPEC_TYPES = (
+    "none", "draft-simple", "draft-eagle3", "draft-mtp", "draft-dflash", "draft-dspark",
+    "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod", "ngram-cache",
+)
+
 SETTINGS: dict[str, dict[str, Any]] = {
     # The host-RAM knobs. They were absent from the registry entirely, which meant an operator
     # could not set them and the portal's budget did not account for them -- while llama.cpp runs
@@ -511,7 +523,114 @@ SETTINGS: dict[str, dict[str, Any]] = {
                         "time, so that gap is not attributable to this flag alone.",
         "accepts": lambda v: v in ("on", "off", "auto"),
     },
+    # --- speculative decoding ---------------------------------------------------------
+    # Added 2026-10-06, and deliberately as the test case for §6.14.1's claim that a new setting
+    # is a data edit. Both flags are in b11429's own `--help`; both defaults are quoted from that
+    # help; and §6.12.17 measured that a preset section really carries `spec-type` down to the
+    # worker's command line, which is what makes them portal settings at all (§6.12.11 recorded
+    # the opposite belief, from a CLI-only reading). Acceptance measured with
+    # tools/registry_flag_audit.py and recorded in tests/test_personality.py::AUDITED_B11429_ACCEPTS.
+    "spec-type": {
+        "kind": "list",
+        "section": "both",
+        "default": "none",
+        "values": _SPEC_TYPES,
+        "help": "Speculative decoding to run: a draft guesses the next tokens and the target verifies them. Comma-separated.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.11, sec 6.12.17",
+        "side_effects": "A draft file costs aperture alongside the target. A file carrying its own head (the index's nextn_layers, §4.9.3) needs no second model; the 177B daily model on this box does not carry one, so a draft spec for it buys speed with a second resident file.",
+        "accepts": lambda v: isinstance(v, str) and all(
+            p.strip() in _SPEC_TYPES for p in v.split(",") if p.strip()),
+    },
+    "spec-draft-sampling": {
+        "kind": "choice",
+        "section": "both",
+        "default": "greedy",
+        "choices": ("greedy", "probabilistic"),
+        "help": "How the draft's guess is made: greedy takes its argmax, probabilistic samples it and lets the target verify by rejection sampling.",
+        "cite": "docs/PORTAL_PLAN.md sec 6.12.26",
+        "side_effects": "Changes how many guesses are accepted, not what the draft costs. Meaningless with no speculative decoding running at all -- it is a knob on a draft, not a way to start one.",
+        "accepts": lambda v: v in ("greedy", "probabilistic"),
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Presentation data (docs/PORTAL_PLAN.md §6.14.1)
+#
+# Everything above is what a key *means*: the validator, its kind, its default, the sentence the
+# page shows. Everything in this table is what a *renderer* needs on top of that, and it is merged
+# into SETTINGS below so there is one table to read and not two to keep in step.
+#
+#   aliases        the spellings b11429's own --help declares for the key. Measured with
+#                  tools/registry_defaults_audit.py (§6.12.26), not remembered: `-ctxcp` declares
+#                  `--ctx-checkpoints` and `--swa-checkpoints`, `-ngl` declares `--gpu-layers` too,
+#                  and the preset-only trio declares nothing because it has no CLI form.
+#   range          the bounds this portal enforces, read off its own `accepts` rule. Not stated
+#                  where the portal enforces no bound, because an invented bound is a rule that
+#                  disagrees with the validator -- tests/test_settingrows.py probes each bound
+#                  against `accepts`, one step outside the lower bound included.
+#   specials       words a numeric field takes that are not numbers.
+#   unit           what a number counts, so the page can say 8192 MiB and not 8192.
+#   visible_when   model-index facts (§4.9) that must be true for the row to mean anything, read
+#                  from the index at render time -- see app/core/settingrows.py.
+#   substitutions  measured facts the help text quotes, resolved by settingrows.substitutions().
+# ---------------------------------------------------------------------------
+SETTING_PRESENTATION: dict[str, dict[str, Any]] = {
+    "cache-ram": {"aliases": ("-cram",), "unit": "MiB", "range": (-1, None),
+                  "substitutions": ("cache_ram_mib",)},
+    "ctx-checkpoints": {"aliases": ("-ctxcp", "--swa-checkpoints"), "range": (0, None),
+                        # §6.12.6: checkpoints are gated per model on sliding-window / bounded
+                        # seq-removal, so the row is noise on a model that reports none.
+                        "visible_when": ("sliding_window",),
+                        "substitutions": ("checkpoint_mib",)},
+    "checkpoint-min-step": {"aliases": ("-cms",), "unit": "tokens", "range": (0, None),
+                            "visible_when": ("sliding_window",)},
+    "cache-idle-slots": {"aliases": ("--no-cache-idle-slots",),
+                         "substitutions": ("cache_ram_mib",)},
+    "threads": {"aliases": ("-t",), "range": (-1, None), "substitutions": ("threads_default",)},
+    "fit": {"aliases": ("-fit",)},
+    "kv-unified": {"aliases": ("-kvu", "--no-kv-unified")},
+    "kv-unified-per-slot": {"range": (0, None)},
+    "fit-ctx": {"aliases": ("-fitc",), "unit": "tokens", "range": (0, None)},
+    "fit-target": {"aliases": ("-fitt",), "unit": "MiB"},
+    "stop-timeout": {"unit": "seconds", "range": (0, None)},
+    "load-on-startup": {},
+    "dedup-cache-models": {},
+    "ctx-size": {"aliases": ("-c",), "unit": "tokens", "range": (0, None),
+                 "substitutions": ("ctx_trained",)},
+    # Range read off this portal's own validator (`v in ("auto", "all") or int >= 0`), not off
+    # llama.cpp's CLI where -1 also means auto. Advertising -1 here would advertise a value the
+    # registry's `accepts` refuses -- which is what tests/test_settingrows.py caught when this
+    # row first said -1.
+    "n-gpu-layers": {"aliases": ("-ngl", "--gpu-layers"), "specials": ("auto", "all"),
+                     "range": (0, None)},
+    "flash-attn": {"aliases": ("-fa",)},
+    "parallel": {"aliases": ("-np",), "range": (-1, None)},
+    "temp": {"range": (0.0, 2.0)},
+    "top-k": {"range": (0, None), "unit": "tokens"},
+    "top-p": {"range": (0.0, 1.0)},
+    "min-p": {"range": (0.0, 1.0)},
+    "presence-penalty": {},
+    "repeat-penalty": {},
+    "dry-multiplier": {"range": (0.0, None)},
+    "cache-prompt": {"aliases": ("--no-cache-prompt",)},
+    "reasoning-budget": {"unit": "tokens", "range": (-1, None)},
+    "reasoning-effort": {},
+    "jinja": {"aliases": ("--no-jinja",),
+              # A template switch on a file with no chat template has nothing to switch.
+              "visible_when": ("chat_template",)},
+    "keep": {"range": (-1, None), "unit": "tokens"},
+    "lazy-mode": {"aliases": ("-lzm",)},
+    "spec-type": {"substitutions": ("spec_types",)},
+    "spec-draft-sampling": {},
+}
+
+for _key, _extra in SETTING_PRESENTATION.items():
+    if _key not in SETTINGS:
+        raise RuntimeError(
+            f"SETTING_PRESENTATION names {_key!r}, which is not a setting: the presentation table "
+            f"cannot describe a key the registry does not define, because the page would offer a "
+            f"row for a key nothing validates.")
+    SETTINGS[_key].update(_extra)
 
 # Present in every preset the router reports, but written by the router, not by us.
 ROUTER_DERIVED_KEYS = frozenset({"metrics", "model", "mmproj"})
