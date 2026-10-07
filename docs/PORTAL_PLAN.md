@@ -3553,6 +3553,54 @@ assertion that reads the live badge from the card that carries it, scoped struct
 assertion cannot be made to pass, the deck does not ship -- the page's active-state story is the one
 thing on this page that must not be ambiguous, because it is the sentence an operator acts on.
 
+##### 6.14.1d The row is one line, and the fields wear the page's theme (2026-10-07)
+
+**The operator's two notes on slice 2.** (1) *The page is dark and the fields are not.* The inputs
+and selects were browser-default boxes on a `#0e1116` canvas. (2) *Each row reads thick* -- the
+default took a line of its own under the control, the help sentence took another, and the word
+`detail` took a third. She asked for the default to the right of the field, and the collapsible
+control to be the short description itself, or `more` at the end of it rather than on a line after.
+
+**What the row is now.** One baseline-aligned flex line:
+
+```
+NAME              [ control ]   default 8192 MiB   Total tokens the server shares among its slots…  more
+```
+
+The help sentence *is* the disclosure control: `<summary>` holds the help span plus the toggle word,
+so the text you read is the text you click, and the rule, side effect, the build's own spellings, the
+model facts the row needs and the `/help#§` link appear underneath it when opened. The toggle word is
+CSS state (`.ed-detail[open]>summary .ed-more-closed{display:none}` and its mirror), not script state --
+a row says "less" when it is open without anything running. Rows 12 (global) + 14 (per-model); the
+parts that used to occupy three lines occupy one, and a closed row is now 1 line + a border.
+
+**Fields, site-wide, in `base.html`.** Panel fill, `var(--line)` border, foreground text, accent on
+focus, muted placeholder, disabled state, and `select>option` painted too -- the last one matters
+because CSS on the field cannot reach the native dropdown. `color-scheme:dark` is what makes the
+popups (dropdown list, date picker) dark; without it the field is themed and its list is white.
+Scoped in the base template rather than per page: a field is the same object on /settings, /models and
+/help, and a theme applied page by page is a theme that leaks.
+
+**Guards.** Three contract tests in `tests/test_ui_contract.py` -- `test_the_help_line_is_the_control_you_click`,
+`test_a_row_is_one_line`, `test_the_form_controls_wear_the_page_theme` -- and three live-page expects in
+`tests/ui/spec.json` (`.ed-detail>summary .mut.h` minCount 12, `>summary .ed-more-closed` minCount 14,
+and a `contains` on a row's summary text). Every one was mutation-checked: putting the help span back on
+its own line fails the first; `.ed-default{grid-column:2}` (the old two-line placement) fails the second;
+deleting the control-theme block fails the third; and dropping the toggle word from **one single row**
+fails the harness, which is the proof that the live-page counts are not decoration.
+
+**A bug the harness caught in my own assertion.** I wrote the `contains` expect as
+`#ed-global .ed-field[data-key="ctx-size"] summary`. It failed: `ctx-size` is `scope=model`, so it
+renders in `#ed-model-fields` and never in the global grid. The expect was re-pointed at `cache-ram`
+(`scope=both`). Worth recording as the ordinary hazard it is: a spec assertion about a row is a claim
+about which grid the row layer puts that key in, and the row layer is the place that decides.
+
+**Limit, stated.** jsdom has no layout engine, so "one line" is asserted structurally -- markup order
+(control, then default, then details, inside the grid) plus the CSS rules that place them on a baseline
+(`.ed-field{display:flex}`, `.ed-default{flex:0 0 auto}`, `.ed-detail{flex:1 1 ...}`) and the absence of
+the old `grid-column` placements. That is testable and mutation-checked, and it is not the same
+statement as "the row is N px tall"; the pixel number is the operator's eye on the deployed page.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

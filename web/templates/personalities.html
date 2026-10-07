@@ -39,20 +39,26 @@ pre.diff .hunk{color:#8fb4ff}
 table.keys{border-collapse:collapse;width:100%;font-size:.82rem}
 table.keys th,table.keys td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 table.keys th{background:var(--panel2);position:sticky;top:0}
-/* The settings row (§6.14.1): NAME [control] (default) on one line, the short line under it, and a
-   collapsible detail carrying the rule, the side effect, the build's own spellings, the model facts
-   the row needs and the help link. Hidden rows are rows the selected file cannot use. */
-.ed-field{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:baseline;
-  border-bottom:1px solid var(--line);padding:8px 0}
-.ed-field label{font-weight:600}
-.ed-field select,.ed-field input{grid-column:2;max-width:300px}
-.ed-default{grid-column:2;font-size:.78rem}
-.ed-field .mut.h{grid-column:1 / -1}
-.ed-detail{grid-column:1 / -1}
-.ed-detail summary{font-size:.75rem;color:var(--mut);cursor:pointer;list-style:none}
-.ed-detail summary:before{content:"\25b8 "}
-.ed-detail[open] summary:before{content:"\25be "}
-.ed-detail p{margin:4px 0;font-size:.8rem}
+/* The settings row (§6.14.1): one line -- NAME [control] default -- and the short help sentence
+   doing double duty as the disclosure control, toggle word at the end of it. The detail underneath
+   carries the rule, the side effect, the build's own spellings, the model facts the row needs and the
+   help link. A row is a line, not a paragraph: the page was 16,720 px tall, and that is the shape
+   this is. Hidden rows are rows the selected file cannot use. */
+.ed-field{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;
+  border-bottom:1px solid var(--line);padding:5px 0}
+.ed-field label{flex:0 0 168px;font-weight:600}
+.ed-field select,.ed-field input{flex:0 1 190px;min-width:110px;max-width:240px}
+.ed-default{flex:0 0 auto;white-space:nowrap;font-size:.78rem}
+.ed-detail{flex:1 1 300px;min-width:260px}
+.ed-detail>summary{display:flex;gap:8px;align-items:baseline;list-style:none;cursor:pointer;
+  font-size:.78rem}
+.ed-detail>summary::-webkit-details-marker{display:none}
+.ed-more{flex:0 0 auto;color:var(--acc);font-size:.72rem;white-space:nowrap}
+/* The toggle word is CSS state, not script state: a row whose details is open says "less", and
+   nothing has to run for that to be true. */
+.ed-detail[open]>summary .ed-more-closed{display:none}
+.ed-detail:not([open])>summary .ed-more-open{display:none}
+.ed-detail p{margin:4px 0 0;font-size:.78rem}
 .ed-field[hidden]{display:none}
 table.keys td.k{font-family:var(--mono,monospace);white-space:nowrap}
 table.keys td.h{color:var(--mut)}
@@ -240,11 +246,11 @@ h2{margin:18px 0 6px}
 
   <h3>Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
-    {# The row component (§6.14.1): NAME [control] (default), one short line, and a collapsible
-       detail that carries the rule, the side effect, the spellings b11429 declares for the key, the
-       model facts the row needs, and the link to the /help section that proves it. Nothing here
-       decides what a key means -- control shape comes from the row's renderer kind, the default and
-       unit from its data, the rule sentence from its bounds. #}
+    {# The row component (§6.14.1): NAME [control] default on one line, the help sentence as the
+       thing you click, and a detail underneath it carrying the rule, the side effect, the spellings
+       b11429 declares for the key, the model facts the row needs, and the link to the /help section
+       that proves it. Nothing here decides what a key means -- control shape comes from the row's
+       renderer kind, the default and unit from its data, the rule sentence from its bounds. #}
     {% for r in editor_rows %}
       {% if r.scope != 'model' %}
       <div class="ed-field" data-key="{{ r.key }}" data-scope="{{ r.scope }}" data-kind="{{ r.kind }}" data-visible-when="{{ r.visible_when|join('+') }}">
@@ -268,9 +274,10 @@ h2{margin:18px 0 6px}
         {% if r.default is not none %}
         <span class="ed-default mut">default {{ r.default }}{% if r.unit %} {{ r.unit }}{% endif %}</span>
         {% endif %}
-        <span class="mut h">{{ r.help }}</span>
+        {# The short line is the disclosure control: the help sentence, toggle word at its end.
+           Nothing about a row gets a line of its own, which is what makes a row a line. #}
         <details class="ed-detail">
-          <summary>detail</summary>
+          <summary><span class="mut h">{{ r.help }}</span><span class="ed-more ed-more-closed">more</span><span class="ed-more ed-more-open">less</span></summary>
           <p class="mut">{{ r.rule }}</p>
           {% if r.detail %}<p class="mut">side effect: {{ r.detail }}</p>{% endif %}
           {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}
@@ -315,9 +322,9 @@ h2{margin:18px 0 6px}
         {% if r.default is not none %}
         <span class="ed-default mut">default {{ r.default }}{% if r.unit %} {{ r.unit }}{% endif %}</span>
         {% endif %}
-        <span class="mut h">{{ r.help }}</span>
+        {# Same as the global grid: the help sentence is the control you click to read the rule. #}
         <details class="ed-detail">
-          <summary>detail</summary>
+          <summary><span class="mut h">{{ r.help }}</span><span class="ed-more ed-more-closed">more</span><span class="ed-more ed-more-open">less</span></summary>
           <p class="mut">{{ r.rule }}</p>
           {% if r.detail %}<p class="mut">side effect: {{ r.detail }}</p>{% endif %}
           {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}

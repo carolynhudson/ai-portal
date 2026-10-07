@@ -580,3 +580,77 @@ def test_the_editor_grids_render_rows_and_hide_what_a_file_cannot_use():
     assert "applyVisibility(name);" in ed, "visibility is computed but never applied on load"
     # The reason text is what an operator reads; a row that vanishes silently is the failure.
     assert "when.textContent = why;" in ed, "the row says nothing about why it is hidden"
+
+
+# ------------------------------------- the row's shape, as a claim about the page source
+#
+# The operator's notes on the shipped row component (§6.14.1, slice 2): the rows read "thick" --
+# the default and the help line each took a line of their own -- and the fields looked like a
+# browser default field on a dark page. Both are layout claims, and layout claims are testable
+# against the source: the markup order and the CSS rules together say what a line contains.
+
+
+def test_the_help_line_is_the_control_you_click():
+    """The short description is the disclosure control, with the toggle word at its end.
+
+    The old row had the help sentence as its own line and a `<summary>detail</summary>` under it --
+    two lines per row, one of them saying nothing, and the clickable word in a third place from the
+    sentence it opened. Now the sentence itself opens the detail, so the thing you read is the thing
+    you click.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    ed = tpl[tpl.index('id="editor"'):]
+    for grid in ("ed-global", "ed-model-fields"):
+        block = ed[ed.index(f'id="{grid}"'):]  # from this grid to the end of the editor
+        assert '<summary><span class="mut h">{{ r.help }}</span>' in block, \
+            f"{grid}: the help sentence is not inside the summary -- the row has a line for it again"
+        assert '<span class="ed-more ed-more-closed">more</span>' in block, \
+            f"{grid}: the disclosure control has no toggle word at the end of the sentence"
+        assert '<span class="ed-more ed-more-open">less</span>' in block, \
+            f"{grid}: an open detail does not say that clicking again closes it"
+    # The word is CSS state, not script state: nothing has to run for "more"/"less" to be true.
+    assert '.ed-detail[open]>summary .ed-more-closed{display:none}' in tpl
+    assert '.ed-detail:not([open])>summary .ed-more-open{display:none}' in tpl
+
+
+def test_a_row_is_one_line():
+    """Name, control and default share the line; the default sits right of the control.
+
+    The row component is a grid whose rules place each part. `grid-column:2` on `.ed-default` is the
+    two-line row: the default under the control, in its own band. `flex:0 0 auto` in a baseline-aligned
+    flex row is the one-line row. The assertion is the CSS, because the markup order alone would pass
+    while a grid rule stacked the parts again.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    css = tpl[:tpl.index("</style>")]
+    assert ".ed-field{display:flex" in css, "the row is not a flex line"
+    assert "align-items:baseline" in css, "the parts of a row are not aligned on the text baseline"
+    assert ".ed-default{flex:0 0 auto" in css, "the default is not on the control's line"
+    assert ".ed-default{grid-column" not in css, "the default has its own grid band again"
+    assert ".ed-detail{flex:1 1" in css, "the help line does not take the rest of the row's line"
+    ed = tpl[tpl.index('id="editor"'):]
+    for grid, control in (("ed-global", 'placeholder="leave as is"'), ("ed-model-fields", 'placeholder="unset"')):
+        block = ed[ed.index(f'id="{grid}"'):]
+        assert block.index(control) < block.index('<span class="ed-default mut">'), \
+            f"{grid}: the default is not to the right of the control"
+        assert block.index('<span class="ed-default mut">') < block.index('<details class="ed-detail">'), \
+            f"{grid}: the default is not on the line the control is on"
+
+
+def test_the_form_controls_wear_the_page_theme():
+    """Every page is dark from the canvas up; a field must not be the one white box on it.
+
+    Scoped site-wide in base.html, not per page: a field on /settings, /models or /help is the same
+    object, and a theme applied one page at a time is a theme that leaks. `color-scheme:dark` is the
+    part that reaches the parts CSS cannot paint -- the native dropdown list and the date picker.
+    """
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert "input:not([type=button]):not([type=submit]):not([type=image]),select,textarea{" in base, \
+        "text fields, selects and textareas are not styled as a set"
+    assert "background:var(--panel);color:var(--fg);border:1px solid var(--line)" in base, \
+        "controls are painted with values from outside the page's own palette"
+    assert "select>option{background:var(--panel);color:var(--fg)}" in base, \
+        "the field is themed and its dropdown is not"
+    assert "color-scheme:dark" in base, "native popups (dropdown, picker) keep the light palette"
+    assert "input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}" in base, \
+        "focus is not visible in the page's own accent"

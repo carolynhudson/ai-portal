@@ -914,6 +914,27 @@
     },
     {
      "_comment": [
+      "Slice 2 polish (operator note: rows read 'thick'). The short line is the disclosure",
+      "control -- the help sentence carries the toggle word -- so every row is one line and the",
+      "text you read is the text you click. 12 global rows, 14 per-model rows, no exceptions."
+     ],
+     "selector": "#ed-global .ed-field .ed-detail>summary .mut.h",
+     "minCount": 12
+    },
+    {
+     "selector": "#ed-model-fields .ed-field .ed-detail>summary .ed-more-closed",
+     "minCount": 14
+    },
+    {
+     "_comment": [
+      "ctx-size is model-scope, so it is not in the global grid -- checked against the row layer.",
+      "The default sits right of the control, on its line, with the unit the row declares."
+     ],
+     "selector": "#ed-global .ed-field[data-key=\"cache-ram\"] summary",
+     "contains": "cache"
+    },
+    {
+     "_comment": [
       "The default is stated on the row, with the unit the row declares. A bare number on a page",
       "is a number the operator has to guess the meaning of: 8192 is MiB here and tokens elsewhere."
      ],

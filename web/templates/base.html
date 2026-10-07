@@ -33,6 +33,17 @@ table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 h2{font-size:18px;margin:24px 0 12px}
 input[type=password]{width:100%;padding:10px;border-radius:8px;border:1px solid #2a3340;background:#0b0e13;color:var(--fg)}
+/* Form controls, site-wide. The page is dark from the canvas up, and a browser-default field is
+   the one thing on it that ignores that: white box, black text, its own native dropdown palette.
+   Panel fill, line border, accent on focus -- the same vocabulary the cards already use. */
+input:not([type=button]):not([type=submit]):not([type=image]),select,textarea{
+  background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;
+  padding:6px 8px;font:inherit;color-scheme:dark}
+input::placeholder{color:var(--mut)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+select>option{background:var(--panel);color:var(--fg)}
+input[type=checkbox],input[type=radio]{accent-color:var(--acc);width:auto}
+input:disabled,select:disabled,textarea:disabled{color:var(--mut);background:var(--line)}
 button{padding:10px 14px;border-radius:8px;border:0;background:var(--acc);color:#04121f;font-weight:600;cursor:pointer}
 button.ghost{background:#2a3340;color:var(--fg)}
 .err{color:var(--bad);margin-top:8px}
