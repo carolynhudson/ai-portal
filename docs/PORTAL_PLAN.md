@@ -3511,6 +3511,48 @@ the two page-source properties the rendered page cannot prove: the grids loop `e
 blocks (14 per-model, 12 global), the unit in the default line, `data-limits` on the options, and the
 missing-fact line. Suite 807 passed / 3 skipped.
 
+##### 6.14.1c Slice 3 (the deck) attempted and reverted, with what it taught (2026-10-07)
+
+**Status: not shipped.** The work is in `/tmp/slice3-attempt.patch` (391 lines) against `c84b2d6`,
+plus a handful of test-side changes in the same patch. The tree, the suite and the deployment stayed
+at `c84b2d6`: 91 tests green in the three modules the patch touched, deployed sha == HEAD. It was
+reverted because one assertion in `tests/test_model_configs.py::test_a_personality_is_active_exactly_when_the_file_on_disk_is_its_file`
+was failing against the deck and I declined to ship a page whose "which personality is live" story was
+not proven.
+
+**What the deck looked like.** Title strip per personality (`<button class="pers-strip" data-raises=...>`,
+name plus the `running` and budget badges), body in `<div class="pers-body">`, raised state carried by
+`data-raised` on the card (CSS hides bodies off it), raised-on-load = the active personality, and a
+`#pers-deck-note` naming both verbs: "Raised: X. The router is running Y. Raising a card changes what
+you can read; it does not change what the router runs." The deck's click handler contains no fetch.
+Guards written for it: 3 route tests, 1 contract test, 4 `spec.json` expects -- and all four mutation
+checks fired, including one found by an equivalent mutation (the constructed active card was the first
+card, so "always raise cards[0]" passed until the case used the last card).
+
+**Finding 1 -- a substring helper is not a scope.** `active_names()` in `tests/test_model_configs.py`
+finds the active card by searching for the string `pers-active` inside each card's slice. The deck put
+the deck's JavaScript on the same page, and that script contains `.pers-active` as a selector, so the
+last card's slice -- which runs to the end of the page -- matched every time. The fix (cut the deck at
+`<p class="mut" id="pers-editor">` before counting badges) is in the patch and is correct on its own;
+the lesson is that the old helper was already reading the page by prefix-matching ids, and the deck's
+`pers-<name>-strip` / `pers-<name>-body` ids broke the old split first. Any new id sharing a prefix
+breaks that helper. Page-scoping helpers should bound regions by structural markers, not by prefixes.
+
+**Finding 2 -- the unresolved one.** With the deck applied, the strip badge for `work` rendered at the
+moment the test's first assertion runs (file on disk hand-written, so nothing should be active), while
+the body badge in the same card -- same `{% if g.get('active') %}` condition, same `g` -- did not
+render. Under `c84b2d6`'s template the page contains no active badge at that moment at all. Two
+identical conditions on the same object disagreeing across two positions in one card is not explained
+by the extraction fix, and I did not have the context budget to finish the investigation. Start there:
+dump `generated[i]["active"]` per card for that request, and check whether the deck's `{% set raised %}`
+block (which iterates `generated` and appends to a list built with `{% set active_names = [] %}`)
+influences the per-card `g` binding.
+
+**Rule for the next attempt.** Ship the deck only when "which personality is live" is proven by an
+assertion that reads the live badge from the card that carries it, scoped structurally. If that
+assertion cannot be made to pass, the deck does not ship -- the page's active-state story is the one
+thing on this page that must not be ambiguous, because it is the sentence an operator acts on.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
