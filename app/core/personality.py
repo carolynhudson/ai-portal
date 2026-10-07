@@ -89,6 +89,12 @@ SERVER_DEFAULTS: dict[str, Any] = {
     # the false *is* the unset state and writing it is noise. `on` is the decision -- and it is only
     # safe in a model section, which is why render() refuses it anywhere else.
     "load-on-startup": False,
+    # Added 2026-10-06 by tools/registry_defaults_audit.py, which flags any key the editor can
+    # write that has no entry here: without one, nothing is ever recognised as the default, so a
+    # member of the preset-only trio written as `off` lands in the file as a line that changes
+    # nothing (§4.10.0). The router hides nothing by default (`dedup-cache-models` is read from
+    # the preset in server-models.cpp; absent means do not hide), so false is the unset state.
+    "dedup-cache-models": False,
     # Added 2026-10-04, read from the binary this box runs (b11396 --help), for the keys the
     # registry gained with §6.12.20. Two things to know before trusting these numbers: they are
     # b11396's, and the block above is b10964's, so this table now spans two builds; and the
@@ -228,6 +234,13 @@ SETTINGS: dict[str, dict[str, Any]] = {
         # Measured on the CLI: `--kv-unified auto` is refused, `--kv-unified` is accepted.
         # So this key is probed through a preset, never on a command line.
         "preset_mapped": True,
+        # What the build states as its own default, recorded because it is NOT this key's
+        # default: b11429's help says 'enabled'. The portal keeps 'auto' as a sentinel meaning
+        # "no opinion, omit the line", which reproduces the server's behaviour because auto
+        # measures as on (§6.12.21). tools/registry_defaults_audit.py reports this row as a
+        # documented deviation instead of drift, so the next build that changes the real default
+        # is visible rather than absorbed.
+        "server_default": "enabled",
         "help": "Shares one cache pool across slots. On: a client can use the whole pool. Off: "
                 "it gets one slice. Auto also turns it on — measured, not server-decided. To let "
                 "the server decide, remove this key from the preset.",
@@ -448,7 +461,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
         "section": "both",
         "default": -1,
         "help": "Tokens the model may spend on private reasoning. -1 means no limit. The server rejects 0.",
-        "cite": "docs/PORTAL_PLAN.md sec 4.10.3",
+        # Declared twice before 2026-10-06: Python kept the second one, so the citation the page
+        # linked was always the server.cpp one and the bare 4.10.3 line was dead text.
         "cite": "docs/PORTAL_PLAN.md sec 4.10.3, server.cpp:360-363",
         "side_effects": "Session cost, not load cost: it cannot make a model cheaper to bring up.",
         "accepts": lambda v: isinstance(v, int) and v >= -1,

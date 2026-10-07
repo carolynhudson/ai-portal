@@ -1,0 +1,102 @@
+# Capture of `llama-server --help` from llama.cpp-b11429 (v0.6.0), the build deployed on
+# this box (~/ai/bin/llama-server). Blocks are verbatim; nothing here is written by hand.
+# The three preset-only keys (load-on-startup, stop-timeout, dedup-cache-models) are
+# deliberately absent: v0.6.0 declares them in common_params_add_preset_options() with no
+# CLI form, so they never appear in this output -- which is the fact the tests assert on.
+
+-t,    --threads N                      number of CPU threads to use during generation (default: -1)
+                                        (env: LLAMA_ARG_THREADS)
+-c,    --ctx-size N                     size of the prompt context (default: 0, 0 = loaded from model)
+                                        (env: LLAMA_ARG_CTX_SIZE)
+-fa,   --flash-attn [on|off|auto]       set Flash Attention use ('on', 'off', or 'auto', default: 'auto')
+                                        (env: LLAMA_ARG_FLASH_ATTN)
+-np,   --parallel N                     number of server slots (default: -1, -1 = auto)
+                                        (env: LLAMA_ARG_N_PARALLEL)
+-ngl,  --gpu-layers, --n-gpu-layers N   max. number of layers to store in VRAM, either an exact number,
+                                        'auto', or 'all' (default: auto)
+                                        (env: LLAMA_ARG_N_GPU_LAYERS)
+--temp, --temperature N                 temperature (default: 0.80)
+                                        (env: LLAMA_ARG_TEMPERATURE)
+--top-k N                               top-k sampling (default: 40, 0 = disabled)
+                                        (env: LLAMA_ARG_TOP_K)
+--top-p N                               top-p sampling (default: 0.95, 1.0 = disabled)
+                                        (env: LLAMA_ARG_TOP_P)
+--min-p N                               min-p sampling (default: 0.05, 0.0 = disabled)
+                                        (env: LLAMA_ARG_MIN_P)
+--presence-penalty N                    repeat alpha presence penalty (default: 0.00, 0.0 = disabled)
+                                        (env: LLAMA_ARG_PRESENCE_PENALTY)
+--repeat-penalty N                      penalize repeat sequence of tokens (default: 1.00, 1.0 = disabled)
+                                        (env: LLAMA_ARG_REPEAT_PENALTY)
+--dry-multiplier N                      set DRY sampling multiplier (default: 0.00, 0.0 = disabled)
+--keep N                                number of tokens to keep from the initial prompt (default: 0, -1 =
+                                        all)
+-cram, --cache-ram N                    set the maximum cache size in MiB (default: 8192, -1 - no limit, 0 -
+                                        disable)[(more
+                                        info)](https://github.com/ggml-org/llama.cpp/pull/16391)
+                                        (env: LLAMA_ARG_CACHE_RAM)
+-ctxcp, --ctx-checkpoints, --swa-checkpoints N
+                                        max number of context checkpoints to create per slot (default:
+                                        32)[(more info)](https://github.com/ggml-org/llama.cpp/pull/15293)
+                                        (env: LLAMA_ARG_CTX_CHECKPOINTS)
+-cms,  --checkpoint-min-step N          minimum spacing between context checkpoints in tokens (default: 8192,
+                                        0 = no minimum)
+                                        (env: LLAMA_ARG_CHECKPOINT_MIN_SPACING_NT)
+--cache-idle-slots, --no-cache-idle-slots
+                                        save idle slots to the prompt cache on new task, and clear them when
+                                        using unified KV (default: enabled, requires cache-ram)
+                                        (env: LLAMA_ARG_CACHE_IDLE_SLOTS)
+--cache-prompt, --no-cache-prompt       whether to enable prompt caching (default: enabled)
+                                        (env: LLAMA_ARG_CACHE_PROMPT)
+--reasoning-budget N                    token budget for thinking: -1 for unrestricted, 0 for immediate end,
+                                        N>0 for token budget (default: -1)
+                                        (env: LLAMA_ARG_THINK_BUDGET)
+--reasoning-effort LEVEL                reasoning effort level given to the chat template: 'default' to keep
+                                        the template default,
+                                        or a level such as 'minimal', 'low', 'medium', 'high', 'xhigh' or
+                                        'max' (default: default)
+                                        (env: LLAMA_ARG_REASONING_EFFORT)
+--jinja, --no-jinja                     whether to use jinja template engine for chat (default: enabled)
+                                        (env: LLAMA_ARG_JINJA)
+-fit,  --fit [on|off]                   whether to adjust unset arguments to fit in device memory ('on' or
+                                        'off', default: 'on')
+                                        (env: LLAMA_ARG_FIT)
+-fitt, --fit-target MiB0,MiB1,MiB2,...
+                                        target margin per device for --fit, comma-separated list of values,
+                                        single value is broadcast across all devices, default: 1024
+                                        (env: LLAMA_ARG_FIT_TARGET)
+-fitc, --fit-ctx N                      minimum ctx size that can be set by --fit option, default: 4096
+                                        (env: LLAMA_ARG_FIT_CTX)
+-kvu,  --kv-unified, -no-kvu, --no-kv-unified
+                                        use single unified KV buffer shared across all sequences (default:
+                                        enabled if number of slots is auto)
+                                        (env: LLAMA_ARG_KV_UNIFIED)
+--kv-unified-per-slot N                 context limit per parallel slot (default: unset, behavior unchanged).
+                                        when set without -c/--ctx-size, the shared KV pool is sized to
+                                        n_parallel*N
+                                        (env: LLAMA_ARG_KV_UNIFIED_PER_SLOT)
+-lzm,  --lazy-mode MODE                 on-demand reading of certain tensors, for example per-layer embeddings
+                                        (default: auto)
+                                        - on: read the rows of such tensors from disk on demand instead of
+                                        keeping them resident (requires mmap)
+                                        - auto: on, but only for tensors larger than 4 GiB
+                                        - off: always keep them resident
+                                        (env: LLAMA_ARG_LAZY_MODE)
+--models-max N                          for router server, maximum number of models to load simultaneously
+                                        (default: 4, 0 = unlimited)
+                                        (env: LLAMA_ARG_MODELS_MAX)
+--cache-reuse N                         min chunk size to attempt reusing from the cache via KV shifting,
+                                        requires prompt caching to be enabled (default: 0)
+                                        [(card)](https://ggml.ai/f0.png)
+                                        (env: LLAMA_ARG_CACHE_REUSE)
+--spec-type none,draft-simple,draft-eagle3,draft-mtp,draft-dflash,draft-dspark,ngram-simple,ngram-map-k,ngram-map-k4v,ngram-mod,ngram-cache
+                                        comma-separated list of types of speculative decoding to use (default:
+                                        none)
+                                        (env: LLAMA_ARG_SPEC_TYPE)
+--spec-draft-sampling {greedy,probabilistic}
+                                        how the draft is sampled: greedy takes its argmax, probabilistic
+                                        samples it and has the target verify by rejection sampling (default:
+                                        greedy)
+                                        (env: LLAMA_ARG_SPEC_DRAFT_SAMPLING)
+-h,    --help, --usage                  print usage and exit
+--version                               show version and build info
+

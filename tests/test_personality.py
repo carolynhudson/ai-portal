@@ -526,16 +526,18 @@ def test_every_setting_states_the_effects_the_name_does_not(library):
 def test_the_no_op_rule_covers_every_writable_setting_with_a_known_default(library):
     """The table has to cover what the editor can write, not what was remembered when it was written.
 
-    The gap is asserted as an explicit set rather than as "no gaps", because two settings genuinely
-    have no verified server-side default: `dedup-cache-models` is implemented in the router's preset
-    reader and was not measured here, and `load-on-startup` is absent on purpose -- the router
-    autoloads unless a preset says otherwise, so writing `load-on-startup = false` is a decision, not
-    a restatement. A new setting with no entry here fails this test, which is the point: an
-    uncovered key can be written as a silent no-op and nobody would notice.
+    A gap is asserted as an explicit set (today: empty) rather than as "no gaps", so the reason a
+    key is uncovered has to be written here before the test passes. `dedup-cache-models` sat in that
+    set from 2026-10-04 to 2026-10-06 on the grounds that it was "implemented in the router's preset
+    reader and not measured here". It is now measured, from the reader itself
+    (`tools/server/server-models.cpp`, v0.6.0): a preset without the key, and a preset whose value is
+    not truthy, both take the same `continue` -- so `false` is the unset state and writing it is a
+    restatement. `tools/registry_defaults_audit.py` reports a missing entry as drift, so the hole
+    cannot reopen quietly; this test is the same rule with the reason attached.
     """
     gaps = {k for k, spec in P.SETTINGS.items()
             if spec["section"] in ("both", "model") and k not in P.SERVER_DEFAULTS}
-    assert gaps == {"dedup-cache-models"}, \
+    assert gaps == set(), \
         f"settings the editor can write with no entry in SERVER_DEFAULTS: {gaps}"
 
 
@@ -556,6 +558,32 @@ def test_the_settings_that_ship_at_their_default_produce_no_line(library):
         assert f"{key} = " not in out["text"], f"{key} was written despite being the server's default"
     assert {o["key"] for o in out["omitted"]} == set(per["global"]), \
         "every suppressed value has to be reported, not quietly dropped"
+
+
+def test_a_preset_only_key_at_its_unset_state_produces_no_line(library):
+    """Preset-only keys are not exempt from the no-op rule just because they have no CLI line.
+
+    `dedup-cache-models` reaches the router through the preset reader only, so nothing in
+    `llama-server --help` states a default for it -- which is exactly how it stayed uncovered for
+    two days. Its unset state is measured in the reader: absent and non-truthy take the same branch
+    (server-models.cpp, v0.6.0), so `dedup-cache-models = 0` is a line that hides what the router
+    already hides, and it is the kind of line a reader of presets.ini reads as a decision.
+    """
+    out = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                    "global": {"dedup-cache-models": False}})
+    # Matched as an assignment, not as a substring: the generated file's header comment lists the
+    # preset-only keys by name, so a bare `in` test reads the header as the setting being written.
+    assert "dedup-cache-models = " not in out["text"], \
+        "the router hides nothing by default; writing false restates that"
+    assert [o["key"] for o in out["omitted"]] == ["dedup-cache-models"], \
+        "a suppressed value has to be reported, not quietly dropped"
+    # The other direction is a decision, and it must survive.
+    kept = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                     "global": {"dedup-cache-models": True}})
+    # `on` is the spelling the router accepts: common_arg_utils::is_truthy reads
+    # on/enabled/true/1, and _ini_value writes bools as on/off, so this is the shape the
+    # preset reader actually takes (v0.6.0, common/arg.cpp:1337).
+    assert "dedup-cache-models = on" in kept["text"], "hiding cached models is a choice, so it is written"
 
 
 def test_a_deliberate_margin_above_the_default_is_still_written(library):

@@ -3273,6 +3273,91 @@ working keys forever. Declined is now its own verdict, listed separately, exit 0
 
 **The audit rule this pins.** When a build moves, re-run the audit; read a `declined` line as
 "not measurable this way", never as a defect.
+
+### 6.12.26 The settings surface, measured against v0.6.0 (2026-10-06, b11429)
+
+The operator's `~/ai/bin/llama-server` moved from b11396 to b11429, and `b11429` **is** the
+`v0.6.0` tag (`v0.6.0=69ecae922`, `b11429=d81235049`; the installed libs say `0.5.0` in the
+b11396 release dir and `0.6.0` in the b11429 one). A version bump is when llama.cpp renames,
+merges and drops flags, so the whole settings registry went from measured to two-builds-old.
+Measured from the build and the source, not from the changelog:
+
+**1. The server's own settings surface did not move between the installed builds.**
+`llama-server --help` from b11396 and from b11429 is **byte-identical** (736 lines, 198 flag
+names each, zero added, zero removed). The registry needs no rename, no removal, and no
+re-measurement of key names. `tools/registry_flag_audit.py` re-run against b11429 remains the
+26 accepted / 4 declined / 0 refused result of §6.12.25.
+
+**2. The version bump added two flags, one of which is not a server setting.** Across
+`v0.5.0..v0.6.0` in `common/arg.cpp`: `+--nextn`, `+--spec-draft-sampling`, nothing removed.
+
+- `--nextn` is declared `.set_examples({LLAMA_EXAMPLE_IMATRIX})` — an `llama-imatrix`
+  data-collection switch. It is not a server flag, not in the server's `--help`, and not a
+  preset key. The portal must not treat "nextn" as a setting: the model's own MTP head is a
+  file fact (§4.9.3), and `--spec-type` is the knob that uses it.
+- `--spec-draft-sampling {greedy,probabilistic}` is server + cli + spec, env
+  `LLAMA_ARG_SPEC_DRAFT_SAMPLING`. Greedy takes the draft's argmax; probabilistic samples the
+  draft and lets the target verify by rejection sampling. It existed before b11396, so it is
+  already in the deployed build and already reachable from a preset section. The registry did
+  not name it; it is the first candidate key for the registry-as-data work (§6.14.1), and
+  §6.12.17 already proved a preset section carries `spec-type` to the worker.
+
+**3. The preset parser changed shape, not behaviour.** `common/preset.cpp` moved 114 lines
+between the tags: `std::string` paths became `std::filesystem::path` with
+`fs_path_to_utf8()` at the log and error boundaries, and the models-directory scan switched
+from `fs_list()` to `std::filesystem::directory_iterator`. Key acceptance, section handling
+and `ignore_unknown_keys` are untouched.
+
+*A hypothesis I killed before it became a finding:* `fs_list(models_dir, true)` looked like a
+recursive scan and `directory_iterator` is not, which would have meant the router stopped
+seeing model directories nested more than one level deep — exactly the thing `health.model_store()`
+reports. It is false: `fs_list`'s second parameter is `include_directories`, not `recursive`,
+and its body is a plain non-recursive `directory_iterator` in v0.5.0 too. The rewrite is a
+like-for-like substitution. Checked the implementation, not the call site.
+
+**4. The preset-only key set is identical in both versions.**
+`common_params_add_preset_options()` in v0.5.0 and v0.6.0 declares the same three keys:
+`load-on-startup`, `stop-timeout`, `dedup-cache-models`. They have no CLI form, which is why
+they are absent from `--help`, and why the flag audit declines them (§6.12.25). That is now
+explained by the source, not inferred from the probe.
+
+**5. Registry defaults cross-checked against the build's own words.** New instrument,
+`tools/registry_defaults_audit.py`: parse `llama-server --help` into arg blocks and compare
+each registry default with the default the build states. `personality.render()` omits any key
+equal to `SERVER_DEFAULTS`, so a default that disagrees with the build is a silent preset
+change — a no-op line the server would have applied anyway, or a dropped line the server
+needed. Result on b11429, 30 keys: 28 agree, 2 are deliberate sentinels, and the 3 keys the
+help states no default for are exactly the preset-only trio of §4.
+
+- `kv-unified`: registry `auto`, help `enabled`. Kept on purpose — `auto` behaves as on
+  (§6.12.21), so omitting the line reproduces the server's own behaviour, and the registry's
+  help tells an operator who wants the server to decide to delete the key.
+- `kv-unified-per-slot`: registry `0`, help `unset`. Same reasoning: 0 means the server
+  divides the pool, which is what omitting the key does.
+- Formatting only (not value disagreements, normalised by the tool): `temp 0.8` vs `0.80`,
+  `presence-penalty 0.0` vs `0.00`, `repeat-penalty`, `dry-multiplier`, and bools printed as
+  `enabled` where the registry stores `True`.
+
+**6. One real gap, found by that cross-check.** `dedup-cache-models` is in `SETTINGS` with
+`default: False` and has **no `SERVER_DEFAULTS` entry**, so `render()` cannot recognise its
+value as the default. An operator who sets it to `false` gets a line written that changes
+nothing — the artifact §4.10.0 exists to prevent. Fixed by adding the entry, with a test that
+the key is omitted when it equals the default.
+
+**7. What 0.6.0 offers the portal that is not a setting.** `GET /v1/models` and the router's
+`GET /models` now carry an `architecture` object — `input_modalities` (text plus each media
+type, from the projector file) and `output_modalities` (from GGUF metadata). The router
+computes both **offline**: unloaded and sleeping models report them, a native decision model
+advertises `decisions` and is served by `/v1/systemone`, and cached values survive sleep and
+unload. The portal derives its capability column from GGUF headers itself (§4.9.3); the router
+now publishes the same class of fact for models it has never loaded, which makes it a
+corroborating source for the index and a candidate `visible_when` source for the settings
+table (§6.14.1). Not a migration — a second measurement to compare against.
+
+**The rule this pins.** Between two installed builds, diff `llama-server --help` first: it is
+one command, it is the surface the portal renders, and it settles key renames and defaults in
+one comparison. Read the source diff for *why*, after the help diff says *what*.
+
 ### 6.13 The model-index warm-up thread, and what it was breaking (2026-09-24)
 
 `create_app()` used to do three things on one daemon thread: build the schema and first-run password
@@ -3308,94 +3393,13 @@ passed, 1 skipped**, twice in a row, where before it was nondeterministic.
 the directory the thread would scan. It now rescans itself. The workaround was the tell: a test that
 has to guess which directory a background thread is about to read is a test that depends on it.
 
-### 6.14 Design briefs from the operator audit (2026-10-06)
-
-These are directions, not work orders. They are written down so the next session starts
-from the same picture. Each has a first slice small enough to ship in one commit.
-
-#### 6.14.1 The personalities page: a deck, an editor, and a settings table
-
-The screenshot measured 3672 x 16720 px. A page that long is a document, not a console.
-The settings editor is the worst part of it: 30 rows, each with a paragraph of help prose
-inline, repeated per model, with a `Side effect.` sentence the size of a table cell.
-
-What the operator asked for, in order:
-
-1. **A stacked deck of personality cards.** Every card shows its title strip. Only the
-   selected card shows its body. Clicking a title raises that card. The card raised on
-   page load is the active personality. Raising a card does not activate it — selection
-   and activation stay separate, and the page says which is which.
-2. **The long prose leaves the form.** The help text belongs in the knowledgebase
-   (`/help`), reached by the citation links that already exist. The form keeps the short
-   line. This is the rule from §6.12.21, applied to the editor.
-3. **The editor is a flow, not a wall.** Three steps are visible: choose an existing
-   personality or start a new one; set the global settings; attach model settings.
-   A personality is a container: global settings plus any number of named per-model
-   settings, and it may hold none.
-4. **Settings become data, not code.** The registry row grows the fields a renderer needs:
-   name, alias, param kind (switch, bool, number, string, path, list), default, allowed
-   scope (global, model, both), validation rule, allowed values or range, help text, help
-   link, visibility rule, and substitutions. llama.cpp grows flags; a new build should
-   need a data edit, not a page edit.
-5. **Row layout is fixed.** Upper left: `NAME [control] (default)`. Below: one short
-   line. Below that: a collapsible detail area that opens the knowledgebase section.
-6. **Visibility is measured, not asserted.** A setting shows when the model's metadata
-   says it applies — FIM specials, pooling type, nextn tensors, template markers. The
-   index (§4.9 Phase N) already reads those facts; the editor asks it.
-
-First slice, smallest shippable: split the existing 30 registry dicts into a row
-structure with `kind`, `scope`, `default`, `accepts`, `help`, `cite`, and a
-`visible_when` key naming an index fact. Render one row type from it. No visual change
-yet — the data drives the same page. Second slice: the row layout in §3/§5. Third: the
-deck. `tools/registry_flag_audit.py` (§6.12.21) is the tool that keeps the table honest
-after a llama.cpp upgrade: 30 keys measured against the deployed build in one run.
-
-#### 6.14.2 The knowledgebase becomes a documentation site
-
-`/help` today is a mono column with panels — the shape of every other portal page. The
-operator wants the common docs shape: an outline table of contents fixed on the left,
-and search results or the current section on the right.
-
-The sequence:
-
-1. Left rail with the section tree, right pane with content. Deep links keep working —
-   the section ids are the links, and 102 links are guarded by a test.
-2. Split the living documents into pages by topic. Today `PORTAL_PLAN.md` is 3400 lines
-   of plan, history, reasoning, and measurement logs in one file. The manual is the
-   outline; the history stays linked from it.
-3. Search stays server-side over section bodies (`app/core/kb.py`), with the result list
-   in the right pane and the outline filtered on the left.
-4. Lists the operator wants kept findable: tools in the project, measured runs,
-   decisions and the evidence behind them, commits. Those become sections with ids, so
-   a settings row, a status page, and a commit message can all point at the same place.
-
-The shape to aim at: the portal manages itself, the knowledgebase explains it, and the
-agent projects (§7 roadmap) mount on the same frame. That is the difference between a
-management portal and a workplace hub: the hub carries work in progress, not just
-service state.
-
-
-### 6.15 Commit attribution correction (2026-10-06)
-
-Fourteen commits carry `Co-Authored-By: Claude Opus 4.4 <noreply@anthropic.com>`. That
-signature is false. The agent writing them runs a Qwen 3.8 Flash derived model inside pi;
-it is not Claude and not made by Anthropic. The operator's ruling: leave the history
-alone, because docs in this file cite those hashes and a rewrite changes every one of
-them, and sign forward as `Co-Authored-By: Flash, the portal gremlin`.
-
-The rule that came out of it is short: do not claim an identity the model running the
-session does not have. It applies to commit messages, docstrings, and any text that
-outlives the session.
-
-
-
-## 6.14 Design briefs from the operator (2026-10-06)
+### 6.14 Design briefs from the operator (2026-10-06)
 
 Two briefs, recorded here so the next session starts from the same picture. Both are
 directions for the polish phase, not work orders for today. Each has a first slice that
 can ship alone.
 
-### 6.14.1 The personalities page: a deck, a flow, and a settings table
+#### 6.14.1 The personalities page: a deck, a flow, and a settings table
 
 Measured first: the page renders 3672 x 16720 px. That is a document, not a console. The
 settings editor is the long part — every key the portal knows, with a paragraph of help
@@ -3437,7 +3441,7 @@ Reusable pieces the operator wants kept reusable, named here so the split is del
 the personality card, the settings row, the citation link, and the sizing ruler
 (`modelindex.context_window`) that the page, the bench tool, and the probe all read.
 
-### 6.14.2 The knowledgebase becomes a documentation site
+#### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
 operator wants the common docs shape: an outline table of contents fixed on the left;
@@ -3456,7 +3460,7 @@ The sequence:
    measured runs, the decisions and the evidence behind them, commits. A settings row, a
    status page, and a commit message can then point at the same place.
 
-### 6.14.3 The portal as a workplace hub
+#### 6.14.3 The portal as a workplace hub
 
 The difference between a management portal and a hub: the hub carries work in progress.
 The next surface is the pi agent harness — active agent projects visible to anyone on the
@@ -3465,6 +3469,21 @@ The pieces it leans on are the ones being built for the portal itself: a knowled
 that can be linked into, a settings layer that is data, and a model index that measures
 rather than asserts. The pi harness stays an add-on with a side-car (`add-on/`,
 `add-on/side-car/`); it is not portal core.
+
+### 6.15 Commit attribution correction (2026-10-06)
+
+Fourteen commits carry `Co-Authored-By: Claude Opus 4.4 <noreply@anthropic.com>`. That
+signature is false. The agent writing them runs a Qwen 3.8 Flash derived model inside pi;
+it is not Claude and not made by Anthropic. The operator's ruling: leave the history
+alone, because docs in this file cite those hashes and a rewrite changes every one of
+them, and sign forward as `Co-Authored-By: Flash, the portal gremlin`.
+
+The rule that came out of it is short: do not claim an identity the model running the
+session does not have. It applies to commit messages, docstrings, and any text that
+outlives the session.
+
+
+
 
 
 ## 7. Build-out roadmap
