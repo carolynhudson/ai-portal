@@ -59,17 +59,49 @@ def test_a_block_declares_the_flags_in_its_prefix_and_not_the_ones_in_its_prose(
 
 
 def test_a_multi_character_short_flag_line_is_a_declaration():
-    """Short forms are not single letters: `-fa`, `-ngl`, `-fitt`, `-fitc`.
+    """Short forms are not single letters, and that is what broke the first parser.
 
-    The first version of this parser only accepted `-x, --flag`, so every line with a multi-letter
-    short form was skipped, and 11 registry keys — including flash-attn, parallel, n-gpu-layers,
-    lazy-mode and fit — were reported as "not in --help". A missing measurement reported as a
-    verdict is the failure this repo has been bitten by before (§6.12.17, §6.13).
+    Measured: the first version accepted `-x, --flag`, so every line whose short form is longer
+    than one letter was skipped and 11 registry keys came back as "not in --help" -- among them
+    `-fa, --flash-attn`, `-ngl, --gpu-layers, --n-gpu-layers`, `-ctxcp, --ctx-checkpoints,
+    --swa-checkpoints`, `-cram, --cache-ram`, `-fitt, --fit-target` and `-lzm, --lazy-mode`.
+    A run that reports a missing measurement as a verdict is the failure shape this repo has been
+    bitten by before (§6.12.17, §6.13).
     """
     hm = _help_map()
     for key in ("flash-attn", "parallel", "n-gpu-layers", "fit", "fit-target", "fit-ctx",
                 "lazy-mode", "cache-ram", "ctx-checkpoints"):
         assert key in hm, f"{key} was not parsed from a line with a multi-character short form"
+
+
+def test_a_line_declares_every_long_form_it_lists_before_its_description():
+    """Real b11429 lines name a key three ways, and the preset can use any of them.
+
+    `-ngl, --gpu-layers, --n-gpu-layers N` and `-ctxcp, --ctx-checkpoints, --swa-checkpoints N`
+    are verbatim in the fixture. Keying only the first long form would report
+    `n-gpu-layers` as absent from a build whose help line contains it, and a key the audit cannot
+    find is a key nobody measures -- the same failure as the flag audit's hardcoded key list.
+    """
+    hm = _help_map()
+    assert "n-gpu-layers" in hm and "gpu-layers" in hm, hm.get("n-gpu-layers")
+    assert "ctx-checkpoints" in hm and "swa-checkpoints" in hm
+    # The short form is not a preset key, and must not become one.
+    assert "ngl" not in hm and "ctxcp" not in hm
+
+
+def test_the_scanner_walks_a_value_placeholder_instead_of_stopping_the_line():
+    """Defensive, and labelled as such: b11429's help has no line of this shape.
+
+    `grep -c '^[A-Za-z0-9-]+ [A-Z]+,? --' /tmp/help_b11429.txt` is 0 -- llama.cpp puts the
+    placeholder after every long form (`-np, --parallel N`). So nothing on the deployed build
+    depends on walking over `N`. The scanner does it anyway, because a release that writes
+    `-np N, --parallel N` would otherwise lose the key silently, and "silently lose" is the
+    failure this file has been written against. Provenance stated because a test that claims a
+    measurement it never made is worse than no test: this one was first described as if
+    `-np N, --parallel N` were a real line, and mutation-checking it found no test could fail.
+    """
+    parsed = _tool().parse_help("-np N, --parallel N            number of server slots (default: -1)")
+    assert "parallel" in parsed, parsed
 
 
 def test_a_section_header_of_dashes_is_not_a_flag():
