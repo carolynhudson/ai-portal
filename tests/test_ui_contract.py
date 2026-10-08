@@ -555,6 +555,21 @@ def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
             f"{loader}() fills the panel without touching {btn}")
 
 
+def test_the_reference_links_come_from_the_row_and_not_from_the_template():
+    """The anchors are row data, so the template names the field, never a key.
+
+    The point of §6.14.1 is that a registry key is a data edit. That survives only while the
+    template's link is `{{ r.settings_ref }}`: a template carrying `href="/help#ctx-size"` is a
+    page that knows the registry's contents, and a key added tomorrow gets a row with no link.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert tpl.count('href="/help#{{ r.settings_ref }}"') == 3, \
+        "the reference link belongs in the keys table and in both editor grids"
+    assert not re.search(r'href="/help#[a-z][a-z0-9-]*"', tpl), \
+        "the template hardcodes a settings anchor; the anchor is row data"
+    assert 'href="/help#{{ r.help_ref }}"' in tpl, "the plan-section link is gone with it"
+
+
 def test_the_editor_grids_render_rows_and_hide_what_a_file_cannot_use():
     """The editor is the row component, and a hidden row cannot reach the payload.
 

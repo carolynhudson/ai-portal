@@ -77,6 +77,22 @@ def test_citations_in_the_page_templates_resolve_too():
     assert not dangling, f"templates cite sections that do not exist: {dangling}"
 
 
+def test_no_citation_anywhere_in_docs_points_at_nothing():
+    """The docs are the largest citation corpus in the portal and had no guard of its own.
+
+    The registry has one, the templates have one, and the plan -- the file every setting cites
+    into -- had neither. A `§N.N` in prose is a promise that a section exists; the prose outgrows
+    the numbering faster than the registry does, because prose is edited without a test beside it.
+    """
+    cited, dangling = set(), set()
+    for p in sorted(DOCS.glob("*.md")):
+        refs = set(kb.refs_in(p.read_text(encoding="utf-8", errors="replace")))
+        cited.update(refs)
+        dangling.update(r for r in refs if kb.find(r, docs_dir=DOCS) is None)
+    assert cited, "no citations anywhere in docs/ -- the prose cites nothing"
+    assert not dangling, f"citations in docs/ that name no section: {sorted(dangling)}"
+
+
 def test_a_cited_number_names_the_section_it_was_written_for():
     """`find` returns the section the number belongs to, not a neighbour."""
     s = kb.find("§4.10", docs_dir=DOCS)

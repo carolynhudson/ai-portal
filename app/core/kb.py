@@ -35,6 +35,7 @@ DOC_ORDER = [
     ("ENVIRONMENT.md", "This box — hardware, units, paths, and the machine's limits"),
     ("DEBUGGING.md", "Debugging — instrument failures and how to verify a probe"),
     ("UPDATES.md", "Update pipeline — builds, releases, and the gated jobs"),
+    ("PORTAL_SETTINGS.md", "Settings reference — every key a personality can set, from the registry"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -46,6 +47,17 @@ _LEAD_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)\.?\s*(?:—|-|:|\s)\s*(.*)$")
 def _slug(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:60] or "section"
+
+
+def anchor_of(title: str) -> str:
+    """The section id a heading with this title gets — the thing a `/help#…` link points at.
+
+    Public because the anchor is a claim shared between a document and the pages that link into it:
+    the settings reference headings a key by its own name, and the settings rows have to build the
+    same slug `_split_sections` will assign to it. Duplicating the slug rule in the page is how a
+    link to a section that does not exist gets printed, which is the failure `/help` had once.
+    """
+    return _slug(title)
 
 
 def _doc_root(docs_dir: Path | None = None) -> Path:

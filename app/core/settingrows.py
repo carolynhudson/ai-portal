@@ -199,6 +199,10 @@ def row(key: str) -> dict:
         "detail": spec.get("side_effects"),
         "cite": cite,
         "help_ref": kb.ref_of(cite) if cite else None,
+        # The key's own section in the generated settings reference (docs/PORTAL_SETTINGS.md),
+        # addressed by the slug the kb gives a heading named after the key. Derived from the key,
+        # not written by hand: a hand-written anchor is a link that outlives its section.
+        "settings_ref": kb.anchor_of(key),
         "visible_when": visible_when_of(key, spec),
         "substitutions": list(spec.get("substitutions") or ()),
         "preset_only": bool(spec.get("preset_only")),

@@ -841,6 +841,68 @@ def test_the_keys_table_is_the_registry_row_data_rendered(client):
             assert rows[key]["writable"] is False
 
 
+# ---------------------------------------------- the reference links: every key, its own section
+def _key_table(page: str) -> str:
+    start = page.index('id="keys-table"')
+    return page[start:page.index("</table>", start)]
+
+
+def test_the_page_links_every_key_to_its_own_section_of_the_settings_reference(client):
+    """The keys table is the index; the reference is the entry. The link has to be per key.
+
+    The generated reference documents each key under a heading named after it, and the row carries
+    that anchor (`settings_ref`). One link at the top of the table would send an operator to the
+    document and leave them to search it, which is the same as no link: the page already carries a
+    "what it does" sentence per row, and prose without a way to the full measurement is where
+    questions end.
+    """
+    page = client.get("/personalities").text
+    rows = _rows_of(_key_table(page))
+    assert rows, "the keys table rendered no rows"
+    for key, chunk in rows.items():
+        links = re.findall(r'href="/help#([a-z][a-z0-9-]*)"', chunk)
+        assert key in links, f"{key}: its row links to {links}, not to /help#{key}"
+        assert links.count(key) == 1, f"{key}: its row links to its reference section twice"
+
+
+def test_every_reference_link_the_page_prints_opens_the_settings_reference(client):
+    """A link the page prints must open the document the page means.
+
+    Two ways this breaks and neither is visible on the page: the anchor resolves to a heading in
+    another document (a namesake in the plan), or it resolves to nothing and the help page answers
+    404. The registry has this guard for its `§` citations; the generated reference's anchors are
+    the same class of claim.
+    """
+    page = client.get("/personalities").text
+    anchors = set(re.findall(r'href="/help#([a-z][a-z0-9-]*)"', page))
+    assert anchors, "the page prints no reference anchors"
+    from app.core import settingsdoc
+    for anchor in sorted(anchors):
+        section = kb.find(anchor)
+        assert section is not None, f"/help#{anchor} opens nothing"
+        assert section["doc"] == settingsdoc.DOC_NAME, \
+            f"/help#{anchor} opens {section['doc']}, not the settings reference"
+        r = client.get(f"/api/help/section/{anchor}")
+        assert r.status_code == 200, (anchor, r.status_code, r.json().get("detail"))
+
+
+def test_both_editor_grids_link_their_rows_into_the_reference(client):
+    """The editor is where a setting is typed, so it is where the measurement has to be reachable.
+
+    The grids render from row data, and the link is part of the row's markup; a grid that drops it
+    leaves one of the two places an operator reads a setting with no route to the evidence.
+    """
+    page = client.get("/personalities").text
+    editable = {r["key"] for r in settingrows.editable_rows()}
+    for grid in ("ed-global", "ed-model-fields"):
+        rows = _rows_of(_grid(page, grid))
+        assert rows, f"{grid} rendered no rows"
+        for key, chunk in rows.items():
+            if key not in editable:
+                continue
+            assert f'href="/help#{key}"' in chunk, f"{grid}: the row for {key} has no reference link"
+
+
 def test_the_page_links_every_documented_setting_to_the_help_section_that_proves_it(client):
     """Each key's citation becomes a working link — the prose is not the evidence.
 

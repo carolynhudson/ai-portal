@@ -216,6 +216,7 @@ h2{margin:18px 0 6px}
       <td class="h">{{ r.help }}
         {% if r.detail %}<div class="mut">side effect: {{ r.detail }}</div>{% endif %}
         {% if r.help_ref %}<div><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></div>{% endif %}
+        {% if r.settings_ref %}<div><a class="mut" href="/help#{{ r.settings_ref }}">settings reference</a></div>{% endif %}
         {% if r.visible_when %}<div class="mut">offerable per model when the file has {{ r.visible_when|join(' + ') }}</div>{% endif %}</td>
     </tr>
   {% endfor %}
@@ -283,6 +284,7 @@ h2{margin:18px 0 6px}
           {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}
           {% if r.visible_when %}<p class="mut" data-when>needs {{ r.visible_when|join(' + ') }} in the model's header</p>{% endif %}
           {% if r.help_ref %}<p><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></p>{% endif %}
+          {% if r.settings_ref %}<p><a class="mut" href="/help#{{ r.settings_ref }}">settings reference</a></p>{% endif %}
         </details>
       </div>
       {% endif %}
@@ -330,6 +332,7 @@ h2{margin:18px 0 6px}
           {% if r.aliases %}<p class="mut">the build spells it: {{ r.aliases|join(', ') }}</p>{% endif %}
           {% if r.visible_when %}<p class="mut" data-when>needs {{ r.visible_when|join(' + ') }} in the model's header</p>{% endif %}
           {% if r.help_ref %}<p><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></p>{% endif %}
+          {% if r.settings_ref %}<p><a class="mut" href="/help#{{ r.settings_ref }}">settings reference</a></p>{% endif %}
         </details>
       </div>
     {% endfor %}

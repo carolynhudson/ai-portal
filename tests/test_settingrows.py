@@ -16,6 +16,7 @@ Sandbox: no test here touches the operator's library. Model rows are hand-built 
 the same columns `modelindex` stores, so a visibility rule is tested against the column layout,
 not against the operator's cache (§4.9).
 """
+import re
 import sys
 
 import pytest
@@ -350,6 +351,45 @@ def test_no_setting_is_defined_in_the_registry_without_a_row():
     # as a name with no control and no sentence.
     with pytest.raises(S.SettingRowError):
         S.row("definitely-not-a-setting")
+
+
+# ---------------------------------------------------------------- the reference anchor
+def test_every_row_carries_the_anchor_of_its_own_reference_section():
+    """`settings_ref` is the key's section in the generated reference, derived from the key.
+
+    The page links a row into `docs/PORTAL_SETTINGS.md` by anchor. Anchors are slugs, and the slug
+    rule lives in `kb` (it is what `_split_sections` assigns to a heading), so the row has to ask
+    `kb` for it. A page that built its own slug — a `.replace("_", "-")` here, a lowercase there —
+    prints a link to a section that does not exist, and a 404 on a link the page itself printed is
+    the failure `/help` already had once.
+    """
+    from app.core import kb, settingsdoc
+
+    for r in S.rows():
+        assert r["settings_ref"] == kb.anchor_of(r["key"]), (r["key"], r["settings_ref"])
+        section = kb.find(r["settings_ref"])
+        assert section is not None, f"{r['key']}: /help#{r['settings_ref']} opens nothing"
+        assert section["doc"] == settingsdoc.DOC_NAME, \
+            f"{r['key']}: its reference link opens {section['doc']}, not the settings reference"
+
+
+def test_a_key_anchor_is_the_key_itself_because_the_reference_titles_sections_by_key():
+    """The anchor is the key, which is what makes the link derivable at all.
+
+    This is the contract between two modules that never see each other: the generator titles a
+    section with the key, and the row builds the anchor from the same string. Rename a heading in
+    the generator and the link silently points at nothing — so the equality is the assertion.
+    """
+    from app.core import kb, settingsdoc
+
+    rendered = settingsdoc.render()
+    headings = set(re.findall(r"^### (\S+)$", rendered, flags=re.M))
+    for r in S.rows():
+        assert r["settings_ref"] == r["key"], (r["key"], r["settings_ref"])
+        # Exact heading, not a substring: `### ctx-size — settings` contains `### ctx-size` and
+        # anchors nothing, so a loose check would pass the generator rename this guard is for.
+        assert r["key"] in headings, f"{r['key']}: no heading anchored exactly on the key"
+
 
 
 if __name__ == "__main__":

@@ -3601,6 +3601,88 @@ about which grid the row layer puts that key in, and the row layer is the place 
 the old `grid-column` placements. That is testable and mutation-checked, and it is not the same
 statement as "the row is N px tall"; the pixel number is the operator's eye on the deployed page.
 
+##### 6.14.1e The settings reference moves into the knowledgebase (2026-10-07)
+
+**The brief, and the duplication it kills.** The keys table under the editor rendered key, kind,
+scope, default, rule, help and citation for all 32 keys, and the editor rows rendered the same
+fields from the same registry two grids above it. Two renderings of one table on one page is how a
+page drifts: the row component changed three times in this slice (6.14.1a, 6.14.1c, 6.14.1d) and
+the table did not move with it. The brief asked for the detail where detail belongs — a report in
+the knowledgebase, next to the prose the citations point at — with the page keeping the scannable
+row.
+
+**What exists now.** `app/core/settingsdoc.py` renders `docs/PORTAL_SETTINGS.md` (621 lines, 32
+sections) out of `settingrows.rows()` — the identical row list the editor iterates — and `kb.DOC_ORDER`
+registers the document, so it is in `/help`, in the table of contents, and searchable. `--write`
+writes it, `--check` exits 1 when the committed file no longer matches the registry.
+
+**Why the document cannot disagree with the form.** It is generated, and the generator is tested
+against its own output: `tests/test_settingsdoc.py` (22 tests) compares the committed bytes with
+what `render()` produces today. A registry edit that skips `--write` is a failing test rather than a
+reference that reads as current and is not.
+
+**Anchors, and the one slug rule.** Each key's section is titled with the key, so its anchor is
+`kb.anchor_of(key)` — a public wrapper over the slug `_split_sections` assigns to a heading. The row
+carries it as `settings_ref`, and the keys table plus **both** editor grids link `/help#<key>`.
+`kb` owns the slug because the page and the document must produce the same string: a page-side
+`.replace("_", "-")` is a link to a section that does not exist, which is the failure `/help`
+already had once (§6.13's citation guard).
+
+**Two claims in my own prose turned out to be false, and the guards found them before I did.**
+
+1. *`settingsdoc.py`'s docstring: "the editor rows link into the reference by key."* They did not:
+   the template linked `/help#§cite` only, so the reference had no inbound link from the page that
+   generated it. Now true, and tested at three levels — row data (`tests/test_settingrows.py`), the
+   rendered page (two tests in `tests/test_personality_routes.py`), and the template's shape
+   (`tests/test_ui_contract.py`, which asserts the link is `{{ r.settings_ref }}` three times and
+   that **no** anchor is hardcoded in markup).
+2. *"They are in the registry so the validator can refuse them with a reason" (the router-owned
+   keys, §4).* Measured: none of the eleven `ROUTER_CONTROLLED_KEYS`/`ROUTER_DERIVED_KEYS` is in
+   `SETTINGS`. The form's answer is the message for a key nothing defines — `host: no definition
+   for this setting` — and the *generator* is the boundary that refuses loudly, raising
+   `personality.render() ... sets router-controlled key(s) ['host'] ... the router overwrites them`
+   in `[*]` and in a model section alike (`personality.py:1251`, `personality.py:1281`). §4 now
+   prints both refusals, and the form's message is **computed from `check_setting` at render time**,
+   so changing that behaviour changes the document instead of leaving a sentence that used to be
+   true. `tests/test_settingsdoc.py::test_the_reference_states_the_refusal_the_form_actually_gives`
+   asserts the quote equals the message the code gives and that no router key is documented as a
+   registry key.
+
+**Two smaller measured fixes.** (a) A switch's registry rule string is literally the word `bool`, so
+the first draft of the reference told an operator that a switch *accepts* "bool" — a type name
+dressed as a rule. `_accepted` now prints the measured behaviour (false is the server's unset state,
+so writing false changes nothing, §6.12.26) and the test refuses the type name. (b)
+`settingrows.substitutions()` and `expand()` existed with **nothing calling them** — six keys declare
+substitutions and the page prints the help prose verbatim. The reference now expands help and side
+effects through the same facts, and inherits the row module's refusal of a placeholder nothing
+resolves: `--write` fails on a help line that quotes a fact nothing answers, rather than printing
+`{cache_ram_mib}` into a document.
+
+**Guards, and what each was mutation-checked against.** (1) Append one line to the committed
+document → the currency test fails. (2) Give the registry a key the document lacks → the section,
+table, and row-equality tests fail (3 failures). (3) Print help raw, dropping `expand()` → the
+placeholder test fails. (4) Change the document's quoted form refusal → the refusal test fails.
+(5) Add a colliding `### ctx-size` heading to the plan → the anchor-ownership test fails.
+(6) Hardcode one anchor in the template → the contract test fails. (7) Build the slug in the row
+module instead of asking `kb` → both anchor tests fail. (8) Drop the keys-table link → the page test
+fails. (9) Rename a generated heading to `### ctx-size — settings` → the exact-heading test fails.
+
+**Stated limit, and the next slice.** The router-owned keys are documented in §4 and never rendered
+as rows, so the `writable: false` branch of the row component (the "the router sets this" refusal) is
+still exercised only by the monkeypatch case `tests/test_personality_routes.py:782` builds — the
+registry contains no non-writable key, which is exactly why that test has to manufacture one.
+Registering those eleven keys with their own help and citations would make the form's refusal name
+the router instead of saying "no definition", and would make the row component's refusal branch real
+data. That is a registry edit with a page consequence (`/api/personalities` settings list would have
+to exclude non-writable keys, which `tests/test_personality_routes.py::test_router_owned_keys_are_absent_from_the_page`
+currently asserts against the registry), so it is recorded as a slice and not slipped in here.
+
+**One addressing gap, found while writing citations here.** A subsection titled `##### 6.14.1a`
+carries no number in `kb`: `_LEAD_NUMBER` wants whitespace after the number, so its id is the full
+slug and `find("6.14.1a")` matches nothing. A `§6.14.1a` citation is not a 404 — `refs_in` captures
+`6.14.1`, which resolves to the parent's *intro*, the text before the subsection. So lettered
+subsections are cited by name, not with `§`, until `kb` gives them their number as an address.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
