@@ -12,9 +12,23 @@
 <style>
 /* page-local only. No tab geometry here — that lives in web/static/tabs.css and a page
    redeclaring it is a contract violation (test_ui_contract). */
-.pers{display:grid;gap:14px}
-.pers-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
-.pers-card h3{margin:0 0 2px}
+/* The deck (§6.14.1f). One line per personality: a strip, and the body under the fold. A strip is
+   a BUTTON, so the deck works with no script at all, and raised state is an attribute on the card
+   (not an inline style) so nothing that sets styles for other reasons can unhide a body. The live
+   badge lives on the strip: "which personality is running" is a deck question, answered without
+   opening anything. */
+.pers{display:grid;gap:6px}
+.pers-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 14px}
+.pers-strip{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;width:100%;
+  background:transparent;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;
+  padding:9px 0}
+.pers-strip:hover{color:var(--acc)}
+.pers-strip .pers-name{font-weight:600}
+.pers-card .pers-body{display:none}
+.pers-card[data-raised="yes"]{padding-bottom:14px}
+.pers-card[data-raised="yes"] .pers-body{display:block}
+.pers-more>summary{cursor:pointer;color:var(--acc);font-size:.82rem;padding:6px 0}
+.pers-more[open]>summary{border-bottom:1px solid var(--line);margin-bottom:6px}
 .pers-note{color:var(--mut);font-size:.85rem;margin:0 0 10px}
 .pers-facts{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0 0 10px;font-size:.85rem}
 .pers-facts b{font-weight:600}
@@ -77,11 +91,39 @@ h2{margin:18px 0 6px}
   <span class="mono">{{ presets_path }}</span>
 </p>
 
-<div class="pers">
+<p class="mut" id="pers-deck-note">
+  {% set live = (cards | selectattr('active') | list) %}
+  {% if live %}Running: <b>{{ live[0].name }}</b>.{% else %}<b>Nothing is running</b> — the
+  presets.ini on disk matches none of these personalities.{% endif %}
+  Raising a card changes what you can read. It changes nothing the router runs.
+</p>
+
+<div class="pers" id="pers-deck">
 {% for c in cards %}
   {% set g = generated[loop.index0] %}
-  <div class="pers-card" id="pers-{{ c.name }}">
-    <h3>{{ c.name }}</h3>
+  {% set b = g.get('budget') or {} %}
+  {# One line per personality, so 10 personalities is a 10-line deck (§6.14.1f). The strip is a
+     button, not a heading: the deck works with no script at all, and the raised state lives on
+     the card. The live badge is on the strip because "which one is running" is a deck question,
+     answered without opening anything; the body keeps its own statement of the same fact, and
+     tests assert the two agree. #}
+  <div class="pers-card" id="pers-{{ c.name }}" data-card="{{ c.name }}" data-raised="{% if c.active %}yes{% else %}no{% endif %}">
+    <button type="button" class="pers-strip" data-raises="{{ c.name }}"
+            aria-expanded="{% if c.active %}true{% else %}false{% endif %}">
+      <span class="pers-name mono">{{ c.name }}</span>
+      {% if c.active %}
+        <span class="badge yes pers-live-strip" data-live-strip="{{ c.name }}">running</span>
+      {% endif %}
+      {% if b.get('fits') is true %}
+        <span class="badge yes">fits</span>
+      {% elif b.get('fits') is false %}
+        <span class="badge no">does not fit</span>
+      {% else %}
+        <span class="badge unknown">budget unknown</span>
+      {% endif %}
+      <span class="mut">{{ (c.models or [])|length }}/{{ c.models_max }} models</span>
+    </button>
+    <div class="pers-body">
     <p class="pers-note">{{ c.note }}</p>
     <div class="pers-facts">
       <span><b>models_max</b> {{ c.models_max }}</span>
@@ -150,7 +192,8 @@ h2{margin:18px 0 6px}
        output -- so the page and the bench tool read the same ruler. A model that cannot be
        priced says "unknown"; it is never shown with a guessed number. #}
     {% if c.context %}
-      <h4>Context each model gives a client</h4>
+      <details class="pers-more">
+        <summary>context each model gives a client</summary>
       <table class="keys">
         <thead><tr><th>model</th><th>tokens per client</th><th>who decides it</th><th>loaded cost</th></tr></thead>
         <tbody>
@@ -168,9 +211,11 @@ h2{margin:18px 0 6px}
       </table>
       <p class="mut">Predicted from these settings and each file's header -- not a reading of a
         running slot. <a href="/help#6.12.22">How a context window is decided</a> (§6.12.22).</p>
+      </details>
     {% endif %}
 
-    <h4>presets.ini it would write</h4>
+    <details class="pers-more">
+      <summary>presets.ini it would write</summary>
     {% if g.get('error') %}
       <p class="sev bad">cannot be generated: {{ g.error }}</p>
     {% elif not g.get('changed') %}
@@ -183,10 +228,44 @@ h2{margin:18px 0 6px}
 {% elif ln.startswith('@@') %}<span class="hunk">{{ ln }}</span>
 {% else %}{{ ln }}
 {% endif %}{% endfor %}</pre>
+      </details>
     {% endif %}
+    </div>
   </div>
 {% endfor %}
 </div>
+
+<script>
+/* The deck's only verb is raising (§6.14.1f). This block contains no fetch, no form and no
+   submit: raising a card moves one attribute. That is the claim a test holds it to -- the deck
+   cannot write, apply, or disturb the editor's pending edits -- and it is the claim the operator
+   needs true, because the deck is the thing they click while a router is running. */
+(function () {
+  'use strict';
+  const deck = document.getElementById('pers-deck');
+  const note = document.getElementById('pers-deck-note');
+  const cards = () => Array.from(deck.querySelectorAll('.pers-card'));
+  const names = (list) => list.map((c) => c.getAttribute('data-card'));
+  const raise = (name) => {
+    for (const card of cards()) {
+      const on = card.getAttribute('data-card') === name;
+      card.setAttribute('data-raised', on ? 'yes' : 'no');
+      const strip = card.querySelector('.pers-strip');
+      if (strip) strip.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+    const raised = names(cards().filter((c) => c.getAttribute('data-raised') === 'yes'));
+    const live = names(cards().filter((c) => c.querySelector('[data-live-strip]')));
+    note.textContent = 'Raised: ' + (raised.join(', ') || 'nothing') + '. ' +
+      (live.length ? ('The router is running ' + live.join(', ') + '.')
+                    : 'The router is running none of these.') +
+      ' Raising a card changes what you can read. It changes nothing the router runs.';
+  };
+  deck.addEventListener('click', (ev) => {
+    const strip = ev.target && ev.target.closest ? ev.target.closest('.pers-strip') : null;
+    if (strip) raise(strip.getAttribute('data-raises'));
+  });
+})();
+</script>
 
 <h2 id="settings-keys">Settings a personality can set</h2>
 <p class="mut">

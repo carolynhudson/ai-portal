@@ -519,12 +519,24 @@ def test_a_personality_is_active_exactly_when_the_file_on_disk_is_its_file(clien
 
     assert active_names() == set(), "the file on disk is a hand-written one"
 
+    def live_pair():
+        """(what the strips say is running, what the bodies say) -- read from both markers."""
+        page = client.get("/personalities").text
+        return (set(re.findall(r'data-live-strip="([^"]+)"', page)),
+                set(re.findall(r'data-active-for="([^"]+)"', page)))
+
     text = P.render(P.find("work"), lib["budget"])["text"]
     paths.PRESETS_INI.write_text(text)
     assert active_names() == {"work"}
+    # The deck states the same fact in two positions by design -- on the strip, so the deck
+    # answers "which one is running" without opening anything, and in the raised body. Two
+    # positions is exactly where the reverted deck attempt died (§6.14.1c Finding 2), so the two
+    # are compared at the moment something IS running, not only once at the end.
+    assert live_pair() == ({"work"}, {"work"}), "the deck and the card disagree about what is live"
 
     paths.PRESETS_INI.write_text(ORIGINAL + "\n# edited by hand\n")
     assert active_names() == set()
+    assert live_pair() == (set(), set()), "nothing is running, and something claims it is"
 
 
 def test_live_state_is_stated_once_per_card_and_only_by_attribute(client, lib):
@@ -542,3 +554,11 @@ def test_live_state_is_stated_once_per_card_and_only_by_attribute(client, lib):
     assert badges == len(marks), (
         f"{badges} live badges, {len(marks)} attributed: a live badge exists that does not name "
         "the card it belongs to, which is the sentence an operator acts on")
+
+    # The deck states the same fact twice by design -- on the strip (answered without opening
+    # anything) and in the body (the raised card's own account). Two positions is exactly where the
+    # reverted deck attempt died, so the two sets are compared rather than trusted.
+    strip = set(re.findall(r'data-live-strip="([^"]+)"', page))
+    assert strip == set(marks), (
+        f"the strip says {sorted(strip)}, the body says {sorted(marks)}: the deck and the card "
+        "disagree about what is running")

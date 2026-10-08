@@ -841,7 +841,11 @@
     "#ed-model",
     "#ed-preview",
     "#ed-apply",
-    "#ed-summary"
+    "#ed-summary",
+    "#pers-deck",
+    "#pers-deck-note",
+    "#pers-safe .pers-strip",
+    "#pers-default .pers-strip"
    ],
    "expectText": [
     {
@@ -976,6 +980,39 @@
     {
      "selector": "#ed-summary",
      "contains": "no edits proposed"
+    },
+    {
+     "_comment": [
+      "the deck (plan \u00a76.14.1f): one strip per personality, so ten personalities is ten",
+      "lines and choosing between them needs no scrolling"
+     ],
+     "selector": "#pers-deck .pers-strip",
+     "minCount": 2
+    },
+    {
+     "_comment": [
+      "the strip is the deck's answer line: name, fit verdict, model count.",
+      "One badge per card is the floor -- the running badge is conditional, and",
+      "a strip with no fit verdict would hide the only number the deck promises"
+     ],
+     "selector": "#pers-deck .pers-strip .badge",
+     "minCount": 2
+    },
+    {
+     "_comment": [
+      "the two tall things (per-model context table, presets.ini diff) are disclosures",
+      "closed by default: 2 per card. The diff is what made two cards fill the screen"
+     ],
+     "selector": "#pers-deck details.pers-more",
+     "minCount": 4
+    },
+    {
+     "_comment": [
+      "raising is reading. The page says it where the deck is, not only in a test",
+      "about the click handler"
+     ],
+     "selector": "#pers-deck-note",
+     "contains": "Raising a card changes what you can read"
     }
    ],
    "expectNoInjectedMarkup": [

@@ -669,3 +669,34 @@ def test_the_form_controls_wear_the_page_theme():
     assert "color-scheme:dark" in base, "native popups (dropdown, picker) keep the light palette"
     assert "input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}" in base, \
         "focus is not visible in the page's own accent"
+
+
+# ------------------------------------------------- the deck's one verb (§6.14.1f)
+#
+# The operator reads this page while a router is running. The deck is the thing they click to
+# find a personality among ten, so it must be structurally incapable of changing the router --
+# not "we hope the click handler is small", but a claim about the source of the block that
+# handles it.
+
+def _deck_script(tpl: str) -> str:
+    """The deck's own <script> block: the one that names pers-deck."""
+    blocks = re.findall(r"<script>(.*?)</script>", tpl, re.S)
+    decks = [b for b in blocks if "pers-deck" in b]
+    assert len(decks) == 1, f"expected exactly one script block for the deck, got {len(decks)}"
+    return decks[0]
+
+
+def test_raising_a_card_is_reading_and_not_applying():
+    """The deck's script cannot write, and the raised state is an attribute, not a style."""
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    deck = _deck_script(tpl)
+    for forbidden in ("fetch(", "XMLHttpRequest", ".submit(", "innerHTML", "location.href",
+                      "localStorage"):
+        assert forbidden not in deck, f"the deck's script contains {forbidden}: raising would write"
+    # The strip is a button, so the deck works with no script at all; raised state is data on the
+    # card, so nothing that sets styles for other reasons can unhide a body.
+    assert 'class="pers-strip" data-raises="{{ c.name }}"' in tpl
+    assert 'data-raised="{% if c.active %}yes{% else %}no{% endif %}"' in tpl
+    assert '.pers-card .pers-body{display:none}' in tpl
+    assert '.pers-card[data-raised="yes"] .pers-body{display:block}' in tpl
+    assert 'style="display' not in tpl.split('<div class="pers" id="pers-deck">')[1]

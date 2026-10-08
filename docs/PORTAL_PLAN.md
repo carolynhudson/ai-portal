@@ -3734,6 +3734,57 @@ from `render()["changed"]` (it already does), the card dict carries it, each car
 `data-active-for="<name>"`, and the guard reads that attribute. A marker read by attribute cannot be
 mis-attributed by a slice.
 
+##### 6.14.1g The deck ships: one line per personality, the body under the fold (2026-10-08)
+
+Shipped against the four answers in §6.14.1f, and under the gate §6.14.1c set.
+
+**What the page is now.** A deck: per personality a strip — name, `running`, `fits`/`does not fit`/
+`budget unknown`, and `2/4 models` — and a body that is hidden until the card is raised. The two
+things that made cards eat the screen (the per-model context table and the `presets.ini` diff) are
+`<details>` disclosures inside the body, closed by default, so the raised card is tall only when the
+operator opens one. The deck opens on the personality the router is running. Live inventory at the
+time of writing: 3 personalities — `default` (1 model), `safe` (1), `coder-heavy` (2) — against a
+14-model catalog and **no model personalities**; with 3 cards the deck is 3 lines.
+
+**The gate closed as §6.14.1c specified.** `main.py` computes active from `render()["changed"]` and
+copies it onto the card dict (`zip(..., strict=True)`); the template reads `c.active` — no second
+derivation, no `{% set %}` list built in a loop. The live badge is stated twice by design, on the
+strip (so the deck answers "which one is running" without opening a card) and in the body, and both
+name their card: `data-live-strip="<name>"`, `data-active-for="<name>"`. The guard compares the two
+sets **at the moment something is running**, not once at the end of the test. The first version of
+that guard passed a mutation that deleted the strip's badge, because the comparison sat after the
+test's last state change, where nothing was active and two empty sets agree with each other
+forever.
+
+**The deck's one verb.** The deck's `<script>` block moves one attribute and updates a sentence: no
+`fetch`, no `XMLHttpRequest`, no `submit`, no `innerHTML`, no `location.href`. Asserted at source
+level, per block, in `test_raising_a_card_is_reading_and_not_applying` — which locates the deck's
+block by the element it names, so it is the deck's script being tested and not some other script's
+quiet corner. Raised state is `data-raised="yes|no"`, an attribute, with CSS doing the hiding; a
+mutation that changed the CSS rule to `display:block` fails it.
+
+**Measured teeth (5 mutations, each failing a named guard).** Strip drops its live badge → the
+strip/body comparison fails. Deck script gains a `fetch(` → the contract test fails. Bodies stop
+being hidden → the contract test fails. `data-raised` pinned to `no` → the raised-on-load route test
+fails. Strip drops the model count → the deck-contents route test fails.
+
+**Two collateral findings, both recorded because they are the kind that recur.**
+1. *The HTML validator cannot parse Jinja inside a tag's attribute list when it is unquoted.*
+   `<div ... {% if c.active %} data-raised{% endif %}>` reports the tag's own `>` as an escape
+   problem and then loses the start tag, which cascades into an unmatched `</div>` 120 lines away
+   and is a genuine trap for a human reader. The quoted form —
+   `data-raised="{% if c.active %}yes{% else %}no{% endif %}"` — validates clean.
+2. *`test_the_page_shows_tokens_per_client_for_each_priced_model` asserted the exact string
+   `Context each model gives a client`.* Moving the table under the fold changed the title's case
+   (it is a `<summary>` now) and the test failed on casing. A guard that pins presentation strings
+   pins the presentation; it was rewritten to assert the disclosure exists and the table follows it.
+
+**Known, not introduced here.** `pytest tests/test_personality_routes.py tests/test_model_configs.py`
+fails `test_models_none_means_the_whole_library_for_a_custom_personality_too` — the model index
+picks up a hub-cache model from the shared throwaway home. Verified identical at `HEAD` by stashing
+this slice's tree and re-running the pair: it is the cross-module `AI_PORTAL_HOME` race the plan
+already documents, not deck fallout.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

@@ -661,8 +661,13 @@ def test_lazy_mode_is_registered_and_emitted(client, library):
 def test_the_page_shows_tokens_per_client_for_each_priced_model(client, library):
     """The card names the window and who decides it — in the fixture's own numbers."""
     page = client.get("/personalities").text
-    assert "Context each model gives a client" in page, "the context block is missing"
-    row = page[page.index("Context each model gives a client"):]
+    # The deck (§6.14.1f) moved this table under the fold: it is a disclosure inside the raised
+    # card now, and its title is a <summary>. Asserted case-insensitively because the title's
+    # casing is presentation, and asserted as a disclosure because "the table is on the page" and
+    # "the table is not eating the first screen" are two different claims.
+    assert "context each model gives a client" in page.lower(), "the context block is missing"
+    assert '<summary>context each model gives a client</summary>' in page
+    row = page[page.lower().index("context each model gives a client"):]
     assert "tokens per client" in row, row[:400]
     # Every model the fixture seeds is trained at 4096, and nothing pins ctx-size, so the
     # trained context is the window. A page quoting the setting instead of the window would
@@ -921,3 +926,82 @@ def test_the_page_links_every_documented_setting_to_the_help_section_that_proves
     keys_with_cites = sum(1 for v in P.SETTINGS.values() if kb.ref_of(v.get("cite")))
     assert len(links) == keys_with_cites, (len(links), keys_with_cites,
                                            len(P.SETTINGS) - keys_with_cites)
+
+
+# ---------------------------------------------------------------- the deck (§6.14.1f)
+#
+# The operator's complaint was measured, not assumed: two cards, each with its own presets.ini
+# diff, filled the first screen, and 10 personalities would need scrolling to choose between.
+# The deck is the answer -- one line per personality, the body under the fold -- and what it must
+# never do is look like the thing that changes the router. These tests hold the strip's contents,
+# the raised card, and the deck's inability to write.
+
+def _strips(body: str) -> dict:
+    """name -> the strip's own markup, for assertions about what the deck line says."""
+    out = {}
+    for m in re.finditer(r'<button type="button" class="pers-strip" data-raises="([^"]+)"'
+                         r'(.*?)</button>', body, re.S):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def test_the_deck_prints_one_line_per_personality(client):
+    """Every personality gets a strip naming it, its fit, and its model count -- and a body."""
+    body = client.get("/personalities").text
+    names = [str(p["name"]) for p in P.all_personalities() if p.get("name")]
+    assert names, "the fixture has personalities to list"
+    strips = _strips(body)
+    assert sorted(strips) == sorted(names), "a personality with no deck line is a personality gone"
+    for n in names:
+        s = strips[n]
+        assert f'>{n}</span>' in s.replace('\n', ' ').replace('  ', ' '), n
+        assert re.search(r'badge (yes|no|unknown)"', s), f"{n}: the strip omits the fit verdict"
+        assert re.search(r'\d+/\d+ models', s), f"{n}: the strip omits the model count"
+        assert 'id="pers-' + n + '"' in body, n
+        assert 'class="pers-body"' in body, n
+    # The diff is the tall thing on a card, so it is a disclosure: present in the DOM, closed
+    # by default, and reachable in the raised card.
+    assert body.count('<details class="pers-more">') >= 2 * len(names)
+    assert 'presets.ini it would write' in body
+
+
+def test_the_raised_card_on_load_is_the_one_the_router_is_running(client):
+    """The deck opens on the live personality, and says so on the strip.
+
+    This is the page's one unambiguous sentence -- an operator acts on it -- so it is asserted
+    from the attributes the page itself carries: the raised state and the live badge, both naming
+    the card they belong to.
+    """
+    original = _presets_text()
+    paths.PRESETS_INI.parent.mkdir(parents=True, exist_ok=True)
+
+    def restore():
+        """Back to exactly what was there, including "there was nothing there"."""
+        if original == "<absent>":
+            paths.PRESETS_INI.unlink(missing_ok=True)
+        else:
+            paths.PRESETS_INI.write_text(original)
+
+    try:
+        budget = mi._pool_bytes()
+        safe = P.find("safe")
+        assert safe is not None, "safe is a built-in personality"
+        paths.PRESETS_INI.write_text(P.render(safe, budget)["text"])
+        body = client.get("/personalities").text
+        raised = re.findall(r'data-card="([^"]+)" data-raised="yes"', body)
+        assert raised == ["safe"], f"the deck raised {raised}; the file on disk is `safe`'s file"
+        assert re.search(r'data-live-strip="safe"', body), "the strip does not say it is running"
+        assert re.search(r'data-active-for="safe"', body), "the body does not say it is running"
+        assert 'aria-expanded="true"' in _strips(body)["safe"]
+        assert 'aria-expanded="false"' in _strips(body)["default"]
+
+        # Nothing on disk matches any personality: nothing is raised, and the deck says that
+        # out loud rather than leaving the operator to infer it from an empty page.
+        paths.PRESETS_INI.write_text((original if original != "<absent>" else "")
+                                     + "\n# edited by hand\n")
+        body = client.get("/personalities").text
+        assert not re.findall(r'data-card="([^"]+)" data-raised="yes"', body)
+        assert not re.findall(r'data-live-strip="([^"]+)"', body)
+        assert "Nothing is running" in body
+    finally:
+        restore()
