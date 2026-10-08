@@ -956,7 +956,7 @@ def test_the_deck_prints_one_line_per_personality(client):
         s = strips[n]
         assert f'>{n}</span>' in s.replace('\n', ' ').replace('  ', ' '), n
         assert re.search(r'badge (yes|no|unknown)"', s), f"{n}: the strip omits the fit verdict"
-        assert re.search(r'\d+/\d+ models', s), f"{n}: the strip omits the model count"
+        assert re.search(r'\d+ models · max \d+ resident', s), f"{n}: the strip omits the model count"
         assert 'id="pers-' + n + '"' in body, n
         assert 'class="pers-body"' in body, n
     # The diff is the tall thing on a card, so it is a disclosure: present in the DOM, closed

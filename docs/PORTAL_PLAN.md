@@ -3739,12 +3739,23 @@ mis-attributed by a slice.
 Shipped against the four answers in §6.14.1f, and under the gate §6.14.1c set.
 
 **What the page is now.** A deck: per personality a strip — name, `running`, `fits`/`does not fit`/
-`budget unknown`, and `2/4 models` — and a body that is hidden until the card is raised. The two
+`budget unknown`, and the model figure — and a body that is hidden until the card is raised. The
+model figure reads `14 models · max 1 resident`, not `14/1`: on the live page the fraction form made
+`default`'s library-wide attach list look as if it were over its own limit, which is not what
+`models_max` means, and the strip is the line a personality is chosen from. The two
 things that made cards eat the screen (the per-model context table and the `presets.ini` diff) are
 `<details>` disclosures inside the body, closed by default, so the raised card is tall only when the
 operator opens one. The deck opens on the personality the router is running. Live inventory at the
-time of writing: 3 personalities — `default` (1 model), `safe` (1), `coder-heavy` (2) — against a
-14-model catalog and **no model personalities**; with 3 cards the deck is 3 lines.
+time of writing: **2 cards** — `safe` (1 model, max 1 resident) and `default` (14 models, max 1
+resident) — against a 14-model catalog, 0 model personalities, and `personalities_on_disk` empty
+(every section in `presets.ini` is one the portal can name).
+
+A note on the note: an earlier draft of this section claimed three personalities, the third being
+`coder-heavy`. Measured, it does not exist — not as a card, not in `/api/personalities`, not as a
+section in `presets.ini`. It came from reading the operator's design mock as if it were an
+inventory. That is written down here rather than quietly fixed, because a count invented in a design
+note is how a page gets built for data that is not on the box, and this repo's rule is that the
+measurements are what the page states.
 
 **The gate closed as §6.14.1c specified.** `main.py` computes active from `render()["changed"]` and
 copies it onto the card dict (`zip(..., strict=True)`); the template reads `c.active` — no second

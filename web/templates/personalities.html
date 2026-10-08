@@ -121,7 +121,10 @@ h2{margin:18px 0 6px}
       {% else %}
         <span class="badge unknown">budget unknown</span>
       {% endif %}
-      <span class="mut">{{ (c.models or [])|length }}/{{ c.models_max }} models</span>
+      {# Not "14/1 models": read off the live page that looked like a fraction that was
+         over its limit. Attached models and the residency ceiling are two numbers, and the
+         strip is the line an operator chooses from. #}
+      <span class="mut">{{ (c.models or [])|length }} models · max {{ c.models_max }} resident</span>
     </button>
     <div class="pers-body">
     <p class="pers-note">{{ c.note }}</p>
