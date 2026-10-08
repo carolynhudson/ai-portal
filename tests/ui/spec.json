@@ -869,8 +869,26 @@
      "minCount": 10
     },
     {
-     "selector": "#keys-table",
-     "contains": "stop-timeout"
+     "_comment": [
+      "Every key row links to its own section of the generated settings reference (plan sec",
+      "6.14.1e). The anchors come from row data -- `settings_ref` -- so 'one link per registry",
+      "key' says the page renders the anchors rather than printing one 'read the manual' link."
+     ],
+     "selector": "#keys-table a[href^='/help#']",
+     "minCount": 32
+    },
+    {
+     "_comment": "the anchor is the key; a link to the document's front page is not a link to the key",
+     "selector": "#keys-table tr[data-key='cache-ram'] a[href='/help#cache-ram']",
+     "minCount": 1
+    },
+    {
+     "_comment": [
+      "The editor is where a setting gets typed, so both grids carry the same route to the",
+      "measurement: 12 global rows plus 14 per-model rows."
+     ],
+     "selector": ".ed-detail a[href^='/help#']",
+     "minCount": 26
     },
     {
      "_comment": [
