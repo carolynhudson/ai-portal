@@ -96,6 +96,11 @@ def _accepted(row: dict) -> str:
         parts.append(f"range: {span}")
     if row.get("specials"):
         parts.append("specials: " + ", ".join(f"`{s}`" for s in row["specials"]))
+    if row.get("accepted"):
+        # A switch has no `choices`, so its words used to be invented at the control. They are the
+        # runtime's now, and printing them is what makes "true or false" checkable.
+        parts.append("spellings this portal accepts: " + ", ".join(f"`{a}`" for a in row["accepted"])
+                     + " (a preset boolean is read by `is_truthy`; a word outside this list is false)")
     return " — ".join(p for p in parts if p)
 
 

@@ -349,7 +349,10 @@ h2{margin:18px 0 6px}
         <select id="ed-g-{{ r.key }}-sel">
           <option value="">leave as is</option>
           {% if r.kind == 'switch' %}
-            <option value="1">on</option><option value="0">off</option>
+            {# The words come from the row, because the row's list is the runtime's: `is_truthy`
+               reads on/enabled/true/1 and nothing else. A hardcoded 1/0 here was refused by the
+               portal's own validator, and a hardcoded yes/no would be silently false. #}
+            {% for v in r.accepted %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
           {% else %}
             {% for ch in r.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
           {% endif %}
@@ -398,7 +401,10 @@ h2{margin:18px 0 6px}
         <select id="ed-m-{{ r.key }}-sel">
           <option value="">unset</option>
           {% if r.kind == 'switch' %}
-            <option value="1">on</option><option value="0">off</option>
+            {# The words come from the row, because the row's list is the runtime's: `is_truthy`
+               reads on/enabled/true/1 and nothing else. A hardcoded 1/0 here was refused by the
+               portal's own validator, and a hardcoded yes/no would be silently false. #}
+            {% for v in r.accepted %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
           {% else %}
             {% for ch in r.choices %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
           {% endif %}

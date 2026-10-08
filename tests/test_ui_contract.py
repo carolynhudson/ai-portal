@@ -38,6 +38,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 
+# The row module is asserted alongside the template: a contract test that only reads the template
+# text can check a loop, not what the loop renders, and the loop's data is the registry's.
+from app.core import personality as P  # noqa: E402
+from app.core import settingrows  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
 # The old /metrics page is on the dashboard now (docs/PORTAL_PLAN.md sec 6.13), so the
@@ -700,3 +705,44 @@ def test_raising_a_card_is_reading_and_not_applying():
     assert '.pers-card .pers-body{display:none}' in tpl
     assert '.pers-card[data-raised="yes"] .pers-body{display:block}' in tpl
     assert 'style="display' not in tpl.split('<div class="pers" id="pers-deck">')[1]
+
+
+# ------------------------------------------------- the switch's words (§6.14.1g)
+#
+# A boolean row is the only control whose values the page invents, and inventing them is how the
+# portal ended up offering `1`/`0` to a validator that refused every string. The values are the
+# row's now; these are the source-level claims that keep them there.
+
+def test_a_switch_builds_its_options_from_the_row():
+    """Both grids loop over `r.accepted`, and neither hardcodes a pair.
+
+    The claim is about the source because the page's options are the row's: a template that
+    spelled `on`/`off` by hand would keep passing every browser check while a second switch key
+    joined the registry with words nothing reads. The browser case in tests/ui/spec.json
+    (`#ed-g-jinja-sel`, value `on`) is what proves the loop renders.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert tpl.count("{% for v in r.accepted %}<option value=\"{{ v }}\">") == 2, \
+        "the switch options are not built from the row in both grids"
+    assert '<option value="1">on</option>' not in tpl, \
+        "a hardcoded on/off pair is back: the control would offer words the registry refuses"
+    assert "<option value=\"yes\">" not in tpl and "<option value=\"no\">" not in tpl, \
+        "yes/no are not spellings is_truthy knows"
+
+
+def test_the_page_and_the_validator_share_one_list_of_boolean_words():
+    """Whatever the template loops over is checked against the runtime's vocabulary at import.
+
+    `settingrows.accepted_of` refuses a key that advertises a word `is_truthy` does not read, so
+    the page cannot offer it; this is the assertion that the switch rows in fact carry the eight
+    words and that a non-boolean row carries none (a `choices` row builds its control from
+    `choices`, and an `accepted` list on it would be a second, weaker source).
+    """
+    rows = settingrows.rows()
+    switches = [r for r in rows if r["kind"] == "switch"]
+    assert switches, "no switch rows: the registry lost every boolean key"
+    for r in switches:
+        assert set(r["accepted"]) == set(P.TRUTHY) | set(P.FALSEY), (r["key"], r["accepted"])
+    for r in rows:
+        if r["kind"] != "switch":
+            assert r["accepted"] == [], (r["key"], r["accepted"])

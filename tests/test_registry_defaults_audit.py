@@ -13,6 +13,7 @@ the value of its tests is that it asks the right questions of the text.
 """
 import importlib.util
 import pathlib
+import re
 import sys
 
 import pytest
@@ -283,3 +284,50 @@ def test_the_fixture_covers_the_keys_the_verdicts_are_asserted_on():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+# ------------------------------------------------------- the words a switch speaks
+PAIR_FLAGS = ("cache-idle-slots", "cache-prompt", "jinja", "kv-unified")
+
+
+def test_the_boolean_words_are_the_builds_own_words():
+    """`TRUTHY`/`FALSEY` are transcribed from the runtime, and this re-checks the transcript.
+
+    A preset boolean becomes a bool through llama.cpp's `is_truthy`, which knows
+    `on`/`enabled`/`true`/`1` and no English. A word added on the strength of "obviously yes means
+    yes" is a control that writes a line the router reads as false — the silent kind.
+
+    The build's `--help` shows part of that vocabulary without compiling anything. Measured on the
+    fixture (b11429's layout): four flags carry a `--no-` counterpart, and **all four state their
+    default as the word `enabled`** — not `true`, not `1`, not `yes`, none of which the help uses
+    anywhere. The false half is spelled by the `--no-` prefix itself, and `on`/`off` are the
+    spellings this build uses when a flag takes a value (`[on|off]`, `[on|off|auto]`).
+    """
+    tool = _tool()
+    sys.path.insert(0, str(ROOT))
+    from app.core import personality as P
+
+    text = FIXTURE.read_text(encoding="utf-8")
+    hm = _help_map()
+
+    # 1. The four flags with a --no- counterpart, and the word they use for their default.
+    pairs = {n: e for n, e in hm.items() if f"no-{n}" in e["names"]}
+    assert set(PAIR_FLAGS) <= set(pairs), sorted(set(PAIR_FLAGS) - set(pairs))
+    for name in PAIR_FLAGS:
+        assert (pairs[name]["stated"] or "").lower() == "enabled", (name, pairs[name]["stated"])
+
+    # 2. Nothing in the whole help states a default as English yes/no, or as true/false.
+    stated = {(e["stated"] or "").lower() for e in hm.values()}
+    assert not (stated & {"yes", "no", "true", "false"}), sorted(stated & {"yes", "no", "true",
+                                                                          "false"})
+    assert "yes" not in text.lower()
+
+    # 3. `on`/`off` are this build's spellings for a flag that takes a value.
+    assert "[on|off]" in text and "[on|off|auto]" in text
+
+    # 4. The portal's vocabulary is exactly the eight, and the word the build spells is in it.
+    assert set(P.TRUTHY + P.FALSEY) == {"on", "enabled", "true", "1", "off", "disabled", "false",
+                                        "0"}, P.TRUTHY + P.FALSEY
+    assert "enabled" in P.TRUTHY and "disabled" in P.FALSEY
+
+    # 5. A flag with a --no- counterpart is not automatically a switch: `kv-unified` has three
+    #    states (auto), and its row is a choice, not a boolean.
+    assert P.SETTINGS["kv-unified"]["kind"] != "bool", "the tri-state key became a switch"

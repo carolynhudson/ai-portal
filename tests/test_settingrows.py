@@ -394,3 +394,39 @@ def test_a_key_anchor_is_the_key_itself_because_the_reference_titles_sections_by
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ------------------------------------------------- accepted_of (§6.14.1g)
+#
+# A switch is the control whose words the portal chooses. The runtime's rule is not a style guide:
+# `is_truthy` reads `on`/`enabled`/`true`/`1` and treats every other string as false, so a control
+# that offers `yes` writes a setting that silently means off.
+
+def test_a_switch_offers_the_runtimes_words_and_no_other_words():
+    for key, spec in P.SETTINGS.items():
+        accepted = S.accepted_of(key, spec)
+        if spec["kind"] == "bool":
+            assert accepted, f"{key}: a switch with nothing to offer"
+            assert set(accepted) <= set(P.BOOL_SPELLINGS), (key, accepted)
+        else:
+            assert accepted == [], (key, accepted)
+
+
+def test_a_key_cannot_advertise_a_word_the_preset_parser_reads_as_false():
+    """`yes` is English, not a spelling. A registry edit that adds it must fail at import."""
+    with pytest.raises(S.SettingRowError, match="is_truthy"):
+        S.accepted_of("jinja", {"kind": "bool", "accepted": ("on", "yes", "off")})
+
+
+def test_accepted_is_a_boolean_controls_field_only():
+    """A `choices` row builds its control from `choices`. An `accepted` list on a number row would
+    be a second, weaker statement about the same key — the shape §6.14.1 asks to delete."""
+    with pytest.raises(S.SettingRowError, match="boolean"):
+        S.accepted_of("ctx-size", {"kind": "int", "accepted": ("on", "off")})
+
+
+def test_the_accepted_list_is_the_one_the_validator_accepts():
+    """Every word the control offers passes `check_setting` for the key that offers it."""
+    for key, spec in P.SETTINGS.items():
+        for word in S.accepted_of(key, spec):
+            assert P.check_setting(key, word) is None, (key, word)

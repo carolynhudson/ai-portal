@@ -823,6 +823,23 @@
    "path": "/personalities",
    "expectTitle": "Personalities",
    "expectRequests": [],
+   "selectCases": [
+    {
+     "select": "#ed-g-jinja-sel",
+     "choose": {
+      "value": "on"
+     },
+     "note": "switch offers the words llama.cpp's is_truthy reads",
+     "comment": "The boolean control offered 1/0 hardcoded in the template while the portal's validator refused text for boolean keys, so the value the page sent was never accepted. The options come from the row's accepted list now; picking `on` must not throw."
+    },
+    {
+     "select": "#ed-m-jinja-sel",
+     "choose": {
+      "value": "off"
+     },
+     "note": "per-model switch offers the same words"
+    }
+   ],
    "expectNoRequests": [
     "/api/personalities/apply",
     "/api/personalities/write",

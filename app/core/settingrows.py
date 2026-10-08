@@ -170,6 +170,32 @@ def rule_of(key: str, spec: dict) -> str:
     return "; ".join(parts)
 
 
+def accepted_of(key: str, spec: dict) -> list[str]:
+    """The literal strings a boolean key's control must offer, checked against the runtime.
+
+    A switch is the one control whose values the page invents: the portal writes `on`/`off`
+    (`personality._ini_value`), the router reports `enabled`, an ini line can hold `1`. All three
+    are spellings llama.cpp reads; `yes`/`no` are not, and a select that offered them would write a
+    line the preset parser reads as false — a control that lies. So the list comes from the
+    registry's `accepted` when a key declares one, and is checked against the runtime's vocabulary
+    either way.
+    """
+    spec = spec or {}
+    declared = list(spec.get("accepted") or ())
+    if not declared:
+        return list(P.BOOL_SPELLINGS) if spec.get("kind") == "bool" else []
+    bad = [a for a in declared if a not in P.BOOL_SPELLINGS]
+    if bad:
+        raise SettingRowError(
+            f"{key}: accepted lists {bad}, which llama.cpp's is_truthy does not read — the control "
+            f"would offer a value the preset parser ignores")
+    if spec.get("kind") != "bool":
+        raise SettingRowError(
+            f"{key}: accepted is a boolean control's list and this key's kind is "
+            f"{spec.get('kind')!r}")
+    return declared
+
+
 def row(key: str) -> dict:
     """One settings row, in the shape the row component renders.
 
@@ -181,6 +207,7 @@ def row(key: str) -> dict:
     if spec is None:
         raise SettingRowError(f"no setting definition for {key!r}")
     cite = str(spec.get("cite") or "")
+    accepted = accepted_of(key, spec)
     return {
         "key": key,
         "aliases": list(spec.get("aliases") or ()),
@@ -190,6 +217,9 @@ def row(key: str) -> dict:
         "default": spec.get("default"),
         "server_default": spec.get("server_default", P.SERVER_DEFAULTS.get(key)),
         "choices": list(spec.get("choices") or ()),
+        # The literal values a boolean control offers, in offer order. Empty for every other kind:
+        # a choice row builds its control from `choices`, a number row from nothing.
+        "accepted": accepted_of(key, spec),
         "values": list(spec.get("values") or ()),
         "specials": list(spec.get("specials") or ()),
         "range": spec.get("range"),

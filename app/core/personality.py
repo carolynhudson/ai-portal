@@ -617,7 +617,11 @@ SETTING_PRESENTATION: dict[str, dict[str, Any]] = {
     "reasoning-effort": {},
     "jinja": {"aliases": ("--no-jinja",),
               # A template switch on a file with no chat template has nothing to switch.
-              "visible_when": ("chat_template",)},
+              "visible_when": ("chat_template",),
+              # What the control offers, in the order it should offer it. `on`/`off` lead because
+              # that is what the portal writes (`_ini_value`); the router reports this key as
+              # "enabled", which is a value, not the only spelling that means it.
+              "accepted": ("on", "off", "enabled", "disabled", "true", "false", "1", "0")},
     "keep": {"range": (-1, None), "unit": "tokens"},
     "lazy-mode": {"aliases": ("-lzm",)},
     "spec-type": {"substitutions": ("spec_types",)},
@@ -691,6 +695,22 @@ def setting_is_writable(key: str) -> bool:
     return key not in ROUTER_CONTROLLED_KEYS and key not in ROUTER_DERIVED_KEYS
 
 
+#: The spellings a preset boolean can carry, transcribed from the runtime's own rule —
+#: `is_truthy`/`is_falsey` in `common/arg.cpp` at v0.6.0 — and re-checked by
+#: tests/test_registry_defaults_audit.py against every boolean key's help line in that build's
+#: `--help`. A preset value arrives as text and becomes a bool through `is_truthy`
+#: (`common/preset.cpp:155`), so these words — and **not** `yes`/`no`, which it does not know — are
+#: the complete set. The form's control and the validator read this list, so a control cannot
+#: offer a spelling the router would ignore.
+TRUTHY = ("on", "enabled", "true", "1")
+FALSEY = ("off", "disabled", "false", "0")
+
+#: The words a boolean control offers, in offer order: truthy first, then falsey, so a select
+#: reads "on, enabled, true, 1, off, disabled, false, 0" rather than shuffling the runtime's
+#: vocabulary. A key may override this list (`accepted`); it may not extend it.
+BOOL_SPELLINGS = TRUTHY + FALSEY
+
+
 def coerce_setting(key: str, value: Any) -> Any:
     """Turn an ini/form value into the type this key's definition expects.
 
@@ -701,10 +721,18 @@ def coerce_setting(key: str, value: Any) -> Any:
     string becomes an int, and it is deliberately not permissive about the rest:
     '16.5' and 'sixteen' both stay strings and are then rejected.
 
-    Booleans are coerced from 1/0 because that is what the ini holds. They are NOT coerced
-    from 'yes'/'no'/'true': llama.cpp's own spellings differ per option (`fit = on|off`,
-    flags written as 1), and guessing which word a given option wants is how a generated
-    file ends up setting something other than what was intended.
+    Booleans and floats are coerced from **the text the runtime accepts**, not from English:
+    `TRUTHY`/`FALSEY` are `is_truthy`/`is_falsey`'s own words, and a float is a decimal string
+    because the preset path calls `std::stof` (`common/arg.cpp:2021`, `--temp`).
+
+    This paragraph used to read "Booleans are coerced from 1/0", describing a conversion that does
+    not happen: `presets.ini` and the form both deliver text, so `'1'` stayed a string, `accepts`
+    refused it, and **every boolean and float key in the registry was unwritable from the page** —
+    11 of 32 keys, `jinja`, `temp`, `top-p`, `min-p`, `presence-penalty` and `repeat-penalty`
+    among them, which is to say the sampling settings a model card recommends. The API contract is
+    `settings: dict[str, str]` (`app/main.py`), so there is no code path that ever sends a Python
+    number; the tests that exercised settings used `ctx-size` and `parallel`, which coerce, and the
+    gap stayed shut.
     """
     spec = SETTINGS.get(key)
     if spec is None:
@@ -718,10 +746,19 @@ def coerce_setting(key: str, value: Any) -> Any:
             return int(text)
         except ValueError:
             return value  # left as a string so 'auto'/'all' still pass, and junk fails loudly
-    # `bool` is not coerced at all. presets.ini spells these as 1/0 and the accepters
-    # already take 1/0, so there is nothing to convert — and converting here would mean
-    # deciding which spelling a given llama.cpp option wants. `fit` takes on/off, preset
-    # flags take 1; guessing wrong sets something other than what was intended.
+    if kind == "bool":
+        # Lowercased: `is_truthy` compares exact words and the portal writes lowercase.
+        low = text.lower()
+        if low in TRUTHY:
+            return True
+        if low in FALSEY:
+            return False
+        return text  # 'yes', 'no', 'nope' — refused by name, not guessed into a bool
+    if kind == "float":
+        try:
+            return float(text)
+        except ValueError:
+            return value  # 'high', '0.' — left as text so the refusal names what was typed
     return text
 
 

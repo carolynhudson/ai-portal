@@ -39,6 +39,7 @@ os.environ.setdefault("AI_PORTAL_HOME",
 from app.core import db  # noqa: E402
 from app.core import modelindex as mi  # noqa: E402
 from app.core import personality as P  # noqa: E402
+from app.core import settingrows  # noqa: E402
 
 # ---------------------------------------------------------------- fixtures
 
@@ -1053,3 +1054,75 @@ def test_describe_carries_the_context_rows_the_page_renders():
     d = P.describe({"name": "ctx-check", "models": ["testorg/Test-4B-GGUF:Q8_0"]},
                    budget_bytes=BUDGET)
     assert any(e["model"] == "testorg/Test-4B-GGUF:Q8_0" for e in d["context"]), d["context"]
+# ------------------------------------------------------- writing a switch from a form field
+#
+# The settings API takes `settings: dict[str, str]` (`app/main.py`): a form field and a preset line
+# are both text, and the registry decides the type. `coerce_setting` converted ints and left
+# everything else alone, so a boolean or float key could only be written by code that already knew
+# the Python type — which nothing on the page can do. 11 of the 32 keys (`jinja`, `temp`, `top-p`,
+# `min-p`, `presence-penalty`, `repeat-penalty`, …) refused every value the editor offered, and no
+# test noticed, because the settings tests used `ctx-size` and `parallel`, the two keys that do
+# coerce.
+BOOL_KEYS = [k for k, s in P.SETTINGS.items() if s["kind"] == "bool"]
+FLOAT_KEYS = [k for k, s in P.SETTINGS.items() if s["kind"] == "float"]
+NOT_A_WORD = ("yes", "no", "maybe", "2")
+
+
+def test_a_switch_can_be_written_from_the_text_a_form_sends():
+    """Every boolean key accepts every spelling `is_truthy`/`is_falsey` reads, and refuses English.
+
+    The list comes from the row (`settingrows.accepted_of`), so the control and the validator
+    cannot drift into offering a word the router ignores. The offer order is truthy-then-falsey,
+    which is what the two halves below assert.
+    """
+    assert len(BOOL_KEYS) >= 4, BOOL_KEYS
+    for key in BOOL_KEYS:
+        accepted = settingrows.accepted_of(key, P.SETTINGS[key])
+        assert accepted, f"{key}: a switch with no spellings to offer"
+        # `accepted`'s order is a control's, not a partition's: jinja offers the pairs
+        # on/off, enabled/disabled, true/false, 1/0 so the two states sit beside each other. What
+        # must hold is that every offered word means the state the runtime says it means.
+        assert set(accepted) == set(P.TRUTHY) | set(P.FALSEY), (key, accepted)
+        for word in accepted:
+            coerced = P.coerce_setting(key, word)
+            assert isinstance(coerced, bool), (key, word, coerced)
+            assert P.check_setting(key, word) is None, (key, word, P.check_setting(key, word))
+            assert coerced is (word.lower() in P.TRUTHY), (key, word, coerced)
+        assert all(P.coerce_setting(key, w) is True for w in P.TRUTHY), (key, accepted)
+        assert all(P.coerce_setting(key, w) is False for w in P.FALSEY), (key, accepted)
+        for junk in NOT_A_WORD:
+            msg = P.check_setting(key, junk)
+            assert msg and key in msg, (key, junk, msg)
+
+
+def test_a_sampling_number_can_be_written_from_the_text_a_form_sends():
+    """`temp = 1.0` is a preset line and `std::stof` is what reads it, so the registry must accept
+    that text — and refuse both the text that is not a number and the number the build caps, with
+    the key named in each message so a form can mark the row that is wrong."""
+    assert len(FLOAT_KEYS) >= 4, FLOAT_KEYS
+    for key in FLOAT_KEYS:
+        for text in ("1.0", "0.0", "0.95"):
+            assert P.check_setting(key, text) is None, (key, text, P.check_setting(key, text))
+        assert isinstance(P.coerce_setting(key, "0.95"), float), key
+        assert P.coerce_setting(key, "20") == 20.0, key        # a whole number is still a float
+        for junk in ("high", "0.x", ""):
+            msg = P.check_setting(key, junk)
+            assert msg and key in msg, (key, junk, msg)
+    # A temperature of 20 is a number and out of llama.cpp's range: refused, and named.
+    msg = P.check_setting("temp", "20")
+    assert msg and "temp" in msg, msg
+
+
+def test_a_switch_and_a_float_survive_the_round_through_the_file(library):
+    """What a form sends ends up in the file spelled the way the router reads it.
+
+    `jinja = on`, not `jinja = True` (what `str(True)` writes) and not `jinja = yes` (what
+    `is_truthy` reads as false). The line the portal writes is the line the build parses.
+    """
+    text = P.render({"name": "x", "models_max": 1, "models": ["small"],
+                     "overrides": {"small": {"jinja": "on", "temp": "1.0"}}})["text"]
+    jinja = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("jinja")]
+    temp = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("temp")]
+    assert jinja == ["jinja = on"], jinja
+    assert temp == ["temp = 1.0"], temp
+    assert "True" not in text and " yes" not in text

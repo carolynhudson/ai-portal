@@ -134,7 +134,7 @@ Minimum tokens between cache checkpoints. Changes how often they are made, not h
 
 - **scope**: global and per-model
 - **type**: switch (llama.cpp parameter type `bool`)
-- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26)
+- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26) — spellings this portal accepts: `on`, `enabled`, `true`, `1`, `off`, `disabled`, `false`, `0` (a preset boolean is read by `is_truthy`; a word outside this list is false)
 - **portal default**: `True`
 - **llama-server default**: `True`
 - **spellings on the command line**: `--no-cache-idle-slots`
@@ -262,7 +262,7 @@ Seconds to wait after a requested unload before forcing termination. Preset-excl
 
 - **scope**: model only
 - **type**: switch (llama.cpp parameter type `bool`)
-- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26)
+- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26) — spellings this portal accepts: `on`, `enabled`, `true`, `1`, `off`, `disabled`, `false`, `0` (a preset boolean is read by `is_truthy`; a word outside this list is false)
 - **portal default**: `False`
 - **llama-server default**: `False`
 - **the no-op line**: writing `False` emits nothing — that is what the server already does, so the line would look like a change while changing nothing (§4.10.0).
@@ -278,7 +278,7 @@ Load this model when the server starts, not on the first request. Read at startu
 
 - **scope**: global and per-model
 - **type**: switch (llama.cpp parameter type `bool`)
-- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26)
+- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26) — spellings this portal accepts: `on`, `enabled`, `true`, `1`, `off`, `disabled`, `false`, `0` (a preset boolean is read by `is_truthy`; a word outside this list is false)
 - **portal default**: `False`
 - **llama-server default**: `False`
 - **the no-op line**: writing `False` emits nothing — that is what the server already does, so the line would look like a change while changing nothing (§4.10.0).
@@ -464,7 +464,7 @@ Penalise phrases you repeat. 1.0 is off. 1.5 stops loops sooner.
 
 - **scope**: global and per-model
 - **type**: switch (llama.cpp parameter type `bool`)
-- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26)
+- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26) — spellings this portal accepts: `on`, `enabled`, `true`, `1`, `off`, `disabled`, `false`, `0` (a preset boolean is read by `is_truthy`; a word outside this list is false)
 - **portal default**: `True`
 - **llama-server default**: `True`
 - **spellings on the command line**: `--no-cache-prompt`
@@ -510,7 +510,7 @@ Reasoning level passed to the chat template. Qwen3.8-Flash-Next obeys this one, 
 
 - **scope**: global and per-model
 - **type**: switch (llama.cpp parameter type `bool`)
-- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26)
+- **accepted**: true or false — the setting is a switch, and false is the server's unset state, so writing false changes nothing (§6.12.26) — spellings this portal accepts: `on`, `off`, `enabled`, `disabled`, `true`, `false`, `1`, `0` (a preset boolean is read by `is_truthy`; a word outside this list is false)
 - **portal default**: `True`
 - **llama-server default**: `True`
 - **spellings on the command line**: `--no-jinja`
