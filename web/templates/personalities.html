@@ -90,8 +90,11 @@ h2{margin:18px 0 6px}
          personality is active exactly when its own text is the file on disk, and a hand-edited
          presets.ini matches none of the cards. `pers-active` is the marker tests assert on; the
          wording is for the operator. #}
-      {% if g.get('active') %}
-        <span class="badge yes pers-active">is what the router is running now</span>
+      {# `data-active-for` is the marker, and it names the card it belongs to. A marker read by
+         attribute cannot be mis-attributed by slicing the page between ids -- the failure that made
+         the last deck attempt look like a Jinja scoping bug (§6.14.1c Finding 1). #}
+      {% if c.active %}
+        <span class="badge yes pers-active" data-active-for="{{ c.name }}">is what the router is running now</span>
       {% endif %}
       {% set b = g.get('budget') or {} %}
       {% if b.get('fits') is true %}

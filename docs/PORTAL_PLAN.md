@@ -3683,6 +3683,57 @@ slug and `find("6.14.1a")` matches nothing. A `§6.14.1a` citation is not a 404 
 `6.14.1`, which resolves to the parent's *intro*, the text before the subsection. So lettered
 subsections are cited by name, not with `§`, until `kb` gives them their number as an address.
 
+##### 6.14.1f The operator's answers on the deck, the flow, and model personalities (2026-10-07)
+
+Measured on the deployed page first, because both complaints turned out to be facts and not
+impressions. `/personalities` renders 142,937 characters with **2** cards (`safe`, `default`), **3**
+full `presets.ini` diffs, **2** per-model context tables, **62** collapsible setting rows, and **0**
+model personalities against a 14-model catalog. The cards eat the page because each card carries its
+own diff, and the page cannot create anything because it calls only two endpoints.
+
+**The endpoints for creation already exist; the page does not link to them.** `POST
+/api/personalities/save` (create/replace a custom personality), `/api/personalities/delete` (refuses
+`safe` and `default` *by name*, so the button says why it is absent), `/api/model-configs/save` and
+`/api/model-configs/delete` (name collisions against the catalog and against aliases, base model must
+be in the library, values the registry refuses, delete refused while a personality uses the config).
+`tests/test_model_configs.py` drives all four at the API level, which is exactly why the gap
+survived: the write paths are proven and the page never uses them. A missing feature can pass a
+suite that tests the layer below it.
+
+**The four answers.**
+
+1. **A collapsed strip shows name, live, fits, model count** — `▸ coder-heavy · does not fit · 3/6
+   models`. One line per personality, so 10 personalities are a 10-line deck. Budget GiB, host
+   caches, findings, the per-model context table and the `presets.ini` diff live in the raised body,
+   and the diff is closed by default. Density is the operator's requirement: choosing among 10+
+   personalities must not need scrolling, and the raised card is the only one that can be tall.
+2. **Creating lives in step 1 of the editor flow** — `1 PERSONALITY [name] (new) (delete)`, `2
+   GLOBAL`, `3 MODELS (attach)`. The deck keeps one verb: raising is reading. Two verbs on one object
+   is why §6.14.1 asked for the deck's click handler to contain no fetch.
+3. **Model personalities are shared, global-namespace objects** — name + catalog model + settings,
+   attachable to any number of personalities, listed with who uses them. The uniqueness rule is not a
+   UI preference: the router keeps aliases in one namespace across every model it discovers, so a name
+   colliding with a catalog model, an existing alias, or a personality is a router that exits.
+   `model_config.name_problem` already enforces it and `assigned_personalities` already answers "used
+   by".
+4. **The router's own state belongs on the status page, not on the personalities page.** The
+   operator runs a hand-started router because the portal's settings are not yet trustworthy, so the
+   router card on `/` gains a report: the effective environment, the launch parameters, the preset
+   settings, and what the process answering the port actually is. And start/stop/restart must notice
+   *other* `llama-server` processes: tell the operator they exist, and give options, instead of
+   starting a second router behind their back. Recorded here as the shape; the panel and the stray-
+   process check are their own slice.
+
+**The gate stays.** §6.14.1c reverted the deck over one unproven assertion, and named the rule: ship
+the deck only when "which personality is live" is proven by an assertion that reads the live marker
+from the card that carries it, scoped structurally. The diagnosis is in that section's Finding 1:
+`active_names()` reads the page by slicing between `id="pers-` prefixes, so any new id sharing the
+prefix mis-attributes the badge — which is exactly what looked like two identical Jinja conditions
+disagreeing. The gate closes by removing the second derivation and the slicing: `main.py` sets active
+from `render()["changed"]` (it already does), the card dict carries it, each card states it once as
+`data-active-for="<name>"`, and the guard reads that attribute. A marker read by attribute cannot be
+mis-attributed by a slice.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

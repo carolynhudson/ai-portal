@@ -12,6 +12,7 @@ on this box (§4.10.4), not from documentation.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import sys
 from pathlib import Path
@@ -505,11 +506,16 @@ def test_a_personality_is_active_exactly_when_the_file_on_disk_is_its_file(clien
                                                  "models": ["fast-alpha"]})
 
     def active_names():
-        """Which cards the page marks active, by the marker the template puts there."""
+        """Which cards the page marks active -- read from the marker's own attribute.
+
+        The old helper found a card by slicing the page between `id="pers-` prefixes and searched
+        for the badge string inside the slice. That is not a scope: a card's slice runs to the next
+        id, so it swallows the next card's badge, and the deck's script text contains the badge as a
+        selector. `data-active-for` names the card it belongs to, so the answer cannot be
+        mis-attributed by how the page was cut (§6.14.1c Finding 1).
+        """
         page = client.get("/personalities").text
-        return {n for n in ("safe", "default", "work")
-                if f'id="pers-{n}"' in page and "pers-active" in
-                page.split(f'id="pers-{n}"', 1)[1].split('id="pers-', 1)[0]}
+        return set(re.findall(r'data-active-for="([^"]+)"', page))
 
     assert active_names() == set(), "the file on disk is a hand-written one"
 
@@ -519,3 +525,20 @@ def test_a_personality_is_active_exactly_when_the_file_on_disk_is_its_file(clien
 
     paths.PRESETS_INI.write_text(ORIGINAL + "\n# edited by hand\n")
     assert active_names() == set()
+
+
+def test_live_state_is_stated_once_per_card_and_only_by_attribute(client, lib):
+    """The marker names its own card, and no marker exists without that name.
+
+    Two reasons this is a test and not a style preference. The deck reads live state on the strip
+    and under the fold, so the value must have one source; and the guard that checks it must not
+    depend on where in the page the marker sits. `data-active-for` answers both: one attribute per
+    active card, and the visible badge cannot be present without it.
+    """
+    page = client.get("/personalities").text
+    marks = re.findall(r'data-active-for="([^"]+)"', page)
+    assert len(marks) == len(set(marks)), f"a card states live state more than once: {marks}"
+    badges = page.count('class="badge yes pers-active"')
+    assert badges == len(marks), (
+        f"{badges} live badges, {len(marks)} attributed: a live badge exists that does not name "
+        "the card it belongs to, which is the sentence an operator acts on")

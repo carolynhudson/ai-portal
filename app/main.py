@@ -22,22 +22,38 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import (Depends, FastAPI, File, Form, HTTPException, Request,
-                     UploadFile)
+import httpx
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-import httpx
-
-from . import __version__, metrics, router as router_mod
-from .core import config as cfg, llamakey, logsetup, network, ratelimit, serviceconf
-from .core import serviceenv
-from .core import (db, health, kb, modeladd, model_config, modelindex, paths, personality,
-                   presets_store, settingrows, systemd, updater)
-from . import providers
-from .providers import PROVIDERS, get as get_provider
+from . import __version__, metrics, providers
+from . import router as router_mod
+from .core import config as cfg
+from .core import (
+    db,
+    health,
+    kb,
+    llamakey,
+    logsetup,
+    model_config,
+    modeladd,
+    modelindex,
+    network,
+    paths,
+    personality,
+    presets_store,
+    ratelimit,
+    serviceconf,
+    serviceenv,
+    settingrows,
+    systemd,
+    updater,
+)
+from .providers import PROVIDERS
+from .providers import get as get_provider
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE.parent / "web"
@@ -914,6 +930,13 @@ def create_app() -> FastAPI:
                 generated.append({"name": p.get("name"), "error": str(exc), "diff": [],
                                   "text": "", "changed": True, "active": False,
                                   "models": [], "budget": {}})
+        # The card carries the live-state fact, so the page states it in exactly one place per card.
+        # The deck needs it on the strip and the body needs it under the fold; two Jinja conditions
+        # reading `generated` at two positions is what made the last deck attempt look as if two
+        # identical conditions disagreed (§6.14.1c Findings 1-2). One value, computed here, read
+        # there.
+        for card, g in zip(cards, generated, strict=True):
+            card["active"] = bool(g.get("active"))
         configs = model_config.rows()
         return templates.TemplateResponse(request, "personalities.html",
                                           {"cards": cards, "generated": generated,

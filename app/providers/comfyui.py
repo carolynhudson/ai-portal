@@ -225,7 +225,8 @@ def verify_python(python: str, log) -> dict:
     return {"ok": True, **info}
 
 
-def _git(repo: str, *args: str) -> str | None:
+def _git(repo: str | Path, *args: str) -> str | None:
+    """git in `repo`, or None if it failed. Accepts the Path the paths table stores."""
     try:
         return subprocess.run(["git", "-C", str(repo), *args],
                               capture_output=True, text=True, timeout=15).stdout.strip() or None
