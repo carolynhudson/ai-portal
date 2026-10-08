@@ -3796,6 +3796,91 @@ picks up a hub-cache model from the shared throwaway home. Verified identical at
 this slice's tree and re-running the pair: it is the cross-module `AI_PORTAL_HOME` race the plan
 already documents, not deck fallout.
 
+##### 6.14.1h Inventory for the deck, and the 11 settings the page could not write (2026-10-08)
+
+**Why.** The deck shipped with two cards, which is enough to prove a guard fires and not enough to
+prove anything about arrangement, about model personalities as shared objects, or about picking a
+personality out of a list. The operator asked for a set to test with, named
+`Function-Model_Short_Name` (`Agent-ThinkingCap-Qwen3.8`, `Autocomplete-…`, `RAG-…`), and suggested
+tuning that enhances a model without constraining it. Suggestions, not directives — so the notes in
+each config say where each number came from.
+
+**The inventory, authored through the portal's own endpoints.** Five model configs and three
+personalities, created with `POST /api/model-configs/save` and `/api/personalities/save`, and
+nothing else: `presets.ini` was not touched (`sha256 b1af77a2…` before and after), because writing
+that file is Apply's job and Apply restarts the router.
+
+| model config | base | settings, and where they came from |
+|---|---|---|
+| `Agent-ThinkingCap-Qwen3.8` | `bottlecapai/ThinkingCap-Qwen3.8-27B-GGUF:Q4_K_M` | `temp 1.0 / top-p 0.95 / top-k 20 / min-p 0.0` and `spec-type = draft-mtp` are the model card's own; `parallel = 2`; context left unset so fit prices it |
+| `Agent-Swift-Qwen3.8-Flash` | `ukisai/Swift-1.5-…-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS` | the vendor's recommended llama.cpp settings, verbatim (`-jinja -fa on -ngl 99`, sampling as shipped) |
+| `Agent-Qwen3.8-Flash-Coder` | `ISTA-DASLab/…-Coder-GGUF:IQ1_M` | same family sampling; **no** `spec-type`: the index reports no `nextn` head on this file |
+| `Autocomplete-Qwopus3.5-MTP` | `Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0` | greedy (`temp 0.0`, `top-k 1`) so a completion is reproducible, `spec-type = draft-mtp` (own head, 97 tok/s measured vs 41 without, §6.12.17), `ctx-size = 8192` written on purpose |
+| `RAG-EmbeddingGemma` | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | nothing to tune: `pooling_type 1`, 2048 tokens trained, 0.31 GiB, `/rerank` answered 501 |
+
+| personality | models_max | worst case, measured on this box (budget 108.0 GiB) |
+|---|---|---|
+| `VSCode` | 3 | **47.2 GiB, fits, 60.8 GiB spare**; `fits_ram` true (host cache 49.8, RAM 122.8, 25.8 spare) |
+| `Flash-VSCode` | 3 | 73.7 GiB, fits, 34.3 spare |
+| `Agentic-PI` | 1 | 77.2 GiB, fits, 30.8 spare — vendor settings only, context unset |
+| (existing) `safe` / `default` | 1 / 1 | 13.9 GiB / 84.4 GiB (15 models now) |
+
+**The block this found, and it is the important part.** Eleven of the registry's 32 keys could not
+be written from the page at all. The API's contract is `settings: dict[str, str]`
+(`app/main.py`) — a form field is text and a `presets.ini` line is text — and `coerce_setting`
+converted ints and returned everything else as a string, while the accepters ask for Python bools
+and floats. Probed directly: `check_setting("jinja", "1")` → `'1' is not a valid value (expects
+bool)`; `check_setting("temp", "1.0")` → `'1.0' is not a valid value (expects float)`. That is
+`jinja`, `cache-prompt`, `cache-idle-slots`, `load-on-startup`, `dedup-cache-models`, `temp`,
+`top-p`, `min-p`, `presence-penalty`, `repeat-penalty`, `dry-multiplier` — the sampling set a model
+card recommends, which is exactly what the personalities above needed. The page's own switch
+submitted `1` and `0`, and the portal refused them. The docstring claimed "Booleans are coerced
+from 1/0"; no code path converts `1`, and `presets.ini` never carries a Python int.
+
+**The fix is the runtime's vocabulary, not a style guide.** `TRUTHY = (on, enabled, true, 1)` and
+`FALSEY = (off, disabled, false, 0)` are `is_truthy`/`is_falsey` as written in `common/arg.cpp` at
+v0.6.0, and a preset value reaches a bool through `is_truthy` (`common/preset.cpp:155`). Floats
+parse as floats because the preset path calls `std::stof` (`common/arg.cpp:2021`). `yes`/`no` are
+refused by name, not quietly accepted: the runtime does not know them, so a control offering `yes`
+writes a line the router reads as false. The row carries the list (`accepted`),
+`settingrows.accepted_of` refuses a key advertising a word outside it and refuses the field on a
+non-boolean row, the template loops over it in both grids instead of hardcoding a pair, and
+`docs/PORTAL_SETTINGS.md` prints it beside the runtime's default.
+
+**Teeth.** `test_a_switch_can_be_written_from_the_text_a_form_sends` (drop the coercion → fails on
+every boolean key); `test_a_sampling_number_can_be_written_from_the_text_a_form_sends` (drop the
+float branch → fails on all six floats, and asserts `temp = 20` is refused *as out of range*, not
+accepted); `test_the_boolean_words_are_the_builds_own_words` reads the words back out of the b11429
+help fixture — all four flags with a `--no-` counterpart state their default as `enabled`, and
+`yes` appears nowhere in the help — so editing `TRUTHY` to include it fails at the build's text;
+`test_a_key_cannot_advertise_a_word_the_preset_parser_reads_as_false` (hardcoding `yes` in the
+registry raises); `test_a_switch_builds_its_options_from_the_row` (a hardcoded pair in the template
+fails); `#ed-g-jinja-sel` value `on` in `tests/ui/spec.json` proves the loop renders. Suite: 853
+passed, 3 skipped; UI harness exit 0.
+
+**The 15th model, and one duplicate avoided.** `bottlecapai/ThinkingCap-Qwen3.8-27B-Q4_K_M`
+(17.44 GiB) was fetched to a staging directory and then to the Hugging Face cache, where the other
+14 live. Both files were compared — `sha256 fafa890c…` — and the staging copy deleted, so the
+catalog has one id for one file (the router's `dedup-cache-models` compares paths, not bytes). The
+index confirms the card's claim independently: `nextn_layers = 1` on this file, so `draft-mtp`
+needs no second resident file; `has_fim = 1`; `ctx_trained = 262144`.
+
+**Not measured: Q6_K.** The question "can this box run ThinkingCap at Q6_K" is answered above only
+by arithmetic — Q4_K_M costs 34.39 GiB peak at its trained context, Q6_K is roughly a third more
+weight bytes, and `VSCode` leaves 60.8 GiB spare — because the Q6_K file is not on this box. The
+card's own scores for it are "2.8 pp lower on GPQA-Diamond, 1.7 pp higher on MMLU-Pro, 7.0 pp
+lower on AA-LCR", i.e. it is not a strict upgrade. Measuring it means a ~23 GiB download and a
+slot-bench run; say the word.
+
+**Stated limits.** The deck is now 5 cards: 57,520 markup chars, of which 27,405 are bodies hidden
+by default, with 10 nested `<details>` (the per-model context table and the `presets.ini` diff), all
+closed. Nothing is running, and the deck says so. `Autocomplete-Qwopus3.5-MTP` writes
+`ctx-size = 8192` with `parallel = 2`, so the card states a 4096-token window per client and names
+the halving — writing `ctx-size` is what locks the fit estimate out for that model, which is the
+page telling the truth about a setting the portal cannot re-price. And the whole set is inert until
+the operator applies it: Apply is gated on confirm and on the machine being idle, and it restarts
+the router.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
