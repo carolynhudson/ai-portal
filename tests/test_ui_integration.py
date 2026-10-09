@@ -33,9 +33,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from tests.gguf_fixture import seed_hub_model  # noqa: E402
 import httpx
 import pytest
+
+from tests.gguf_fixture import seed_hub_model  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 UIDIR = ROOT / "tests" / "ui"
@@ -67,7 +68,9 @@ def _seed_gguf(path: Path, *, pad: int = 0) -> None:
     }, pad=pad)
 SPEC = json.loads((UIDIR / "spec.json").read_text())
 NODE = shutil.which("node")
-PASSWORD = "ui-test-password-123"
+# The sandbox portal's password. Not a secret: it lives in a throwaway AI_PORTAL_HOME in the temp
+# directory, on a port bound to 127.0.0.1, and the process dies with the fixture.
+PASSWORD = "ui-test-password-123"  # noqa: S105
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is required to drive the DOM tests")
 
@@ -98,6 +101,14 @@ def ui_server():
     mdir = home / "ai" / "models" / "llama" / "ui-test-model"
     mdir.mkdir(parents=True)
     _seed_gguf(mdir / "ui-test-model-Q4_K_M.gguf", pad=2048)
+    # A second, fixed-name model, for the personalities editor: the harness seeds a model config
+    # onto it (§6.14.1i), and the spec asserts the values that config carries arrive in the fields.
+    # A spec cannot name a model id it does not know, so this row's name is written here, and the
+    # spec quotes it. Seeded before the server starts, because the index is built by the startup
+    # scan and a model added afterwards would not be in it.
+    tiny = home / "ai" / "models" / "llama" / "ui-tiny-coder"
+    tiny.mkdir(parents=True)
+    _seed_gguf(tiny / "ui-tiny-coder.gguf", pad=1024)
     # `safe` names one specific model as the fallback. A sandbox without it is not broken —
     # the page correctly reports that the fallback cannot start — but it renders `safe` with
     # no budget, so a UI assertion about the budget figure would be describing only `default`
@@ -138,7 +149,9 @@ def ui_server():
         NO_PROXY="127.0.0.1,localhost",
     )
     base = f"http://127.0.0.1:{env['AI_PORTAL_PORT']}"
-    log = open(home / "server.log", "w+")
+    # The handle outlives any `with` block that would make sense here: the uvicorn subprocess writes
+    # to it for the whole session, and `finally` is what closes it. Asserted in the `finally` below.
+    log = open(home / "server.log", "w+")  # noqa: SIM115
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app",
          "--host", "127.0.0.1", "--port", env["AI_PORTAL_PORT"], "--no-access-log"],
@@ -161,6 +174,35 @@ def ui_server():
         assert r.status_code == 200, f"sandbox login failed: {r.status_code} {r.text}"
         token = r.cookies.get("aipp")
         assert token, "login did not set the session cookie"
+
+        # A personality with a model personality of its own, authored through the portal's own
+        # endpoints. The editor's claim is "these are the settings this personality carries", and a
+        # sandbox whose only personalities carry no settings can only ever assert the empty case --
+        # an empty field next to a correct label looks exactly like a filled one.
+        hdr = {"Cookie": f"aipp={token}"}
+        # The index is built by the startup scan thread, and `/healthz` answers long before it
+        # finishes. A model config names a library id, so seeding one against a portal that has not
+        # scanned yet is a 400 about a file that is sitting right there -- a fixture that fails on
+        # the day the scan is slow and passes every other day, which is the worst kind of fixture.
+        # Ask the index, in its own words, when the row exists.
+        bases: list[str] = []
+        for _ in range(120):
+            bases = httpx.get(f"{base}/api/model-configs", headers=hdr, timeout=10).json()["bases"]
+            if "ui-tiny-coder" in bases:
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail(f"the sandbox index never listed ui-tiny-coder; it has {bases}")
+        rc = httpx.post(f"{base}/api/model-configs/save", headers=hdr, timeout=10, json={
+            "name": "UI-Tiny-Coder", "base_model": "ui-tiny-coder",
+            "note": "seeded by the UI harness: the editor has to show a real config",
+            "settings": {"temp": "0.5", "parallel": "2", "ctx-size": "2048", "cache-ram": "512"}})
+        assert rc.status_code == 200, f"seed model config: {rc.status_code} {rc.text}"
+        rp = httpx.post(f"{base}/api/personalities/save", headers=hdr, timeout=10, json={
+            "name": "UI-Test-Work", "models_max": 2, "note": "seeded by the UI harness",
+            "models": ["UI-Tiny-Coder", SAFE_MODEL],
+            "global_edits": {"threads": "8", "cache-prompt": "off"}})
+        assert rp.status_code == 200, f"seed personality: {rp.status_code} {rp.text}"
         yield {"base": base, "cookie": f"aipp={token}", "home": home, "syscalls": syscalls}
     finally:
         proc.terminate()

@@ -361,6 +361,28 @@ MUTATIONS = [
         "builds-strays",
         "798 MB",
     ),
+    (
+        # The editor's fields are seeded from the personality's own settings, carried on the
+        # option by personality.settings_view() (plan §6.14.1i). Dropping the seed leaves a
+        # correct-looking page with empty fields -- and an empty field next to a correct label is
+        # indistinguishable from a filled one, which is why the spec asserts values.
+        "the editor stops showing the personality's current settings",
+        "templates/personalities.html",
+        "      if (control) control.value = st.global[f.dataset.key] || '';",
+        "      if (control) control.value = '';",
+        "personalities",
+        "#ed-g-threads-val: value is",
+    ),
+    (
+        # "no changes" has to name the configuration it compared against. A generic sentence is
+        # true of an editor that lost the comparison, which is the whole claim.
+        "the summary stops naming the settings it compared",
+        "templates/personalities.html",
+        "      el.textContent = `no changes — these are ${name}'s current settings: ${Object.keys(st.global).length}`",
+        "      el.textContent = 'no edits proposed'",
+        "personalities",
+        "UI-Test-Work's current settings",
+    ),
 ]
 
 

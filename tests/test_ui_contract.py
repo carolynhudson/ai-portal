@@ -36,12 +36,11 @@ os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import app  # noqa: E402
-
 # The row module is asserted alongside the template: a contract test that only reads the template
 # text can check a loop, not what the loop renders, and the loop's data is the registry's.
 from app.core import personality as P  # noqa: E402
 from app.core import settingrows  # noqa: E402
+from app.main import app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -594,7 +593,8 @@ def test_the_editor_grids_render_rows_and_hide_what_a_file_cannot_use():
     assert "setting_names" not in ed, "the editor is looping the registry names again"
     assert ed.count("for r in editor_rows") == 2, \
         "both grids must render rows; one of them is still hand-built"
-    assert "if (f.hidden) continue;" in ed, "capture reads hidden rows"
+    assert "if (f.hidden) { delete st[f.dataset.key]; continue; }" in ed, \
+        "capture reads hidden rows"   # §6.14.1i: a hidden row is also dropped from the working copy
     assert "control.value = f.hidden ? '' : (saved[f.dataset.key] || '');" in ed, \
         "loadModel leaves a stale value in a row the model cannot use"
     assert "applyVisibility(name);" in ed, "visibility is computed but never applied on load"
@@ -746,3 +746,110 @@ def test_the_page_and_the_validator_share_one_list_of_boolean_words():
     for r in rows:
         if r["kind"] != "switch":
             assert r["accepted"] == [], (r["key"], r["accepted"])
+
+
+# ---------------------------------------------- the editor follows the personality (§6.14.1i)
+
+def _editor_script(tpl: str) -> str:
+    """The editor's own <script> block: the one that names ed-persona."""
+    blocks = re.findall(r"<script>(.*?)</script>", tpl, re.S)
+    edits = [b for b in blocks if "ed-persona" in b]
+    assert len(edits) == 1, f"expected one script block for the editor, got {len(edits)}"
+    return edits[0]
+
+
+def _fn(script: str, name: str) -> str:
+    """One function's source, by brace counting from its declaration."""
+    start = script.index(f"function {name}(")
+    depth, i = 0, script.index("{", start)
+    for j in range(i, len(script)):
+        if script[j] == "{":
+            depth += 1
+        elif script[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return script[start:j + 1]
+    raise AssertionError(f"unbalanced braces reading {name}")
+
+
+def test_the_editor_reads_the_personality_it_shows_from_the_page():
+    """The values come from the server's view, not from anything the script infers.
+
+    Two halves, both checked in the source: the template puts the view on the option
+    (`data-config`, built by `personality.settings_view()`), and the script parses that attribute
+    instead of computing a layering of its own. A browser-side copy of the layering is a second
+    ruler for the same file -- the failure this page keeps re-meeting (§6.14.1a, §6.14.1i).
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    assert 'data-config=\'{{ config_views.get(c.name, {}) | tojson }}\'' in tpl, \
+        "the personality option no longer carries its current settings"
+    script = _editor_script(tpl)
+    assert "dataset.config" in script, "the script does not read the view off the option"
+    assert "JSON.parse" in script, "the view is not parsed as data"
+    for invented in ("GLOBAL_DEFAULTS", "SERVER_DEFAULTS", "visible_when", "pooling_type"):
+        assert invented not in script, f"the script derives {invented} -- that is the server's ruler"
+
+
+def test_the_summary_is_a_diff_against_the_current_settings():
+    """`proposed` has to mean *different from what the personality carries*.
+
+    Before the fields were seeded, "proposed" meant "non-empty", which was the same claim. With
+    prefilled fields it is a comparison, so the comparison is asserted: both grids are diffed
+    against the base view, and the payload is built from the working copy -- not by reading the
+    inputs at submit time, which is how a hidden row's stale value reaches a file.
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    script = _editor_script(tpl)
+    for fn in ("workFor", "baseFor", "captureGlobal", "captureCurrent", "loadPersona"):
+        assert f"function {fn}(" in script, f"the editor has no {fn}() -- there is no working copy"
+    summary = _fn(script, "summarize")
+    assert "changed(st.global, b.global)" in summary, "the global grid is not diffed against the view"
+    assert "changed(body," in summary, "the model sections are not diffed against the view"
+    payload = _fn(script, "payload")
+    assert "querySelector" not in payload, "payload() walks the DOM at submit time"
+    # The one field payload() may read is the personality's *name*, which lives in the select. Any
+    # other `.value` is a settings control, and a control is the thing the working copy exists to
+    # keep out of the payload: hidden rows and cleared rows have values sitting in them.
+    reads = re.findall(r"\$\('[^']+'\)\.value", payload)
+    assert reads == [], f"payload() reads control values from the DOM: {reads}"
+    assert "shown" in payload, "payload() does not say which record it is sending"
+    visibility = _fn(script, "applyVisibility")
+    assert "delete st[" in visibility, "a row the file cannot use stays a value the page can send"
+
+
+def test_a_switch_saves_the_fields_it_is_leaving():
+    """Both grids reuse one set of controls, so a switch is a save plus a load.
+
+    This is the bug the page actually had: by the time a `change` handler runs, the select already
+    holds the *new* name, so capturing "what is in the fields" into the record the select names
+    writes the outgoing configuration over the incoming one -- and the fields you just loaded are
+    emptied by the values you just left. The assertion is the order, because the symptom is a page
+    that looks empty next to a summary that says nothing changed.
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    script = _editor_script(tpl)
+    for fn, capture, move in (("loadModel", "captureCurrent()", "captured = name"),
+                             ("loadPersona", "captureGlobal()", "shown =")):
+        body = _fn(script, fn)
+        assert capture in body, f"{fn}() does not capture the fields it is replacing"
+        assert body.index(capture) < body.index(move), \
+            f"{fn}() changes which record the fields belong to before saving them"
+    # Which record is showing is a variable, not a question to ask the selects -- asking the select
+    # is the bug above, restated.
+    for fn in ("captureGlobals", "captureCurrent", "payload", "summarize"):
+        body = _fn(script, fn)
+        assert "$('ed-persona').value" not in body, f"{fn}() asks the select which record is showing"
+
+
+def test_the_personality_select_updates_the_editor():
+    """Selecting a personality is a load, not a summary.
+
+    The operator's complaint verbatim: choosing a personality did not update the settings shown.
+    Asserted structurally, because the symptom is exactly what a `change` handler that only
+    recomputes a sentence looks like -- the page keeps working and shows the wrong configuration.
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    script = _editor_script(tpl)
+    assert "$('ed-persona').addEventListener('change', loadPersona)" in script, \
+        "the personality select does not reload the fields"
+    assert "loadPersona();" in script, "the fields are not seeded on page load"

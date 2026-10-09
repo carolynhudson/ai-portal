@@ -318,17 +318,33 @@ h2{margin:18px 0 6px}
 <p class="mut">
   Propose changes, preview the exact file and the exact cost, then apply. Nothing is written and
   nothing is snapshotted until Apply, and Apply restarts {{ router_unit }} so the router actually
-  re-reads the file. Values left at “leave as is” are not sent at all: an omitted key keeps the
-  personality's own default rather than being guessed at from a form field.
+  re-reads the file. The fields start on the values this personality already carries, so what you
+  are editing is the configuration, not an empty form -- and a field you leave alone is sent
+  unchanged, which is the same as not touching it.
 </p>
 <div class="pers-editor" id="pers-editor">
   <div class="ed-row">
     <label for="ed-persona">personality</label>
+    {# The personality's own current settings ride on its option (§6.14.1i), computed on the
+       server by personality.settings_view() from the same layers render() writes: `global` is this
+       personality's [*], and `models` is each model's own section -- its model config plus any
+       per-model override. The form is seeded from the page's own data, so the values a person
+       reads cannot be a second, weaker statement about the file. #}
     <select id="ed-persona">
-      {% for c in cards %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}
+      {% for c in cards %}<option value="{{ c.name }}" data-config='{{ config_views.get(c.name, {}) | tojson }}'>{{ c.name }}</option>{% endfor %}
     </select>
     <span class="mut" id="ed-model-count"></span>
   </div>
+  {# Where each layer is written, said once and near both grids. A per-model field shows only what
+     that model's section sets: the values it inherits from [*] are deliberately not copied into
+     it, because saving them there would turn one number set in one place into a copy per model
+     that outranks [*] from then on. #}
+  <p class="mut" id="ed-layers">
+    A global field shows what this personality sets in <span class="mono">[*]</span>, which reaches
+    every model the router discovers. A model field shows what that model's own section sets -- its
+    model config, plus any per-model edit. Empty means this layer does not set the key, so the
+    <span class="mono">default</span> on the row applies; it does not mean zero.
+  </p>
 
   <h3>Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
@@ -385,7 +401,8 @@ h2{margin:18px 0 6px}
     <select id="ed-model">
       {% for m in model_ids %}<option value="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>{{ m }}</option>{% endfor %}
     </select>
-    <button type="button" id="ed-clear-model">clear this model's edits</button>
+    <button type="button" id="ed-clear-global">reset the global fields</button>
+    <button type="button" id="ed-clear-model">reset this model's fields</button>
   </div>
   <div class="ed-grid" id="ed-model-fields">
     {# Same row component. These rows are filtered by the client as the model changes: a row whose
@@ -463,26 +480,86 @@ h2{margin:18px 0 6px}
 
   const globalFields = [...$('ed-global').querySelectorAll('.ed-field')];
   const modelFields = [...$('ed-model-fields').querySelectorAll('.ed-field')];
-  // Edits are held per model rather than read off the inputs on submit: the inputs are reused as
-  // the model selector changes, and a model whose fields were never touched must contribute no
-  // section at all rather than an empty one.
-  const modelEdits = new Map();
-  let captured = null;   // the model whose values are currently shown in the shared inputs
+
+  // The editor's state is a working copy of each personality's own settings, not a list of edits
+  // (§6.14.1i). It starts from what the personality carries today -- `base`, read off the option --
+  // and the fields show that copy, so selecting a personality updates the page to its configuration.
+  // Two consequences the tests hold: the payload always states the whole desired section, so a
+  // field nobody touched is written as it already was; and "proposed" means *different from base*,
+  // which is the only claim a preview can be judged against.
+  const base = new Map();     // name -> {global:{}, models:{}, parsed:bool}
+  const work = new Map();     // name -> {global:{}, models:Map(model -> {})}
+  // Which record the shared inputs are showing. Both grids reuse one set of controls, so a switch
+  // has to save what is displayed *before* it changes: by the time a change handler runs, the
+  // select already holds the new name, and capturing into the record being switched to is how the
+  // values you are leaving overwrite the ones you just loaded.
+  let shown = null;           // the personality whose [*] fields are displayed
+  let captured = null;        // the model whose per-model fields are displayed
+
+  function baseFor(name) {
+    if (base.has(name)) return base.get(name);
+    let view = null, parsed = false;
+    for (const o of $('ed-persona').options) {
+      if (o.value !== name) continue;
+      try {
+        const p = JSON.parse(o.dataset.config || 'null');
+        if (p && typeof p === 'object') { view = p; parsed = true; }
+      } catch (e) {
+        // An unreadable view shows empty fields, and the summary says the current settings could
+        // not be read. It is never allowed to read as "this personality sets nothing".
+        view = null; parsed = false;
+      }
+      break;
+    }
+    const b = {parsed, global: (view && view.global) || {}, models: (view && view.models) || {}};
+    base.set(name, b);
+    return b;
+  }
+
+  function workFor(name) {
+    if (!work.has(name)) {
+      const b = baseFor(name);
+      work.set(name, {global: Object.assign({}, b.global), models: new Map()});
+    }
+    return work.get(name);
+  }
+
+  function modelWork(name, mid) {
+    const st = workFor(name);
+    if (!st.models.has(mid)) {
+      st.models.set(mid, Object.assign({}, (baseFor(name).models || {})[mid] || {}));
+    }
+    return st.models.get(mid);
+  }
+
+  function captureGlobals(name) {
+    if (!name) return;
+    const st = workFor(name);
+    for (const f of globalFields) {
+      const control = f.querySelector('select, input');
+      if (!control) continue;
+      // An empty field means "this layer does not set the key", so it leaves the working copy
+      // rather than sending a value -- which is how a personality keeps inheriting [*].
+      if (control.value === '') delete st.global[f.dataset.key];
+      else st.global[f.dataset.key] = control.value;
+    }
+  }
+
+  function captureGlobal() { captureGlobals(shown); }
 
   function captureCurrent() {
     if (!captured) return;
-    const body = {};
+    const st = modelWork(shown, captured);
     for (const f of modelFields) {
       // A row the selected file cannot use contributes nothing, whatever is sitting in its input:
       // the same controls are reused across models, so a value typed for a model that supports the
       // setting is still in the box when a model that does not is selected.
-      if (f.hidden) continue;
-      const key = f.dataset.key;
+      if (f.hidden) { delete st[f.dataset.key]; continue; }
       const control = f.querySelector('select, input');
-      if (control && control.value !== '') body[key] = control.value;
+      if (!control) continue;
+      if (control.value === '') delete st[f.dataset.key];
+      else st[f.dataset.key] = control.value;
     }
-    if (Object.keys(body).length) modelEdits.set(captured, body);
-    else modelEdits.delete(captured);
   }
 
   // Which rows the selected file cannot use, and why. Computed on the server from the model index
@@ -505,18 +582,21 @@ h2{margin:18px 0 6px}
 
   function applyVisibility(name) {
     const limits = limitsFor(name);
+    const st = modelWork(shown, name);
     for (const f of modelFields) {
       const why = limits[f.dataset.key];
       f.hidden = Boolean(why);
+      if (why) delete st[f.dataset.key];   // a row this file cannot use is not a value it can send
       const when = f.querySelector('[data-when]');
       if (when && why) when.textContent = why;
     }
   }
 
   function loadModel(name) {
+    captureCurrent();          // the fields belong to the model being left, not the one arriving
     captured = name;
     applyVisibility(name);
-    const saved = modelEdits.get(name) || {};
+    const saved = modelWork(shown, name);
     for (const f of modelFields) {
       const control = f.querySelector('select, input');
       if (!control) continue;
@@ -527,33 +607,75 @@ h2{margin:18px 0 6px}
     summarize();
   }
 
-  function summarize() {
-    const globals = [];
+  // The fields follow the personality: choosing one loads its [*] values into the global grid and
+  // re-seeds the shared per-model inputs for the currently selected model. Edits made in the fields
+  // are captured into the personality they belong to first, so switching never leaks a value from
+  // one personality into another.
+  function loadPersona() {
+    captureGlobal();           // into the personality being left, not the one arriving
+    shown = $('ed-persona').value;
+    const st = workFor(shown);
     for (const f of globalFields) {
       const control = f.querySelector('select, input');
-      if (control && control.value !== '') globals.push(f.dataset.key);
+      if (control) control.value = st.global[f.dataset.key] || '';
     }
+    const mid = $('ed-model').value;
+    if (mid) loadModel(mid);
+    else summarize();
+  }
+
+  function changed(work, base) {
+    const out = [];
+    for (const k of Object.keys(work)) {
+      if (!(k in base) || String(base[k]) !== String(work[k])) out.push([k, work[k], base[k]]);
+    }
+    return out;
+  }
+
+  const fmt = (list) => list.map(([k, v, was]) =>
+    `${k}=${v}${was === undefined ? '' : ` (was ${was})`}`).join(', ');
+
+  function summarize() {
+    captureGlobal();
+    captureCurrent();
+    const name = shown;
+    const b = baseFor(name);
+    const st = workFor(name);
     const parts = [];
-    if (globals.length) parts.push(`[*]: ${globals.join(', ')}`);
-    for (const [mid, body] of modelEdits) parts.push(`[${mid}]: ${Object.keys(body).join(', ')}`);
-    $('ed-summary').textContent = parts.length
-      ? `proposed — ${parts.join(' · ')}`
-      : 'no edits proposed';
+    const gd = changed(st.global, b.global);
+    if (gd.length) parts.push(`[*]: ${fmt(gd)}`);
+    let sections = 0;
+    for (const [mid, body] of st.models) {
+      if (Object.keys(body).length) sections++;
+      const md = changed(body, (b.models || {})[mid] || {});
+      if (md.length) parts.push(`[${mid}]: ${fmt(md)}`);
+    }
+    const el = $('ed-summary');
+    if (!b.parsed) {
+      el.textContent = `the settings this personality carries could not be read from this page, `
+        + `so the fields are empty and the summary cannot say what changed — Preview is the `
+        + `authority on what would be written`;
+    } else if (parts.length) {
+      el.textContent = `proposed — ${parts.join(' · ')}`;
+    } else {
+      el.textContent = `no changes — these are ${name}'s current settings: ${Object.keys(st.global).length}`
+        + ` value(s) in [*], ${sections} model section(s) set`;
+    }
     // Apply is only reachable from a preview that came back clean, so a click here always follows
     // a diff the operator has seen for exactly the payload being sent.
     setApply(false);
   }
 
   function payload() {
+    captureGlobal();
     captureCurrent();
-    const globalEdits = {};
-    for (const f of globalFields) {
-      const control = f.querySelector('select, input');
-      if (control && control.value !== '') globalEdits[f.dataset.key] = control.value;
-    }
+    const st = workFor(shown);
     const modelEditsOut = {};
-    for (const [mid, body] of modelEdits) modelEditsOut[mid] = body;
-    return {name: $('ed-persona').value, global_edits: globalEdits, model_edits: modelEditsOut};
+    for (const [mid, body] of st.models) {
+      if (Object.keys(body).length) modelEditsOut[mid] = Object.assign({}, body);
+    }
+    return {name: shown, global_edits: Object.assign({}, st.global),
+            model_edits: modelEditsOut};
   }
 
   function setApply(on) {
@@ -646,24 +768,38 @@ h2{margin:18px 0 6px}
     // most likely to be in when they reach for it because they think they changed something and
     // cannot remember what. A control that silently does nothing is how someone ends up certain
     // a value is set when it never was.
-    const name = captured || $('ed-model').value;
-    const had = Boolean(name && modelEdits.has(name));
-    if (name) modelEdits.delete(name);
-    loadModel(name);
+    const name = shown;
+    const mid = captured || $('ed-model').value;
+    const st = workFor(name);
+    const had = Object.keys((st.models.get(mid) || {})).length;
+    st.models.delete(mid);
+    loadModel(mid);
     $('ed-summary').textContent = had
-      ? `cleared the edits proposed for ${name}`
-      : `no edits proposed for ${name}`;
+      ? `reset ${mid} to ${name}'s current settings (its ${had} value(s) were dropped)`
+      : `${mid} sets nothing for ${name}, so there was nothing to reset`;
+  });
+  $('ed-clear-global').addEventListener('click', () => {
+    const name = shown;
+    const st = workFor(name);
+    const had = Object.keys(st.global).length;
+    st.global = Object.assign({}, baseFor(name).global);
+    for (const f of globalFields) {
+      const control = f.querySelector('select, input');
+      if (control) control.value = st.global[f.dataset.key] || '';
+    }
+    summarize();
+    $('ed-summary').textContent = (had ? `reset the [*] fields to ${name}'s current settings; ` : '')
+      + `${name} sets ${Object.keys(st.global).length} value(s) in [*]`;
   });
   for (const f of globalFields.concat(modelFields)) {
     const control = f.querySelector('select, input');
     if (control) control.addEventListener('change', summarize);
   }
-  $('ed-persona').addEventListener('change', summarize);
+  $('ed-persona').addEventListener('change', loadPersona);
   $('ed-preview').addEventListener('click', preview);
   $('ed-apply').addEventListener('click', applyIt);
 
-  const first = $('ed-model').value;
-  if (first) loadModel(first);
+  loadPersona();
   const n = $('ed-model').options.length;
   $('ed-model-count').textContent = `${n} model${n === 1 ? '' : 's'} in the library`;
 })();

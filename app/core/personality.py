@@ -1058,6 +1058,62 @@ def _effective(personality: dict, model_id: str, key: str, fallback: Any,
     return fallback
 
 
+def settings_view(personality: dict, configs: dict[str, dict] | None = None) -> dict:
+    """The settings this personality carries, in the words a form field sends (§6.14.1i).
+
+    The editor seeds its controls from this, so a field shows the personality's own value and
+    the `default` printed beside the row stays llama.cpp's. Two layers, deliberately the two the
+    editor writes into: `global` is this personality's `[*]`, and `models[<id>]` is that model's
+    own section exactly as `_layered_settings()` resolves it — its model config, with any
+    personality-level override on top. The file and the form read one layering, not two.
+
+    What is deliberately **not** here: the values a model section inherits from `[*]` or from the
+    server default. A per-model control seeded with an inherited value writes that value into the
+    model's section the next time the personality is saved, which turns one number set in one
+    place into sixteen copies an operator then has to keep in step — and the router's precedence
+    (CLI > model section > `[*]`) means those copies win silently against any future change to
+    `[*]`. An unset control therefore means "this section does not set it", not "zero".
+
+    Values come back as `_ini_value()` strings — `on`/`off`, not Python `True` — because a form
+    field sends text, `presets.ini` is text, and the accepters want the runtime's own words.
+    """
+    name = personality.get("name")
+    out: dict[str, Any] = {"name": name, "global": {}, "models": {}, "configs": {},
+                           "note": personality.get("note") or "", "unregistered": []}
+    try:
+        out["models_max"] = _models_max(personality)
+    except PersonalityError as exc:
+        out["models_max"] = None
+        out["error"] = str(exc)
+        return out
+
+    if configs is None:
+        configs = {c["name"]: c for c in model_config.rows()}
+    try:
+        targets = resolve_targets(personality)
+    except PersonalityError as exc:
+        # A personality naming a model that is not here is reported as such, with the `[*]` it
+        # does carry. Dropping the view would render the editor as an empty form, which reads as
+        # "this personality sets nothing" — a different and worse claim than the refusal.
+        out["error"] = str(exc)
+        out["global"] = {k: _ini_value(v) for k, v in (personality.get("global") or {}).items()}
+        out["unregistered"] = sorted(k for k in out["global"] if k not in SETTINGS)
+        return out
+
+    out["global"] = {k: _ini_value(v) for k, v in (personality.get("global") or {}).items()}
+    layered = _layered_settings(personality, targets=targets, configs=configs)
+    for model_id, per in layered.items():
+        out["models"][model_id] = {k: _ini_value(v) for k, v in per.items()}
+    for target in targets:
+        if target["config"]:
+            out["configs"][target["model"]] = target["config"]
+    seen: set[str] = set(out["global"])
+    for per in out["models"].values():
+        seen.update(per)
+    out["unregistered"] = sorted(k for k in seen if k not in SETTINGS)
+    return out
+
+
 def budget_for(personality: dict, budget_bytes: int | None = None) -> Budget:
     """Compute the worst-case resident cost of a personality.
 

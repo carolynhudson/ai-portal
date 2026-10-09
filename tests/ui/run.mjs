@@ -384,7 +384,12 @@ for (const sel of spec.expectShown || []) {
 // forever passes a visibility check and tells the user nothing. `contains` is
 // matched against any element of the selector; `minCount` pins how many there
 // are (a slot board with no rows is the classic failure).
-for (const t of spec.expectText || []) {
+// `after_select: true` moves an entry to the pass that runs once the select cases have
+// driven the page (see checkText/checkValues below). A page that fills its fields from the
+// record a control names has to be measured *after* that control was driven -- asserting the
+// personality that is selected on load would only ever measure the first card.
+function checkText(entries, when) {
+  for (const t of entries || []) {
   if (!t.selector) {                        // annotation-only entry
     if (!t._comment) fail(`expectText entry has no selector: ${JSON.stringify(t)}`);
     continue;
@@ -394,12 +399,34 @@ for (const t of spec.expectText || []) {
     .map((el) => JSON.stringify((el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90)));
   if (!els.length) { fail(`expected text region missing: ${t.selector}`); continue; }
   if (t.minCount != null && els.length < t.minCount)
-    fail(`${t.selector}: ${els.length} element(s), expected at least ${t.minCount}`);
+    fail(`${t.selector}: ${els.length} element(s), expected at least ${t.minCount} (${when})`);
   if (t.contains != null && !els.some((el) => (el.textContent || "").includes(t.contains)))
-    fail(`${t.selector}: nothing contains ${JSON.stringify(t.contains)} (saw ${seen().join(", ")})`);
+    fail(`${t.selector}: nothing contains ${JSON.stringify(t.contains)} (${when}, saw ${seen().join(", ")})`);
   if (t.matches != null && !els.some((el) => new RegExp(t.matches).test(el.textContent || "")))
-    fail(`${t.selector}: nothing matches /${t.matches}/ (saw ${seen().join(", ")})`);
+    fail(`${t.selector}: nothing matches /${t.matches}/ (${when}, saw ${seen().join(", ")})`);
+  }
 }
+
+// A field's *value* is not text content, so expectText cannot reach it. The pages that seed a
+// form from the record a control names (personalities, §6.14.1i) are defined by those values:
+// an empty field with a correct label looks exactly like a correct field.
+function checkValues(entries, when) {
+  for (const t of entries || []) {
+    const el = win.document.querySelector(t.selector);
+    if (!el) { fail(`expected value control missing: ${t.selector} (${when})`); continue; }
+    if (!("value" in el)) { fail(`${t.selector} has no value to assert (${when})`); continue; }
+    const got = String(el.value ?? "");
+    if (t.value != null && got !== String(t.value)) {
+      fail(`${t.selector}: value is ${JSON.stringify(got)}, expected ${JSON.stringify(String(t.value))} (${when})`);
+    }
+    if (t.contains != null && !got.includes(t.contains)) {
+      fail(`${t.selector}: value ${JSON.stringify(got)} does not contain ${JSON.stringify(t.contains)} (${when})`);
+    }
+  }
+}
+
+checkText((spec.expectText || []).filter((t) => !t.after_select), "load");
+checkValues((spec.expectValues || []).filter((t) => !t.after_select), "load");
 
 // A control the user is meant to use must not be stuck disabled.
 report.disabledControls = [];
@@ -655,6 +682,13 @@ for (const c of spec.selectCases || []) {
     judgeControl(rinfo, rr, `${what}, clicked ${target}`, {});
   }
 }
+
+// The post-selection pass: what a page shows *because* a control was driven. A page that seeds
+// its fields from the record the selection names can only be measured with that record selected,
+// and the sweep runs after this point -- so a field the page never filled is caught here rather
+// than looked over by the sweep on its way to judging the button next to it.
+checkText((spec.expectText || []).filter((t) => t.after_select), "after select cases");
+checkValues((spec.expectValues || []).filter((t) => t.after_select), "after select cases");
 
 
 // Clicking the tab that is already showing changes nothing — in a browser

@@ -832,13 +832,78 @@
      "note": "switch offers the words llama.cpp's is_truthy reads",
      "comment": "The boolean control offered 1/0 hardcoded in the template while the portal's validator refused text for boolean keys, so the value the page sent was never accepted. The options come from the row's accepted list now; picking `on` must not throw."
     },
-    {
+      {
      "select": "#ed-m-jinja-sel",
      "choose": {
       "value": "off"
      },
      "note": "per-model switch offers the same words"
-    }
+      },
+      {
+     "_comment": [
+      "plan sec 6.14.1i: the personality the harness seeded carries two keys in [*] and one model",
+      "config with four. Selecting it must move the page to that configuration -- the expectation",
+      "is the field values below, asserted after the selection, not a selector that would pass on",
+      "an empty form."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "UI-Test-Work"
+     },
+     "note": "the seeded personality: its own settings arrive in the fields"
+      },
+      {
+     "select": "#ed-model",
+     "choose": {
+      "value": "ui-tiny-coder"
+     },
+     "note": "the model the seeded config renames: its section arrives in the fields"
+      }
+   ],
+   "expectValues": [
+      {
+     "_comment": [
+      "A field's value is not text content, so expectText cannot reach it. These are asserted",
+      "after the select cases ran, which is the only moment the seeded personality is selected."
+     ],
+     "after_select": true,
+     "selector": "#ed-g-threads-val",
+     "value": "8"
+      },
+      {
+     "after_select": true,
+     "selector": "#ed-g-cache-prompt-sel",
+     "value": "off"
+      },
+      {
+     "after_select": true,
+     "selector": "#ed-m-temp-val",
+     "value": "0.5"
+      },
+      {
+     "after_select": true,
+     "selector": "#ed-m-parallel-val",
+     "value": "2"
+      },
+      {
+     "after_select": true,
+     "selector": "#ed-m-ctx-size-val",
+     "value": "2048"
+      },
+      {
+     "after_select": true,
+     "selector": "#ed-m-cache-ram-val",
+     "value": "512"
+      },
+      {
+     "_comment": [
+      "The values a model's section does not set stay empty: the page must not copy the personality's",
+      "global keys into a model section, because saving them there outranks [*] for that model forever."
+     ],
+     "after_select": true,
+     "selector": "#ed-m-threads-val",
+     "value": ""
+      }
    ],
    "expectNoRequests": [
     "/api/personalities/apply",
@@ -859,6 +924,9 @@
     "#ed-preview",
     "#ed-apply",
     "#ed-summary",
+    "#ed-layers",
+    "#ed-clear-global",
+    "#ed-clear-model",
     "#pers-deck",
     "#pers-deck-note",
     "#pers-safe .pers-strip",
@@ -995,8 +1063,34 @@
      "contains": "needs"
     },
     {
-     "selector": "#ed-summary",
-     "contains": "no edits proposed"
+      "_comment": [
+        "plan sec 6.14.1i: at load the selected personality is the first card (safe), which carries no",
+        "settings. The sentence has to say that, not merely that the region is non-empty."
+      ],
+      "selector": "#ed-summary",
+      "contains": "no changes \u2014 these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
+    },
+    {
+      "after_select": true,
+      "selector": "#ed-summary",
+      "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
+    },
+    {
+      "_comment": [
+        "The page explains what an empty field means, because the fields are now seeded: a blank box",
+        "beside `default 8192 MiB` reads as 0 to anyone who has filled in a form, and on ctx-size and",
+        "cache-ram that guess costs tens of GiB."
+      ],
+      "selector": "#ed-layers",
+      "contains": "does not set the key"
+    },
+    {
+      "_comment": [
+        "Every personality's current configuration rides on its option, computed server-side by",
+        "personality.settings_view(): 3 cards in this sandbox (safe, default, the seeded one)."
+      ],
+      "selector": "#ed-persona option[data-config]",
+      "minCount": 3
     },
     {
      "_comment": [

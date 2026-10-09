@@ -43,9 +43,9 @@ import re  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core import config as cfg  # noqa: E402
-from app.core import kb  # noqa: E402
 from app.core import db, modelindex as mi, paths, settingrows  # noqa: E402
-from app.core import personality as P  # noqa: E402
+from app.core import kb  # noqa: E402
+from app.core import model_config as mc, personality as P  # noqa: E402
 from app.core import presets_store, systemd, updater  # noqa: E402
 from app.main import app  # noqa: E402
 from tests.gguf_fixture import _write_fake_gguf, seed_hub_model  # noqa: E402
@@ -1005,3 +1005,197 @@ def test_the_raised_card_on_load_is_the_one_the_router_is_running(client):
         assert "Nothing is running" in body
     finally:
         restore()
+
+
+# --- the editor shows the personality's own settings (plan §6.14.1i)
+#
+# The operator's complaint this answers: selecting a personality left the form empty. An editor
+# whose fields start blank is not editing the configuration, it is proposing a new one, and the
+# operator cannot see what they are about to overwrite. So the fields are seeded from the
+# personality's own layers, and the payload is the whole desired section rather than a diff --
+# which is only safe once what the page shows is what the personality carries.
+
+
+def _views(page: str) -> dict:
+    """{personality: the current-config view its option carries}, read off the page."""
+    out = {}
+    for m in re.finditer(r'<option value="([^"]+)" data-config=\'([^\']*)\'>', page):
+        out[m.group(1)] = json.loads(html.unescape(m.group(2)))
+    return out
+
+
+def _seed_tuned_personality(client, library) -> dict:
+    """A config carrying a bool, a float, an int and a model-only key, on a personality that also
+    covers one bare model and sets two keys in `[*]`.
+
+    Created through the page's own endpoints, so the view is asserted about data the portal
+    accepted. The key shapes are chosen on purpose: `jinja` is a bool, `temp` a float, `parallel`
+    an int and `ctx-size` is model-scoped -- the four ways a seeded value can arrive in a shape
+    the form cannot send back.
+    """
+    r = client.post("/api/model-configs/save", json={
+        "name": "Tiny-Coder", "base_model": library[0], "note": "fixture config",
+        "settings": {"jinja": "on", "temp": "0.5", "parallel": "2", "ctx-size": "2048"}})
+    assert r.status_code == 200, r.text
+    r2 = client.post("/api/personalities/save", json={
+        "name": "work", "models_max": 2, "note": "fixture personality",
+        "models": ["Tiny-Coder", library[1]],
+        "global_edits": {"threads": "8", "cache-prompt": "off"}})
+    assert r2.status_code == 200, r2.text
+    return {"config": "Tiny-Coder", "personality": "work"}
+
+
+@pytest.fixture()
+def tuned(client, library):
+    """The seeded config and personality, removed again afterwards.
+
+    Cleanup is part of the fixture: this suite shares one throwaway home, and a custom personality
+    left behind is visible to every later module, including ones that assert about the deck.
+    """
+    seeded = _seed_tuned_personality(client, library)
+    yield seeded
+    client.post("/api/personalities/delete", json={"name": seeded["personality"], "confirm": True})
+    client.post("/api/model-configs/delete", json={"name": seeded["config"], "confirm": True})
+
+
+def test_the_editor_shows_the_settings_the_personality_already_carries(client, library, tuned):
+    """The fields arrive filled with the personality's own values, in the words a form can send.
+
+    The expectations below are literals, deliberately. A test that compared the page against
+    `settings_view()` alone would pass while `settings_view()` itself stopped reading the config
+    layer, and the page would be blank in exactly the way the operator reported.
+    """
+    views = _views(client.get("/personalities").text)
+    names = [str(p["name"]) for p in P.all_personalities() if p.get("name")]
+    assert sorted(views) == sorted(names), "a personality the editor has no current settings for"
+
+    work = views[tuned["personality"]]
+    assert work["global"] == {"cache-prompt": "off", "threads": "8"}, work["global"]
+    assert work["models"][library[0]] == {"ctx-size": "2048", "jinja": "on", "parallel": "2",
+                                          "temp": "0.5"}, work["models"]
+    assert work["configs"] == {library[0]: "Tiny-Coder"}, work["configs"]
+    assert work["models_max"] == 2, work
+    # A bool is `on`, not `True`: a field seeded with Python's spelling sends a preset line the
+    # preset parser reads as false, which is the failure §6.14.1g named for the control side.
+    assert work["models"][library[0]]["jinja"] == "on"
+    assert work["global"]["cache-prompt"] == "off"
+    # `alias` is not a setting the editor can carry -- render() writes the config's own name, and a
+    # control for it would let a person type a router-wide alias by hand.
+    assert "alias" not in work["models"][library[0]]
+
+
+def test_a_bare_model_shows_nothing_because_its_section_sets_nothing(client, library, tuned):
+    """A model with no config shows an empty section, not the values it inherits.
+
+    Copying `[*]` into a model's fields would write those values into the model's own section the
+    next time the personality is saved -- and the router's precedence (CLI > model section > `[*]`)
+    means each copy then outranks `[*]` forever. One number in one place is the property being
+    protected here, not a formatting preference.
+    """
+    views = _views(client.get("/personalities").text)
+    work = views[tuned["personality"]]
+    assert work["models"][library[1]] == {}, work["models"]
+    # ...and the model that *does* carry settings is not shown the global ones either.
+    assert "threads" not in work["models"][library[0]]
+    assert "cache-prompt" not in work["models"][library[0]]
+
+
+def test_every_value_the_page_seeds_is_a_value_the_portal_accepts(client, library, tuned):
+    """Round-trip: the seeded text must survive the portal's own validator.
+
+    The page seeds fields from stored JSON, and a field sends its content back as text. A value
+    stored in a shape the validator refuses -- a Python `True` in a bool row, a `1` in a switch --
+    is a personality that can be edited only by breaking it.
+    """
+    views = _views(client.get("/personalities").text)
+    checked = 0
+    for name, view in views.items():
+        tables = [("*", view.get("global") or {})]
+        tables += [(m, t) for m, t in (view.get("models") or {}).items()]
+        for where, table in tables:
+            for key, value in table.items():
+                problem = P.check_setting(key, P.coerce_setting(key, value))
+                assert problem is None, f"{name} [{where}] {key}={value!r}: {problem}"
+                checked += 1
+    assert checked >= 6, f"only {checked} value(s) were checked -- the fixture seeded nothing"
+
+
+def test_the_shown_config_is_the_same_layering_the_file_is_written_from(client, library, tuned):
+    """One statement of the layering, read by the form and by the generator.
+
+    `_layered_settings()` is what `render()` writes the file from and what `budget_for()` prices.
+    If the editor showed a second derivation, the preview's diff and the fields a person edited
+    could describe two different files -- and the fit verdict a third.
+    """
+    views = _views(client.get("/personalities").text)
+    cfgs = {c["name"]: c for c in mc.rows()}
+    for p in P.all_personalities():
+        view = views[str(p["name"])]
+        layered = P._layered_settings(p, configs=cfgs)
+        assert view["models"] == {m: {k: P._ini_value(v) for k, v in per.items()}
+                                  for m, per in layered.items()}, str(p["name"])
+
+
+def test_the_builtins_show_an_empty_config_because_they_carry_no_settings(client, library):
+    """`safe` and `default` are derived from the library, so they carry no settings to show.
+
+    Asserted as an empty config rather than as nothing, because the difference is what the page
+    claims: these personalities set no keys, and a view that filled their fields from the portal's
+    own defaults would make them look editable in place.
+    """
+    views = _views(client.get("/personalities").text)
+    for name in ("safe", "default"):
+        v = views[name]
+        assert v["global"] == {} and v["configs"] == {}, name
+        assert all(per == {} for per in v["models"].values()), f"{name} shows settings it does not carry"
+        # The view's model set is the personality's own resolved set -- `safe` names one model and
+        # `default` is the library, and a view that listed a model the card does not would seed
+        # fields for a section the file never contains.
+        built_in = P.find(name)
+        assert built_in is not None, f"{name} is a built-in personality"
+        card = P.describe(built_in)
+        assert set(v["models"]) == set(card["models"]), (name, sorted(v["models"]), card["models"])
+
+
+def test_a_personality_missing_a_model_shows_the_refusal_not_an_empty_form(client, library):
+    """The view keeps its `[*]` and names what is missing, rather than collapsing to nothing.
+
+    The page has no endpoint to ask, so the refusal has to ride on the view. A personality that
+    renders as an empty form reads as "this personality sets nothing", which is a different claim
+    from the true one -- "its model list names a file that is not here".
+    """
+    now = time.time()
+    db.execute("INSERT INTO personalities (name, models_max, note, models, global, created_at,"
+               " updated_at) VALUES (?,?,?,?,?,?,?)",
+               ("broken", 1, "names a model that is gone", json.dumps(["Not-A-Model"]),
+                json.dumps({"threads": 8}), now, now))
+    try:
+        r = client.get("/personalities")
+        assert r.status_code == 200, "a personality that cannot resolve must still get a page"
+        view = _views(r.text)["broken"]
+        assert "Not-A-Model" in view["error"], view
+        assert view["global"] == {"threads": "8"}, "the [*] it does carry went with the refusal"
+        assert view["models"] == {}, view
+        assert 'data-card="broken"' in r.text, "the card disappeared with the view"
+    finally:
+        db.execute("DELETE FROM personalities WHERE name = 'broken'")
+
+
+def test_the_api_carries_the_same_current_config_the_page_seeds_from(client, library, tuned):
+    """D1: the read endpoint answers the same question the form asks (§4.7)."""
+    page = _views(client.get("/personalities").text)
+    api = client.get("/api/personalities").json()["config_views"]
+    assert api == page, "the endpoint and the page describe the personalities differently"
+
+
+def test_the_page_says_what_an_empty_field_means(client):
+    """Empty is "this layer does not set the key", and the page has to say so.
+
+    A form seeded with values needs its absence explained: an empty box next to `default 8192 MiB`
+    reads as 0 to anyone who has ever filled in a form, and `ctx-size`/`cache-ram` are the two keys
+    where that guess costs tens of GiB.
+    """
+    body = client.get("/personalities").text
+    region = body[body.index('id="ed-layers"'):]
+    assert "does not set the key" in region, region[:300]
+    assert "default" in region, "the row default is not named as the thing that applies"

@@ -938,9 +938,16 @@ def create_app() -> FastAPI:
         for card, g in zip(cards, generated, strict=True):
             card["active"] = bool(g.get("active"))
         configs = model_config.rows()
+        config_by_name = {c["name"]: c for c in configs}
+        # What the editor must show as the personality's current configuration. Built here, from
+        # the same personality dicts the cards were built from, so the form and the card cannot
+        # describe two different personalities (§6.14.1i).
+        config_views = {p.get("name"): personality.settings_view(p, configs=config_by_name)
+                        for p in people}
         return templates.TemplateResponse(request, "personalities.html",
                                           {"cards": cards, "generated": generated,
                                            "configs": configs,
+                                           "config_views": config_views,
                                            "config_uses": {c["name"]: model_config
                                                            .assigned_personalities(c["name"])
                                                            for c in configs},
@@ -975,12 +982,18 @@ def create_app() -> FastAPI:
         """JSON for the same view (D1: every read is also an endpoint)."""
         budget = modelindex._pool_bytes()
         configs = model_config.rows()
+        people = personality.all_personalities()
+        config_by_name = {c["name"]: c for c in configs}
         return {
             "budget_bytes": budget,
-            "personalities": [personality.describe(p, budget)
-                              for p in personality.all_personalities()],
+            "personalities": [personality.describe(p, budget) for p in people],
             "personalities_on_disk": [p["name"] for p in personality.stored()],
             "configs": configs,
+            # The same current-configuration view the editor seeds from, so a script driving the
+            # API and a person reading the page answer "what does this personality set?" from one
+            # place (D1: every read is also an endpoint).
+            "config_views": {p.get("name"): personality.settings_view(p, configs=config_by_name)
+                             for p in people},
             "assigned": {c["name"]: model_config.assigned_personalities(c["name"]) for c in configs},
             "settings": _setting_specs(),
         }
