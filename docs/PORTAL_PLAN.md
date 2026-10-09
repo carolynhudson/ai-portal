@@ -3881,6 +3881,87 @@ page telling the truth about a setting the portal cannot re-price. And the whole
 the operator applies it: Apply is gated on confirm and on the machine being idle, and it restarts
 the router.
 
+##### 6.14.1i The editor shows the personality it is editing (2026-10-08)
+
+**The complaint, verbatim:** "when a personality global or model level is selected to be edited,
+the shown settings on the page should be updated to reflect the personality's current config."
+Measured: it was not. Every field started empty, so the editor was proposing a configuration rather
+than editing one -- and the payload it built was a set of edits, not a state. Nothing on the page
+said what a field was about to overwrite.
+
+**What the page is now.** `personality.settings_view(personality)` returns the two layers the editor
+writes into: `global`, the personality's own `[*]`, and `models[<library id>]`, that model's section
+exactly as `_layered_settings()` resolves it -- its model config, with any personality-level override
+on top. Values are `_ini_value()` strings, so a bool arrives as `on` and not as Python's `True` (the
+spelling §6.14.1g established for the control side, now established for the seeded side too). The
+view rides on `#ed-persona option[data-config]` and on `/api/personalities` as `config_views`, so the
+form, the read endpoint and the generator answer "what does this personality set?" from one place.
+
+**The layering rule, stated in code and on the page.** A model's fields show what that section *sets*.
+They do not show what it inherits. Seeding a per-model field with a value inherited from `[*]` would
+write that value into the model's own section the next time the personality is saved, and the router's
+precedence is CLI > model section > `[*]`, so the copy outranks `[*]` from then on -- one number set
+in one place becomes sixteen copies an operator keeps in step by hand. `#ed-layers` says the
+consequence in the operator's terms: an empty field means this layer does not set the key, and the
+`default` on the row applies; it does not mean zero.
+
+**The editor's state is a working copy, not a list of edits.** `payload()` sends the whole desired
+section, so a field nobody touched is written as it already was, and the summary compares the copy
+against the view: `no changes — these are VSCode's current settings: 2 value(s) in [*], 3 model
+section(s) set`, and, when something differs, `proposed — [bottlecapai/…:Q4_K_M]: parallel=1 (was 2)`.
+Two reset buttons return a grid to the personality's current settings and report how many values they
+dropped. The old sentence -- "no edits proposed" -- was true of an editor that had lost the comparison
+entirely, which is why the new one names the configuration it compared against.
+
+**A bug the slice found in the page it was writing.** Both grids reuse one set of controls, so a
+switch is a save plus a load, and the order matters: by the time a `change` handler runs, the select
+already holds the *new* name. Capturing "what is in the fields" into the record the select names
+therefore writes the outgoing configuration over the incoming one -- the fields you had just loaded,
+emptied by the values you had just left. Symptoms: selecting `VSCode` showed an empty global grid and
+a summary saying nothing had changed. `shown` and `captured` now name the record the shared inputs are
+displaying, capture happens before the switch, and the guard asserts the *order* in the source, because
+the symptom (an empty form next to "no changes") is exactly what a passing page looks like here.
+
+**The refusal case keeps its facts.** A personality naming a model that is not on the box resolves to
+nothing, so its view carries `error` naming the missing model, and keeps the `[*]` it does carry. An
+empty form reads as "this personality sets nothing", which is a different -- and false -- claim.
+
+**The harness grew two assertions this page needs.** A field's *value* is not text content, so
+`expectText` cannot reach it: `expectValues` asserts `#ed-g-threads-val` is `8` and `#ed-m-ctx-size-val`
+is `2048`. And a page seeded by a selection can only be measured with that record selected, so
+`expectText` entries may carry `after_select: true` and are checked once the select cases have driven
+the page. The sandbox now seeds a model (`ui-tiny-coder`), a model config on it (a float, an int, a
+model-scoped key and a host-cache key) and a personality carrying two `[*]` keys, authored through the
+portal's own endpoints -- a sandbox whose personalities set nothing can only ever assert the empty
+case, and an empty field beside a correct label is indistinguishable from a filled one. The fixture
+asks the index when its row exists before using it: the startup scan is a thread and `/healthz`
+answers before it finishes, which was a fixture that passed most days and failed some.
+
+**Teeth (7 mutations, each failing a named guard).** View built with no configs (config layer dropped)
+and view returning raw Python values (no `_ini_value`) both fail
+`test_the_editor_shows_the_settings_the_personality_already_carries`; copying `[*]` into every model
+section fails `test_a_bare_model_shows_nothing_because_its_section_sets_nothing`; the option dropping
+`data-config` fails that route guard and the source guard; the read endpoint dropping `config_views`
+fails `test_the_api_carries_the_same_current_config_the_page_seeds_from`; the refusal branch dropping
+`[*]` fails `test_a_personality_missing_a_model_shows_the_refusal_not_an_empty_form`; capture-after-
+switch fails `test_a_switch_saves_the_fields_it_is_leaving`. Suite 865 passed / 3 skipped; UI gate 51
+passed; deployed sha == HEAD, live page shows `VSCode` with 11 settings on ThinkingCap Q4_K_M, 10 on
+the autocomplete, 2 on the embedder, and `Agentic-PI` raised as the running card. `presets.ini` was
+not written by any of this (sha `9eb0c21d8075…` before and after) and the router was not touched.
+
+**Known, not introduced.** The cross-module `AI_PORTAL_HOME` race still fails
+`test_models_none_means_the_whole_library_for_a_custom_personality_too` when
+`tests/test_personality_routes.py` and `tests/test_model_configs.py` run as a pair; verified identical
+at HEAD with this slice stashed.
+
+**Decisions recorded with the slice (operator, same day).** Model personalities stay **shared** global
+objects -- `model_configs`, with the `alias` a client on the network types -- and step 3 becomes a
+nested deck of collapsible model-personality cards, one per model the personality covers (the file has
+one section per model, so `resolve_targets()` already refuses two configs on one model), opening the
+same row component, with attach-existing / new-for-this-model / detach. A shared card states who else
+uses it, because an edit to a shared object silently changes those personalities too. Names are
+**immutable**: renaming means create-new + delete-old, because the alias is the endpoint, not a label.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
