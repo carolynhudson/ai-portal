@@ -125,6 +125,18 @@ def ui_server():
         (home / "ai" / "models" / "llama" / SAFE_MODEL).mkdir(parents=True)
         _seed_gguf(home / "ai" / "models" / "llama" / SAFE_MODEL / f"{SAFE_MODEL}.gguf", pad=1024)
 
+    # A llama-server process the portal does not control, seeded on purpose. The dashboard's process
+    # census (§6.14.1l) has to be asserted on its most load-bearing sentence — which servers are
+    # outside the portal's control — and a sandbox whose census depends on whether the machine
+    # running the tests happens to have a router up is a sandbox that asserts the machine. `comm`
+    # comes from the executable's name, so a copy of sleep named llama-server is a server process to
+    # the census and nothing else to the system. The fixture owns it and kills it.
+    stray_dir = home / "stray-bin"
+    stray_dir.mkdir(parents=True)
+    stray_bin = stray_dir / "llama-server"
+    shutil.copy("/bin/sleep", stray_bin)
+    stray = subprocess.Popen([str(stray_bin), "3600"], cwd=str(home))
+
     # The preset file, seeded: the pages that preview presets (personalities, models, the dashboard's
     # census) render a file in the operator's world. A sandbox without one is not broken — those pages
     # correctly say the file could not be read — but an assertion written against that state describes
@@ -215,6 +227,8 @@ def ui_server():
         assert rp.status_code == 200, f"seed personality: {rp.status_code} {rp.text}"
         yield {"base": base, "cookie": f"aipp={token}", "home": home, "syscalls": syscalls}
     finally:
+        stray.terminate()
+        stray.wait(timeout=5)
         proc.terminate()
         try:
             proc.wait(timeout=10)

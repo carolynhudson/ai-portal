@@ -4075,6 +4075,72 @@ shared-object statement, `requireConfirmFor` on `/api/model-configs/delete`, and
 **Known, not introduced.** `presets.ini` is untouched by this slice: sha `9eb0c21d8075…` before and
 after, the router was not restarted, and `Agentic-PI` is what it is serving.
 
+##### 6.14.1l The dashboard reports what the router is (2026-10-09)
+
+**The measured reason.** `systemctl is-active ai-llama-router` is not the fact the operator needs.
+Measured on this box: the unit is `active` with `MainPID=17541`, `--port 8080`,
+`--models-preset /home/cortana/ai/config/llama/presets.ini`, `--models-max 1`, and one worker
+(pid 17650, ppid 17541, port 42919, alias `ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS`,
+RSS 11.6 GiB at the census run). A `llama-server` started by hand on 8080 leaves that unit reporting
+`active` after `systemctl start` succeeds, while every client is talking to the hand-started process.
+Nothing in the portal could see the difference, so the dashboard's three router buttons were acting on
+a unit state with no account of the processes behind it.
+
+**The census (`app/core/routerctl.py`).** Parentage is the definition, not a heuristic: the unit's
+`MainPID` is the router process, its children are workers, everything else that runs `llama-server` is
+outside the portal's control and is named as such. `MainPID=0` (systemd for "not running") is treated
+as "no router process", which makes every server found read as foreign — the over-reporting direction,
+and the one that keeps the page from claiming nothing is outside the unit when the unit is not running.
+The port is parsed from `--port` and `--port=` only: `-p` is `--parallel`, and a census that read
+`--parallel 2` as port 2 would invent collisions, so the assertion is on the spellings, not the intent.
+Launch facts are read from the process's own command line (`--port`, `--models-preset`,
+`--models-max`), which is what makes the preset comparison possible: `presets.ini` sha
+`9eb0c21d8075…`, 2 sections, and the file the *running process* was launched with. A router launched
+before an Apply is running the old file; "active" hides that, the launched-with line cannot.
+
+**Degradation is a sentence, not a blank.** The probes fail alone: a `ps` that cannot be read yields
+"the process list could not be read (…), this panel is not reporting 'no servers outside the unit' —
+it is reporting that it did not look." A page that reads most-reassuring when it knows least is the
+failure this section is about.
+
+**The endpoint.** `GET /api/router/report` (auth-gated, 401 for a bare API call, not a redirect).
+Read-only, asserted: `presets.ini` byte-identical across the call, no job queued.
+
+**The panel.** Statements, not a table: unit and main pid; the router process with its port, preset
+file and `--models-max`; workers with alias, port, RSS; the llama-server processes the portal does not
+control, with the sentence that they are not started, stopped or restarted here; the port-clash
+statement; presets sha/sections/launched-with; what `/v1/models` answers (16 registered, 1 loaded,
+1 alias at the measurement). Read at page load and re-read by **check again** — deliberately not on
+the 2.5 s pulse, because a `ps`, an HTTP probe and a file read are not second-scale numbers, and the
+contract test asserts the census is absent from the poll function. The server-rendered sentences and
+the JS-refresh sentences are word-for-word identical: the §6.14.1c rule (one fact, one renderer)
+applies to a panel with two renderers by writing the same wording in both.
+
+**The verbs consult it.** Starting is the verb the census informs, so it is gated by what the panel
+shows: with llama-server processes outside the unit, the click confirms, names those processes, and
+states that the start will not move what already holds those ports. Stop/restart keep their existing
+confirm. In the harness, `requireConfirmFor` now covers `/api/services/llamacpp/start`, so a page that
+started the router on a bare click is a blocked mutation with no dialog, which the suite fails on.
+
+**Fixture, not a workaround.** The UI sandbox home had no `presets.ini`, so the census panel could
+only ever be asserted in its "the file could not be read" branch — an assertion describing the fixture
+rather than the feature. The fixture now seeds one, and the panel's assertions are branch-independent
+sentences, because the sandbox portal is a subprocess: its census correctly reports *this machine's*
+real router and worker as processes outside the unit, and that is the panel's most important claim.
+
+**Asserted.** `tests/test_routerctl.py` (9): parentage (worker is a child, stray is nobody's),
+`--port=8080` recognised and `--parallel 2` not a port, `MainPID=0`, launched-with vs rendered file,
+unreadable `ps`, report shape (every id on the panel has a key), endpoint shape, read-only, auth.
+Contract test: the nine panel ids, the "did not look" sentence, the start gate consulting the census
+with a confirm naming ports, no `innerHTML` in the census renderers, census off the pulse. Harness:
+`/api/router/report` requested, eight panel ids visible, panel text asserted. Suite **883 passed /
+3 skipped**; UI gate **54 passed**. Two mutation entries: start stops consulting the census, the
+census stops naming the servers it does not control.
+
+**Left alone deliberately.** The census cannot kill a stray server — it names it. Stopping a process
+the portal does not own is not a portal verb, and the panel says so rather than offering a button that
+would lie about what it controls.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

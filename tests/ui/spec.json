@@ -304,27 +304,25 @@
     },
     {
      "_comment": [
-      "\u00a76.14.1l. The sandbox portal is a subprocess, not the systemd unit, so the census's",
-      "job here is the claim that matters most: it must account for the llama-server",
-      "processes this machine is really running, and it must not present an unreadable",
-      "preset file as a healthy one. Every assertion below is a sentence the panel says in",
-      "both of its branches -- asserting one branch would make the suite depend on whether",
-      "the operator's router happens to be running while the tests run."
+      "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
+      "MainPID=0 (so no router process, and every server found is outside the unit) and the",
+      "fixture seeds a llama-server the portal does not control. So these are the panel's",
+      "branch-specific sentences, not a shape that both branches happen to share."
      ],
      "selector": "#census-state",
      "contains": "ai-llama-router is"
     },
     {
      "selector": "#census-workers",
-     "contains": "process"
+     "contains": "no router process"
     },
     {
      "selector": "#census-foreign",
-     "contains": "llama-server"
+     "contains": "does not control"
     },
     {
      "selector": "#census-clash",
-     "contains": "port"
+     "contains": "no port"
     },
     {
      "selector": "#census-presets",

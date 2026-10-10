@@ -397,12 +397,15 @@ MUTATIONS = [
     (
         # The census's most load-bearing sentence is which llama-server processes the portal cannot
         # touch. Softening it to "none" is exactly the failure the panel was built to prevent.
+        # The census's most load-bearing sentence is which llama-server processes the portal cannot
+        # touch, and it is the refresh renderer that an operator actually reads: the fixture seeds a
+        # stray server precisely so this branch is the one the sandbox is in.
         "the census stops naming the servers it does not control (census-blanket-ok)",
         "templates/dashboard.html",
-        "      {{ c.foreign | length }} llama-server process{{ 'es' if c.foreign | length != 1 }} the portal does",
-        "      no server processes outside the unit: every llama-server on the box is",
+        "    ? (c.foreign.length + ' llama-server process' + (c.foreign.length === 1 ? '' : 'es')",
+        "    ? ('no server processes outside the unit: every llama-server on the box is the router '",
         "dashboard",
-        "llama-server",
+        "does not control",
     ),
 
 ]
