@@ -3962,6 +3962,62 @@ same row component, with attach-existing / new-for-this-model / detach. A shared
 uses it, because an edit to a shared object silently changes those personalities too. Names are
 **immutable**: renaming means create-new + delete-old, because the alias is the endpoint, not a label.
 
+##### 6.14.1j Step 1 creates, saves and deletes a personality (2026-10-08)
+
+**The missing verbs, in the operator's words:** "create/edit/delete personality is not in the flow"
+and, for the deck, "no create, delete buttons ... personality is not shown in edit mode". The write
+endpoints have validated personality changes since phase N4 (`POST /api/personalities/save`,
+`POST /api/personalities/delete`, `safe`/`default` refused by name), and the page called only
+preview and apply -- so there was no way to produce a personality from the page, and no way to remove
+one. This is the page slice §6.14.1f answer 2 queued as step 1.
+
+**Step 1 owns the personality, not its settings.** Name, max resident, note, which models it covers,
+and create / save / delete. The numbering is presentation and the split is the substance: step 1
+writes `personalities/<name>.json` and never `presets.ini`, which is why these verbs are additive --
+Preview has nothing to show for them, Apply is not involved, and the router is not restarted. That
+boundary is asserted rather than asserted-about: `identityBody()` and `writeIdentity()` must not
+contain the apply route.
+
+**The model list is the two kinds a personality's `models` accepts.** A library model id (that file
+under its own name, no settings of its own) and a stored model config (the same file under the name
+the router routes to), the config printed with the model it renames, because the name is what a client
+types and the base is what loads. It prefills from `settings_view.attach` -- the personality's own
+list, verbatim -- and not from `describe()`, which reports resolved base models: a different fact, and
+not one a form can send back. An empty selection is sent as `null`, which means the whole library, so
+the sentence beside the list says that: an unchecked list otherwise reads as "covers nothing", and
+`default` is exactly that state.
+
+**The built-in pair is shown, listed and refused.** `safe` and `default` are not hidden -- they
+describe the library as it is -- their attach lists render read-only, Save and Delete are locked, and
+the reason is in the sentence: derived from the library, refused by name at the endpoints, so raise
+one on the deck and create a new personality from its settings. `editable` arrives on the view, so the
+form does not keep a second rule about the built-in pair next to the buttons that enforce it.
+
+**Harness: a select case can now type (`then_fill`).** Client-side gating was previously untestable on
+its enabled half. "Create is disabled while the name is empty" is easy to assert and proves nothing
+about the rule; the rule is *unlocks on a usable name*, and a driver that cannot fill a text field
+cannot reach that state at all. `Delete` is confirm-gated at the endpoint and the page asks first;
+`requireConfirmFor` covers `/api/personalities/delete` so the denied pass proves no request left the
+page without the confirm.
+
+**Teeth.** The route tests drive the page's own payload shape: create a personality with a config and
+a bare model in its list, read the stored file back (the typed text arrives coerced by the row's
+declared type -- `4`, not `"4"`, which is why the editor seeds with `_ini_value()` spellings), check
+the view prefills the same list, save it again with a different list and max, assert `presets.ini`
+unchanged across the whole round trip, delete without a confirm (400) and with one (200), and assert
+the personality is gone from the page. The built-in pair is refused at both endpoints, `editable` is
+false on both views, `default`'s attach is `None` and `safe`'s is its one model. Suite **868 passed /
+3 skipped**; UI gate **52 passed**; deployed sha == HEAD, live page carries every step-1 control and
+the `__new__` mode option. `presets.ini` sha `9eb0c21d8075…` before and after; the router was not
+restarted at any point, and is still serving `Agentic-PI`.
+
+**The cross-module home race is closed.** `test_models_none_means_the_whole_library_for_a_custom_
+personality_too` failed only when `tests/test_personality_routes.py` and `tests/test_model_configs.py`
+ran as a pair: both modules set `AI_PORTAL_HOME` at import, and the gguf fixture wrote into the home
+its own module captured while the index scanned the other. conftest now owns that isolation (commit
+`8716352`), and the pair passes -- so the pair that was listed as known-failing in the last four plan
+records is no longer known-failing.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
