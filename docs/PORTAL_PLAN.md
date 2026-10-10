@@ -4122,11 +4122,16 @@ states that the start will not move what already holds those ports. Stop/restart
 confirm. In the harness, `requireConfirmFor` now covers `/api/services/llamacpp/start`, so a page that
 started the router on a bare click is a blocked mutation with no dialog, which the suite fails on.
 
-**Fixture, not a workaround.** The UI sandbox home had no `presets.ini`, so the census panel could
-only ever be asserted in its "the file could not be read" branch — an assertion describing the fixture
-rather than the feature. The fixture now seeds one, and the panel's assertions are branch-independent
-sentences, because the sandbox portal is a subprocess: its census correctly reports *this machine's*
-real router and worker as processes outside the unit, and that is the panel's most important claim.
+**Fixture, not a workaround.** Two seeds, both because a census has to be *in* a branch to be
+asserted. The UI sandbox home had no `presets.ini`, so the panel could only ever be asserted in its
+"the file could not be read" branch; the fixture writes one. And the sentence that matters most —
+which `llama-server` processes the portal does not control — was only exercised if the machine running
+the tests happened to have a router up, which is asserting the machine, not the feature. So the fixture
+copies `/bin/sleep` to a binary named `llama-server` and runs it: `comm` is the executable's name, so
+the census sees a server process and nothing else on the system does; the fixture owns it and kills it
+in teardown. The spec asserts the branch sentences — no router process (the `systemctl` stand-in
+reports `MainPID=0`), the stray named as outside the portal's control, no port held from outside, the
+preset file nothing has loaded.
 
 **Asserted.** `tests/test_routerctl.py` (9): parentage (worker is a child, stray is nobody's),
 `--port=8080` recognised and `--parallel 2` not a port, `MainPID=0`, launched-with vs rendered file,
