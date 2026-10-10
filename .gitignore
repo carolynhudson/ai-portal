@@ -25,3 +25,7 @@ tests/ui/package-lock.json
 
 # Drop a screenshot here to talk about it; it is not part of the repo
 /*.png
+
+# Design-playbook run trees (baseline evidence, drafts, shaping logs). They are hash-bound
+# to the source they measured and regenerate on demand, so they are not repo content.
+/.scratch/

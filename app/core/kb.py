@@ -36,6 +36,8 @@ DOC_ORDER = [
     ("DEBUGGING.md", "Debugging — instrument failures and how to verify a probe"),
     ("UPDATES.md", "Update pipeline — builds, releases, and the gated jobs"),
     ("PORTAL_SETTINGS.md", "Settings reference — every key a personality can set, from the registry"),
+    ("PORTAL_UI.md", "Interface baseline — tokens, scale, components, page ownership, measured gaps"),
+    ("PORTAL_LAYOUT.md", "Layout spec — hero, ribbon, owner pages, sub-pages, acceptance criteria"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
