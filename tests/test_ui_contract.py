@@ -965,3 +965,41 @@ def test_the_model_personality_cards_edit_one_object_at_a_time():
         "delete is not confirm-gated"
     assert "/api/personalities/apply" not in create + save + drop, \
         "a card verb reaches the route that restarts the router"
+
+
+def test_the_dashboard_reports_what_the_router_actually_is():
+    """The process census (§6.14.1l) exists, is read on demand, and gates the one verb it informs.
+
+    A unit reporting `active` is not the fact the operator needs: a `llama-server` started by hand on
+    the router's port means `systemctl start` succeeds and every client is talking to the other
+    process. So the panel is asserted to say three things the unit state cannot say — which process is
+    the router, which processes are nobody's, and which preset file the running process was given —
+    and the start button is asserted to consult them, because that is the moment the information has
+    a decision attached to it.
+    """
+    tpl = (ROOT / "web/templates/dashboard.html").read_text(encoding="utf-8")
+    for eid in ("router-census", "census-state", "census-workers", "census-foreign",
+                "census-clash", "census-presets", "census-served", "census-refresh",
+                "census-when"):
+        assert f'id="{eid}"' in tpl, f"the census panel has no {eid}"
+    assert "it is reporting that it did not look" in tpl, \
+        "an unreadable process list is allowed to read as 'nothing outside the unit'"
+    assert "the running router reads" in tpl, "the panel never compares the file the router loaded"
+
+    svc = _fn(tpl, "svcAction")
+    assert "CENSUS" in svc and "foreign" in svc, \
+        "start does not consult the census: the panel is decoration, not a gate"
+    start_block = svc[svc.index("action === 'start'"):svc.index("action !== 'start'")]
+    assert "confirm(" in start_block, "the census names the stray processes without asking anything"
+    assert "port" in start_block, "the port clash is not part of the decision it informs"
+
+    refresh = _fn(tpl, "censusRefresh")
+    assert "/api/router/report" in refresh, "the refresh button does not re-read the census"
+    render = _fn(tpl, "renderCensus")
+    assert "innerHTML" not in render and "innerHTML" not in svc, "the census renders unescaped markup"
+
+    # Read on demand, not on the pulse: a `ps` and an HTTP probe are not a 2.5-second number, and a
+    # panel that cost the page a poll would be quietly slowing down the part that matters.
+    # The pulse's own poll: `tick`, from its declaration to the interval it schedules itself with.
+    poll = tpl[tpl.index("async function tick("):tpl.index("const _poll =")]
+    assert "router/report" not in poll, "the census rides the router's poll"

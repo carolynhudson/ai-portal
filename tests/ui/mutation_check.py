@@ -383,6 +383,28 @@ MUTATIONS = [
         "personalities",
         "UI-Test-Work's current settings",
     ),
+    (
+        # The start button is the verb the process census exists for. A `llama-server` started by
+        # hand on the router's port makes `systemctl start` succeed while every client is talking to
+        # the other process; losing the gate puts a machine-mutating POST back on a bare click.
+        "starting the router stops consulting the process census (census-start-ungated)",
+        "templates/dashboard.html",
+        "  if (key === 'llamacpp' && action === 'start'){",
+        "  if (false){",
+        "dashboard",
+        "/api/services/llamacpp/start",
+    ),
+    (
+        # The census's most load-bearing sentence is which llama-server processes the portal cannot
+        # touch. Softening it to "none" is exactly the failure the panel was built to prevent.
+        "the census stops naming the servers it does not control (census-blanket-ok)",
+        "templates/dashboard.html",
+        "      {{ c.foreign | length }} llama-server process{{ 'es' if c.foreign | length != 1 }} the portal does",
+        "      no server processes outside the unit: every llama-server on the box is",
+        "dashboard",
+        "llama-server",
+    ),
+
 ]
 
 

@@ -87,6 +87,18 @@
 .pulse-signals{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);margin:2px 0 0}
 .pulse-signals b{color:var(--fg);font-weight:600}
 .feed-quiet{max-height:112px}
+/* The process census (§6.14.1l). A wall of numbers about processes is only useful if the sentence
+   that says what they mean is the loudest thing in it, so this is a stack of statements with a
+   monospace pid/port inside each one, not a table. */
+.census{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.census-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:.82rem}
+.census-head button{font:inherit;padding:2px 8px}
+.census-note{margin:6px 0;font-size:.82rem;line-height:1.45}
+.census-list{list-style:none;margin:4px 0;padding:0;font-size:.8rem}
+.census-list li{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0}
+.census-foreign li{border-left:2px solid var(--bad);padding-left:8px}
+.census-cmd{flex:1 1 100%;word-break:break-all;opacity:.75}
+.bad{color:var(--bad)}
 .feed .ln .age{color:var(--mut)}
 .feed .ln b.ct{color:var(--warn);font-weight:700}
 .feed-head-row{display:flex;align-items:center;gap:10px}
@@ -213,6 +225,92 @@
             title="switch between curated lines and the raw journal tail">all lines</button>
   </div>
   <pre id="router-feed" class="feed feed-quiet">{% for a in p.get('attention', []) %}<span class="ln {{ a.level }}"><span class="age">{{ a.age_text }} · </span>{{ a.text }}{% if a.count >= 2 %} <b class="ct">×{{ a.count }}</b>{% endif %}</span>{% else %}<span class="ln mut">nothing unusual in the recent journal</span>{% endfor %}</pre>
+
+  {# ---- what the router IS, as opposed to what it is doing (§6.14.1l) ----
+     The unit can report `active` and still be the wrong process: a `llama-server` somebody
+     started by hand, sitting on the router's port, means `systemctl start` succeeds and every
+     client is talking to the hand-started one. So this panel is a process census, not a status
+     light -- and the start button consults it, because that is the moment the question has an
+     answer in it. #}
+  <div class="census" id="router-census">
+    <div class="census-head">
+      <b>process census</b>
+      <span class="mut" id="census-state">{{ census.unit }} is {{ census.state }}{% if census.main_pid %} as pid {{ census.main_pid }}{% endif %}</span>
+      <button type="button" id="census-refresh">check again</button>
+      <span class="mut" id="census-when">read at page load</span>
+    </div>
+    {% set c = census.processes or {} %}
+    {% if not c.get('ok') %}
+    <p class="mut census-note" id="census-workers">the process list could not be read
+      ({{ c.get('error') or 'unknown error' }}). This panel is not reporting "no servers outside the
+      unit" — it is reporting that it did not look.</p>
+    {% else %}
+    <p class="mut census-note" id="census-workers">
+      {%- if c.router -%}
+      router pid {{ c.router.pid }} on port {{ (c.router.launch or {}).port }}, reading
+      <span class="mono">{{ (c.router.launch or {}).presets }}</span> with
+      <span class="mono">--models-max {{ (c.router.launch or {}).models_max }}</span>;
+      {{ c.workers | length }} worker{{ 's' if c.workers | length != 1 }}{% if c.workers %}:
+        {%- for w in c.workers %}{{ w.alias or 'unnamed' }} on port {{ (w.launch or {}).port }}
+        at {{ '%.1f'|format(w.rss_kib / 1048576) }} GiB{{ ', ' if not loop.last }}{% endfor %}{% endif %}.
+      {%- else -%}
+      no router process is running, so nothing here accounts for the
+      {{ c.workers | length + c.foreign | length }} server process{{ 'es' if (c.workers | length + c.foreign | length) != 1 }}
+      on the box; starting the unit would be starting the first one.
+      {%- endif -%}
+    </p>
+    <p class="{% if c.foreign %}census-note bad{% else %}mut census-note{% endif %}" id="census-foreign">
+      {%- if c.foreign -%}
+      {{ c.foreign | length }} llama-server process{{ 'es' if c.foreign | length != 1 }} the portal does
+      not control: {% for f in c.foreign %}pid {{ f.pid }}{% if f.ports %} on port
+      {{ f.ports | join(', ') }}{% endif %} at {{ '%.1f'|format(f.rss_kib / 1048576) }}
+      GiB{{ '; ' if not loop.last }}{% endfor %}. Not started, stopped or restarted here — a button on
+      this page would not touch them.
+      {%- else -%}
+      no server processes outside the unit: every <span class="mono">llama-server</span> on the box is
+      the router or one of its workers.
+      {%- endif -%}
+    </p>
+    <p class="{% if c.port_clash %}census-note bad{% else %}mut census-note{% endif %}" id="census-clash">
+      {%- if c.port_clash -%}
+      port{{ 's' if c.port_clash | length != 1 }} {{ c.port_clash | join(', ') }}
+      {{ 'is' if c.port_clash | length == 1 else 'are' }} held by a process outside the unit. Starting
+      {{ census.unit }} will succeed and will not move the thing already listening there.
+      {%- else -%}
+      no port the router launches on is held by a process outside the unit.
+      {%- endif -%}
+    </p>
+    {% endif %}
+    {% set pr = census.presets or {} %}
+    <p class="mut census-note" id="census-presets">
+      {%- if pr.get('error') -%}
+      the preset file could not be read: {{ pr.error }}.
+      {%- else -%}
+      <span class="mono">{{ pr.path }}</span>: {{ pr.sections }} section{{ 's' if pr.sections != 1 }},
+      sha <span class="mono">{{ pr.sha256 }}</span>.
+      {%- if pr.warning -%}
+      WARNING: the running router reads <span class="mono">{{ pr.launched_with }}</span>, not the file
+      this page renders.
+      {%- elif c.get('ok') and not c.router -%}
+      no router process is running, so no preset file is loaded: this is the file the next start
+      would be given.
+      {%- else -%}
+      the running router reads this file.
+      {%- endif -%}
+      {%- endif -%}
+    </p>
+    {% set sv = census.served or {} %}
+    <p class="mut census-note" id="census-served">
+      {%- if sv.get('ok') -%}
+      the router's own list: {{ sv.count }} model{{ 's' if sv.count != 1 }} registered, {{ sv.loaded }}
+      loaded{% if sv.loaded_ids %} (<span class="mono">{{ sv.loaded_ids | join(', ') }}</span>){% endif %};
+      it answers {{ sv.aliases | length }} alias{{ 'es' if sv.aliases | length != 1 }}.
+      {%- else -%}
+      the router did not answer <span class="mono">/v1/models</span>: {{ sv.get('error') }}.
+      {%- endif -%}
+    </p>
+  </div>
+  </div>
 </div>
 
 {# ---- live ComfyUI: the other running thing on this box ---- #}
@@ -847,9 +945,91 @@ async function loadSvc(){
     if (res.ok) Object.assign(SVC, await res.json());
   }catch(e){ /* controls stay inert until the API answers */ }
 }
+// The process census (§6.14.1l): what the router process actually is, and the llama-server
+// processes the portal does not control. Read once at page load and on demand -- not on the
+// router's poll, because a `ps` and an HTTP probe are not a second-scale number.
+let CENSUS = null;
+const giB = (kib) => (kib / 1048576).toFixed(1) + ' GiB';
+function describeForeign(list){
+  return list.map((f) => 'pid ' + f.pid + (f.ports && f.ports.length
+    ? ' on port ' + f.ports.join(', ') : '') + ' at ' + giB(f.rss_kib)).join('; ');
+}
+async function censusRefresh(){
+  try{
+    const r = await fetch('/api/router/report', {credentials:'same-origin'});
+    if (!r.ok) { setText('census-state', 'the census could not be read (' + r.status + ')'); return; }
+    CENSUS = await r.json();
+    renderCensus(CENSUS);
+  }catch(e){ setText('census-state', 'the census request failed: ' + e); }
+}
+function renderCensus(d){
+  setText('census-when', 'read at ' + new Date().toLocaleTimeString());
+  setText('census-state', d.unit + ' is ' + d.state +
+    (d.main_pid ? (' as pid ' + d.main_pid) : ' with no process'));
+  const c = d.processes || {};
+  if (!c.ok){ setText('census-served', 'the process list could not be read: ' + (c.error || 'unknown')
+    + ' — this panel is not claiming there is nothing outside the unit.'); return; }
+  setText('census-workers', c.router
+    ? ('router pid ' + c.router.pid + ' on port ' + ((c.router.launch || {}).port)
+       + ', reading ' + ((c.router.launch || {}).presets)
+       + ' with --models-max ' + ((c.router.launch || {}).models_max) + '; ' + c.workers.length
+       + ' worker(s): ' + c.workers.map((w) => (w.alias || '?') + ' on ' + ((w.launch || {}).port)
+         + ' at ' + giB(w.rss_kib)).join(', '))
+    : 'no router process; ' + (c.workers.length + c.foreign.length) + ' server process(es) found');
+  // The same sentences the page renders server-side, word for word: two renderers of one panel that
+  // phrase one fact differently is how a page ends up saying two things about one machine (§6.14.1c),
+  // and the refresh path is the one an operator actually reads.
+  setText('census-foreign', c.foreign.length
+    ? (c.foreign.length + ' llama-server process' + (c.foreign.length === 1 ? '' : 'es')
+       + ' the portal does not control: ' + describeForeign(c.foreign)
+       + '. Not started, stopped or restarted here — a button on this page would not touch them.')
+    : 'no server processes outside the unit: every llama-server on the box is the router '
+      + 'or one of its workers');
+  setText('census-clash', (c.port_clash || []).length
+    ? ('port ' + c.port_clash.join(', ') + ' is held from outside the unit -- starting ' + d.unit
+       + ' there will not move what is already listening')
+    : 'no port held by a process outside the unit');
+  const pr = d.presets || {};
+  setText('census-presets', pr.sha256
+    ? (pr.sections + ' section(s), sha ' + pr.sha256 + '. '
+       + (pr.warning
+          ? 'WARNING: the running router reads ' + pr.launched_with + ', not the file this page renders.'
+          : (!c.router
+             ? 'no router process is running, so no preset file is loaded: this is the file the next start would be given.'
+             : 'the running router reads this file.')))
+    : 'the preset file could not be read: ' + (pr.error || 'unknown'));
+  const sv = d.served || {};
+  setText('census-served', sv.ok
+    ? (sv.count + ' model(s) registered, ' + sv.loaded + ' loaded'
+       + (sv.loaded_ids.length ? (' (' + sv.loaded_ids.join(', ') + ')') : '')
+       + '; ' + sv.aliases.length + ' alias(es)')
+    : 'the router did not answer /v1/models: ' + sv.error);
+}
 async function svcAction(key, action){
   const meta = SVC[key] || {};
   if (!meta.controllable){ alert('unit not installed yet'); return; }
+  // Starting the router is the verb this panel exists for. `systemctl start` succeeds when a
+  // hand-started llama-server already holds the port -- systemd is satisfied and every client is
+  // talking to the other process -- so a start that was asked for while the census named such a
+  // process is confirmed with those processes in front of the operator, not after the fact.
+  if (key === 'llamacpp' && action === 'start'){
+    const c = (CENSUS && CENSUS.processes) || null;
+    if (!c){
+      if (!confirm('The process census has not been read on this page. Start ' + (meta.name || key)
+                   + ' without it?')) return;
+    } else if (!c.ok){
+      if (!confirm('The process census could not be read (' + (c.error || 'unknown')
+                   + '). Start ' + (meta.name || key) + ' without knowing what llama-server processes'
+                   + ' are running?')) return;
+    } else if (c.foreign.length || (c.port_clash || []).length){
+      if (!confirm('Outside ' + (CENSUS.unit) + ': ' + describeForeign(c.foreign) + '.\n'
+                   + ((c.port_clash || []).length
+                      ? ('Ports ' + c.port_clash.join(', ') + ' are held by those processes. Starting '
+                         + (meta.name || key) + ' will succeed and will not take over those ports.\n')
+                      : 'None of them holds a port the router launches on.\n')
+                   + 'Start ' + (meta.name || key) + ' anyway?')) return;
+    }
+  }
   if (action !== 'start' &&
       !confirm(meta.confirm || ('Stop or restart ' + (meta.name || key) + '?'))) return;
   try{
@@ -863,6 +1043,11 @@ async function svcAction(key, action){
   }catch(e){ alert('action failed: ' + e); }
 }
 loadSvc();
+(function(){
+  const b = document.getElementById('census-refresh');
+  if (b) b.addEventListener('click', censusRefresh);
+  censusRefresh();   // the page's server-rendered census is a snapshot; make it the live one
+})();
 </script>
 <script>
 // Phase C: llama.cpp release update — one click fetches, builds (~10-20 min),

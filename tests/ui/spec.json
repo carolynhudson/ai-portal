@@ -40,7 +40,8 @@
     "/api/comfyui",
     "/api/services",
     "/api/updates/llamacpp",
-    "/api/updates/comfyui"
+    "/api/updates/comfyui",
+    "/api/router/report"
    ],
    "expectVisible": [
     "#router-state",
@@ -69,7 +70,15 @@
     "#machine-detail",
     "#machine-cpu",
     "#disk-sampled",
-    "#machine-chart"
+    "#machine-chart",
+    "#router-census",
+    "#census-state",
+    "#census-workers",
+    "#census-foreign",
+    "#census-clash",
+    "#census-presets",
+    "#census-served",
+    "#census-refresh"
    ],
    "expectEnabled": [
     "#update-llamacpp button.btn-primary-sm",
@@ -254,7 +263,8 @@
     "^/api/updates/llamacpp/rollback$",
     "^/api/updates/llamacpp/delete$",
     "^/api/updates/comfyui$",
-    "^/api/updates/hf$"
+    "^/api/updates/hf$",
+    "^/api/services/llamacpp/start$"
    ],
    "expectText": [
     {
@@ -291,11 +301,45 @@
     {
      "selector": "#attention-count",
      "matches": "\\d"
+    },
+    {
+     "_comment": [
+      "\u00a76.14.1l. The sandbox portal is a subprocess, not the systemd unit, so the census's",
+      "job here is the claim that matters most: it must account for the llama-server",
+      "processes this machine is really running, and it must not present an unreadable",
+      "preset file as a healthy one. Every assertion below is a sentence the panel says in",
+      "both of its branches -- asserting one branch would make the suite depend on whether",
+      "the operator's router happens to be running while the tests run."
+     ],
+     "selector": "#census-state",
+     "contains": "ai-llama-router is"
+    },
+    {
+     "selector": "#census-workers",
+     "contains": "process"
+    },
+    {
+     "selector": "#census-foreign",
+     "contains": "llama-server"
+    },
+    {
+     "selector": "#census-clash",
+     "contains": "port"
+    },
+    {
+     "selector": "#census-presets",
+     "contains": "no router process"
     }
    ],
    "expectHidden": [
     "#stray-row",
     "#stray-hint"
+   ],
+   "_census_comment": [
+    "Starting the router is confirm-gated in the harness because the page now confirms it when the",
+    "census names a llama-server outside the unit -- a hand-started server on the router's port makes",
+    "`systemctl start` succeed while every client is talking to the other process. The denied pass",
+    "proves the page requested nothing before the confirm."
    ]
   },
   {

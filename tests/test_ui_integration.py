@@ -125,6 +125,16 @@ def ui_server():
         (home / "ai" / "models" / "llama" / SAFE_MODEL).mkdir(parents=True)
         _seed_gguf(home / "ai" / "models" / "llama" / SAFE_MODEL / f"{SAFE_MODEL}.gguf", pad=1024)
 
+    # The preset file, seeded: the pages that preview presets (personalities, models, the dashboard's
+    # census) render a file in the operator's world. A sandbox without one is not broken — those pages
+    # correctly say the file could not be read — but an assertion written against that state describes
+    # the fixture, not the feature, and it would keep passing if a preview stopped computing anything.
+    llama_cfg = home / "ai" / "config" / "llama"
+    llama_cfg.mkdir(parents=True)
+    (llama_cfg / "presets.ini").write_text(
+        "[*]\nthreads = 16\ngpu_split_mask = 0xf\n\n[ui-tiny-coder]\nalias = UI-Tiny\n\n",
+        encoding="utf-8")
+
     env = dict(os.environ)
     env.update(
         AI_PORTAL_HOME=str(home),

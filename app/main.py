@@ -46,6 +46,7 @@ from .core import (
     personality,
     presets_store,
     ratelimit,
+    routerctl,
     serviceconf,
     serviceenv,
     settingrows,
@@ -662,6 +663,10 @@ def create_app() -> FastAPI:
         # NameError happens
         hb = _health_bundle()
         snap = router_mod.snapshot()
+        # The router's own account of itself, read once at page load like the disk and GPU figures:
+        # it costs a `ps`, an HTTP probe and a file read, and none of those is a second-scale number.
+        # The page can re-read it on request; the panel says when it was read.
+        census = routerctl.self_report()
         # The machine detail section (disk, GPU) renders once, at page load: these are
         # seconds-scale numbers with no second-scale signal in them. They carry the time
         # they were read, and the poll below reports the time of its own sample.
@@ -673,7 +678,7 @@ def create_app() -> FastAPI:
                    if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
         return templates.TemplateResponse(request, "dashboard.html",
                                           {"providers": providers, "health": hb,
-                                           "r": snap, "comfy": comfy_snapshot(),
+                                           "r": snap, "comfy": comfy_snapshot(), "census": census,
                                            "disk": disk, "gpu": gpu_txt,
                                            "sampled": datetime.now().strftime("%H:%M:%S"),
                                            "settings": db.current_settings()})
@@ -1251,6 +1256,18 @@ def create_app() -> FastAPI:
         this every few seconds, and the pane that reads it is off by default.
         """
         return router_mod.snapshot(raw=raw)
+
+    @app.get("/api/router/report")
+    def api_router_report(_=Depends(_require_auth)):
+        """The router's own account of itself, and the servers the portal is not responsible for.
+
+        The dashboard's pulse says what the router is doing. This says what it *is*: the unit's main
+        process, the workers it spawned, the port and preset file it launched with, and every
+        `llama-server` on the box that is neither of those. A hand-started server on the router's port
+        makes `systemctl start` succeed while every client is talking to the wrong process, so the
+        page has to name those processes rather than report a unit state.
+        """
+        return routerctl.self_report()
 
     @app.get("/api/settings")
     def api_settings(_=Depends(_require_auth)):
