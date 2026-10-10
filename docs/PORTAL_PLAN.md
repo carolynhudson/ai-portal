@@ -4018,6 +4018,63 @@ its own module captured while the index scanned the other. conftest now owns tha
 `8716352`), and the pair passes -- so the pair that was listed as known-failing in the last four plan
 records is no longer known-failing.
 
+##### 6.14.1k Step 3 is a deck of model personalities (2026-10-09)
+
+**The idea, in the operator's words:** model-level settings for a personality are their own "model
+personality", which can exist only inside a full personality, while a full personality need not have
+any -- so the model-personality editor is the main personality editor with collapsible cards, and a
+mechanic to create new ones. The question posed was shared versus embedded. Measured answer: **shared**,
+which is what `model_configs` already is. A model config is `(name, base_model, settings)`, `render()`
+writes it as the model's section plus `alias = <name>`, and the router routes by that alias (measured:
+`POST /v1/chat/completions {"model":"tiny-chat"} → 200`), so a model personality's name is a client
+endpoint on the network. `Autocomplete-Qwopus3.5-MTP` is used by `VSCode` and `Flash-VSCode` both:
+embedded, the greedy-sampling block is duplicated in two files and they drift; shared, it is one
+object and one place to fix.
+
+**One card per model, because that is all the file can hold.** `presets.ini` has one section per model,
+and `resolve_targets()` refuses two configs on the same model -- "which settings win" would be answered
+by dictionary ordering. So the nested list is naturally one card per model the personality covers, not
+an arbitrary pile of cards, and a deck with more cards than models would be a UI for a state the
+generator cannot write. The card count is asserted against the index for exactly that reason.
+
+**The card is the selector, and there is one grid.** The per-model fields move into the open card
+rather than being cloned per model: two grids is two places where `parallel` can disagree, and the row
+component (§6.14.1) is the thing being reused. Two consequences of that fell out of the UI gate. The
+strip has to **move** `#ed-model`, not read it -- the sweep drives that select behind the page's back,
+so a strip that only read it leaves the open card naming a different file from the selected model. And
+a second click on the open card has to close it: a control that changes nothing is what the gate calls
+dead, and the honest reading is that a card you have already opened should answer a second click.
+
+**Shared, said out loud.** A card states the object it edits, how many settings it carries, and which
+personalities use it -- and the sentence says that editing it changes those too, because that is the
+danger of the shared choice and the operator is the one who has to weigh it. `used by` arrives from
+the read endpoint rather than being worked out by the page: `POST /api/model-configs/delete` refuses a
+config that a personality is still using (`'x' is assigned by y; remove it from those personalities
+first`), and a page computing its own answer to that question would be a second, weaker version of the
+answer the refusal depends on. The delete button is locked, with the users named, when the endpoint
+would refuse.
+
+**Names are immutable** (operator's decision, same day as the shared one): renaming means create-new
+plus delete-old, because the alias is the endpoint a client types, not a label. The card's buttons are
+therefore attach / create-with-these-settings / save-these-settings / detach / delete, and the delete
+of a config in use is asserted as a refusal naming the users, with the config still on disk afterwards.
+
+**Where the writes land, asserted.** Create, save and delete of a model personality write the portal's
+own definitions; `presets.ini` is compared before and after the whole round trip and is unchanged, so
+no card verb can restart the router -- Apply remains the only path to the file. Detaching is not a
+request at all: it changes the personality's model list, which step 1's Save stores. The step-1 list
+and the step-3 cards are one fact seen from two sides, so the card refresh reuses the checkbox state as
+the single store -- two controls allowed to disagree about one list is the §6.14.1c deck bug arriving in
+a new shape.
+
+**Harness and suite.** Personalities page gained: cards visible and counted, the strip's text as a
+shared-object statement, `requireConfirmFor` on `/api/model-configs/delete`, and the sweep driving
+652 control interactions on the page with zero dead controls. Suite **873 passed / 3 skipped**; UI gate
+**53 passed**.
+
+**Known, not introduced.** `presets.ini` is untouched by this slice: sha `9eb0c21d8075…` before and
+after, the router was not restarted, and `Agentic-PI` is what it is serving.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
