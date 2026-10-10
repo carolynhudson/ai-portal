@@ -79,7 +79,8 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
 | `/machine` | Own the box: load, RAM aperture, disk, GPU, health probes, alerts settings. |
 | `/machine/updates` | Own what changes the software under it: llama.cpp release, ComfyUI, huggingface-cli, python/venvs, GPU drivers. |
 | `/portal` | Own the portal itself: auth, bind, rate limits, polling, jobs history, events, the documentation entry. |
-| `/projects` | Own `~/ai-projects/*`: each project's state, its portal-related work, and a pi session scoped to it. |
+| `/projects` | Own the projects root: create a project from the init shortlist, list projects, and launch a pi session scoped to one. Inactive state only. |
+| `/pi` | Own the live pi session: the terminal, its state, and `/quit`. Shows the session and nothing else while one is running. |
 
 ## L3 Core flow
 
@@ -106,6 +107,10 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
 | P5 | `/projects` → project detail → start a pi session job scoped to it → job bar names it → log readable on the project page |
 | P6 | any page → a stated fact cites the documentation → `/help#section` lands on the cited section |
 | P7 | `/machine` → a probe degraded → "did not look" sentence → re-check → populated or degraded again (never a default) |
+| P8 | `/projects` → name a project → tick the init shortlist (git, uv, README, .gitignore) → create → the project row appears with the init results |
+| P9 | `/projects` → pick a project → launch (confirm names the working directory) → `/pi` operational (terminal only) → work → `/quit` → `/projects` inactive |
+| P10 | `/projects` → pick a project → resume a prior session by id → `/pi` operational, reconnected to the live session after a portal restart |
+| P11 | `/machine/updates` → the pi harness card → check pi version and extensions → update (confirm) → card states the installed versions |
 
 ## L4 Component behavior detail
 
@@ -129,6 +134,20 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
   - Focus: keyboard focus is visible as a ring, not a 1 px border-colour change (baseline §6 item 4
     is a defect this spec fixes, not a style preference); `prefers-reduced-motion` covers the job
     bar spinner on every page, not only the dashboard.
+- **Session host (new component, and the load-bearing one).** A pi session is a PTY-hosted process
+  that the portal *connects to*, not a process the portal *parents*: started with `setsid` and a
+  pidfile under `~/ai/state/portal/pi-sessions/`, bridged over a Unix socket, so a portal restart
+  leaves the agent running and the portal finds it again on startup. This is the operator's stated
+  requirement — an agent that is editing the portal's code must survive the portal restarting itself.
+  `tmux` and `dtach` are not installed on this box (measured), so the bridge is ours; `pi` already
+  carries the session identity the page needs (`--session-id <id>` creates, `--session <id>` and
+  `--continue` reopen, sessions under `~/.pi/agent/sessions/<project-dir>/`).
+- **Terminal (new component).** `@xterm/xterm` over a WebSocket to the host. It is the only part of
+  the portal that streams; it authenticates with the same cookie as the REST API, it shows the
+  session's state in words (starting · live · ended · exited-n), and it closes with `/quit`.
+- **Two states only.** Inactive: projects list, create form, launch and resume verbs. Operational:
+  the terminal, and nothing else — no nav to a dashboard that hides a live session, no second launch
+  control, no settings form on the same page.
 - Reuse is the rule: new surfaces compose the twelve baseline primitives; page-local CSS is allowed
   only for a layout the primitives cannot express, and it is written as a named rule in
   `docs/PORTAL_UI.md`, not as a one-off selector. The exception to "no internal change to existing
@@ -210,6 +229,34 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
     degraded branch in the sandbox (the sandbox's portal *is* outside the unit, so the census's
     foreign branch is the deterministic one), and the mutation check
     "the census stops naming the servers it does not control".
+
+- Given no pi session is running, When the operator opens `/projects` and launches a session in a
+  project directory, Then `/pi` shows the terminal and nothing else, the session's own id is on the
+  page, and the process is not a child of the portal (it is started with `setsid` and a pidfile under
+  the portal state dir). (path: P9)
+  - Required evidence: an automated check that launches a session, reads `/proc/<pid>/stat` parentage
+    against the portal's pid, and asserts the pidfile; interaction record for the launch confirm.
+- Given a live pi session, When the portal service is restarted, Then the session process is still
+  running, the portal discovers it on startup from the pidfile, and `/pi` reattaches to the same
+  session id. (path: P10)
+  - Required evidence: an automated check — start a session, `systemctl --user restart ai-portal`
+    (portal unit only), assert the session pid is alive and `GET /api/pi/session` names it; state
+    "portal restarted with a live session" as the capture seed.
+- Given a running session ends (via `/quit`), When the page observes the end, Then `/pi` returns to
+  the inactive state with the session id and exit code stated, and `/projects` offers resume by that
+  id. (path: P9)
+  - Required evidence: automated check on the end-of-session transition; harness expectation that
+    the operational controls are gone and the inactive controls are present.
+- Given the projects root is a setting, When it is unset, missing, or a path that is not a directory,
+  Then the create form is disabled with that reason on the page and the endpoint refuses with the
+  same reason. (path: P8)
+  - Required evidence: `test_ui_contract.py` on the disabled-with-reason markup, an endpoint test on
+    each refusal, and a harness expectation that a project name escaping the root is refused.
+- Given the pi harness has a version and installed extensions, When the operator opens
+  `/machine/updates`, Then the pi card shows the harness version and the extension set with the
+  same check/update shape as llama.cpp and ComfyUI. (path: P11)
+  - Required evidence: endpoint test on the pi card payload, harness expectation on the card text,
+    and `test_ui_contract.py` that the pi card lives on the updates page and not on `/pi`.
 
 Design done definition: the layout is done when the ribbon is the only place the five live facts are
 restated, every one of the operator's seven concerns has exactly one owner page, `/` answers "what is

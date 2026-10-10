@@ -157,12 +157,37 @@ Written down so they are choices, not surprises.
 6. **No ribbon.** The hero's facts exist only on `/`. The job bar proves the pattern works — a
    persistent element on every page, with `main` padding reserved for it — and it is the model for
    the status ribbon.
-7. **Visual claims are not verified.** The UI harness drives the real pages in jsdom and proves
-   controls, requests, dialogs, blocked mutations, states, text and coverage. jsdom has no layout
-   engine: it cannot measure a box, detect overlap, check contrast, or take a screenshot. Spacing,
-   cramping and hierarchy are currently *asserted in prose and proven nowhere*. Enabling
-   Playwright (`pip install playwright && playwright install chromium`, plus the design-playbook
-   evidence server in `.mcp.json`) is the concrete step that closes this gap.
+7. **Visual claims are measured now, and only by one tool.** `tools/layout_measure.py` opens the
+   portal in Chromium (Playwright, installed 2026-10-10 with the headless shell) and reports box
+   geometry, fold coverage, column gaps and intersecting boxes. Measured at **1280x800 on the live
+   portal**, top-level blocks only:
+
+   | page | scroll height | blocks | above the fold | tallest block |
+   | --- | --- | --- | --- | --- |
+   | `/` | 1796 px | 4 | 1 | 769 px (llama.cpp router hero) |
+   | `/models` | 1743 px | 7 | 2 | 850 px (library table) |
+   | `/personalities` | 6800 px | 3 | 1 | **5298 px (the editor, 6.6 viewports in one block)** |
+   | `/health` | 2048 px | 8 | 5 | 408 px |
+   | `/settings` | 833 px | 4 | 4 | 193 px, with **1 pair of blocks intersecting** |
+   | `/help` | 800 px | 1 | 1 | 590 px |
+
+   Three facts come out of that. The status page puts **one** block above the fold on a laptop, so
+   "what is running" is a scroll, not a glance. The personalities editor is a single block 6.6
+   viewports tall, which is cramping in its purest form. And `/settings` renders two blocks whose
+   boxes intersect — a defect, not a style preference.
+
+8. **Type sizes are fractional, not scaled.** The same tool reports the font sizes computed on each
+   page: `/` uses 12, 13, 14, 15 px *plus* 12.5 and 13.12 px; `/personalities` is dominated by
+   12.48 px (588 elements) and 13.12 px (352); `/help` has 195 elements at 12 px. Page-local
+   `rem`-multiplied sizes produce the fractions, and that is what a missing scale looks like when
+   measured.
+
+9. **No PTY host, no web terminal.** The pi harness page (`docs/PORTAL_LAYOUT.md` L4) needs a
+   portal-restart-surviving terminal session. Measured on this box: `tmux` **absent**, `dtach`
+   **absent**, `/usr/bin/script` present, `node` v22.22.1 present, `@xterm/xterm` not vendored.
+   `pi` carries the session identity the page needs (`--session-id <id>` creates it if missing,
+   `--session <id>` and `--continue` reopen, sessions under `~/.pi/agent/sessions/<project-dir>/`),
+   so resume is already solved by pi; the *surviving live process* is ours to build.
 
 ## 7. Verification
 
@@ -174,5 +199,8 @@ report dead controls, uncaught dialogs and coverage gaps; `tests/ui/mutation_che
 realistic regressions and requires the suite to name them. A page slice that removes a guard fails
 in CI.
 
-What is **not** verified is §6 item 7. Until a layout engine is in the loop, the honest statement is:
-behaviour is verified, appearance is not.
+What is verified, and by what: behaviour by the jsdom harness and the contract tests; contrast by the
+ratios in §1; geometry by `tools/layout_measure.py`. What is **not** verified: keyboard focus
+appearance (no tool asserts a focus ring today), and anything about how a page looks beyond box
+geometry — the design-playbook evidence server (`observe*`) would add screenshots and the
+accessibility tree, and it needs a project `.mcp.json` to run on this box.
