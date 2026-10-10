@@ -904,3 +904,64 @@ def test_the_editor_creates_saves_and_deletes_a_personality():
     for fn in ("identityBody", "writeIdentity"):
         assert "/api/personalities/apply" not in _fn(script, fn), \
             f"{fn}() reaches the route that restarts the router"
+
+
+# The tokens as the page writes them: `c.querySelector('.mp-save').addEventListener(...)`, so the
+# closing paren belongs to the needle.
+CARD_BUTTONS = ["'.mp-strip')", "'.mp-attach')", "'.mp-new')", "'.mp-create')", "'.mp-save')",
+                "'.mp-delete')", "'.mp-detach')"]
+
+
+def test_the_model_personality_cards_edit_one_object_at_a_time():
+    """Step 3 is a deck of shared objects, and the page keeps that a single fact (§6.14.1k).
+
+    Four things are asserted here because each is a way a nested editor goes quietly wrong: two
+    copies of the per-model grid (so two cards can show two values for one key), a card that works out
+    `used by` for itself (the delete endpoint refuses on the strength of that answer), a strip that
+    reads the model select instead of moving it (the sweep then drives one model while the open card
+    names another), and a detach that fires a request (it is the personality's choice, and the
+    personality is written by step 1's Save).
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    script = _editor_script(tpl)
+    assert tpl.count('id="ed-model-fields"') == 1, \
+        "the per-model grid exists more than once, so two cards can disagree about one key"
+    assert "$('.mp-slot').appendChild" not in script and \
+        "c.querySelector('.mp-slot').appendChild($('ed-model-fields'))" in script, \
+        "the open card does not host the one grid"
+    assert "CONFIG_USES" in script and "dataset.configs" in script, \
+        "the shared objects are not read from the data the server authored"
+    assert "assigned_personalities" not in script
+
+    # The two selectors are arrow consts, not `function` declarations, so they are sliced by their
+    # own terminator rather than by _fn's brace counting.
+    strip = script[script.index("const selectModel ="):script.index("};", script.index("const selectModel ="))]
+    assert "dispatchEvent(new Event('change'))" in strip, \
+        "clicking a card reads the model selector without moving it"
+    close = script[script.index("const closeCard ="):script.index("};", script.index("const closeCard ="))]
+    assert "showCard(null)" in close, "a second click on the open card does not answer"
+
+    attach = _fn(script, "attachConfigToPersonality")
+    assert "attachBoxes()" in attach and "syncIdentity()" in attach, \
+        "the card's model personality is a second list, not the one step 1 saves"
+    def card_handler(token: str) -> str:
+        """One card button's listener, sliced from its own addEventListener to the next control."""
+        start = script.index(f"{token}.addEventListener")
+        ends = [script.index(nxt + ".addEventListener", start + 1) for nxt in CARD_BUTTONS
+                if script.find(nxt + ".addEventListener", start + 1) > start]
+        ends.append(script.index("$('ed-preview').addEventListener"))
+        return script[start:min(ends)]
+
+    detach = card_handler("'.mp-detach')")
+    assert "postConfig" not in detach and "fetch(" not in detach, \
+        "detach posts: detaching is the personality's choice, and Save writes it"
+
+    create = card_handler("'.mp-create')")
+    save = card_handler("'.mp-save')")
+    drop = card_handler("'.mp-delete')")
+    assert "/api/model-configs/save" in create and "/api/model-configs/save" in save, \
+        "the card's verbs do not reach the model personality endpoint"
+    assert "/api/model-configs/delete" in drop and "window.confirm(" in drop, \
+        "delete is not confirm-gated"
+    assert "/api/personalities/apply" not in create + save + drop, \
+        "a card verb reaches the route that restarts the router"

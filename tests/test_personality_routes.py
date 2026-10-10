@@ -1279,3 +1279,101 @@ def test_the_page_says_what_an_empty_field_means(client):
     region = body[body.index('id="ed-layers"'):]
     assert "does not set the key" in region, region[:300]
     assert "default" in region, "the row default is not named as the thing that applies"
+
+
+def _shared_data(body: str) -> dict:
+    """The editor's shared-object data, read off the attribute the page reads it from."""
+    m = re.search(r'id="pers-editor"\s+data-configs=\'([^\']*)\'', body)
+    assert m, "the editor carries no shared-object data"
+    return json.loads(html.unescape(m.group(1)))
+
+
+def test_the_editor_offers_one_card_per_model(client, library, tuned):
+    """One card per model, in the only shape the file can hold.
+
+    `presets.ini` has one section per model and `resolve_targets()` refuses two configs on one model,
+    so a deck with an arbitrary number of cards per model would be a UI for a state the generator
+    cannot write. The card count is asserted against the library for that reason.
+    """
+    body = client.get("/personalities").text
+    cards = re.findall(r'<section class="mp-card" data-model="([^"]+)"', body)
+    assert len(cards) == len(set(cards)), "a model has more than one card"
+    assert set(library) <= set(cards), f"cards are {cards}, library is {library}"
+    # The same list the model-config endpoint calls its bases: a card for a model the router cannot
+    # see would offer a model personality the generator refuses to write.
+    bases = set(client.get("/api/model-configs").json()["bases"])
+    assert set(cards) <= bases, f"cards name models the index does not: {set(cards) - bases}"
+    for slot in ("mp-attach", "mp-new", "mp-create", "mp-save", "mp-delete", "mp-detach",
+                 "mp-share", "mp-slot", "mp-result"):
+        assert slot in body, f"the card has no {slot}"
+    # The card is the selector: the only control on the strip is the strip.
+    strip = re.search(r'<button type="button" class="mp-strip".*?</button>', body, re.S).group(0)
+    assert "<button" not in strip[len("<button"):] and "<input" not in strip, \
+        "the card strip carries a control: the strip is for reading and choosing, not for writing"
+
+
+def test_a_card_names_the_object_it_edits_and_who_else_uses_it(client, library, tuned):
+    """`used by` is server data, because the delete route's refusal depends on the same answer.
+
+    A card that computed "who else uses this" from what it could see on the page would be a second,
+    weaker answer to a question the read endpoint answers exactly -- and the endpoint refuses a delete
+    on the strength of that answer.
+    """
+    shared = _shared_data(client.get("/personalities").text)
+    by_name = {c["name"]: c for c in shared["configs"]}
+    assert tuned["config"] in by_name, shared["configs"]
+    assert by_name[tuned["config"]]["base_model"] == library[0], by_name[tuned["config"]]
+    assert by_name[tuned["config"]]["settings"], "a config with no settings is not a model personality"
+    assert tuned["personality"] in shared["uses"][tuned["config"]], shared["uses"]
+    # Only configs built on that model can attach to it -- the same rule `model_config.save` enforces.
+    for c in shared["configs"]:
+        assert c["base_model"] in library, c
+
+
+def test_a_config_in_use_refuses_delete_and_names_who_uses_it(client, library, tuned):
+    """The refusal, in the operator's terms, before anything is removed.
+
+    A config that vanishes from under a personality does not error: the personality quietly stops
+    carrying those settings and the next apply writes a smaller file than the operator believes they
+    are editing.
+    """
+    r = client.post("/api/model-configs/delete", json={"name": tuned["config"], "confirm": True})
+    assert r.status_code == 400, r.text
+    assert tuned["personality"] in r.text, r.text
+    assert "assigned by" in r.text, r.text
+    assert mc.get(tuned["config"]), "the refusal deleted the config it refused about"
+
+
+def test_a_model_personality_can_be_created_for_a_model_the_page_lists(client, library):
+    """Step 3 creates a shared object; step 1 attaches it; the router file is untouched.
+
+    The two writes stay separated: a model personality is a definition the portal keeps, and
+    `presets.ini` changes only through Apply. Asserted across both, with the file compared, because
+    the whole point of the split is that editing a shared object cannot restart the router.
+    """
+    before = _presets_text()
+    name = "Page-Card-Coder"
+    r = client.post("/api/model-configs/save",
+                    json={"name": name, "base_model": library[1],
+                          "settings": {"temp": "0.2", "parallel": "4"}, "note": "from the card"})
+    assert r.status_code == 200, r.text
+    assert r.json()["config"]["base_model"] == library[1]
+    assert r.json()["assigned"] == [], "a brand new config is claimed by somebody"
+
+    shared = _shared_data(client.get("/personalities").text)
+    assert name in {c["name"] for c in shared["configs"]}
+    assert shared["uses"].get(name, []) == []
+
+    assert client.post("/api/personalities/save",
+                       json={"name": "Card-User", "models_max": 1, "note": "",
+                             "models": [name], "global_edits": {}}).status_code == 200
+    shared = _shared_data(client.get("/personalities").text)
+    assert shared["uses"][name] == ["Card-User"], shared["uses"]
+    d = client.post("/api/model-configs/delete", json={"name": name, "confirm": True})
+    assert d.status_code == 400 and "Card-User" in d.text, d.text
+
+    assert _presets_text() == before, "a model personality write touched presets.ini"
+    assert client.post("/api/personalities/delete",
+                       json={"name": "Card-User", "confirm": True}).status_code == 200
+    assert client.post("/api/model-configs/delete",
+                       json={"name": name, "confirm": True}).status_code == 200

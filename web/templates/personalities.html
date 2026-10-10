@@ -84,6 +84,18 @@ h2{margin:18px 0 6px}
   font-size:.78rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
 .ed-steps li[data-step]{border-bottom:2px solid var(--line);padding-bottom:2px}
 .ed-steps li[data-step="1"]{color:var(--acc);border-bottom-color:var(--acc)}
+/* A model personality is a named object with settings, so it gets a card: a strip to read, a body to
+   edit. One per model, which is what the file can hold. */
+.mp-cards{display:grid;gap:6px;margin:8px 0 10px}
+.mp-card{border:1px solid var(--line);border-radius:6px;padding:0}
+.mp-card[data-open=1]{border-color:var(--acc)}
+.mp-strip{display:flex;flex-wrap:wrap;gap:10px;width:100%;text-align:left;background:none;border:0;
+  padding:8px 10px;font:inherit;cursor:pointer;color:inherit}
+.mp-strip .mp-name{font-weight:600}
+.mp-strip .mp-meta{flex:1 1 auto;text-align:right}
+.mp-body{padding:4px 10px 10px;border-top:1px solid var(--line)}
+.mp-share{margin:6px 0}
+.mp-slot>.ed-grid{padding:0}
 /* The model list is a set of names to scan, not a table to read: a config is shown with the file it
    renames, because that is the pair an operator is choosing between. */
 .ed-attach{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2px 18px}
@@ -333,7 +345,8 @@ h2{margin:18px 0 6px}
   are editing is the configuration, not an empty form -- and a field you leave alone is sent
   unchanged, which is the same as not touching it.
 </p>
-<div class="pers-editor" id="pers-editor">
+<div class="pers-editor" id="pers-editor"
+     data-configs='{{ {"configs": configs, "uses": config_uses} | tojson }}'>
   <div class="ed-row">
     <label for="ed-persona">personality</label>
     {# The personality's own current settings ride on its option (§6.14.1i), computed on the
@@ -347,7 +360,7 @@ h2{margin:18px 0 6px}
          letter or digit, so no stored personality can collide with it. #}
       <option value="__new__">new personality…</option>
     </select>
-    <span class="mut" id="ed-model-count"></span>
+    <span class="mut" id="ed-model-count">pick a model to see its model personality</span>
   </div>
   {# Where each layer is written, said once and near both grids. A per-model field shows only what
      that model's section sets: the values it inherits from [*] are deliberately not copied into
@@ -449,8 +462,46 @@ h2{margin:18px 0 6px}
   </div>
 
   <h3>3 Per model</h3>
+  {# The model personalities live here, as one card per model this personality covers (§6.14.1f
+     answer 2). One per model, not an arbitrary pile: presets.ini has one section per model, and
+     resolve_targets() already refuses two configs on the same model, because "which settings win"
+     would be answered by dictionary ordering. The cards are the selector -- there is one set of
+     inputs, and the open card is where they sit. #}
+  <div class="mp-cards" id="mp-cards">
+    {% for m in model_ids %}
+    <section class="mp-card" data-model="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>
+      <button type="button" class="mp-strip" aria-expanded="false">
+        <span class="mp-name mono">{{ m }}</span>
+        <span class="mut mp-meta"></span>
+      </button>
+      <div class="mp-body" hidden>
+        <p class="mut mp-share"></p>
+        <div class="ed-row">
+          <label for="mp-attach-{{ loop.index }}">model personality</label>
+          <select class="mp-attach" id="mp-attach-{{ loop.index }}">
+            <option value="">none -- this model runs on the personality's [ * ]</option>
+          </select>
+          <button type="button" class="mp-detach" disabled>detach</button>
+        </div>
+        <div class="ed-row">
+          <label for="mp-new-{{ loop.index }}">new name</label>
+          <input class="mp-new" id="mp-new-{{ loop.index }}" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="a new model personality for this file">
+          <button type="button" class="mp-create" disabled>create with these settings</button>
+          <button type="button" class="mp-save" disabled>save these settings</button>
+          <button type="button" class="mp-delete" disabled>delete</button>
+        </div>
+        <p class="mut mp-result"></p>
+        <div class="mp-slot"></div>
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+  <div id="mp-rest"></div>
   <div class="ed-row">
-    <label for="ed-model">model</label>
+    {# The model selector stays as the target of the per-model fields: a card selects a model, and
+       these two buttons act on the model the open card names. #}
+    <label for="ed-model" class="mut">target</label>
     <select id="ed-model">
       {% for m in model_ids %}<option value="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>{{ m }}</option>{% endfor %}
     </select>
@@ -524,6 +575,12 @@ h2{margin:18px 0 6px}
   // responses, and a diff line is the least likely thing in this app to need escaping but the
   // worst place to learn that lesson late.
   const $ = (id) => document.getElementById(id);
+  const readJSON = (text) => {
+    // Server-authored JSON on an attribute. A malformed value yields empty data, which the card
+    // code already treats as "no model personalities" -- and an empty grid is a claim the page
+    // states, not a crash the browser shows.
+    try { const v = JSON.parse(text); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; }
+  };
   const node = (tag, cls, text) => {
     const el = document.createElement(tag);
     if (cls) el.className = cls;
@@ -533,6 +590,16 @@ h2{margin:18px 0 6px}
 
   const globalFields = [...$('ed-global').querySelectorAll('.ed-field')];
   const modelFields = [...$('ed-model-fields').querySelectorAll('.ed-field')];
+
+  // The shared objects step 3 edits (§6.14.1k) arrive on the editor element, not inside this
+  // script: the inline scripts are asserted to parse as written (§6.14.1e), and a Jinja expression
+  // in a <script> body is text that only becomes JavaScript after rendering. The data is read once,
+  // from one place, and a card never works out "used by" for itself.
+  const SHARED = readJSON($('pers-editor').dataset.configs || '{}');
+  const CONFIGS = SHARED.configs || [];      // [{name, base_model, settings, note}]
+  const CONFIG_USES = SHARED.uses || {};     // {name: [personality]}
+  const configByName = {};
+  for (const c of CONFIGS) configByName[c.name] = c;
 
   // The editor's state is a working copy of each personality's own settings, not a list of edits
   // (§6.14.1i). It starts from what the personality carries today -- `base`, read off the option --
@@ -648,6 +715,9 @@ h2{margin:18px 0 6px}
   }
 
   function applyVisibility(name) {
+    // The limits come from `limitsFor`, the existing safe reader of the option's data: the cards
+    // carry the same facts for display, and a second JSON.parse of a second copy is how the two
+    // would start to disagree.
     const limits = limitsFor(name);
     const st = modelWork(shown, name);
     for (const f of modelFields) {
@@ -671,7 +741,100 @@ h2{margin:18px 0 6px}
       // value in a row this file cannot use must never reach the payload.
       control.value = f.hidden ? '' : (saved[f.dataset.key] || '');
     }
+    showCard(name);
     summarize();
+  }
+
+  /* The model personalities (§6.14.1f answer 2, operator's decision: shared objects, nested editor).
+     One card per model the personality covers -- not an arbitrary pile, because presets.ini holds one
+     section per model and resolve_targets() refuses two configs on the same model. The card is the
+     selector: there is one set of inputs, and opening a card moves them into it, so the row component
+     is reused exactly as §6.14.1 planned and two cards cannot show two different values for one key.
+
+     The shared half is what a card says out loud: a config is one object, and `assigned` names every
+     personality using it, so an edit here is stated as an edit to those too. Deleting is refused by
+     the endpoint while a personality still uses the config, and the button says who. Names are
+     immutable by decision -- the alias is the name a client on the network types, so renaming is
+     create-new plus delete-old, which is what the two buttons do. */
+  const cards = new Map([...$('mp-cards').querySelectorAll('.mp-card')]
+                        .map(c => [c.dataset.model, c]));
+  const cardAttach = (c) => c.querySelector('.mp-attach');
+  const cardTarget = (c) => {
+    for (const o of cardAttach(c).options) if (o.value) { o.remove(); }
+  };
+  const sharedBy = (name) => (CONFIG_USES[name] || []).filter(p => p !== shown);
+
+  function configForModel(mid) {
+    // The config this personality resolves the model through, from the same view the fields seed
+    // from: `configs` maps a library id to the config name covering it.
+    const b = baseFor(shown);
+    return (b.configs || {})[mid] || '';
+  }
+
+  function fillCard(mid) {
+    const c = cards.get(mid);
+    if (!c) return;
+    const attached = configForModel(mid);
+    const sel = cardAttach(c);
+    while (sel.options.length > 1) sel.remove(1);
+    for (const name of Object.keys(CONFIGS)) {
+      // A config can only be attached to the file it was built on: model_config refuses a config
+      // whose base model is not in the library, and two configs on one model is the collision the
+      // router's own resolution refuses.
+      if (CONFIGS[name].base_model !== mid) continue;
+      const opt = document.createElement('option');
+      opt.value = name;
+      const users = sharedBy(name);
+      opt.textContent = users.length ? `${name} (used by ${users.join(', ')})` : name;
+      sel.appendChild(opt);
+    }
+    if (attached) sel.value = keep === attached ? attached : attached;
+    const cfgName = sel.value || attached;
+    const n = cfgName ? Object.keys(CONFIGS[cfgName]?.settings || {}).length : 0;
+    c.querySelector('.mp-meta').textContent = cfgName
+      ? `${cfgName} · ${n} setting(s) · used by ${(CONFIG_USES[cfgName] || []).length}`
+      : 'no model personality · runs on [*]';
+    const users = cfgName ? sharedBy(cfgName) : [];
+    c.querySelector('.mp-share').textContent = cfgName
+      ? (users.length
+        ? `${cfgName} is one object shared with ${users.join(', ')}: the settings you change here change there too, and the name is what a client on the network types.`
+        : `${cfgName} is used only by ${shown}. Names do not rename -- the alias is the endpoint, so a new name means create, then delete the old one.`)
+      : 'This model has no model personality: it runs on the personality’s global [*] and the server defaults.';
+    // Detach and delete act on what is attached. Detach is the personality's own choice, so it is
+    // allowed with other users; delete is the object's, and the endpoint refuses it while anyone
+    // else is using it -- the page says so instead of firing a request that will be refused.
+    c.querySelector('.mp-detach').disabled = !attached;
+    const del = c.querySelector('.mp-delete');
+    del.disabled = !cfgName || users.length > 0;
+    del.title = cfgName && users.length
+      ? `assigned by ${users.join(', ')}; detach it from those personalities first`
+      : '';
+    c.querySelector('.mp-create').disabled = !(c.querySelector('.mp-new').value.trim());
+  }
+
+  // Clicking the open card closes it. Without the toggle, a second click on the same strip is a
+  // control that changes nothing, which is exactly what the UI gate calls dead -- and the honest
+  // reading is that a card you have already opened should answer a second click, not swallow it.
+  let openModel = null;
+  function showCard(mid) {
+    openModel = mid || null;
+    for (const [m, c] of cards) {
+      const on = (m === openModel);
+      c.dataset.open = on ? '1' : '0';
+      c.querySelector('.mp-strip').setAttribute('aria-expanded', on ? 'true' : 'false');
+      c.querySelector('.mp-body').hidden = !on;
+      if (on) {
+        fillCard(m);
+        // The one set of inputs lives in the open card. Moving it, rather than cloning a grid per
+        // model, is what keeps "what is on screen" a single fact.
+        c.querySelector('.mp-slot').appendChild($('ed-model-fields'));
+      }
+    }
+    if (!openModel) {
+      $('mp-rest').appendChild($('ed-model-fields'));   // no card open: the grid has one resting place
+      $('ed-model-count').textContent =
+        'no model is open: pick a card, or pick a model below. The fields belong to whichever one you chose.';
+    }
   }
 
   // The fields follow the personality: choosing one loads its [*] values into the global grid and
@@ -728,6 +891,10 @@ h2{margin:18px 0 6px}
       : (checked.length
         ? `${checked.length} of ${attachBoxes().length} listed. A library model is that file under its own name with no settings of its own; a stored config is the same file under the name the router routes to.`
         : `No models are checked, so ${shown} covers the whole library, the same state default is in.`);
+    // The step-1 list and the step-3 cards are the same fact seen from two sides, so the open card
+    // is refreshed whenever the list moves. Two controls that can disagree about one list is the
+    // deck bug §6.14.1c named, arriving in a new shape.
+    if (openModel) fillCard(openModel);
     $('ed-identity-note').textContent = isNew
       ? 'Create stores the name, the model list, max resident and the [*] currently in the grid. It does not write presets.ini -- that stays Preview, then Apply.'
       : (b.editable
@@ -960,6 +1127,125 @@ h2{margin:18px 0 6px}
                         `and snapshots taken by past Apply runs are kept.`)) return;
     writeIdentity('/api/personalities/delete', {name: shown, confirm: true}, 'deleted');
   });
+  /* Card verbs (§6.14.1k). Creating, saving and deleting a model personality are writes to the
+     portal's own definitions -- `model_configs`, the table the router's sections are generated from
+     -- and not to presets.ini, so they need no confirm and no idle machine: the endpoint says so in
+     its own docstring, and the page repeats it where the operator reads it. Detaching is the
+     personality's choice and is written by step 1's Save, which is why it is not a request here. */
+  const cardResult = (c, text) => { c.querySelector('.mp-result').textContent = text; };
+
+  async function postConfig(path, body) {
+    try {
+      const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                   body: JSON.stringify(body)});
+      const data = await r.json().catch(() => null);
+      if (!r.ok) return {detail: String((data && data.detail) || `http ${r.status}`)};
+      return data;
+    } catch (e) {
+      return {detail: `request failed: ${e.message || e}`};
+    }
+  }
+
+  function attachConfigToPersonality(mid, cfgName) {
+    // The personality's model list is one fact with two views: the step-1 checkboxes by name, the
+    // cards by model. Both must move together, so the checkboxes are the store and this is the only
+    // writer. Attaching a config replaces the model's own entry: the file is covered once, by the
+    // name the router routes to.
+    for (const box of attachBoxes()) {
+      if (box.value === mid || box.value === cfgName) box.checked = (box.value === cfgName);
+    }
+    syncIdentity();
+  }
+
+  function gridSettings(mid) {
+    captureCurrent();
+    return Object.assign({}, modelWork(shown, mid));
+  }
+
+  // A strip is the model selector, seen from the card side. It drives the same control the sweep
+  // drives, and carries it: clicking a card must move `#ed-model`, because the sweep changes that
+  // select behind the page's back and a strip that only read it would leave the open card and the
+  // selected model naming two different files.
+  const selectModel = (mid) => {
+    if ($('ed-model').value !== mid) { $('ed-model').value = mid; $('ed-model').dispatchEvent(new Event('change')); }
+    else loadModel(mid);
+  };
+  const closeCard = () => { showCard(null); captured = null; };
+
+  for (const [mid, c] of cards) {
+    c.querySelector('.mp-strip').addEventListener('click', () => {
+      if (openModel === mid) closeCard();
+      else selectModel(mid);
+    });
+    c.querySelector('.mp-attach').addEventListener('change', () => {
+      attachConfigToPersonality(mid, c.querySelector('.mp-attach').value);
+      loadModel(mid);
+      cardResult(c, c.querySelector('.mp-attach').value
+        ? `${c.querySelector('.mp-attach').value} will be attached to ${shown} when the personality is saved.`
+        : `${mid} will be covered on its own name when the personality is saved.`);
+    });
+    c.querySelector('.mp-new').addEventListener('input', () => { fillCard(mid); });
+    c.querySelector('.mp-create').addEventListener('click', async () => {
+      const name = c.querySelector('.mp-new').value.trim();
+      const settings = gridSettings(mid);
+      const data = await postConfig('/api/model-configs/save', {name, base_model: mid, settings});
+      if (data && data.detail) { cardResult(c, `refused: ${data.detail}`); return; }
+      configByName[name] = data.config;
+      CONFIG_USES[name] = data.assigned || [];
+      attachConfigToPersonality(mid, name);
+      c.querySelector('.mp-new').value = '';
+      loadModel(mid);
+      cardResult(c, `created ${name} for ${mid} with ${Object.keys(settings).length} setting(s), and ` +
+                     `attached it to ${shown}. presets.ini is unchanged: that stays Preview, then Apply.`);
+    });
+    c.querySelector('.mp-save').addEventListener('click', async () => {
+      const cfgName = configForModel(mid) || c.querySelector('.mp-attach').value;
+      if (!cfgName) return;
+      const settings = gridSettings(mid);
+      const data = await postConfig('/api/model-configs/save',
+                                    {name: cfgName, base_model: mid, settings});
+      if (data && data.detail) { cardResult(c, `refused: ${data.detail}`); return; }
+      configByName[cfgName] = data.config;
+      CONFIG_USES[cfgName] = data.assigned || [];
+      loadModel(mid);
+      const users = (data.assigned || []).filter(p => p !== shown);
+      cardResult(c, `saved ${settings.length} setting(s) to ${cfgName}, which` +
+                     (users.length ? ` ${shown} shares with ${users.join(', ')} — those personalities` +
+                                    ` changed too.` : ` only ${shown} uses.`));
+    });
+    c.querySelector('.mp-delete').addEventListener('click', async () => {
+      const cfgName = configForModel(mid);
+      if (!cfgName) return;
+      if (!window.confirm(`delete the model personality ${cfgName}? Its settings and the name a client`
+                          + ` types both go. presets.ini keeps whatever was last applied until the`  
+                          + ` next Apply.`)) return;
+      const data = await postConfig('/api/model-configs/delete', {name: cfgName, confirm: true});
+      if (data && data.detail) { cardResult(c, `refused: ${data.detail}`); return; }
+      delete configByName[cfgName];
+      delete CONFIG_USES[cfgName];
+      for (const box of attachBoxes()) if (box.value === cfgName) box.checked = false;
+      syncIdentity();
+      loadModel(mid);
+      cardResult(c, `deleted ${cfgName}. ${mid} is not attached to ${shown} any more -- its checkbox is` +
+                     ` unchecked, and the personality is only written when you save it.`);
+    });
+    c.querySelector('.mp-detach').addEventListener('click', () => {
+      const cfgName = configForModel(mid);
+      if (!cfgName) return;
+      // Detaching keeps the object: it is the personality that stops using it. The model's own entry
+      // takes its place, so the file stays covered by its library name and the settings that come
+      // with it are the personality's [*] and the server defaults.
+      for (const box of attachBoxes()) {
+        if (box.value === cfgName) box.checked = false;
+        if (box.value === mid) box.checked = true;
+      }
+      syncIdentity();
+      loadModel(mid);
+      cardResult(c, `${cfgName} is detached from ${shown} and stays a model personality for the other` +
+                     ` personalities that use it. Save the personality to store that.`);
+    });
+  }
+
   $('ed-preview').addEventListener('click', preview);
   $('ed-apply').addEventListener('click', applyIt);
 

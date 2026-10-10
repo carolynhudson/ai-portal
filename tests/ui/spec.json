@@ -825,14 +825,14 @@
    "expectRequests": [],
    "+requireConfirmFor": [
     "^/api/personalities/apply$",
-    "^/api/personalities/delete$"
+    "^/api/personalities/delete$",
+    "^/api/model-configs/delete$"
    ],
    "_requireConfirmFor_comment": [
-    "Apply writes presets.ini and restarts the router, so the page must ask before it fires.",
-    "Delete is confirm-gated at the endpoint too (personality.delete_personality refuses without",
-    "confirm=true) and the page asks before it posts -- requireConfirmFor is what proves the denied",
-    "pass requested nothing. Create and Save are absent from this list on purpose: they write",
-    "personalities/<name>.json only, never presets.ini, so they are additive."
+    "Apply writes presets.ini and restarts the router; personality delete and model personality",
+    "delete are both confirm-gated at their endpoints. A model personality that other personalities",
+    "use is refused outright, and the page says who uses it -- so the only delete that can fire is",
+    "one the operator confirmed, on an object nothing else is using."
    ],
    "selectCases": [
     {
@@ -843,14 +843,14 @@
      "note": "switch offers the words llama.cpp's is_truthy reads",
      "comment": "The boolean control offered 1/0 hardcoded in the template while the portal's validator refused text for boolean keys, so the value the page sent was never accepted. The options come from the row's accepted list now; picking `on` must not throw."
     },
-      {
+    {
      "select": "#ed-m-jinja-sel",
      "choose": {
       "value": "off"
      },
      "note": "per-model switch offers the same words"
-      },
-      {
+    },
+    {
      "_comment": [
       "plan sec 6.14.1i: the personality the harness seeded carries two keys in [*] and one model",
       "config with four. Selecting it must move the page to that configuration -- the expectation",
@@ -862,15 +862,15 @@
       "value": "UI-Test-Work"
      },
      "note": "the seeded personality: its own settings arrive in the fields"
-      },
-      {
+    },
+    {
      "select": "#ed-model",
      "choose": {
       "value": "ui-tiny-coder"
      },
      "note": "the model the seeded config renames: its section arrives in the fields"
-      },
-      {
+    },
+    {
      "_comment": [
       "plan sec 6.14.1f step 1: a built-in personality is shown as what it is. safe is derived from",
       "the library and the write endpoints refuse it by name, so Save and Delete are locked here and",
@@ -892,8 +892,8 @@
        "contains": "built-in"
       }
      ]
-      },
-      {
+    },
+    {
      "_comment": [
       "default covers the whole library, which is what an empty model list means. The attach list is",
       "left with nothing checked at this point, so the sentence has to name the state rather than let",
@@ -910,8 +910,8 @@
        "contains": "whole library"
       }
      ]
-      },
-      {
+    },
+    {
      "_comment": [
       "a custom personality is editable at step 1, and Create is not: the name belongs to a record",
       "that already exists, so the page offers Save and Delete and keeps Create locked."
@@ -941,8 +941,8 @@
      "then_click": [
       "#ed-save"
      ]
-      },
-      {
+    },
+    {
      "_comment": [
       "new personality mode with no name typed: Create stays locked on an empty name, Save and",
       "Delete are locked because there is nothing to save or delete, and the sentence says the write",
@@ -964,8 +964,8 @@
        "contains": "does not write presets.ini"
       }
      ]
-      },
-      {
+    },
+    {
      "_comment": [
       "the enabled half of the same rule: type a usable name and Create unlocks. A case that could",
       "not type could only ever assert the locked state, which is why then_fill exists."
@@ -993,8 +993,8 @@
      "then_click": [
       "#ed-create"
      ]
-      },
-      {
+    },
+    {
      "_comment": [
       "back to the seeded personality with the name typed, the list must show its attach state",
       "prefilled from the stored personality, and the fields must still arrive from step 1's data."
@@ -1004,10 +1004,10 @@
       "value": "UI-Test-Work"
      },
      "note": "the seeded personality, after create mode: its list and its settings arrive"
-      }
+    }
    ],
    "expectValues": [
-      {
+    {
      "_comment": [
       "A field's value is not text content, so expectText cannot reach it. These are asserted",
       "after the select cases ran, which is the only moment the seeded personality is selected."
@@ -1015,33 +1015,33 @@
      "after_select": true,
      "selector": "#ed-g-threads-val",
      "value": "8"
-      },
-      {
+    },
+    {
      "after_select": true,
      "selector": "#ed-g-cache-prompt-sel",
      "value": "off"
-      },
-      {
+    },
+    {
      "after_select": true,
      "selector": "#ed-m-temp-val",
      "value": "0.5"
-      },
-      {
+    },
+    {
      "after_select": true,
      "selector": "#ed-m-parallel-val",
      "value": "2"
-      },
-      {
+    },
+    {
      "after_select": true,
      "selector": "#ed-m-ctx-size-val",
      "value": "2048"
-      },
-      {
+    },
+    {
      "after_select": true,
      "selector": "#ed-m-cache-ram-val",
      "value": "512"
-      },
-      {
+    },
+    {
      "_comment": [
       "The values a model's section does not set stay empty: the page must not copy the personality's",
       "global keys into a model section, because saving them there outranks [*] for that model forever."
@@ -1049,13 +1049,14 @@
      "after_select": true,
      "selector": "#ed-m-threads-val",
      "value": ""
-      }
+    }
    ],
    "expectNoRequests": [
     "/api/personalities/apply",
     "/api/personalities/write",
     "/api/services/llamacpp/restart",
-    "/api/updates/llamacpp"
+    "/api/updates/llamacpp",
+    "/api/model-configs/delete"
    ],
    "expectVisible": [
     "#pers-safe",
@@ -1085,7 +1086,11 @@
     "#pers-deck",
     "#pers-deck-note",
     "#pers-safe .pers-strip",
-    "#pers-default .pers-strip"
+    "#pers-default .pers-strip",
+    "#mp-cards",
+    "#mp-rest",
+    ".mp-card",
+    ".mp-strip"
    ],
    "expectText": [
     {
@@ -1218,34 +1223,34 @@
      "contains": "needs"
     },
     {
-      "_comment": [
-        "plan sec 6.14.1i: at load the selected personality is the first card (safe), which carries no",
-        "settings. The sentence has to say that, not merely that the region is non-empty."
-      ],
-      "selector": "#ed-summary",
-      "contains": "no changes \u2014 these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
+     "_comment": [
+      "plan sec 6.14.1i: at load the selected personality is the first card (safe), which carries no",
+      "settings. The sentence has to say that, not merely that the region is non-empty."
+     ],
+     "selector": "#ed-summary",
+     "contains": "no changes \u2014 these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
     },
     {
-      "after_select": true,
-      "selector": "#ed-summary",
-      "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
+     "after_select": true,
+     "selector": "#ed-summary",
+     "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
     },
     {
-      "_comment": [
-        "The page explains what an empty field means, because the fields are now seeded: a blank box",
-        "beside `default 8192 MiB` reads as 0 to anyone who has filled in a form, and on ctx-size and",
-        "cache-ram that guess costs tens of GiB."
-      ],
-      "selector": "#ed-layers",
-      "contains": "does not set the key"
+     "_comment": [
+      "The page explains what an empty field means, because the fields are now seeded: a blank box",
+      "beside `default 8192 MiB` reads as 0 to anyone who has filled in a form, and on ctx-size and",
+      "cache-ram that guess costs tens of GiB."
+     ],
+     "selector": "#ed-layers",
+     "contains": "does not set the key"
     },
     {
-      "_comment": [
-        "Every personality's current configuration rides on its option, computed server-side by",
-        "personality.settings_view(): 3 cards in this sandbox (safe, default, the seeded one)."
-      ],
-      "selector": "#ed-persona option[data-config]",
-      "minCount": 3
+     "_comment": [
+      "Every personality's current configuration rides on its option, computed server-side by",
+      "personality.settings_view(): 3 cards in this sandbox (safe, default, the seeded one)."
+     ],
+     "selector": "#ed-persona option[data-config]",
+     "minCount": 3
     },
     {
      "_comment": [
@@ -1279,6 +1284,20 @@
      ],
      "selector": "#pers-deck-note",
      "contains": "Raising a card changes what you can read"
+    },
+    {
+     "_comment": [
+      "The cards are one per model, and a card states what it edits: the shared object's",
+      "name, how many settings it carries, and how many personalities use it. A card that",
+      "said nothing about sharing is how an edit to a shared object surprises someone."
+     ],
+     "selector": ".mp-strip",
+     "minCount": 2,
+     "contains": "no model personality"
+    },
+    {
+     "selector": "#mp-cards",
+     "minCount": 1
     }
    ],
    "expectNoInjectedMarkup": [
