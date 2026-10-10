@@ -78,6 +78,17 @@ table.keys td.k{font-family:var(--mono,monospace);white-space:nowrap}
 table.keys td.h{color:var(--mut)}
 .wrap{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:6px}
 h2{margin:18px 0 6px}
+/* The flow's three steps as one line above the fields they name: a list, not three headings, so the
+   line stays short and the headings remain the thing the sections are titled by. */
+.ed-steps{display:flex;flex-wrap:wrap;gap:4px 16px;list-style:none;margin:10px 0 2px;padding:0;
+  font-size:.78rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.ed-steps li[data-step]{border-bottom:2px solid var(--line);padding-bottom:2px}
+.ed-steps li[data-step="1"]{color:var(--acc);border-bottom-color:var(--acc)}
+/* The model list is a set of names to scan, not a table to read: a config is shown with the file it
+   renames, because that is the pair an operator is choosing between. */
+.ed-attach{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2px 18px}
+.ed-attach-item{display:flex;gap:8px;align-items:baseline;font-size:.82rem;padding:2px 0}
+.ed-attach-item input{flex:0 0 auto}
 </style>
 
 <h2>Personalities</h2>
@@ -332,6 +343,9 @@ h2{margin:18px 0 6px}
        reads cannot be a second, weaker statement about the file. #}
     <select id="ed-persona">
       {% for c in cards %}<option value="{{ c.name }}" data-config='{{ config_views.get(c.name, {}) | tojson }}'>{{ c.name }}</option>{% endfor %}
+      {# `__new__` is a mode switch, not a name: personality's own name rule starts a name with a
+         letter or digit, so no stored personality can collide with it. #}
+      <option value="__new__">new personality…</option>
     </select>
     <span class="mut" id="ed-model-count"></span>
   </div>
@@ -346,7 +360,46 @@ h2{margin:18px 0 6px}
     <span class="mono">default</span> on the row applies; it does not mean zero.
   </p>
 
-  <h3>Global ([*])</h3>
+  {# The three steps, named in the order the page asks them (§6.14.1f answer 2). The numbering is
+     presentation; what it commits to is that step 1 owns the personality itself -- its name, how many
+     models may be resident, the note, which models it covers, create/save/delete -- and steps 2 and 3
+     own the settings it carries. Creating lives here, not on the deck: the deck's one verb is raising. #}
+  <ol class="ed-steps" id="ed-steps">
+    <li data-step="1">1 personality</li>
+    <li data-step="2">2 global settings</li>
+    <li data-step="3">3 model settings</li>
+  </ol>
+
+  <div class="ed-row">
+    <label for="ed-new-name" class="mono">name</label>
+    <input id="ed-new-name" type="text" autocomplete="off" spellcheck="false" hidden
+           placeholder="new -- letters, digits, dot, dash, underscore">
+    <label for="ed-models-max">max resident</label>
+    <input id="ed-models-max" type="number" min="1" step="1">
+    <label for="ed-note">note</label>
+    <input id="ed-note" type="text" autocomplete="off" spellcheck="false" placeholder="what this personality is for">
+  </div>
+
+  <div class="ed-row">
+    <button type="button" id="ed-create" disabled>create personality</button>
+    <button type="button" id="ed-save" disabled>save personality</button>
+    <button type="button" id="ed-delete" disabled>delete personality</button>
+    <span class="mut" id="ed-identity-note"></span>
+  </div>
+
+  <h4>Models this personality covers</h4>
+  <div class="ed-attach" id="ed-attach">
+    {# The two kinds a personality's `models` list accepts: a library model id, which is that file
+       under its own name with no settings of its own, and a stored model config, which is the same
+       file addressed by a name the router routes to. The base model is printed for a config because
+       the name is what a client types and the base is what loads. #}
+    {% for o in attach_options %}
+    <label class="ed-attach-item"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.name }}</span>{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
+    {% endfor %}
+  </div>
+  <p class="mut" id="ed-attach-note"></p>
+
+  <h3>2 Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
     {# The row component (§6.14.1): NAME [control] default on one line, the help sentence as the
        thing you click, and a detail underneath it carrying the rule, the side effect, the spellings
@@ -395,7 +448,7 @@ h2{margin:18px 0 6px}
     {% endfor %}
   </div>
 
-  <h3>Per model</h3>
+  <h3>3 Per model</h3>
   <div class="ed-row">
     <label for="ed-model">model</label>
     <select id="ed-model">
@@ -456,7 +509,7 @@ h2{margin:18px 0 6px}
   <div id="ed-refuse" class="sev bad" hidden></div>
   <p id="ed-budget" class="mut"></p>
   <pre id="ed-diff" class="diff"></pre>
-  <p class="mut" id="ed-note">
+  <p class="mut" id="ed-apply-note">
     Refused keys are listed before the diff: a key the router strips, a key the router derives, a
     key with no definition here, a value its own registry rule rejects, and a model section this
     personality does not cover. The last one matters because a section the router ignores looks
@@ -496,6 +549,10 @@ h2{margin:18px 0 6px}
   let shown = null;           // the personality whose [*] fields are displayed
   let captured = null;        // the model whose per-model fields are displayed
 
+  const NEW = '__new__';
+  const attachBoxes = () => [...$('ed-attach').querySelectorAll('input[type=checkbox]')];
+  const checkedAttach = () => attachBoxes().filter(b => b.checked).map(b => b.value);
+
   function baseFor(name) {
     if (base.has(name)) return base.get(name);
     let view = null, parsed = false;
@@ -511,7 +568,17 @@ h2{margin:18px 0 6px}
       }
       break;
     }
-    const b = {parsed, global: (view && view.global) || {}, models: (view && view.models) || {}};
+    const b = {
+      parsed, global: (view && view.global) || {}, models: (view && view.models) || {},
+      // Step 1 fields (§6.14.1f): the personality's identity, not its settings. They come from the
+      // same view the settings grids seed from, so the page cannot show one personality's settings
+      // beside another personality's name.
+      models_max: view && view.models_max != null ? view.models_max : null,
+      note: view && typeof view.note === 'string' ? view.note : '',
+      attach: view && 'attach' in view ? view.attach : null,
+      editable: !!(view && view.editable),
+      error: view && view.error ? String(view.error) : null,
+    };
     base.set(name, b);
     return b;
   }
@@ -622,6 +689,85 @@ h2{margin:18px 0 6px}
     const mid = $('ed-model').value;
     if (mid) loadModel(mid);
     else summarize();
+  }
+
+  /* Step 1 (§6.14.1f answer 2): the personality itself -- its name, how many models may be resident,
+     its note, which models it covers, and create / save / delete. These are page verbs on
+     `personalities/<name>.json`; none of them touches presets.ini, so they are additive writes with
+     nothing for Preview to show, and the endpoint they call is not the one Apply calls.
+
+     The model list is sent as the personality's own `models` value: library model ids and stored
+     config names, the two kinds `resolve_targets()` accepts. An empty selection is sent as null, which
+     means the whole library -- the state `default` is in -- so the page says that out loud instead of
+     letting an unchecked list read as "covers nothing". */
+  function loadIdentity() {
+    const b = baseFor(shown);
+    const isNew = (shown === NEW);
+    $('ed-new-name').hidden = !isNew;
+    $('ed-models-max').value = isNew ? '1' : String(b.models_max == null ? 1 : b.models_max);
+    $('ed-note').value = isNew ? '' : b.note;
+    const want = isNew ? [] : (Array.isArray(b.attach) ? b.attach : null);
+    for (const box of attachBoxes()) {
+      box.checked = want === null ? false : want.includes(box.value);
+      // A built-in personality's list is a fact about it, not a field to edit: `safe` and `default`
+      // are derived from the library and are refused by name at the write endpoints.
+      box.disabled = !b.editable;
+    }
+    syncIdentity();
+  }
+
+  function syncIdentity() {
+    const b = baseFor(shown);
+    const isNew = (shown === NEW);
+    const checked = checkedAttach();
+    $('ed-create').disabled = !(isNew && $('ed-new-name').value.trim());
+    $('ed-save').disabled = isNew || !b.editable;
+    $('ed-delete').disabled = isNew || !b.editable;
+    $('ed-attach-note').textContent = isNew
+      ? 'Nothing is checked, and an empty list means the whole library: a new personality covers every model until you choose. Unchecking every box says the same thing `default` means.'
+      : (checked.length
+        ? `${checked.length} of ${attachBoxes().length} listed. A library model is that file under its own name with no settings of its own; a stored config is the same file under the name the router routes to.`
+        : `No models are checked, so ${shown} covers the whole library, the same state default is in.`);
+    $('ed-identity-note').textContent = isNew
+      ? 'Create stores the name, the model list, max resident and the [*] currently in the grid. It does not write presets.ini -- that stays Preview, then Apply.'
+      : (b.editable
+        ? `custom personality: Save stores name, model list, max resident, note and [*]. The router is not restarted, and presets.ini changes only through Apply.`
+        : `${shown} is built-in: derived from the library, and refused by name at the write endpoints. Raise it on the deck, then create a new personality from its settings.`);
+  }
+
+  function identityBody() {
+    const checked = checkedAttach();
+    return {
+      name: shown === NEW ? $('ed-new-name').value.trim() : shown,
+      models_max: parseInt($('ed-models-max').value, 10) || 1,
+      note: $('ed-note').value,
+      models: checked.length ? checked : null,
+      // The [*] working copy goes with it, so "save personality" stores the whole personality the form
+      // is showing. The per-model grid is not in this body: that layer belongs to presets.ini, and it
+      // reaches the file through Preview and Apply.
+      global_edits: Object.assign({}, workFor(shown).global),
+    };
+  }
+
+  async function writeIdentity(path, body, verb) {
+    let data = null;
+    try {
+      const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                   body: JSON.stringify(body)});
+      data = await r.json().catch(() => null);
+      if (!r.ok) { renderRefuse([String((data && data.detail) || `${verb} failed (${r.status})`)]); return; }
+    } catch (e) {
+      renderRefuse([`${verb} failed: ${e.message || e}`]);
+      return;
+    }
+    if (data && (data.ok === false || data.ok === 'refused')) {
+      renderRefuse((data.refusals && data.refusals.length) ? data.refusals : [data.detail || 'refused']);
+      return;
+    }
+    // The deck, the editor's options and the budgets all come from the stored files, so after a write
+    // the page is re-read from the server rather than patched from what was just sent.
+    $('ed-apply-note').textContent = `${verb} ${body.name}. reloading so the deck and the editor show what is stored…`;
+    location.reload();
   }
 
   function changed(work, base) {
@@ -751,13 +897,13 @@ h2{margin:18px 0 6px}
     }
     setApply(false);
     const job = data.job;
-    $('ed-note').textContent = `apply started as job ${job}; watching…`;
+    $('ed-apply-note').textContent = `apply started as job ${job}; watching…`;
     const timer = setInterval(async () => {
       const jr = await fetch(`/api/jobs/${job}`).then((x) => x.json()).catch(() => ({}));
       const row = jr.job || jr;
       if (row.status === 'running') return;
       clearInterval(timer);
-      $('ed-note').textContent = `${row.status}: ${row.log || ''}`;
+      $('ed-apply-note').textContent = `${row.status}: ${row.log || ''}`;
     }, 1500);
   }
 
@@ -795,11 +941,30 @@ h2{margin:18px 0 6px}
     const control = f.querySelector('select, input');
     if (control) control.addEventListener('change', summarize);
   }
-  $('ed-persona').addEventListener('change', loadPersona);
+  // Switching personality loads the settings and the identity together, and the capture inside
+  // loadPersona runs first -- it is the personality being left whose fields must be saved.
+  $('ed-persona').addEventListener('change', () => { loadPersona(); loadIdentity(); });
+  $('ed-new-name').addEventListener('input', syncIdentity);
+  $('ed-identity-note').dataset.hint = 'step 1';
+  for (const box of attachBoxes()) box.addEventListener('change', syncIdentity);
+  $('ed-create').addEventListener('click', () => {
+    const body = identityBody();
+    if (!body.name) return;
+    writeIdentity('/api/personalities/save', body, 'created');
+  });
+  $('ed-save').addEventListener('click', () => writeIdentity('/api/personalities/save', identityBody(), 'saved'));
+  $('ed-delete').addEventListener('click', () => {
+    // Delete is confirm-gated client-side as well as at the endpoint: the endpoint requires
+    // confirm=true, and a page that fired it without asking would delete on a stray click.
+    if (!window.confirm(`delete ${shown}? The personality file is removed. presets.ini is untouched, ` +
+                        `and snapshots taken by past Apply runs are kept.`)) return;
+    writeIdentity('/api/personalities/delete', {name: shown, confirm: true}, 'deleted');
+  });
   $('ed-preview').addEventListener('click', preview);
   $('ed-apply').addEventListener('click', applyIt);
 
   loadPersona();
+  loadIdentity();
   const n = $('ed-model').options.length;
   $('ed-model-count').textContent = `${n} model${n === 1 ? '' : 's'} in the library`;
 })();

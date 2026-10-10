@@ -1079,7 +1079,11 @@ def settings_view(personality: dict, configs: dict[str, dict] | None = None) -> 
     """
     name = personality.get("name")
     out: dict[str, Any] = {"name": name, "global": {}, "models": {}, "configs": {},
-                           "note": personality.get("note") or "", "unregistered": []}
+                           "note": personality.get("note") or "", "attach": None, "unregistered": [],
+                           # Which verbs the page may offer for this personality. It is stated here so
+                           # the form does not have a second rule about the built-in pair -- the same
+                           # two names `save_personality()` and `delete_personality()` refuse by name.
+                           "editable": str(name or "").lower() not in RESERVED_NAMES}
     try:
         out["models_max"] = _models_max(personality)
     except PersonalityError as exc:
@@ -1096,11 +1100,19 @@ def settings_view(personality: dict, configs: dict[str, dict] | None = None) -> 
         # does carry. Dropping the view would render the editor as an empty form, which reads as
         # "this personality sets nothing" — a different and worse claim than the refusal.
         out["error"] = str(exc)
+        out["attach"] = personality.get("models")
         out["global"] = {k: _ini_value(v) for k, v in (personality.get("global") or {}).items()}
         out["unregistered"] = sorted(k for k in out["global"] if k not in SETTINGS)
         return out
 
     out["global"] = {k: _ini_value(v) for k, v in (personality.get("global") or {}).items()}
+    # The personality's own attach list, verbatim: entries are library model ids and stored config
+    # names, and `None` is the whole library -- which is what `default` means, and is a different
+    # state from an empty list. Step 1 of the editor sends this list when it creates a personality,
+    # so it has to arrive as data the form can pre-fill, not as something the page infers from the
+    # model list (`describe()` reports resolved base models, which is a different fact: a config's
+    # name is what the personality carries, the base model is what the router resolves it to).
+    out["attach"] = personality.get("models")
     layered = _layered_settings(personality, targets=targets, configs=configs)
     for model_id, per in layered.items():
         out["models"][model_id] = {k: _ini_value(v) for k, v in per.items()}

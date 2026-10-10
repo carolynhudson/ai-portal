@@ -850,6 +850,57 @@ def test_the_personality_select_updates_the_editor():
     """
     tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
     script = _editor_script(tpl)
-    assert "$('ed-persona').addEventListener('change', loadPersona)" in script, \
+    # Asserted as a shape, not as one exact line: step 1 added a second load to the same handler
+    # (the settings and the identity arrive together), and a literal match on the wiring would fail
+    # a handler that is correct and simply says more.
+    # Non-greedy up to the first `);` stops at the arrow function's own `);` inside the body, so the
+    # wiring is taken to the handler's closing brace instead.
+    wiring = re.search(r"\$\('ed-persona'\)\.addEventListener\('change',(.*)", script)
+    assert wiring and "loadPersona" in wiring.group(1), \
         "the personality select does not reload the fields"
+    assert wiring and "loadIdentity" in wiring.group(1), \
+        "the personality select does not load step 1 together with the settings"
+    assert wiring and wiring.group(1).index("loadPersona") < wiring.group(1).index("loadIdentity"), \
+        "step 1 loads before the fields it must capture have been saved"
     assert "loadPersona();" in script, "the fields are not seeded on page load"
+
+
+def test_the_editor_creates_saves_and_deletes_a_personality():
+    """Step 1's verbs exist, and each one is wired to the endpoint that answers it.
+
+    Create, Save and Delete are the page's oldest missing verbs: the endpoints have validated
+    personality writes since phase N4, and the page offered Preview and Apply. Asserted in the page's
+    own source because the failure this guards is silent in the same way a dead Apply is -- a button
+    that posts to the wrong route, or that posts without asking, looks exactly like one that works.
+    """
+    tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
+    script = _editor_script(tpl)
+    for bid in ("ed-create", "ed-save", "ed-delete", "ed-new-name", "ed-models-max",
+                "ed-note", "ed-attach", "ed-identity-note"):
+        assert f'id="{bid}"' in tpl, f"step 1 has no {bid}"
+    body = _fn(script, "identityBody")
+    assert "'/api/personalities/save'" in script, "no verb reaches the personality write endpoint"
+    assert "'/api/personalities/delete'" in script, "no verb reaches the personality delete endpoint"
+    # Delete asks. The endpoint requires confirm=true, so a page that posted without asking would
+    # delete on a stray click and report it as a success.
+    wired = script[script.index("$('ed-delete').addEventListener"):]
+    assert "window.confirm(" in wired.split("writeIdentity")[0], \
+        "the delete button posts without asking"
+    assert "confirm: true" in wired, "the delete request does not carry the confirm the endpoint wants"
+    # Create is gated on a usable name, and the built-in pair is locked by the server's own fact
+    # rather than by a second rule invented next to the buttons.
+    sync = _fn(script, "syncIdentity")
+    assert "ed-new-name').value.trim()" in sync, "create is not gated on a name"
+    assert "b.editable" in sync, "the lock on a built-in personality is its own rule, not the view's"
+    # The empty model list is the whole library, which is a claim about the personality, not an
+    # accident of the form.
+    assert "models: checked.length ? checked : null" in body, \
+        "an empty model list is sent without saying what it means"
+    attach = _fn(script, "syncIdentity")
+    assert "whole library" in attach, "the page never says what an unchecked list means"
+    # Step 1 touches the personality file only. If it ever reached presets.ini, Preview/Apply would
+    # stop being the only way to change the router.
+    assert "presets.ini" in _fn(script, "syncIdentity"), "step 1 does not say what it does not write"
+    for fn in ("identityBody", "writeIdentity"):
+        assert "/api/personalities/apply" not in _fn(script, fn), \
+            f"{fn}() reaches the route that restarts the router"

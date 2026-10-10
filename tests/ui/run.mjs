@@ -645,6 +645,23 @@ for (const c of spec.selectCases || []) {
   await ctx.idle({ quietMs: 60, maxMs: 3000 });
   if (trace.errors.length > errBefore)
     fail(`${what}: changing the selection threw ${trace.errors[errBefore]}`);
+
+  // A case may type into a text field before the page's enablement is judged. Client-side gating —
+  // "Create unlocks when a usable name is typed", "Delete is locked for a built-in" — is a property
+  // of the page, and a case that cannot type can only ever assert that a control is *locked*: the
+  // enabled half of the rule would go unmeasured.
+  for (const f of c.then_fill || []) {
+    const el = win.document.getElementById(f.id) || win.document.querySelector(f.id);
+    if (!el) { fail(`${what}: fill target ${f.id} missing`); continue; }
+    if (el.disabled) {
+      fail(`${what}: fill target ${f.id} is disabled with ${JSON.stringify(picked.textContent)} selected`);
+      continue;
+    }
+    el.value = f.value;
+    el.dispatchEvent(new win.Event("input", { bubbles: true }));
+    el.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await ctx.idle({ quietMs: 25, maxMs: 2000 });
+  }
   for (const sel of c.expectEnabled || []) {
     const el = win.document.querySelector(sel);
     if (!el) fail(`${what}: expected enabled control missing: ${sel}`);

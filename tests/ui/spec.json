@@ -823,6 +823,17 @@
    "path": "/personalities",
    "expectTitle": "Personalities",
    "expectRequests": [],
+   "+requireConfirmFor": [
+    "^/api/personalities/apply$",
+    "^/api/personalities/delete$"
+   ],
+   "_requireConfirmFor_comment": [
+    "Apply writes presets.ini and restarts the router, so the page must ask before it fires.",
+    "Delete is confirm-gated at the endpoint too (personality.delete_personality refuses without",
+    "confirm=true) and the page asks before it posts -- requireConfirmFor is what proves the denied",
+    "pass requested nothing. Create and Save are absent from this list on purpose: they write",
+    "personalities/<name>.json only, never presets.ini, so they are additive."
+   ],
    "selectCases": [
     {
      "select": "#ed-g-jinja-sel",
@@ -858,6 +869,141 @@
       "value": "ui-tiny-coder"
      },
      "note": "the model the seeded config renames: its section arrives in the fields"
+      },
+      {
+     "_comment": [
+      "plan sec 6.14.1f step 1: a built-in personality is shown as what it is. safe is derived from",
+      "the library and the write endpoints refuse it by name, so Save and Delete are locked here and",
+      "the page says why -- a disabled control that explains itself is a decision, and one that does",
+      "not is a dead button."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "safe"
+     },
+     "note": "built-in: locked with the reason stated",
+     "expectDisabled": [
+      "#ed-save",
+      "#ed-delete"
+     ],
+     "expectText": [
+      {
+       "selector": "#ed-identity-note",
+       "contains": "built-in"
+      }
+     ]
+      },
+      {
+     "_comment": [
+      "default covers the whole library, which is what an empty model list means. The attach list is",
+      "left with nothing checked at this point, so the sentence has to name the state rather than let",
+      "an unchecked list read as covers nothing."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "default"
+     },
+     "note": "the whole library is a state, not an empty choice",
+     "expectText": [
+      {
+       "selector": "#ed-attach-note",
+       "contains": "whole library"
+      }
+     ]
+      },
+      {
+     "_comment": [
+      "a custom personality is editable at step 1, and Create is not: the name belongs to a record",
+      "that already exists, so the page offers Save and Delete and keeps Create locked."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "UI-Test-Work"
+     },
+     "note": "custom: save and delete are usable, create is not",
+     "expectEnabled": [
+      "#ed-save",
+      "#ed-delete"
+     ],
+     "expectDisabled": [
+      "#ed-create"
+     ],
+     "expectText": [
+      {
+       "selector": "#ed-identity-note",
+       "contains": "custom personality"
+      },
+      {
+       "selector": "#ed-attach-note",
+       "contains": "1 of"
+      }
+     ],
+     "then_click": [
+      "#ed-save"
+     ]
+      },
+      {
+     "_comment": [
+      "new personality mode with no name typed: Create stays locked on an empty name, Save and",
+      "Delete are locked because there is nothing to save or delete, and the sentence says the write",
+      "does not touch presets.ini."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "__new__"
+     },
+     "note": "new mode, empty name: nothing to create yet",
+     "expectDisabled": [
+      "#ed-create",
+      "#ed-save",
+      "#ed-delete"
+     ],
+     "expectText": [
+      {
+       "selector": "#ed-identity-note",
+       "contains": "does not write presets.ini"
+      }
+     ]
+      },
+      {
+     "_comment": [
+      "the enabled half of the same rule: type a usable name and Create unlocks. A case that could",
+      "not type could only ever assert the locked state, which is why then_fill exists."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "__new__"
+     },
+     "note": "new mode with a name: Create unlocks",
+     "then_fill": [
+      {
+       "id": "ed-new-name",
+       "value": "ui-new-one"
+      }
+     ],
+     "expectEnabled": [
+      "#ed-create"
+     ],
+     "expectText": [
+      {
+       "selector": "#ed-new-name",
+       "contains": "ui-new-one"
+      }
+     ],
+     "then_click": [
+      "#ed-create"
+     ]
+      },
+      {
+     "_comment": [
+      "back to the seeded personality with the name typed, the list must show its attach state",
+      "prefilled from the stored personality, and the fields must still arrive from step 1's data."
+     ],
+     "select": "#ed-persona",
+     "choose": {
+      "value": "UI-Test-Work"
+     },
+     "note": "the seeded personality, after create mode: its list and its settings arrive"
       }
    ],
    "expectValues": [
@@ -927,6 +1073,15 @@
     "#ed-layers",
     "#ed-clear-global",
     "#ed-clear-model",
+    "#ed-steps",
+    "#ed-attach",
+    "#ed-attach-note",
+    "#ed-create",
+    "#ed-save",
+    "#ed-delete",
+    "#ed-identity-note",
+    "#ed-models-max",
+    "#ed-note",
     "#pers-deck",
     "#pers-deck-note",
     "#pers-safe .pers-strip",

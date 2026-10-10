@@ -1188,6 +1188,86 @@ def test_the_api_carries_the_same_current_config_the_page_seeds_from(client, lib
     assert api == page, "the endpoint and the page describe the personalities differently"
 
 
+def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, library, tuned):
+    """Create, save and delete from the page's own payload shape, through the page's own endpoints.
+
+    Step 1 writes `personalities/<name>.json` and nothing else: presets.ini is untouched, the router
+    is not restarted, and there is nothing for Preview to show. That boundary is what makes these
+    verbs additive, and it is asserted here rather than trusted: a page that quietly applied while it
+    saved a name would pass every visual check and restart the router on a click.
+    """
+    body = client.get("/personalities").text
+    for sel in ('id="ed-new-name"', 'id="ed-models-max"', 'id="ed-note"', 'id="ed-attach"',
+                'id="ed-create"', 'id="ed-save"', 'id="ed-delete"', 'id="ed-steps"'):
+        assert sel in body, f"step 1 is missing {sel}"
+    # The attach list is the two kinds a personality's `models` accepts, both of them named on the
+    # page: a library model id, and a stored config with the file it renames.
+    for opt in list(library) + [tuned["config"]]:
+        assert f'value="{opt}"' in body, f"the model list has no entry for {opt}"
+    assert f"renames {library[0]}" in body, "a config is listed without the model it renames"
+
+    created = "Page-Created"
+    r = client.post("/api/personalities/save", json={
+        "name": created, "models_max": 1, "note": "built from the page's payload shape",
+        "models": [library[1], tuned["config"]],
+        "global_edits": {"threads": "4"},
+    })
+    assert r.status_code == 200, r.text
+    # The stored file, not the card: `describe()` reports resolved targets, and step 1 stores the
+    # names the operator chose, which is the thing the form has to be able to send.
+    saved = next(p for p in P.stored() if p.get("name") == created)
+    assert saved["models"] == [library[1], tuned["config"]], saved
+    # The stored value is the typed text coerced by the row's declared type -- an int, not the string
+    # the field sent -- which is why the editor seeds its fields with `_ini_value()` spellings.
+    assert saved["models_max"] == 1 and saved["global"] == {"threads": 4}, saved
+
+    view = _views(client.get("/personalities").text)[created]
+    assert view["attach"] == [library[1], tuned["config"]], "the form cannot pre-fill what it just stored"
+    assert view["editable"] is True, view
+    assert view["models_max"] == 1 and view["note"] == "built from the page's payload shape", view
+
+    # Saving the identity again, as Save does: the list, max and note move, and the router is
+    # untouched because presets.ini was never written.
+    before = _presets_text()
+    r = client.post("/api/personalities/save", json={
+        "name": created, "models_max": 3, "note": "saved",
+        "models": [library[0]], "global_edits": {"threads": "4"},
+    })
+    assert r.status_code == 200, r.text
+    view = _views(client.get("/personalities").text)[created]
+    assert view["attach"] == [library[0]] and view["models_max"] == 3 and view["note"] == "saved", view
+    assert _presets_text() == before, "step 1 wrote presets.ini"
+
+    assert client.post("/api/personalities/delete", json={"name": created}).status_code == 400, \
+        "delete is allowed without a confirm"
+    assert client.post("/api/personalities/delete",
+                       json={"name": created, "confirm": True}).status_code == 200
+    assert created not in [str(v) for v in _views(client.get("/personalities").text)], \
+        "the personality is still on the page after delete"
+
+
+def test_the_built_in_pair_is_locked_at_step_one_with_the_reason(client, library):
+    """`safe` and `default` are shown, listed and refused -- by name, at the endpoint and on the form.
+
+    The page's job here is not to hide them (they are the two personalities that describe the library
+    as it is) but to refuse them in a way the operator can read, and to point at the verb that does
+    work: create a new personality.
+    """
+    for name in ("safe", "default"):
+        r = client.post("/api/personalities/save", json={"name": name, "models_max": 1})
+        assert r.status_code == 400, (name, r.text)
+        d = client.post("/api/personalities/delete", json={"name": name, "confirm": True})
+        assert d.status_code == 400 and name in d.text, (name, d.text)
+        view = _views(client.get("/personalities").text)[name]
+        assert view["editable"] is False, view
+
+    # `default` covers the whole library, which the view carries as None and not as an empty list:
+    # the form has to be able to tell "everything" from "nothing chosen".
+    assert _views(client.get("/personalities").text)["default"]["attach"] is None
+    assert _views(client.get("/personalities").text)["safe"]["attach"] == [library[1]], \
+        "safe's single model is not in the data the form pre-fills from"
+
+
 def test_the_page_says_what_an_empty_field_means(client):
     """Empty is "this layer does not set the key", and the page has to say so.
 

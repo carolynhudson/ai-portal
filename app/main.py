@@ -944,6 +944,12 @@ def create_app() -> FastAPI:
         # describe two different personalities (§6.14.1i).
         config_views = {p.get("name"): personality.settings_view(p, configs=config_by_name)
                         for p in people}
+        # What a personality may cover: library model ids, and stored model configs (which carry a
+        # base model, shown so the name and the file it renames are visible together). Step 1 of the
+        # editor sends this list when it creates a personality, and the two kinds are not
+        # interchangeable -- `resolve_targets()` accepts both and refuses a name that is neither.
+        attach_options = ([{"name": r["id"], "base": None} for r in index_rows]
+                          + [{"name": c["name"], "base": c["base_model"]} for c in configs])
         return templates.TemplateResponse(request, "personalities.html",
                                           {"cards": cards, "generated": generated,
                                            "configs": configs,
@@ -962,6 +968,7 @@ def create_app() -> FastAPI:
                                            # something if it names a directory the router can see, and
                                            # normalize_proposed() refuses any name that does not.
                                            "model_ids": [r["id"] for r in index_rows],
+                                           "attach_options": attach_options,
                                            # The editor grids render rows, not SETTINGS lookups: control
                                            # shape, default, unit, rule, help link and visibility facts
                                            # all arrive on the row (app/core/settingrows.py, §6.14.1).
