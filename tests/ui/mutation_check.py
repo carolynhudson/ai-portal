@@ -402,8 +402,8 @@ MUTATIONS = [
         # stray server precisely so this branch is the one the sandbox is in.
         "the census stops naming the servers it does not control (census-blanket-ok)",
         "templates/dashboard.html",
-        "    ? (c.foreign.length + ' llama-server process' + (c.foreign.length === 1 ? '' : 'es')",
-        "    ? ('no server processes outside the unit: every llama-server on the box is the router '",
+        "    ? (c.foreign.length + ' llama-server process' + (c.foreign.length === 1 ? '' : 'es')\n       + ' the portal does not control: ' + describeForeign(c.foreign)\n       + '. Not started, stopped or restarted here — a button on this page would not touch them.')",
+        "    ? ('no server processes outside the unit: every llama-server on the box is the router '\n       + 'or one of its workers')",
         "dashboard",
         "does not control",
     ),
