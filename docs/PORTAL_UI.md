@@ -191,8 +191,16 @@ Written down so they are choices, not surprises.
    (`/var/log/journal/…/user-1000.journal`), so a session unit's transcript survives a reboot.
    `pi` carries the session identity the page needs (`--session-id <id>` creates it if missing,
    `--session <id>` and `--continue` reopen, sessions under
-   `~/.pi/agent/sessions/<project-dir>/`), so resume is solved by pi; the *detachable live
-   process* — a PTY the portal can attach to and let go of — is ours to build.
+   `~/.pi/agent/sessions/<project-dir>/`), so resume is solved by pi.
+
+   **Superseded by measurement (2026-10-11, `docs/PI_HARNESS_RESEARCH.md`):** the detachable live
+   process is *not* ours to build first. pi's RPC mode degrades extension UI by its own docs
+   (`custom()` → `undefined`, theme/autocomplete/editor-component calls are no-ops), so an RPC-based
+   portal UI is a permanent catch-up job; and **PI WEB** (`@jmfederico/pi-web`) already separates the
+   session daemon from its web server, ships `node-pty` + `@xterm/xterm` 6, keeps question forms alive
+   across web restarts, and stores projects in `~/.pi-web/projects.json`. The gap closes by adoption
+   if the spike (`docs/PORTAL_PLAN.md sec 6.14.2`, queue item 16) confirms terminal fidelity — the
+   self-built PTY host above is the named fallback, not the plan.
 
 ## 7. Verification
 

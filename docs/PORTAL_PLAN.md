@@ -4146,6 +4146,50 @@ census stops naming the servers it does not control.
 the portal does not own is not a portal verb, and the panel says so rather than offering a button that
 would lie about what it controls.
 
+##### 6.14.1m The pi harness runtime: research before code (2026-10-11)
+
+The operator set the terms for the pi harness page: the launched session must behave **as close to a
+terminal pi session as possible** — typing, models, extensions like the Q&A tool "without extra work" —
+keep running when they disconnect, be reachable from any machine on the LAN, and after a host reboot
+leave the session id on the Projects page so they can resume it. Their instruction was to research pi
+and its packages *deeply* before we write a host, and to pivot if the honest answer is that it cannot
+be done well. The evidence is in `docs/PI_HARNESS_RESEARCH.md`; the conclusions:
+
+- **RPC mode is not the interface.** pi's `--mode rpc` is a clean JSONL control protocol, but
+  `docs/rpc-extension-ui.md` states the degradations outright: `custom()` returns `undefined`,
+  `onTerminalInput`/`setFooter`/`setHeader`/`addAutocompleteProvider`/`setEditorComponent` are no-ops,
+  `getAllThemes()` returns `[]`, `setTheme()` errors, `setWidget` accepts only string arrays. An RPC
+  portal UI is a second implementation of pi's interface that is permanently behind pi's feature set —
+  exactly the "chasing problems" outcome the operator ruled out. RPC stays right for headless jobs.
+- **Resume is already solved by pi.** Sessions are files under `~/.pi/agent/sessions/<encoded-cwd>/`
+  shared by CLI, TUI and the browser UIs; `--session <id>`, `--session-id <id>`, `--continue`,
+  `--resume`, `--fork` are in `pi --help`.
+- **The property we need is a decoupled session daemon, and only one package has it.**
+  PI WEB (`@jmfederico/pi-web`, MIT, 33 releases since 2026-05-09, Node ≥ 22.19 — box has v22.22.1)
+  runs sessions in `pi-web-sessiond`, separate from its web/API server, joined over a Unix socket;
+  its docs state "a browser disconnect should not stop an agent", that restarting the daemon interrupts
+  sessions while "a web/API restart … is not a substitute", that open question forms survive web
+  restarts while the daemon lives, and that projects live in `~/.pi-web/projects.json`. pi-web-ui
+  (MIT, 196 releases, richest feature set: Git panel, subagents, vision bridge, plugins, `PI_WEB_TOKEN`)
+  runs the SDK **in the web process**, so its own README promises "last run was interrupted" after a
+  server shutdown. `@agegr/pi-web` shuts idle sessions down (`PI_WEB_IDLE_TIMEOUT_MS` default 600000)
+  — a viewer, not a host.
+- **So: no PTY host written by us, unless the spike says the terminal cannot meet the fidelity bar.**
+  Both serious packages ship `node-pty` + xterm.js (`@xterm/xterm` 6, which is where the Kitty keyboard
+  protocol landed — the `Shift+Enter` vs `Enter` distinction pi needs, per its own `docs/tmux.md`). The
+  fallback design (a systemd user unit owning `pty.openpty` and a Unix-socket relay) stays in
+  `docs/PORTAL_LAYOUT.md` with the spike gates that decide it.
+
+**Open questions this raised, kept in the queue.** (15) `projects_root` as a portal setting key. (16)
+Spike PI WEB on this box — install with `--allow-scripts=node-pty`, `pi-web install`, `pi-web doctor`,
+then: session alive after a web/API restart; interrupted and resumable by session id after a sessiond
+restart; the URL/deep-link and per-project live-session endpoint the Projects page can read;
+`Shift+Enter` inserts a newline in the browser terminal; the Q&A form opens with previews and survives
+a reload. (17) The LAN access path — local CA and certificates for `portal.local`/`pihole.local`/
+`pihole2.local`, nginx terminating TLS at a sub-path with WebSocket forwarding (the supported pattern
+in both packages), the portal password gate plus a shared harness token; not required for
+proof-of-concept, required before production, per the operator.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
