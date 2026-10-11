@@ -103,7 +103,80 @@ gate plus a shared token for the harness. It is a queue item of its own, recorde
 `docs/PORTAL_PLAN.md sec 6.14.2`, and the operator's position — not required for proof-of-concept, needed before production —
 is recorded there.
 
-## 5. Sources
+## 5. Spike on this box (2026-10-11) — what passed, what did not
+
+Installed `@jmfederico/pi-web` 1.202610.1 into `~/.npm-global` (npm's global prefix on this box is
+root-owned, so a user prefix plus symlinks into `~/.local/bin`, which the login shell already carries);
+`pi-web install` created **`pi-web-sessiond.service`** and **`pi-web.service`** as systemd user units
+(`ExecStart=/usr/bin/env bash -lc "exec pi-web-sessiond"` — a login shell, which is why their doctor
+cares about PATH), both active, web on loopback `127.0.0.1:8504`. `pi-web doctor` reported: node
+22.22.1 ✓, npm ✓, `pi` 1.1.0 found in the login shell ✓, ripgrep ✓, `node-pty` native module loadable ✓
+(it compiled — `build/Release/pty.node`), systemd user lingering enabled ✓.
+
+**What the portal can drive (measured over HTTP):**
+
+- `GET /api/pi-web/health` → `{"ok":true}`; `GET /api/pi-web/runtime` → web + sessiond versions,
+  `piVersion 1.1.0`, `activeAgentProfile.dir = ~/.pi/agent`; `GET /api/pi-web/status` → per-component
+  install/runtime versions and staleness.
+- `GET /api/projects` → registry; `POST /api/projects {"path": …, "name": …, "create": bool}` →
+  `{id, name, path, createdAt}` (the schema is stated in its own validation error), and the UI showed
+  the project in its sidebar from the same registry. `DELETE` by id works.
+- `POST /api/sessions {"cwd": …}` → `{id, path, cwd, persisted, created, modified, messageCount}`, where
+  `path` is the pi session file — `~/.pi/agent/sessions/--tmp-spike-proj--/<ts>_<uuid>.jsonl`.
+  **This is the resume record the Projects page needs: the harness hands back pi's own session id.**
+- `POST /api/sessions/:id/prompt {"cwd", "text"}` → `{"accepted":true}` (field is `text`; `message`,
+  `prompt` are rejected by name). `GET /api/sessions?cwd=…` lists sessions for a project.
+- `GET /api/machines/local/status` → live epoch/revision map over projects/workspaces (what the page
+  would poll, alongside the `ws://…/api/machines/local/events` socket the UI itself uses);
+  `GET /api/machines/local/plugins` → bundled `pi-web.terminal` (required) and `git`, both `healthy`.
+
+**Web/API restart does not touch the daemon** (measured, not asserted from docs): restart
+`pi-web.service` → web pid 191849 → 192615, `pi-web-sessiond.service` pid **191848 unchanged**, and the
+daemon answered throughout. That is the property the operator named; it holds.
+
+**What did not pass: a session run against the portal's llama.cpp router.** The UI's model picker
+("Select Model" → Enabled / All models / Search) listed **no models**; the composer chip read
+`unknown/unknown`; a prompt was accepted and the transcript answered:
+
+> No API key found for the selected model. Use `/login` to log into a provider via OAuth or API key.
+
+`GET /sessions/:id/models?cwd=…` on the daemon socket returned `{"models":[]}`. Adding a systemd drop-in
+(`LLAMA_BASE_URL=http://127.0.0.1:8080`, `PI_PROVIDER=llama.cpp`) and restarting sessiond did not change
+it. The diagnosis is not pi-web's: **terminal pi in the same login shell behaves the same way** —
+`pi -p "…"` with no model selects a Hugging Face route and fails (`403 … Inference Providers …`), while
+
+```
+LLAMA_BASE_URL=http://127.0.0.1:8080 PI_PROVIDER=llama.cpp \
+pi --model "llama.cpp/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS" -p "Reply OK"
+→ OK
+```
+
+works. So the provider is reachable and the router serves it; **an explicit model is mandatory** on
+this box, and pi's provider list for llama.cpp is ambiguous by design (the operator's own experience:
+`llama.cpp` vs `Llama.cpp`, `/login llama.cpp=http://127.0.0.1:8080` with a blank key, the loaded model
+appearing last in `/model`, `/models` listing the router's library, load/unload from `/models`
+unreliable). The portal's router already knows which model is loaded, so the portal is the component
+that can supply the explicit `provider/model` at session start — the harness API accepts `model`,
+`modelId`, and `provider`+`model` on `POST /api/sessions` (all three accepted; which one binds is
+unverified).
+
+**Parity gap found, unmasked:** typing `/model …` in the composer produced the system message
+**"/model is not implemented in the web UI yet"** — pi's `/model` works in a terminal and not there.
+`/new /name /cwd /thinking /resume /reload` are listed as their built-ins; `/model` is not among them.
+That is a concrete divergence from "as close to a terminal session as possible" and it lands exactly on
+this box's weak point (model selection), which is the interaction the operator described fighting with.
+
+**Not yet verified (need a session that can run):** session continuity across a web restart *while a run
+is in flight*; the Q&A form with previews and its survival of a reload; `Shift+Enter` vs `Enter` in the
+web terminal. The tooling for them exists and is measured working on this box — **Playwright + Chromium
+headless-shell 156 drives the page** (the UI is Lit with open shadow roots, so selectors must walk
+`shadowRoot`; that is why the first scripted attempts read an empty body).
+
+**One more thing Playwright unblocks** (relevant to the design baseline, `docs/PORTAL_UI.md` §6):
+layout, spacing, density and contrast claims on the portal's own pages become *measurable* — the harness
+that exists today is jsdom, which cannot see layout at all.
+
+## 6. Sources
 
 - `docs/rpc.md`, `docs/rpc-extension-ui.md`, `docs/sdk.md`, `docs/session-format.md`, `docs/tmux.md`,
   `docs/termux.md`, `pi --help` — installed pi 1.1.0 under
