@@ -4221,6 +4221,20 @@ proof-of-concept, required before production, per the operator.
   inventory, personalities, router census, jobs, settings) plus `SKILL.md` skills for portal
   conventions, so any harness in `docs/HARNESS_LANDSCAPE_RESEARCH.md` operates on the portal by
   protocol — including the pi session this repo is developed in.
+- (24) **Portal MCP server + memory tools.** `app/core/mcpserver.py`: portal inventory, router census,
+  personalities, jobs, settings, project registry, plus `memory_put` / `memory_search` /
+  `memory_recall` / `session_checkpoint`, stored in `portal.db` and shown on the pages. Lexical search
+  with FTS5 first; embeddings through the router when `embeddinggemma` is loaded (measured: the router
+  answers `/v1/embeddings` and says `model is not loaded` until we load it — and loading is the
+  portal's job). opencode consumes it from generated config (`mcp`) or at runtime (`POST /mcp`); pi
+  consumes it through the MCP adapter already installed.
+- (25) **Skills that teach the handoff.** `SKILL.md` files for portal conventions (checkpoint format,
+  when to recall before editing, the deploy paths), in the portable location — measured: skills in
+  `~/.agents/skills` appear in opencode's `GET /command`, and pi loads them natively.
+- (26) **Compaction ladder, in order.** Config (`compaction {auto, prune, reserved}`) → MCP
+  `session_checkpoint` + skill → the `POST /session/:id/summarize` verb behind a context meter → and
+  only if those are not enough, a thin plugin on `experimental.session.compacting`. No fork; a fork is
+  pinned if it ever happens, never pruned.
 
 
 #### 6.14.2 The knowledgebase becomes a documentation site
