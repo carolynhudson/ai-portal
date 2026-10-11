@@ -158,7 +158,87 @@ client), while **protocol breadth** favours ACP. There is no measured option tha
 - The self-built PTY host in `docs/PORTAL_LAYOUT.md` is **withdrawn**: ACP removes the need for it, and
   the terminal-tab evidence (xterm 6.0.0, no Kitty) says a browser terminal is the wrong goal.
 
-## 7. Sources
+## 7. Directness: what the browser talks to (the operator's second requirement)
+
+The requirement, restated: the layers a person sees must be as close as possible to the service the
+browser is connected to — not a harness wrapped in a web translation layer so it can be used in a
+browser — and the harness must be light, extensible, and treat a local llama.cpp router as a
+first-class citizen, with a tool and session suite at least as capable as pi's.
+
+That rules shapes in and out:
+
+| shape | layers a person sees | verdict |
+|---|---|---|
+| **PI WEB** | browser → its Lit UI → its daemon → pi | Rules *out* on this requirement, in the operator's own words: it is a web UI for a terminal harness. Measured useful (runs survive portal restarts, Q&A forms), and it is a second front door with its own auth, on its own port, with its own design language. Keep it as an optional long-run runtime, reached by a link, not as the interface. |
+| **`opencode serve`** | browser → **portal page** → harness HTTP API | Rules *in*. The harness has no opinion about the browser; the portal renders the API the harness already exposes. No translation layer, no second front door. |
+| **ACP (`pi-acp`, `opencode acp`)** | browser → **portal page** → portal's ACP client → harness | Rules *in*. Same directness, protocol-breadth, and one client serving several harnesses. |
+| Claude Agent SDK, Codex SDK | browser → portal → vendor SDK → vendor cloud | Rules out on the local-first requirement. |
+| pydantic-ai / LangGraph | browser → portal → a harness we write | The only way to get a suite that is *exactly* ours — at the cost of writing the tool suite, session semantics and compaction that pi and opencode spent years on. A library, not a harness. |
+
+### 7.1 The suite question, measured (2026-10-11)
+
+`GET /experimental/tool?provider=llamacpp&model=…` on the live server listed **12 tools**: `bash`,
+`read`, `write`, `edit`, `glob`, `grep`, `task` (subagents), `todowrite`, `webfetch`, `skill`,
+`question`, plus an `invalid` guard. `GET /agent` listed the agent types `build`, `plan`, `general`,
+`explore`, and — notably — **`compaction`, `summary`, `title`**: context compaction is a built-in agent
+with its own endpoint, not a side effect the user discovers when the window overflows.
+`GET /command` listed `/init`, `/review`, `customize-opencode` **and `hf-cli`** — a skill from
+`~/.agents/skills` appearing as a harness command, which is the Agent Skills standard working in
+practice on this box.
+
+A real coding task, prompted over HTTP to the router model:
+
+> Create fib.py with a fib(n) function, then create test_fib.py with three pytest tests, then run pytest
+> and report the result.
+
+Result: `write` fib.py → `write` test_fib.py → `bash` pytest → **"All 3 tests passed:
+`fib(0)==0`, `fib(10)==55`, `fib(30)==832040`"**, with per-step accounting
+(`tokens {total: 8731, input: 174, output: 49, cache read: 8508}`, `cost: 0`). The suite is
+comparable to pi's on the surface that matters — read/write/edit/bash/grep/glob/subagents/todos/skills —
+and the ask-user tool exists (`question`), surfacing as a **pending tool part** in the session API
+(`{"tool":"question","state":{"status":"pending"}}`), which is precisely what a portal page needs to
+render its own form: the portal is not told "here is a dialog", it reads a session object.
+
+Two measured integration details that shape the design:
+
+1. **An opencode instance is bound to one directory.** The files landed in the server's instance
+   directory (`/home/cortana`), not the session's `?directory=` value, and `GET /session/:id/diff`
+   reported `[]` because the diff is VCS-relative to the instance. So the portal runs **one harness
+   instance per project**, rooted at that project directory, as a unit — which is exactly the
+   per-project shape the Projects page already implies, and it is what keeps an agent's writes inside
+   the project it was pointed at.
+2. **Compaction is portal-triggerable.** `POST /session/:id/summarize` returned `True`, and the
+   summary arrived as a new message (`tokens {total: 1595, …}`) capturing the objective and the
+   details. Combined with per-step token accounting, the page can show a context meter, warn before
+   the window overflows, and offer "compact now" as a verb — the operator's compaction-bug workaround
+   (start a new session and tell the agent to document everything) becomes a supported action with a
+   logged checkpoint.
+
+### 7.2 Local-first, compared honestly
+
+|  | llama.cpp router support, as measured here |
+|---|---|
+| **opencode** | 16 models from a 12-line config, `connected` in `GET /provider`; a built-in `llama` provider (7 models); community plugins that auto-detect llama.cpp servers on common ports and query `/v1/models`; sampling/reasoning options are provider-aware. Local is the *default* posture of the project. |
+| **pi** | Router mode is documented (`docs/llama-cpp.md`: `--no-models-autoload`, `/llama` load management, `/model` selection). Needs an explicit model on this box, and the credential quirk we measured; via ACP the portal sees 40 router models as config options and switching works. The `pi-llama-cpp` extension adds router management (and virtual models, which some hosts reject). |
+| **Cloud-first harnesses** (Claude Agent SDK, Codex SDK, Gemini CLI) | Local endpoints are reachable (OpenAI-compatible), but the product's centre is the vendor: session features, model metadata, tool definitions and pricing are written for their own models. The operator's complaint, and it is a real property of that ecosystem. |
+
+## 8. Recommendation, revised by the directness requirement
+
+1. **The interface is the portal's own page**, rendered from a harness API. No harness UI in an iframe,
+   no terminal in a tab, no second auth.
+2. **Primary harness for the family-facing agent: opencode, one instance per project as a systemd user
+   unit.** Server-native, MIT, local-first, 12-tool suite with subagents, skills, plugins, MCP, durable
+   sessions, compaction and permission endpoints, token accounting. The portal generates its config
+   (models from the router census, permission rules, the project directory) and owns the front door.
+3. **Secondary harness: pi over ACP**, for the work we do in pi today and for the pi package ecosystem.
+   Same portal page, one session registry, harness named per session.
+4. **The portal generates both configs from `routerctl`'s census** (`docs/PORTAL_PLAN.md` queue 18) and
+   exposes its own MCP server + skills (queue 23) so harnesses act on the portal by protocol.
+5. **PI WEB stays on the box as an optional long-run runtime** — the only measured thing that keeps a
+   run alive across a portal restart — reached by a link from the Projects page, in words, not as the
+   interface.
+
+## 9. Sources
 
 - ACP — agents list (`agentclientprotocol.com/get-started/agents`), clients list, Streamable HTTP &
   WebSocket transport RFD (`agentclientprotocol.com/rfds/streamable-http-websocket-transport`),
