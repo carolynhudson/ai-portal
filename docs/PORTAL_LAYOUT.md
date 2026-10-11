@@ -134,14 +134,28 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
   - Focus: keyboard focus is visible as a ring, not a 1 px border-colour change (baseline §6 item 4
     is a defect this spec fixes, not a style preference); `prefers-reduced-motion` covers the job
     bar spinner on every page, not only the dashboard.
-- **Session host (new component, and the load-bearing one).** A pi session is a PTY-hosted process
-  that the portal *connects to*, not a process the portal *parents*: started with `setsid` and a
-  pidfile under `~/ai/state/portal/pi-sessions/`, bridged over a Unix socket, so a portal restart
-  leaves the agent running and the portal finds it again on startup. This is the operator's stated
-  requirement — an agent that is editing the portal's code must survive the portal restarting itself.
-  `tmux` and `dtach` are not installed on this box (measured), so the bridge is ours; `pi` already
-  carries the session identity the page needs (`--session-id <id>` creates, `--session <id>` and
-  `--continue` reopen, sessions under `~/.pi/agent/sessions/<project-dir>/`).
+- **Session host (new component, and the load-bearing one).** A pi session is a process the portal
+  *connects to*, never a process the portal *parents*. Shape, with each part justified by a
+  measurement on this box:
+  - The host runs as a **systemd user unit** (`systemd-run --user -u ai-pi-<id> …`): not a child of
+    the portal, so `systemctl --user restart ai-portal` cannot kill it; discoverable with
+    `systemctl --user list-units 'ai-pi-*'`; supervised, with a journal. `Linger=yes` is set, so
+    user units keep running when the operator logs out of the desktop — which is the "I close my
+    browser / log out / drive home" case.
+  - The host owns a **PTY** and serves it over a Unix socket. Clients attach and detach freely; a
+    detaching client never sends EOF to the agent. `tmux` and `dtach` are **not installed** (and
+    `systemd-run --pty` proxies a caller's terminal, which is the opposite of detachable), so the
+    PTY host is ours: `pty.openpty`, the child's stdio on the slave, a socket relay on the master.
+  - Two records, because they answer different questions. A **registry** under
+    `~/ai/state/portal/pi-sessions/records.jsonl` (session id, unit, project path, started, ended,
+    exit, log path) and the **PTY stream log** in the same directory. The user journal is persistent
+    here (`/var/log/journal/…/user-1000.journal`, measured), so a unit's transcript survives a
+    reboot; the registry is what makes a session *findable* afterwards.
+  - After a **host reboot** the live agent is gone and nothing pretends otherwise: the Projects page
+    lists the session with its id, project, end state and log path, and Resume starts a *new* host
+    with `pi --session <id>` in that project directory. `pi` supplies the identity —
+    `--session-id <id>` creates, `--session <id>` / `--continue` reopen, sessions under
+    `~/.pi/agent/sessions/<project-dir>/` (all measured from `pi --help`).
 - **Terminal (new component).** `@xterm/xterm` over a WebSocket to the host. It is the only part of
   the portal that streams; it authenticates with the same cookie as the REST API, it shows the
   session's state in words (starting · live · ended · exited-n), and it closes with `/quit`.
@@ -257,6 +271,14 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
   same check/update shape as llama.cpp and ComfyUI. (path: P11)
   - Required evidence: endpoint test on the pi card payload, harness expectation on the card text,
     and `test_ui_contract.py` that the pi card lives on the updates page and not on `/pi`.
+
+- Given a session ended by a host reboot, When the operator opens `/projects` after the portal comes
+  back up, Then the session is listed with its id, project, end time and log path, and Resume starts
+  a new host in that project with that session id — and no part of the page claims the session is
+  live. (path: P10)
+  - Required evidence: an automated check that writes a registry record, restarts the portal, and
+    asserts `/api/pi/sessions` reports the record with `live: false`; harness expectation that the
+    resume control carries the id.
 
 Design done definition: the layout is done when the ribbon is the only place the five live facts are
 restated, every one of the operator's seven concerns has exactly one owner page, `/` answers "what is

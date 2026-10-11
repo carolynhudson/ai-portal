@@ -183,11 +183,16 @@ Written down so they are choices, not surprises.
    measured.
 
 9. **No PTY host, no web terminal.** The pi harness page (`docs/PORTAL_LAYOUT.md` L4) needs a
-   portal-restart-surviving terminal session. Measured on this box: `tmux` **absent**, `dtach`
-   **absent**, `/usr/bin/script` present, `node` v22.22.1 present, `@xterm/xterm` not vendored.
+   portal-restart-surviving terminal session, so the box was measured for it: `tmux` **absent**,
+   `dtach` **absent**, `/usr/bin/script` present, `node` v22.22.1 present, `@xterm/xterm` not
+   vendored, systemd **259** (`--pty` exists but proxies the *caller's* terminal, which is the
+   opposite of detachable, so it is not the answer), `Linger=yes` (user units keep running after
+   the operator logs out), and the user journal is **persistent**
+   (`/var/log/journal/…/user-1000.journal`), so a session unit's transcript survives a reboot.
    `pi` carries the session identity the page needs (`--session-id <id>` creates it if missing,
-   `--session <id>` and `--continue` reopen, sessions under `~/.pi/agent/sessions/<project-dir>/`),
-   so resume is already solved by pi; the *surviving live process* is ours to build.
+   `--session <id>` and `--continue` reopen, sessions under
+   `~/.pi/agent/sessions/<project-dir>/`), so resume is solved by pi; the *detachable live
+   process* — a PTY the portal can attach to and let go of — is ours to build.
 
 ## 7. Verification
 
