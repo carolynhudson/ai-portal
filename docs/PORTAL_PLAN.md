@@ -4189,6 +4189,25 @@ a reload. (17) The LAN access path — local CA and certificates for `portal.loc
 `pihole2.local`, nginx terminating TLS at a sub-path with WebSocket forwarding (the supported pattern
 in both packages), the portal password gate plus a shared harness token; not required for
 proof-of-concept, required before production, per the operator.
+- (18) **Harness model binding, portal-side.** Generate `~/.pi/agent/models.json` from the router's
+  registered models and give the built-in `llama.cpp` provider a non-empty stored credential, so a
+  launched session binds `provider/model` from the census (which model is loaded) instead of the
+  operator's `/login`-and-hope ritual. Measured shape: `POST /api/sessions/:id/model {cwd, provider,
+  modelId}` → 200; runs then execute on the local router at zero cost. The portal already reads both
+  halves (routerctl: registered models, loaded model, port).
+- (19) **Terminal-tab key fidelity is an upstream gap, and the portal must say so.** `@xterm/xterm`
+  6.0.0 (pinned by pi-web `^6.0.0`) ships no Kitty keyboard protocol support, so a terminal tab cannot
+  tell `Shift+Enter` from `Enter` — measured: the keystroke executed the line. The portal's harness
+  affordance is therefore the chat pane; any "open a terminal" link must be labelled with that
+  boundary, not offered as equivalent to a desktop terminal.
+- (20) **Playwright acceptance for the portal's own pages.** Playwright + Chromium headless-shell now
+  runs on this box (measured: it drives PI WEB's Lit UI with open shadow roots). The portal's UI harness
+  is jsdom, which proves controls, dialogs, verbs and requests and **cannot see layout, spacing,
+  density or contrast** — exactly the complaints the design baseline exists to fix. A thin Playwright
+  layer over the portal's pages turns `docs/PORTAL_UI.md`'s measured facts (type scale, row rhythm,
+  panel gaps, contrast pairs) into assertions, and gives the design-review gates screenshots to reason
+  from.
+
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

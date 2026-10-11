@@ -176,6 +176,53 @@ headless-shell 156 drives the page** (the UI is Lit with open shadow roots, so s
 layout, spacing, density and contrast claims on the portal's own pages become *measurable* — the harness
 that exists today is jsdom, which cannot see layout at all.
 
+### The gates, run to completion (2026-10-11, late)
+
+**Model binding — the blocker, with its cause.** The daemon's `global-provider-bootstrap` log registers
+`providerIds: ["llama-server=http://127.0.0.1:8080"]` — that is the **`pi-llama-cpp` extension's**
+provider (the `Llama.cpp` in the operator's login list), whose stored credential is empty. Binding a
+session to the built-in provider failed with `No API key for llama.cpp/…` until two files existed:
+`~/.pi/agent/models.json` declaring `providers["llama.cpp"] = { baseUrl: http://127.0.0.1:8080/v1, api:
+openai-completions, apiKey: <non-empty>, models: [the router's 16 registered ids] }`, and a **non-empty
+`key` on the `llama.cpp` entry of `auth.json`**. The operator's own ritual — `/login
+llama.cpp=http://127.0.0.1:8080` answered with a *blank* key — is exactly what leaves the credential
+empty. With both files, `POST /api/sessions/:id/model {cwd, provider, modelId}` → `200` and the run
+executes on the local router (transcript records `provider: llama.cpp`,
+`model: ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS`, cost 0). The router ignores the key.
+**The portal is the right component to generate `models.json`** — it already reads the router's model
+list and which model is loaded.
+
+**Gate A — continuity across a portal restart, with a run in flight: PASS.** Prompt asked for
+`sleep 50 && echo SPIKE_DONE`. UI showed `● bash sleep 50 && echo SPIKE_DONE RUNNING`. Browser closed
+(no client attached). `systemctl --user restart pi-web.service`: web pid 192615 → 201181,
+`pi-web-sessiond` pid **200629 unchanged**. Reopened the page, opened the same session, and the
+transcript completed with **`DONE`**.
+
+**Gate B — the Q&A tool as a browser form: PASS, end to end.** A prompt asked the agent to call its
+`ask_user` tool with two questions; the session file records the ask (`askId`, questions
+`pet: Dog|Cat`, `proceed: Yes|No`) and the run pauses. The browser rendered: header
+`0 of 2 answered`, `1. Pick a pet — Dog · Cat · Custom`, `2. Proceed with the plan? — Yes · No ·
+Custom`, `Send answers`. Answering (Dog, Yes) woke the agent: *"Got your answers: **Pet:** Dog 🐕 …
+**Proceed with the plan?** Yes"*. Question forms are documented to survive browser/web restarts while
+the daemon lives.
+
+**Gate C — `Shift+Enter` in the *terminal* tab: FAILS, with a version cause.** In the web terminal
+(real shell in the workspace, `echo MARKER_ALPHA` → `MARKER_ALPHA` ✓), typing
+`printf ALPHA` + `Shift+Enter` + `BETA` executed `printf ALPHA`, then `BETA` at the next prompt
+(`BETA: command not found`): **Shift+Enter arrived as plain Enter.** The installed terminal is
+`@xterm/xterm` **6.0.0**, and the shipped `lib` contains no `keyboardProtocol`/Kitty strings — the
+Kitty keyboard protocol (which is how a terminal distinguishes `Shift+Enter` from `Enter`, and what
+pi's own `docs/tmux.md` goes to the length of requesting) landed in xterm.js 6.1. pi-web pins `^6.0.0`.
+So today: the *chat pane* is a first-class pi interface (its own composer handles newlines, with
+configurable send keys), and the *terminal tab* is a real PTY shell with modifier keys degraded — a pi
+TUI driven in that tab loses `Shift+Enter`/`Alt+Enter`. That is the honest answer to "as close to a
+terminal as possible": close for the chat pane, not there for the terminal tab.
+
+**Net for the portal.** Adoption is defensible for the chat-pane harness with portal-side model
+binding; the terminal tab is a bonus, not the interface. The three properties that made it worth it are
+now measured, not advertised: the daemon survives a portal restart with a run in flight; sessions
+resume from pi's own session ids; the Q&A tool with previews reaches the browser and wakes the agent.
+
 ## 6. Sources
 
 - `docs/rpc.md`, `docs/rpc-extension-ui.md`, `docs/sdk.md`, `docs/session-format.md`, `docs/tmux.md`,
