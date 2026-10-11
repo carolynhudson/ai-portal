@@ -80,7 +80,7 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
 | `/machine/updates` | Own what changes the software under it: llama.cpp release, ComfyUI, huggingface-cli, python/venvs, GPU drivers. |
 | `/portal` | Own the portal itself: auth, bind, rate limits, polling, jobs history, events, the documentation entry. |
 | `/projects` | Own the projects root: create a project from the init shortlist, list projects, and launch a pi session scoped to one. Inactive state only. |
-| `/pi` | Own the live pi session: the terminal, its state, and `/quit`. Shows the session and nothing else while one is running. |
+| `/pi` | Own the live agent session: transcript, tool calls, permission decisions, context meter, and `/quit`. Shows the session and nothing else while one is running. |
 
 ## L3 Core flow
 
@@ -108,7 +108,7 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
 | P6 | any page → a stated fact cites the documentation → `/help#section` lands on the cited section |
 | P7 | `/machine` → a probe degraded → "did not look" sentence → re-check → populated or degraded again (never a default) |
 | P8 | `/projects` → name a project → tick the init shortlist (git, uv, README, .gitignore) → create → the project row appears with the init results |
-| P9 | `/projects` → pick a project → launch (confirm names the working directory) → `/pi` operational (terminal only) → work → `/quit` → `/projects` inactive |
+| P9 | `/projects` → pick a project → launch (confirm names the working directory) → `/pi` operational (session view only) → work → `/quit` → `/projects` inactive |
 | P10 | `/projects` → pick a project → resume a prior session by id → `/pi` operational, reconnected to the live session after a portal restart |
 | P11 | `/machine/updates` → the pi harness card → check pi version and extensions → update (confirm) → card states the installed versions |
 
@@ -134,31 +134,43 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
   - Focus: keyboard focus is visible as a ring, not a 1 px border-colour change (baseline §6 item 4
     is a defect this spec fixes, not a style preference); `prefers-reduced-motion` covers the job
     bar spinner on every page, not only the dashboard.
-- **Session host (new component, and the load-bearing one).** A pi session is a process the portal
-  *connects to*, never a process the portal *parents*. Shape, with each part justified by a
-  measurement on this box:
-  - The host runs as a **systemd user unit** (`systemd-run --user -u ai-pi-<id> …`): not a child of
-    the portal, so `systemctl --user restart ai-portal` cannot kill it; discoverable with
-    `systemctl --user list-units 'ai-pi-*'`; supervised, with a journal. `Linger=yes` is set, so
-    user units keep running when the operator logs out of the desktop — which is the "I close my
-    browser / log out / drive home" case.
-  - The host owns a **PTY** and serves it over a Unix socket. Clients attach and detach freely; a
-    detaching client never sends EOF to the agent. `tmux` and `dtach` are **not installed** (and
-    `systemd-run --pty` proxies a caller's terminal, which is the opposite of detachable), so the
-    PTY host is ours: `pty.openpty`, the child's stdio on the slave, a socket relay on the master.
+- **Harness host (new component, and the load-bearing one).** A coding-agent session is a process
+  the portal *talks to*, never a process whose UI the portal pretends to be. Shape, with each part
+  justified by a measurement (`docs/HARNESS_LANDSCAPE_RESEARCH.md` §3):
+  - The harness runs as a **systemd user unit** (`systemd-run --user -u ai-pi-<id> …`): not a child
+    of the portal, so `systemctl --user restart ai-portal` is not what an agent restarts;
+    discoverable with `systemctl --user list-units 'ai-pi-*'`; supervised, with a journal.
+    `Linger=yes` is set (measured), so user units keep running when the operator logs out of the
+    desktop — the "close the browser, drive home" case.
+  - The portal speaks **ACP (Agent Client Protocol)** to it over stdio: `initialize`, `session/new`,
+    `session/prompt`, the `session/update` stream, `request_permission`, config options for the
+    model and thinking level, `usage_update` for context occupancy, and `session/load` to take over
+    an existing session. Measured in Python with `agent-client-protocol` 0.12.1 and `pi-acp` 0.0.34:
+    92 models offered as config options (40 of them the router's), a model switch accepted, tool
+    calls streamed, `usage_update {used: 19403, size: 128000}` reported, and after the harness
+    process died a new client loaded the session and the agent recalled the exact command. ACP's
+    HTTP/WebSocket transports are an experimental RFD and stay unused; stdio is the stable one, and
+    the portal's own page is the browser surface.
   - Two records, because they answer different questions. A **registry** under
-    `~/ai/state/portal/pi-sessions/records.jsonl` (session id, unit, project path, started, ended,
-    exit, log path) and the **PTY stream log** in the same directory. The user journal is persistent
-    here (`/var/log/journal/…/user-1000.journal`, measured), so a unit's transcript survives a
-    reboot; the registry is what makes a session *findable* afterwards.
+    `~/ai/state/portal/pi-sessions/records.jsonl` (session id, harness, unit, project path, started,
+    ended, exit, model bound) and the harness's own session file. The user journal is persistent here
+    (`/var/log/journal/…/user-1000.journal`, measured), so a unit's transcript survives a reboot; the
+    registry is what makes a session *findable* afterwards.
   - After a **host reboot** the live agent is gone and nothing pretends otherwise: the Projects page
-    lists the session with its id, project, end state and log path, and Resume starts a *new* host
-    with `pi --session <id>` in that project directory. `pi` supplies the identity —
-    `--session-id <id>` creates, `--session <id>` / `--continue` reopen, sessions under
-    `~/.pi/agent/sessions/<project-dir>/` (all measured from `pi --help`).
-- **Terminal (new component).** `@xterm/xterm` over a WebSocket to the host. It is the only part of
-  the portal that streams; it authenticates with the same cookie as the REST API, it shows the
-  session's state in words (starting · live · ended · exited-n), and it closes with `/quit`.
+    lists the session with its id, harness, project, model, end state and log path, and Resume starts
+    a *new* unit and `session/load`s that id. `pi` supplies the identity — `--session-id <id>`
+    creates, `--session <id>` / `--continue` reopen, sessions under
+    `~/.pi/agent/sessions/<project-dir>/` (all measured from `pi --help`); `pi-acp` keeps
+    `~/.pi/pi-acp/session-map.json` so an ACP client can load the same session.
+  - Runs are not immortal, and the spec says so: a portal restart ends a run in flight; the session
+    survives and is resumable. The one runtime measured to keep a run alive across a portal restart
+    is PI WEB's `pi-web-sessiond`, and where the operator needs that (start a long job, close the
+    laptop) the page hands off to it explicitly, in words.
+- **Session view (new component).** The page renders the protocol: the transcript, tool calls with
+  their status, the plan, permission requests as confirm-styled decisions, the model in use, and a
+  **context meter** from `usage_update`. It is not a terminal emulator: `@xterm/xterm` 6.0.0 ships no
+  Kitty keyboard protocol (measured — `Shift+Enter` arrives as `Enter`), so a browser terminal is not
+  the interface this portal offers; the operator's terminal keeps being a terminal on their own box.
 - **Two states only.** Inactive: projects list, create form, launch and resume verbs. Operational:
   the terminal, and nothing else — no nav to a dashboard that hides a live session, no second launch
   control, no settings form on the same page.
@@ -245,7 +257,7 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
     "the census stops naming the servers it does not control".
 
 - Given no pi session is running, When the operator opens `/projects` and launches a session in a
-  project directory, Then `/pi` shows the terminal and nothing else, the session's own id is on the
+  project directory, Then `/pi` shows the session and nothing else, the session's own id is on the
   page, and the process is not a child of the portal (it is started with `setsid` and a pidfile under
   the portal state dir). (path: P9)
   - Required evidence: an automated check that launches a session, reads `/proc/<pid>/stat` parentage

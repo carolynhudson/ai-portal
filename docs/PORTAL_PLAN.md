@@ -4207,6 +4207,20 @@ proof-of-concept, required before production, per the operator.
   layer over the portal's pages turns `docs/PORTAL_UI.md`'s measured facts (type scale, row rhythm,
   panel gaps, contrast pairs) into assertions, and gives the design-review gates screenshots to reason
   from.
+- (21) **The harness interface is ACP, and the portal implements it.** `app/core/agentd.py`: an ACP
+  client (stdio, the stable transport) in the portal's own language, the session registry, the
+  Projects page's two states, permission decisions rendered as confirms, a context meter from
+  `usage_update`. Harness adapters: `pi-acp` for pi, `opencode acp` for opencode — both MIT, both
+  measured here. The self-built PTY host is withdrawn: `@xterm/xterm` 6.0.0 has no Kitty keyboard
+  protocol, so a browser terminal loses `Shift+Enter` (measured), and the protocol gives the portal
+  more than a terminal does.
+- (22) **Harness rows on Services**, beside the llama.cpp and ComfyUI update tools, per the
+  operator's instruction: harness version, adapter version, unit, bound models, health, and their
+  update verbs.
+- (23) **The portal exposes MCP and skills, not a page to be scraped.** A portal MCP server (model
+  inventory, personalities, router census, jobs, settings) plus `SKILL.md` skills for portal
+  conventions, so any harness in `docs/HARNESS_LANDSCAPE_RESEARCH.md` operates on the portal by
+  protocol — including the pi session this repo is developed in.
 
 
 #### 6.14.2 The knowledgebase becomes a documentation site
