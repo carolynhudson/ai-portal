@@ -720,6 +720,15 @@ function noopCheck(el) {
     if (el.classList.contains("active") && active.length === 1)
       return `already showing #${active[0].id}`;
   }
+  // A nav link to the page you are already on changes nothing in a browser too — the user is
+  // standing on it. Declared per page (`noopSelfLinks`), and *href*-matched only: a link to a
+  // different page that changes nothing is the dead link this check exists to catch, and stays loud.
+  if (spec.noopSelfLinks && el.tagName === "A") {
+    const href = el.getAttribute("href") || "";
+    const target = href.replace(/[#?].*$/, "");
+    const here = (win.location.pathname || "").replace(/\/$/, "");
+    if (target && target.replace(/\/$/, "") === here) return `already on ${target}`;
+  }
   return null;
 }
 

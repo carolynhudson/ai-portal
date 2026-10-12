@@ -4315,6 +4315,99 @@ same binary serves the portal's own `check-ui` job, the plugin, and MCP. **Not n
 page (queue 18's second half) comes first; this is the "do not forget it" note, with the requirements
 attached.
 
+Queue **29** — §6.14.1m end to end: **the pi harness page and the session host that survives a portal
+restart.** The Projects page (queue 18, §6.14.1n) is built and its Launch button is labelled as this
+queue's verb. What it needs: the session host as its own supervised unit (not a child of the portal
+service), the per-project live-session read with the session id a page can deep-link to, model binding
+from the census (queue 18's generator already emits the ids), the two page states (inactive = projects,
+operational = the session and nothing else), and `/quit` returning the page to the inactive state with
+the session id left visible so a rebooted portal can point at a finished/abandoned session. Measured
+support for the hard half already exists in `@jmfederico/pi-web` (queue 16): the session daemon is a
+separate systemd user unit, sessions survive restarting the web server, and `GET /api/sessions?cwd=`
+answers the running list — what is missing is the portal's side of it.
+
+#### 6.14.1n Projects: the registry, the init shortlist, and the projects root
+
+The operator's design for the pi harness page has two states, and this is the first one: **inactive**,
+where projects are created, adopted, forgotten and chosen; and **operational**, where a running session
+is all the page shows. The inactive state has to be a real folder list before the operational state
+means anything, because a session launches *in* a project, at a path, with a model.
+
+What is built (commits `bc195e3` and the page commit that follows it):
+
+- **The name rule is the security boundary.** A project name becomes a directory. Lowercase letters,
+  digits and single hyphens, 2 to 64 characters, starting and ending with a letter or digit. Every
+  refusal quotes the same sentence, so the page can show the rule the operator can type to; `app--1`
+  is refused because it is a typo of a name, not a name. The page states the rule where the name is
+  typed, and a contract test pins the page's sentence to the server's (`test_the_projects_page_promises_the_name_rule_the_server_enforces`),
+  so a page cannot promise a name the endpoint refuses.
+- **Toolchains are measured, not assumed.** `uv, npm, node, git, cmake, g++, cargo, go, deno` are
+  probed with `shutil.which` plus the version line, and an absent tool carries the install statement.
+  The plan splits the ticked boxes into *what will run* and *what is refused, by name with the reason*;
+  a missing toolchain never aborts the boxes that could run. (Mutation check: a probe that reports a
+  missing tool as present was MISSED by the first test set — the plan tests feed the census themselves,
+  so a lying probe passed every one. The test that catches it feeds the probe the real box.)
+- **The init shortlist is seven constants** — `git init`, `uv venv` + pyproject, npm + `.nvmrc` +
+  tsconfig, CMake + `build/`, `README.md`, `.gitignore`, `AGENTS.md` — each with its needs, dirs,
+  files and commands, in a fixed order. It is not a place to type commands.
+- **Bounded execution.** List argv only, never a shell string; cwd pinned to the project; stdin
+  closed; a per-command timeout; git non-interactive; output bounded; environment copied, not
+  extended. The first bug this measured was real: `git commit` dying with *"Please tell me who you
+  are"* on a box with no git identity, so the first commit is made with an explicit identity and a
+  message naming the project.
+- **A half-built project is a reported fact.** The folder stays, the failing step is named with its
+  command and exit code, the steps after it do not run, and the answer says nothing was deleted. The
+  endpoint answers 409 with that sentence; the page shows it (mutation check: "a half-created project
+  is reported as a success" is caught at both the core and endpoint level).
+- **Registry plus scan.** A folder made by hand, by `git clone`, or by an agent is discovered;
+  adopting writes the registry only. Adoption refuses a path outside the projects root and the root
+  itself. **Forgetting deletes nothing on disk** and requires `confirm`.
+- **`projects_root` is a portal setting** (queue 18): validated (absolute, no NUL, bounded traversal,
+  creatable and writable, with the mkdir-ability answer computed before anything is created), stored
+  in the settings table, and read by every path operation. `_safe_join` refuses any name that resolves
+  outside a project — the shortlist's names are constants today, and the check exists because the next
+  shortlist will not be.
+
+The page (`/projects`, nav-linked): the root line (root, registered count, folders the registry does
+not know, root health), the New project card (name + the seven boxes + Plan + Create, with the plan's
+refusals and the install statements), the registry rows (facts, Launch **labelled inert** with the
+sentence naming §6.14.1m as the page that owns that verb, Forget behind a confirm that says the folder
+is not touched), and the unadopted list with Adopt. The page reads everything from
+`GET /api/projects`; the row verbs and the plan are endpoints (D1).
+
+**The safety finding worth keeping.** The UI sandbox sets `AI_PORTAL_HOME`, which moves the portal's
+`~/ai` tree — and does **not** move `~`. The projects root is a `~` path by default, so the first
+Projects-page UI run rendered (and could have written to) the operator's real `~/ai-projects`: the
+page's own summary line printed `/home/cortana/ai-projects`, and the sweep clicks every control,
+including Create. Fixed by setting `HOME` to the sandbox home in both UI sandboxes, and the fixture
+now seeds its own projects root. The rule to remember: **a sandbox that redirects the portal's home
+must redirect `~` too**, because everything the portal resolves with `expanduser` follows `~`.
+
+Mutation checks for the page — 9, all caught, three of them only after the assertions were fixed:
+forgetting without asking (the spec had not named `/api/projects/forget` in `requireConfirmFor`, so
+the sweep's confirm gate was not enforced at all); Launch offered as a live button (`data-inert="yes"`
+was satisfied by the page's **CSS** — an assertion on markup text proves nothing about the control the
+page builds, so it is asserted on the line that builds it); the shortlist offering boxes whose
+toolchain this box does not have (a stubbed `missing = []` kept every other word of the function
+intact, so availability must be asserted on the line that decides it); a half-built project reported
+as created; a swallowed create refusal; the card rendered without its facts; a swallowed adoption
+refusal (source-level: the harness blocks mutation requests, so the refusal branch never runs under
+jsdom — a **boundary** of the UI harness, recorded here); the inert control not naming its owner page.
+
+Harness changes this slice needed, both general:
+- `tests/ui/run.mjs` tolerates a **nav link to the page you are already on** (`noopSelfLinks`,
+  declared per page), matched on `href` only — a link to a *different* page that changes nothing is
+  the dead link this check exists to catch, and stays loud.
+- The UI fixtures redirect `HOME`, and seed a projects root containing a folder whose *name* is
+  markup (`<img src=x onerror=alert(1)>`): the scan lists folders the portal did not author, so a
+  stored-XSS payload arrives here by `git clone`.
+
+**Not built, and where it goes:** launching a session (§6.14.1m) — the harness page, its two states,
+the session host that survives a portal restart, the per-project live-session read, and the deep link.
+Queue 18's first half (model binding) is done: `app/core/agentconfig.py` generates both harness
+configs from the census. Queue **29** is §6.14.1m end to end; the Projects page's Launch button is the
+handoff point, and is labelled as such on the page.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

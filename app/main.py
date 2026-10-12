@@ -1374,10 +1374,13 @@ def create_app() -> FastAPI:
         return out
 
     # ------------------------------------------------------ projects (§6.14.1n)
-    @app.get("/api/projects")
-    def api_projects(_=Depends(_require_auth)):
+    def _projects_payload() -> dict:
         """The inactive-state payload: the registry, the folders the registry does not know, the
-        toolchains the init shortlist depends on, and the projects root's own health."""
+        toolchains the init shortlist depends on, and the projects root's own health.
+
+        One function for the page and the endpoint, so the page cannot show a toolchain census that
+        differs from the one the plan endpoint answers with.
+        """
         return {"projects": projects.list_projects(),
                 "scan": projects.scan(),
                 "toolchains": projects.toolchains(),
@@ -1385,6 +1388,23 @@ def create_app() -> FastAPI:
                           for k, v in projects.INIT_STEPS.items()},
                 "order": list(projects.INIT_ORDER),
                 "summary": projects.summary()}
+
+    @app.get("/projects")
+    def projects_page(request: Request, _=Depends(_require_auth)):
+        """Projects (§6.14.1n): the projects root, the registry, the folders the registry has not
+        been told about, and the fixed init shortlist.
+
+        This is the page's *inactive* state (the operator's word): projects are chosen, created,
+        adopted and forgotten here. The session view is the harness page (§6.14.1m) — that is why
+        the row's Launch button is labelled inert rather than shown as a button that does nothing.
+        Rendering reads; it creates and writes nothing.
+        """
+        return templates.TemplateResponse(request, "projects.html", _projects_payload())
+
+    @app.get("/api/projects")
+    def api_projects(_=Depends(_require_auth)):
+        """The projects page's data, as an endpoint (D1: every read is also an endpoint)."""
+        return _projects_payload()
 
     @app.post("/api/projects/plan")
     def api_projects_plan(body: ProjectPlanBody, _=Depends(_require_auth)):

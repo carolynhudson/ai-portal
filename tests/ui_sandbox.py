@@ -32,7 +32,9 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 UIDIR = ROOT / "tests" / "ui"
-PASSWORD = "ui-test-password-123"
+#: The sandbox portal's password. It is generated for a throwaway home on loopback and is not a
+#: secret; the rule is a password detector, not a test-fixture detector.
+PASSWORD = "ui-test-password-123"  # noqa: S105
 
 
 def _free_port() -> int:
@@ -68,6 +70,13 @@ class Sandbox:
         comfy = self.home / "ai" / "comfyui" / "models" / "checkpoints"
         comfy.mkdir(parents=True)
         (comfy / "ui-test.safetensors").write_bytes(b"\0" * 2048)
+        # The projects root (§6.14.1n), with one ordinary folder and one whose *name* is markup. The
+        # scan lists folders the portal did not author — a name that arrives by `git clone` is a
+        # stored-XSS payload with a legal filename, and the page renders it.
+        proot = self.home / "ai-projects"
+        proot.mkdir(parents=True)
+        (proot / "ui-test-app").mkdir()
+        (proot / "<img src=x onerror=alert(1)>").mkdir()
         self._seed_health()
 
     def _seed_health(self) -> None:
@@ -96,10 +105,14 @@ class Sandbox:
         (presets / "presets.ini").write_text("[*]\nthreads = 16\n\n")
         (self.home / "apt-stamp").touch()   # apt's "last update" stamp: fresh lists
 
-    def start(self, timeout: float = 60.0) -> "Sandbox":
+    def start(self, timeout: float = 60.0) -> Sandbox:
         env = dict(os.environ)
         env.update(
             AI_PORTAL_HOME=str(self.home),
+            # `AI_PORTAL_HOME` redirects the portal's own `~/ai` tree, but it does not redirect `~`.
+            # The projects root is a `~` path by default (~/ai-projects), so a sandbox that leaves
+            # HOME alone renders — and can write to — the operator's real projects folder.
+            HOME=str(self.home),
             AI_PORTAL_HOST="127.0.0.1",
             AI_PORTAL_PORT=str(self.port),
             AI_PORTAL_PASSWORD=PASSWORD,
@@ -116,7 +129,9 @@ class Sandbox:
             no_proxy="127.0.0.1,localhost",
             NO_PROXY="127.0.0.1,localhost",
         )
-        self._log = open(self.home / "server.log", "w+")
+        # The log handle outlives this method: it is the server's stdout, read in `stop()` and
+        # `server_log()`. A context manager here would close the stream being captured.
+        self._log = open(self.home / "server.log", "w+")  # noqa: SIM115
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app.main:app",
              "--host", "127.0.0.1", "--port", str(self.port), "--no-access-log"],
@@ -185,10 +200,11 @@ class Sandbox:
             return self._log.read()
         return ""
 
-    def __enter__(self) -> "Sandbox":
+    def __enter__(self) -> Sandbox:
         return self.start()
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc) -> None:   # noqa: SIM115 companion of the log handle above
+
         self.stop()
 
 

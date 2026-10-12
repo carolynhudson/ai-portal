@@ -1,0 +1,322 @@
+{# Projects (PORTAL_PLAN §6.14.1n, queue 18): the projects root, the registry, and the shortlist
+   of boxes a new project gets.
+
+   This is the page's *inactive* state (the operator's word): projects are chosen, created, adopted
+   and forgotten here. Once a session is launched the harness page takes over (§6.14.1m) — this page
+   deliberately does not try to be a session view, and "Launch" is labelled as that page's verb
+   rather than shown as a dead button.
+
+   Every fact on the page — the root, what is in it, which toolchains exist, what a box needs, what
+   a plan would run — is read from the portal's endpoints at render time (D3). No toolchain is
+   assumed present, so a box on a machine without npm shows why its box is greyed instead of failing
+   on click. #}
+{% extends "base.html" %}
+{% block title %}Projects · AI Portal{% endblock %}
+{% block body %}
+<style>
+/* page-local only. No tab geometry here — that lives in web/static/tabs.css. */
+.proj-grid{display:grid;gap:14px;grid-template-columns:minmax(320px,1fr) minmax(320px,1fr)}
+@media (max-width:900px){.proj-grid{grid-template-columns:1fr}}
+.proj-line{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;font-size:.85rem;margin:0 0 10px}
+.proj-line b{font-weight:600}
+.proj-mut{color:var(--mut);font-size:.85rem;margin:0 0 10px}
+.proj-steps{display:grid;gap:6px;margin:8px 0}
+.proj-step{display:flex;gap:9px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);
+  border-radius:7px;background:var(--panel)}
+.proj-step[data-unavailable="yes"]{border-style:dashed;opacity:.72}
+.proj-step .proj-need{color:var(--mut);font-size:.78rem}
+.proj-plan{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;background:var(--panel)}
+.proj-plan ul{margin:4px 0 0;padding-left:18px}
+.proj-plan li{padding:2px 0;font-size:.85rem}
+.proj-result{font-size:.85rem;margin:8px 0 0;white-space:pre-wrap}
+.proj-result[data-tone="bad"]{color:#c44}
+.proj-result[data-tone="good"]{color:#2a8f5a}
+.proj-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--line)}
+.proj-name{font-weight:600}
+.proj-path{color:var(--mut);font-size:.78rem;grid-column:1/-1}
+.proj-facts{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:.75rem;color:var(--mut);grid-column:1/-1}
+.proj-verbs{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
+</style>
+
+<h2>Projects</h2>
+<p class="proj-mut">Projects live in the projects root — the folder the portal is allowed to create
+  projects in. Change it on <a href="/settings">Settings</a>. Forgetting a project here removes it
+  from the registry and never deletes the folder on disk.</p>
+
+<div id="proj-summary" class="proj-line"></div>
+
+<div class="proj-grid">
+  <div class="card">
+    <h3>New project</h3>
+    <label class="proj-mut" for="proj-name">Name</label>
+    <input id="proj-name" type="text" placeholder="my-app" autocomplete="off" spellcheck="false"
+           style="width:100%;box-sizing:border-box">
+    <p class="proj-mut" id="proj-namerule">Lowercase letters, digits and single hyphens, 2 to 64
+      characters, starting and ending with a letter or digit. <code>my-app</code> is fine;
+      <code>My-App</code>, <code>-app</code>, <code>app--1</code> and <code>app/x</code> are not.</p>
+    <p class="proj-mut">Tick the boxes a new project starts with. The shortlist is fixed: the
+      portal's own best practices, not a place to type commands. A box whose toolchain is not on
+      this machine is refused by name, with the install statement, and the boxes that can run still
+      run.</p>
+    <div id="proj-steps" class="proj-steps"></div>
+    <p style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0">
+      <button id="proj-plan">Plan</button>
+      <button id="proj-create" class="primary">Create project</button>
+    </p>
+    <div class="proj-plan" id="proj-plan-out" hidden></div>
+    <p class="proj-result" id="proj-create-out"></p>
+  </div>
+
+  <div class="card">
+    <h3>Registry</h3>
+    <p class="proj-mut" id="proj-empty" hidden>No projects yet. Create one, adopt a folder that is
+      already in the projects root, or clone a project into the root and it will show up below.</p>
+    <div id="proj-rows"></div>
+
+    <h3 style="margin-top:16px">Folders the registry does not know</h3>
+    <p class="proj-mut">A folder created by hand, with <code>git clone</code>, or by an agent, is a
+      project the portal has not been told about. Adopting writes the registry only — it changes
+      nothing on disk.</p>
+    <div id="proj-unadopted"></div>
+  </div>
+</div>
+
+<div id="proj-data"
+     data-steps='{{ steps | tojson }}'
+     data-order='{{ order | tojson }}'
+     data-toolchains='{{ toolchains | tojson }}'
+     data-root='{{ summary | tojson }}'></div>
+
+<script>
+/* The injected data is server output, not a guarantee: a truncated attribute or a template that
+   shipped an empty one must degrade to an empty page with a sentence, not a script error. */
+function readData(name, fallback) {
+  const node = document.getElementById('proj-data');
+  const raw = node && node.dataset[name];
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+const STEPS = readData('steps', {});
+const ORDER = readData('order', []);
+const TOOLCHAINS = readData('toolchains', {});
+const ROOT = readData('root', {});
+
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+
+/* Every request answers with a sentence. A page that swallows an HTTP status leaves the operator
+   with a button that did nothing. */
+async function req(method, path, body) {
+  try {
+    const r = await fetch(path, {method, headers: {'Content-Type': 'application/json'},
+                                 body: body === undefined ? undefined : JSON.stringify(body)});
+    const data = await r.json().catch(() => null);
+    if (!r.ok) return {detail: String((data && data.detail) || `http ${r.status}`)};
+    return data;
+  } catch (e) {
+    return {detail: `request failed: ${e.message || e}`};
+  }
+}
+
+function renderSummary(s) {
+  const box = $('#proj-summary');
+  box.textContent = '';
+  const add = (label, value) => {
+    // Separated, not just placed side by side: `textContent` of the line is the page's own
+    // sentence, and a reader (the operator, or the harness asserting the line) should get words,
+    // not "Registered 0Folders not in the registry 2".
+    if (box.children.length) box.append(document.createTextNode(' · '));
+    const p = el('span'); const b = el('b'); b.textContent = label;
+    p.append(b, document.createTextNode(' ' + value));
+    box.append(p);
+  };
+  add('Projects root', s.root);
+  add('Registered', s.registered);
+  add('Folders not in the registry', s.unadopted);
+  add('Root', s.root_ok ? 'usable' : `refused: ${s.root_error}`);
+}
+
+function renderSteps() {
+  const box = $('#proj-steps');
+  box.textContent = '';
+  for (const id of ORDER) {
+    const spec = STEPS[id];
+    if (!spec) continue;
+    const missing = (spec.needs || []).filter(t => !(TOOLCHAINS[t] && TOOLCHAINS[t].present));
+    const row = el('label', 'proj-step');
+    row.dataset.step = id;
+    row.dataset.unavailable = missing.length ? 'yes' : 'no';
+    const cb = el('input'); cb.type = 'checkbox'; cb.value = id;
+    const name = el('span'); name.textContent = spec.label;
+    const does = el('span'); does.className = 'proj-need';
+    does.textContent = missing.length
+      ? `needs ${missing.join(', ')} — ${missing.map(t => TOOLCHAINS[t] && TOOLCHAINS[t].hint).filter(Boolean).join('; ')}`
+      : spec.does;
+    row.append(cb, name, does);
+    box.append(row);
+  }
+}
+
+const ticked = () => Array.from(document.querySelectorAll('#proj-steps input:checked')).map(i => i.value);
+
+async function plan() {
+  const out = $('#proj-plan-out');
+  out.hidden = false;
+  out.textContent = 'planning…';
+  const d = await req('POST', '/api/projects/plan', {steps: ticked()});
+  out.textContent = '';
+  if (d.detail) {
+    const p = el('p'); p.textContent = `refused: ${d.detail}`; p.dataset.tone = 'bad';
+    out.append(p);
+    return;
+  }
+  const head = el('b');
+  head.textContent = 'Plan';
+  out.append(head);
+  const runs = el('ul');
+  (d.run || []).forEach(s => { const li = el('li'); li.textContent = `runs: ${s}`; runs.append(li); });
+  const refuses = el('ul');
+  (d.refused || []).forEach(r => {
+    const li = el('li'); li.textContent = `refused: ${r.step} — ${r.reason}`; li.dataset.tone = 'bad';
+    refuses.append(li);
+  });
+  out.append(runs, refuses);
+  if (!d.run.length && !d.refused.length) {
+    const p = el('p'); p.textContent = 'nothing ticked.'; out.append(p);
+  }
+}
+
+function renderRows(rows) {
+  const box = $('#proj-rows');
+  box.textContent = '';
+  $('#proj-empty').hidden = rows.length > 0;
+  for (const p of rows) {
+    const row = el('div', 'proj-row');
+    row.dataset.path = p.path;
+    const name = el('span', 'proj-name');
+    name.textContent = p.name + (p.exists ? '' : '  (folder missing)');
+    const verbs = el('div', 'proj-verbs');
+
+    const launch = el('button');
+    launch.textContent = 'Launch';
+    launch.dataset.launch = p.name;
+    launch.dataset.inert = 'yes';
+    launch.title = 'Launching a session is the harness page (§6.14.1m). It is not here yet, so this button does nothing.';
+
+    const forget = el('button');
+    forget.textContent = 'Forget';
+    forget.dataset.forget = p.name;
+
+    const path = el('span', 'proj-path');
+    path.textContent = p.path;
+
+    const facts = el('span', 'proj-facts');
+    const on = [];
+    for (const [k, v] of Object.entries(p.facts || {})) if (v) on.push(k);
+    facts.textContent = (on.join(' · ') || 'nothing measured') +
+      (p.notes && p.notes.refused && p.notes.refused.length
+        ? ` — init refused: ${p.notes.refused.map(r => r.step).join(', ')}` : '');
+
+    row.append(name, verbs, path, facts);
+    verbs.append(launch, forget);
+    box.append(row);
+  }
+}
+
+function renderUnadopted(items) {
+  const box = $('#proj-unadopted');
+  box.textContent = '';
+  if (!items.length) {
+    const p = el('p'); p.className = 'proj-mut'; p.textContent = 'None.';
+    box.append(p);
+    return;
+  }
+  for (const f of items) {
+    const row = el('div', 'proj-row');
+    row.dataset.path = f.path;
+    const name = el('span', 'proj-name');
+    name.textContent = f.name;
+    const verbs = el('div', 'proj-verbs');
+    const adopt = el('button');
+    adopt.textContent = 'Adopt';
+    adopt.dataset.adopt = f.name;
+    adopt.disabled = !f.adoptable;
+    const path = el('span', 'proj-path');
+    path.textContent = f.path + (f.reason ? ` — ${f.reason}` : '');
+    row.append(name, verbs, path);
+    verbs.append(adopt);
+    box.append(row);
+  }
+}
+
+async function refresh() {
+  const d = await req('GET', '/api/projects');
+  if (d.detail) {
+    $('#proj-summary').textContent = `the projects read failed: ${d.detail}`;
+    return;
+  }
+  renderSummary(d.summary);
+  renderRows(d.projects);
+  renderUnadopted(d.scan);
+}
+
+$('#proj-plan').addEventListener('click', () => plan());
+
+$('#proj-create').addEventListener('click', async () => {
+  const out = $('#proj-create-out');
+  out.dataset.tone = '';
+  out.textContent = 'creating…';
+  const d = await req('POST', '/api/projects', {name: $('#proj-name').value.trim(), steps: ticked()});
+  if (d.detail) {
+    out.dataset.tone = 'bad';
+    out.textContent = `refused: ${d.detail}`;
+    await refresh();
+    return;
+  }
+  out.dataset.tone = d.ok ? 'good' : 'bad';
+  out.textContent = d.ok
+    ? `created ${d.name} in ${d.root}. ran: ${d.ran.join(', ') || 'nothing'}` +
+      (d.refused.length ? `. refused: ${d.refused.map(r => `${r.step} (${r.reason})`).join('; ')}` : '')
+    : d.warning;
+  await refresh();
+});
+
+$('#proj-rows').addEventListener('click', async (e) => {
+  const row = e.target.closest('.proj-row');
+  if (!row) return;
+  if (e.target.dataset.launch) {
+    $('#proj-summary').textContent = 'Launching a session is the harness page (§6.14.1m): this page '
+      + 'lists projects and prepares them; the session view is the page that takes over once a '
+      + 'session runs.';
+    return;
+  }
+  if (e.target.dataset.forget) {
+    const name = e.target.dataset.forget;
+    if (!window.confirm(`forget ${name}? The registry drops it. The folder ${row.dataset.path} is `
+                        + 'not touched — deleting a folder is your verb, not the portal’s.')) return;
+    const d = await req('POST', '/api/projects/forget', {path: row.dataset.path, confirm: true});
+    $('#proj-summary').textContent = d.detail ? `refused: ${d.detail}`
+      : `forgotten ${name}. ${d.note}`;
+    await refresh();
+  }
+});
+
+$('#proj-unadopted').addEventListener('click', async (e) => {
+  const row = e.target.closest('.proj-row');
+  if (!row || !e.target.dataset.adopt) return;
+  const d = await req('POST', '/api/projects/adopt', {path: row.dataset.path});
+  $('#proj-summary').textContent = d.detail ? `refused: ${d.detail}` : `adopted ${d.name}.`;
+  await refresh();
+});
+
+renderSteps();
+refresh();
+</script>
+{% endblock %}

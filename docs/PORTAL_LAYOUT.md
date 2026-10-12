@@ -94,7 +94,12 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
   confirms with that list, and the page states the start will not move it) · a preset file the
   router did not load (drift statement, Apply is the way to close it) · a probe failed (degradation
   sentence + a re-check verb) · a job holds the machine (controls inert with the reason, bar names
-  the job) · unauthenticated (login, then return to the page the link came from).
+  the job) · unauthenticated (login, then return to the page the link came from) · a project init
+  step fails (the folder stays, the step is named with its command and exit code, the page states
+  nothing was deleted) · a box whose toolchain is not installed (refused by name with the install
+  statement, and the boxes that can run still run) · a folder in the root the registry does not know
+  (listed, adoptable, adopted by registry write only) · a name that is not a folder name (the rule
+  quoted where the name is typed).
 
 ### Paths
 

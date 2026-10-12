@@ -1392,6 +1392,82 @@
     "#kb-section"
    ],
    "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
+  },
+  {
+   "_comment": [
+    "sec 6.14.1n: the projects page. It shows a shortlist of checkboxes and a plan, and every",
+    "promise it makes about them is a promise about the server: a missing toolchain is refused",
+    "by name, a plan creates nothing, forgetting deletes nothing, and Launch belongs to the",
+    "harness page (sec 6.14.1m) and is labelled inert. The sweep drives the fields and the",
+    "buttons; the assertions below are the outcomes the operator reads.",
+    "requireConfirmFor names the forget endpoint: the sweep accepts confirm() in its second pass, so a page that posts /api/projects/forget without asking is caught there. Create and adopt need no confirm (registry writes, nothing on disk deleted) and the endpoint says so."
+   ],
+   "name": "projects",
+   "path": "/projects",
+   "expectTitle": "Projects",
+   "expectRequests": [
+    "/api/projects"
+   ],
+   "expectNoRequests": [
+    "/api/projects/plan",
+    "/api/projects/adopt",
+    "/api/projects/forget"
+   ],
+   "expectVisible": [
+    "#proj-summary",
+    "#proj-name",
+    "#proj-namerule",
+    "#proj-steps",
+    "#proj-plan",
+    "#proj-create",
+    "#proj-plan-out",
+    "#proj-rows",
+    "#proj-unadopted",
+    "#proj-data"
+   ],
+   "expectText": [
+    {
+     "_comment": [
+      "The root line is the page's headline fact: where projects live and what the",
+      "registry knows. A page that renders the card markup without the payload answers",
+      "with empty strings, which expectVisible cannot see."
+     ],
+     "selector": "#proj-summary",
+     "matches": "Projects root \\S+ \u00b7 Registered \\d+ \u00b7 Folders not in the registry \\d+"
+    },
+    {
+     "_comment": [
+      "the name rule the server enforces, stated where the operator types the name"
+     ],
+     "selector": "#proj-namerule",
+     "matches": "[Ll]owercase letters, digits and single hyphens"
+    },
+    {
+     "_comment": [
+      "the shortlist is rendered from the server's step list, not hardcoded markup"
+     ],
+     "selector": "#proj-steps .proj-step",
+     "matches": "Git repository",
+     "minCount": 7
+    }
+   ],
+   "expectInert": [
+    "dataset\\.launch"
+   ],
+   "expectNoInjectedMarkup": [
+    {
+     "_comment": [
+      "Project names, folder paths and the unadopted scan all come from the filesystem,",
+      "and the scan lists folders the portal did not author. A hostile folder name is a",
+      "stored-XSS payload that arrives by `git clone`."
+     ],
+     "selectors": "#proj-rows, #proj-unadopted"
+    }
+   ],
+   "noopSelfLinks": true,
+   "requireConfirmFor": [
+    "^/api/projects/forget$"
+   ]
   }
  ]
 }

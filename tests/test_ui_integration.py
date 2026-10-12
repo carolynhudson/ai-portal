@@ -147,9 +147,22 @@ def ui_server():
         "[*]\nthreads = 16\ngpu_split_mask = 0xf\n\n[ui-tiny-coder]\nalias = UI-Tiny\n\n",
         encoding="utf-8")
 
+    # The projects root (§6.14.1n), with one ordinary folder and one whose *name* is markup. The
+    # scan lists folders the portal did not author: a name that arrives by `git clone` is a stored-XSS
+    # payload with a legal filename, and the page renders it.
+    proot = home / "ai-projects"
+    proot.mkdir(parents=True)
+    (proot / "ui-test-app").mkdir()
+    (proot / "<img src=x onerror=alert(1)>").mkdir()
+
     env = dict(os.environ)
     env.update(
         AI_PORTAL_HOME=str(home),
+        # `AI_PORTAL_HOME` moves the portal's `~/ai` tree; it does not move `~`. The projects root is
+        # a `~` path by default (~/ai-projects), and the UI sweep clicks every control on the page --
+        # including Create. Leaving HOME alone means the sweep writes projects into the operator's
+        # real projects folder.
+        HOME=str(home),
         AI_PORTAL_HOST="127.0.0.1",
         AI_PORTAL_PORT=str(_free_port()),
         AI_PORTAL_PASSWORD=PASSWORD,
@@ -225,6 +238,13 @@ def ui_server():
             "models": ["UI-Tiny-Coder", SAFE_MODEL],
             "global_edits": {"threads": "8", "cache-prompt": "off"}})
         assert rp.status_code == 200, f"seed personality: {rp.status_code} {rp.text}"
+
+        # A registered project, created through the portal's own endpoint. The projects page's row
+        # verbs (Launch, Forget) exist only on registry rows: a sandbox with an empty registry can
+        # assert the empty-state sentence and nothing else, and the sweep never drives a row button.
+        rj = httpx.post(f"{base}/api/projects", headers=hdr, timeout=60, json={
+            "name": "ui-registered-app", "steps": ["readme", "gitignore", "agents"]})
+        assert rj.status_code == 200, f"seed project: {rj.status_code} {rj.text}"
         yield {"base": base, "cookie": f"aipp={token}", "home": home, "syscalls": syscalls}
     finally:
         stray.terminate()

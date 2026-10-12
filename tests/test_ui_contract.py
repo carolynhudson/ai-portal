@@ -758,6 +758,17 @@ def _editor_script(tpl: str) -> str:
     return edits[0]
 
 
+def _script_of(tpl: str, page: str) -> str:
+    """The page's own script — the largest inline block.
+
+    A page may carry a small markup block and the script that runs it; picking the biggest one is
+    how this file reads "the page's JavaScript" without deciding per page which index that is.
+    """
+    blocks = [b for b in SCRIPT_RE.findall(tpl) if b.strip()]
+    assert blocks, f"{page} has no inline script, so there is no page behaviour to check"
+    return max(blocks, key=len)
+
+
 def _fn(script: str, name: str) -> str:
     """One function's source, by brace counting from its declaration."""
     start = script.index(f"function {name}(")
@@ -1003,3 +1014,146 @@ def test_the_dashboard_reports_what_the_router_actually_is():
     # The pulse's own poll: `tick`, from its declaration to the interval it schedules itself with.
     poll = tpl[tpl.index("async function tick("):tpl.index("const _poll =")]
     assert "router/report" not in poll, "the census rides the router's poll"
+
+# ------------------------------------------------------------- the projects page (§6.14.1n)
+# The page shows a shortlist of checkboxes, a plan, and a registry. Its promises are all
+# statements about the server: that a missing toolchain is refused by name, that a plan creates
+# nothing, that forgetting deletes nothing, that Launch is the harness page's verb. All of them are
+# checkable in the page's own JavaScript — which is exactly the point: a page that says one thing
+# and posts another is the failure this test exists for.
+def test_the_projects_page_shows_the_toolchain_it_measured():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+
+    assert "toolchains" in tpl, "the page renders no toolchain census, so it is assuming toolchains"
+    assert "TOOLCHAINS" in script
+    step_row = script[script.index("function renderSteps"):script.index("const ticked")]
+    assert "missing" in step_row and "unavailable" in step_row, \
+        "a box whose toolchain is absent is drawn exactly like one that can run"
+    assert "hint" in step_row, \
+        "the box says a tool is missing without the install statement the server supplied"
+    # The census has to be consulted *in the sentence that decides availability*: a page that
+    # computes `missing = []` and keeps every other word of this function intact offers every box.
+    census_line = [ln for ln in step_row.splitlines() if "const missing" in ln]
+    assert census_line, "the availability decision is not one readable line"
+    assert "spec.needs" in census_line[0] and "TOOLCHAINS" in census_line[0], \
+        f"availability is not decided from the box's needs against the measured census: {census_line[0].strip()}"
+    assert "STEPS[id]" in step_row, "the box list is written in the page instead of read from the shortlist"
+
+
+def test_the_projects_page_shows_the_plan_it_asked_for():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+    plan = _fn(script, "plan")
+
+    assert "/api/projects/plan" in plan, "the Plan button does not ask the plan endpoint"
+    assert "'POST'" in plan, "the plan is asked for as a GET, so it is a page read, not a plan"
+    assert "refused" in plan and "reason" in plan, \
+        "the plan output drops the refusals: the operator sees a plan with holes in it"
+    assert "run" in plan, "the plan output never lists what will run"
+
+
+def test_the_projects_page_creates_only_through_the_endpoint_that_reports_a_half_built_project():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+    create = script[script.index("$('#proj-create').addEventListener"):]
+    create = create[:create.index("$('#proj-rows').addEventListener")]
+
+    assert "'/api/projects'" in create, "Create does not post to the create endpoint"
+    assert "steps: ticked()" in create, "Create posts without the boxes the operator ticked"
+    assert "detail" in create, "a refusal from create is swallowed: the button appears to do nothing"
+    assert "warning" in create, \
+        "a half-built project is shown as success: the page hides the failing step the endpoint named"
+    assert "refused" in create, "the init refusals are not reported after a create"
+
+
+def test_the_projects_page_asks_before_it_forgets_and_says_what_forgetting_does_not_do():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+
+    assert "confirm(" in rows, "Forget is a one-click write"
+    assert "not touched" in rows or "never deletes" in rows, \
+        "the confirm does not say that the folder on disk is left alone"
+    assert "confirm: true" in rows, "Forget posts without the confirm the endpoint requires"
+    assert "/api/projects/forget" in rows, "Forget is not wired to the endpoint"
+
+
+def test_the_projects_page_labels_the_launch_it_cannot_perform():
+    """§6.14.1m is the harness page. Until it exists, Launch must read as the harness page's verb,
+    not as a button that silently does nothing."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+    # Asserted on the line that *builds the button*. `data-inert="yes"` also appears in the page's
+    # CSS, where it styles the control — an assertion satisfied by a stylesheet proves nothing about
+    # the control the page renders.
+    assert "launch.dataset.inert = 'yes'" in script, "the Launch control is not built as inert"
+
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    launch = rows[rows.index("dataset.launch"):]
+    launch = launch[:launch.index("dataset.forget")]
+    assert "req(" not in launch, "the inert Launch posts a request: an inert control that acts"
+
+
+def test_the_projects_page_reports_the_refusal_of_every_row_verb():
+    """Adopt and Forget refuse things for reasons the operator can act on — the folder is outside
+    the projects root, the name is not a project name, the confirm was missing.
+
+    The UI sweep cannot see this: its mutation block means the server never answers those posts, so
+    the refusal branch never runs under jsdom. Asserted in the source for that reason.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    assert "refused: ${d.detail}" in rows, "a refused Forget is silent"
+
+    adopt = script[script.index("$('#proj-unadopted').addEventListener"):]
+    assert "'/api/projects/adopt'" in adopt, "Adopt is not wired to the adopt endpoint"
+    assert "refused: ${d.detail}" in adopt, "a refused Adopt is silent"
+
+
+def test_the_projects_page_reads_every_number_it_shows():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects.html")
+
+    assert "'/api/projects'" in script, "the page never reads the projects payload"
+    assert "renderSummary(d.summary)" in script and "renderRows(d.projects)" in script \
+        and "renderUnadopted(d.scan)" in script, "a section of the payload is never rendered"
+    assert "request failed" in script, \
+        "a failed request leaves the page showing last week's registry with no note"
+    assert "innerHTML" not in script, "the page renders registry data as markup"
+
+
+def test_the_projects_page_is_linked_and_routed():
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert 'href="/projects"' in base, "the Projects page is not in the nav"
+    main = (ROOT / "app" / "main.py").read_text()
+    assert '@app.get("/projects")' in main, "the nav links a page that has no route"
+    assert "projects.html" in main, "the route renders a template that is not the projects page"
+
+
+def test_the_projects_page_promises_the_name_rule_the_server_enforces():
+    """The page states the rule and the server enforces it. They are checked against the same
+    sentence, so the page cannot promise a name the endpoint refuses."""
+    from app.core import projects as proj
+
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    needle = "lowercase letters, digits and single hyphens"
+    with pytest.raises(proj.ProjectError) as exc:
+        proj.validate_name("My-App")
+    server_rule = str(exc.value)
+
+    assert needle in tpl.lower(), "the page does not state the name rule the operator will hit"
+    assert needle in server_rule.lower(), "the server's rule sentence changed shape: the page's copy is stale"
+    for shape in ("my-app", "My-App", "app--1", "app/x", "a"):
+        ok = bool(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", shape)) and len(shape) >= 2
+        refuses = False
+        try:
+            proj.validate_name(shape)
+        except proj.ProjectError:
+            refuses = True
+        assert refuses is (not ok), f"{shape}: the page tells the operator {ok}, the server answers {not refuses}"
