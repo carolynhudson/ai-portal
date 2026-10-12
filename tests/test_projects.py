@@ -1,0 +1,395 @@
+"""Projects: name rule, toolchain honesty, bounded init, registry plus scan (§6.14.1n).
+
+A project name becomes a directory, so the name rule is the security boundary; the projects root
+decides where an agent may write, so it is validated by `portalsettings`; and an init step whose
+toolchain is absent is refused *with the install command* rather than offered as a live button.
+Every test here runs against a temporary projects root — nothing touches the operator's
+`~/ai-projects`.
+"""
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from app.core import db
+from app.core import portalsettings
+from app.core import projects
+
+@pytest.fixture(autouse=True)
+def sandbox(tmp_path, monkeypatch):
+    """A home, a portal home, a projects root, and a database in a temporary home."""
+    home = tmp_path / "home"
+    (home / "ai").mkdir(parents=True)
+    root = home / "ai-projects"
+    root.mkdir()
+    monkeypatch.setattr(portalsettings, "home", lambda: str(home))
+    monkeypatch.setattr(portalsettings, "portal_home", lambda: str(home / "ai"))
+    # The registry lives in the portal database. `db.init()` creates the table (a core test reaches
+    # `db.execute` without the app starting up), and the DELETE isolates the rows: the suite's home
+    # is process-wide, so a shared registry would make every "the list is exactly this" assertion
+    # depend on which test ran first.
+    db.init()
+    db.execute("DELETE FROM projects")
+    # The root is redirected by *storing the setting*, the way the operator does it from the page.
+    # That keeps the real validator in the path; patching `projects_root` would hide the check the
+    # tests exist to prove.
+    db.set_setting("projects_root", str(root))
+    # `projects_root` is deliberately **not** patched: with only `home` redirected, the real
+    # function resolves to this fixture's root, so an explicit root passed to `create()` still runs
+    # through the real validator. Patching it away would hide the check the tests exist to prove.
+    return root
+
+
+def _tools(**present):
+    """A toolchain census where only the named tools are present.
+
+    `gpp` stands in for `g++`, which is not an identifier. A helper that silently accepted a
+    misspelled tool name would answer `present: False` for exactly the tool a test was trying to
+    simulate, and the test would then pass by proving nothing.
+    """
+    named = dict(present)
+    named["g++"] = named.pop("gpp", False)
+    out = {}
+    for t in projects.TOOLS:
+        entry: dict[str, object] = {"present": bool(named.get(t)),
+                                    "path": f"/usr/bin/{t}" if named.get(t) else None}
+        if not named.get(t) and t in projects.INSTALL_HINT:
+            entry["hint"] = projects.INSTALL_HINT[t]
+        out[t] = entry
+    return out
+
+
+# --- the name rule ------------------------------------------------------------------------
+
+def test_a_name_is_a_folder_name(sandbox):
+    assert projects.validate_name("my-app") == "my-app"
+    assert projects.validate_name("app2") == "app2"
+
+
+@pytest.mark.parametrize("bad", ["My-App", "-app", "app-", "a", "app--1", "app/x", "../escape",
+                                 ".hidden", "app x", "app\x00", "x" * 65])
+def test_a_name_that_is_not_a_folder_name_is_refused_with_the_rule(sandbox, bad):
+    with pytest.raises(projects.ProjectError) as e:
+        projects.validate_name(bad)
+    assert "lowercase letters, digits and single hyphens" in str(e.value)
+
+
+def test_a_non_string_name_is_refused(sandbox):
+    with pytest.raises(projects.ProjectError):
+        projects.validate_name(None)
+    with pytest.raises(projects.ProjectError):
+        projects.validate_name(["my-app"])
+
+
+def test_a_refused_name_never_creates_a_folder(sandbox):
+    with pytest.raises(projects.ProjectError):
+        projects.create("../escape", ["readme"])
+    assert list(sandbox.iterdir()) == []
+
+
+# --- toolchain honesty --------------------------------------------------------------------
+
+def test_a_tool_that_is_not_on_the_path_is_reported_absent(sandbox, monkeypatch):
+    """The probe's negative answer, asserted directly.
+
+    A probe that reports every tool as present passes every "the plan refused cpp" test, because
+    those tests feed it a census of their own. This one feeds it the real box.
+    """
+    monkeypatch.setattr(projects.shutil, "which", lambda tool: None)
+    census = projects.toolchains()
+    assert all(v["present"] is False for v in census.values()), census
+    assert all(census[t].get("hint") for t in projects.INSTALL_HINT), "an absent tool must come with the install statement"
+
+
+def test_the_plan_runs_what_this_box_can_do_and_refuses_the_rest_with_the_install_command(sandbox):
+    plan = projects.plan_init(["cpp", "python"], _tools(git=True, uv=True, cmake=True, gpp=True))
+    assert plan["run"] == ["python", "cpp"], plan
+    assert plan["refused"] == [], plan
+
+    plan = projects.plan_init(["cpp", "agents"], _tools(uv=True))
+    assert plan["run"] == ["agents"], "the box that can run must not be taken by the one that cannot"
+    refused = {r["step"]: r["reason"] for r in plan["refused"]}
+    assert "cpp" in refused and "cmake" in refused["cpp"], refused
+
+
+def test_a_missing_toolchain_does_not_abort_the_other_boxes(sandbox):
+    plan = projects.plan_init(["node", "readme", "gitignore"], _tools(node=True))
+    assert plan["run"] == ["readme", "gitignore"], "a missing toolchain must not take README with it"
+    assert {r["step"] for r in plan["refused"]} == {"node"}, plan["refused"]
+
+
+def test_an_unknown_step_is_refused_and_names_the_ones_the_page_offers(sandbox):
+    with pytest.raises(projects.ProjectError) as e:
+        projects.plan_init(["deploy_kubernetes"], _tools())
+    assert "AGENTS.md" not in str(e.value)
+    assert "git" in str(e.value) and "readme" in str(e.value)
+
+
+def test_a_non_list_of_steps_is_refused(sandbox):
+    with pytest.raises(projects.ProjectError):
+        projects.plan_init("git", _tools())
+
+
+def test_the_toolchain_probe_reports_what_it_found_and_the_version_line(sandbox):
+    tc = projects.toolchains()
+    assert tc["git"]["present"] is True and tc["git"]["version"], "git is on this box; the probe must see it"
+    for ghost in ("cargo", "go", "deno"):
+        if not tc[ghost]["present"]:
+            assert tc[ghost]["hint"], "a missing toolchain must come with the install statement"
+        assert set(tc[ghost]) >= {"present"}
+
+
+# --- creation -----------------------------------------------------------------------------
+
+def test_create_makes_the_folder_and_the_files_and_registers_it(sandbox):
+    out = projects.create("spike-app", ["readme", "gitignore", "agents"], root=str(sandbox))
+    assert out["ok"], out
+    target = sandbox / "spike-app"
+    assert (target / "README.md").read_text().startswith("# spike-app")
+    assert "node_modules/" in (target / ".gitignore").read_text()
+    assert "## Commands" in (target / "AGENTS.md").read_text()
+    assert out["refused"] == []
+    rows = projects.list_projects()
+    assert [r["name"] for r in rows] == ["spike-app"]
+    assert rows[0]["facts"]["readme"] is True and rows[0]["facts"]["agents"] is True
+
+
+def test_the_project_name_is_substituted_into_the_files_it_writes(sandbox):
+    projects.create("widget", ["cpp"], root=str(sandbox))
+    text = (sandbox / "widget" / "CMakeLists.txt").read_text()
+    assert "project(widget CXX)" in text and "${name}" not in text
+
+
+def test_an_existing_folder_is_refused_and_points_at_adopt(sandbox):
+    (sandbox / "taken").mkdir()
+    with pytest.raises(projects.ProjectError) as e:
+        projects.create("taken", ["readme"], root=str(sandbox))
+    assert "already exists" in str(e.value) and "Adopt" in str(e.value)
+
+
+def test_a_failing_step_leaves_the_folder_and_names_the_step(sandbox, monkeypatch):
+    calls = {"n": 0}
+    real = projects._run
+
+    def fake(argv, cwd, env):
+        calls["n"] += 1
+        if argv[0] == "npm":
+            return {"code": 127, "stdout": "", "stderr": "npm: command not found (simulated)", "seconds": 0.1}
+        return real(argv, cwd, env)
+
+    monkeypatch.setattr(projects, "_run", fake)
+    out = projects.create("half-built", ["node", "readme"], root=str(sandbox))
+    assert not out["ok"]
+    assert out["failed"]["step"] == "node" and out["failed"]["code"] == 127
+    target = sandbox / "half-built"
+    assert target.is_dir(), "nothing is deleted behind a failed step"
+    assert (target / "tsconfig.json").is_file()
+    assert not (target / "README.md").exists(), "steps after the failure do not run"
+    assert "nothing was deleted" in out["warning"] and "npm" in out["warning"]
+    assert [r["name"] for r in projects.list_projects()] == ["half-built"], "a half project is a fact the page can show"
+
+
+def test_git_init_runs_with_the_project_as_its_working_directory(sandbox):
+    projects.create("repo-app", ["git"], root=str(sandbox))
+    assert (sandbox / "repo-app" / ".git").is_dir()
+    assert projects.list_projects()[0]["facts"]["git"] is True
+
+
+def test_create_refuses_a_root_the_validator_refuses(sandbox):
+    """A relative root is the case the plan warns about: the service starts in its own working
+    directory, so a relative root resolves to a folder the page cannot see."""
+    with pytest.raises(projects.ProjectError) as e:
+        projects.create("x-app", ["readme"], root="apps/x-app")
+    assert "projects root is not usable" in str(e.value) and "relative path" in str(e.value)
+    assert list(sandbox.iterdir()) == []
+
+
+def test_a_name_the_shortlist_writes_can_never_escape_the_project_folder(sandbox):
+    for bad in ("../escape", "/etc/passwd", "a/../../b", "x\x00"):
+        with pytest.raises(projects.ProjectError):
+            projects._safe_join(str(sandbox / "p"), bad)
+    assert projects._safe_join(str(sandbox / "p"), "src").endswith(os.path.join("p", "src"))
+
+
+# --- registry plus scan -------------------------------------------------------------------
+
+def test_a_folder_created_by_hand_is_discovered_and_adoptable(sandbox):
+    (sandbox / "by-hand").mkdir()
+    found = projects.scan(str(sandbox))
+    assert [f["path"] for f in found] == [os.path.realpath(str(sandbox / "by-hand"))]
+    assert found[0]["adoptable"] is True
+
+    out = projects.adopt(str(sandbox / "by-hand"))
+    assert out["ok"]
+    assert [r["name"] for r in projects.list_projects()] == ["by-hand"]
+    assert projects.scan(str(sandbox)) == [], "an adopted folder stops being unadopted"
+
+
+def test_scan_skips_the_registrys_own_rows_and_dotfolders(sandbox):
+    projects.create("registered", ["readme"], root=str(sandbox))
+    (sandbox / ".cache").mkdir()
+    (sandbox / "loose-file.txt").write_text("x")
+    assert projects.scan(str(sandbox)) == []
+
+
+def test_a_folder_whose_name_is_not_a_project_name_is_reported_as_not_adoptable(sandbox):
+    (sandbox / "Bad Name").mkdir()
+    found = projects.scan(str(sandbox))
+    assert [f for f in found if f["name"] == "Bad Name"][0]["adoptable"] is False
+    with pytest.raises(projects.ProjectError):
+        projects.adopt(str(sandbox / "Bad Name"))
+
+
+def test_adoption_refuses_a_folder_outside_the_projects_root(sandbox):
+    outside = sandbox.parent / "outside-app"
+    outside.mkdir()
+    with pytest.raises(projects.ProjectError) as e:
+        projects.adopt(str(outside))
+    assert "not inside the projects root" in str(e.value)
+
+
+def test_adoption_refuses_the_root_itself(sandbox):
+    with pytest.raises(projects.ProjectError) as e:
+        projects.adopt(str(sandbox))
+    assert "projects root itself" in str(e.value)
+
+
+def test_forgetting_a_project_deletes_nothing(sandbox):
+    projects.create("keepme", ["readme"], root=str(sandbox))
+    target = sandbox / "keepme"
+    out = projects.remove(str(target))
+    assert out["ok"] and out["deleted_from_disk"] is False
+    assert target.is_dir() and (target / "README.md").is_file()
+    assert projects.list_projects() == []
+
+
+def test_the_summary_reports_the_root_and_what_is_missing_from_it(sandbox):
+    projects.create("one", ["readme"], root=str(sandbox))
+    (sandbox / "two").mkdir()
+    s = projects.summary()
+    assert s["registered"] == 1 and s["unadopted"] == 1
+    assert s["root_ok"] is True and s["root"] == str(sandbox)
+
+
+def test_notes_record_the_steps_that_ran_and_the_ones_refused(sandbox, monkeypatch):
+    monkeypatch.setattr(projects, "toolchains", lambda: _tools(readme=True))
+    projects.create("noted", ["readme", "cpp"], root=str(sandbox))
+    row = projects.list_projects()[0]
+    assert row["notes"]["init"] == ["readme"]
+    assert row["notes"]["refused"][0]["step"] == "cpp"
+
+
+def test_a_notes_column_that_is_not_json_survives_the_read(sandbox):
+    projects.create("legacy", ["readme"], root=str(sandbox))
+    row = projects.list_projects()[0]
+    db.execute("UPDATE projects SET notes='not json' WHERE path=?", (row["path"],))
+    assert projects.list_projects()[0]["notes"] == {}
+
+
+# --- the endpoints (D1: every read is also an endpoint) ------------------------------------
+
+def _client():
+    from fastapi.testclient import TestClient
+
+    from app.core import config as cfg
+    from app.main import app
+    c = TestClient(app)
+    c.cookies.set(cfg.COOKIE_NAME, cfg.make_token(cfg.load()))
+    return c
+
+
+def test_the_project_endpoints_require_auth():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    c = TestClient(app)
+    assert c.get("/api/projects", follow_redirects=False).status_code == 401
+    for path, body in [("/api/projects", {"name": "x"}), ("/api/projects/plan", {"steps": []}),
+                       ("/api/projects/adopt", {"path": "/x"}),
+                       ("/api/projects/forget", {"path": "/x", "confirm": True})]:
+        assert c.post(path, json=body, follow_redirects=False).status_code == 401, path
+
+
+def test_the_read_endpoint_answers_the_page(sandbox):
+    c = _client()
+    r = c.get("/api/projects")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    for key in ("projects", "scan", "toolchains", "steps", "order", "summary"):
+        assert key in d, key
+    assert d["steps"]["git"]["label"] == "Git repository"
+    assert "git" in d["toolchains"] and d["toolchains"]["git"]["present"] is True
+
+
+def test_the_plan_endpoint_answers_without_creating(sandbox):
+    c = _client()
+    r = c.post("/api/projects/plan", json={"steps": ["cpp", "readme"]})
+    assert r.status_code == 200, r.text
+    assert list(sandbox.iterdir()) == [], "plan creates nothing"
+    assert "readme" in r.json()["run"]
+
+
+def test_the_plan_endpoint_refuses_an_unknown_step_by_name(sandbox):
+    c = _client()
+    r = c.post("/api/projects/plan", json={"steps": ["nope"]})
+    assert r.status_code == 409
+    assert "nope" in r.json()["detail"] and "readme" in r.json()["detail"]
+
+
+def test_create_through_the_endpoint_answers_409_with_the_name_rule(sandbox):
+    c = _client()
+    r = c.post("/api/projects", json={"name": "Bad Name", "steps": []})
+    assert r.status_code == 409, r.text
+    assert "lowercase letters" in r.json()["detail"]
+    assert list(sandbox.iterdir()) == []
+
+
+def test_create_through_the_endpoint_creates_and_logs_the_event(sandbox):
+    c = _client()
+    r = c.post("/api/projects", json={"name": "api-app", "steps": ["readme", "gitignore"]})
+    assert r.status_code == 200, r.text
+    assert (sandbox / "api-app" / "README.md").is_file()
+    events = db.query("SELECT kind, detail FROM events WHERE actor='project' ORDER BY id")
+    assert events and events[-1]["kind"] == "create"
+    detail = events[-1]["detail"]
+    assert "name=api-app" in detail and "ran=readme,gitignore" in detail, detail
+
+
+def test_forgetting_requires_confirm(sandbox):
+    projects.create("confirmme", ["readme"], root=str(sandbox))
+    c = _client()
+    r = c.post("/api/projects/forget", json={"path": str(sandbox / "confirmme"), "confirm": False})
+    assert r.status_code == 409 and "confirm" in r.json()["detail"]
+    assert projects.list_projects() != []
+
+    r = c.post("/api/projects/forget", json={"path": str(sandbox / "confirmme"), "confirm": True})
+    assert r.status_code == 200 and projects.list_projects() == []
+    assert (sandbox / "confirmme").is_dir(), "the endpoint forgets; it does not delete"
+
+
+def test_adoption_through_the_endpoint_refuses_a_path_outside_the_root(sandbox):
+    c = _client()
+    r = c.post("/api/projects/adopt", json={"path": str(sandbox.parent)})
+    assert r.status_code == 409
+    assert "projects root" in r.json()["detail"]
+
+
+def test_a_half_created_project_is_answered_as_a_failure_the_operator_can_act_on(sandbox, monkeypatch):
+    """The endpoint's side of §6.14.1n: a failed step is 409 with the step named and the folder
+    declared, never a 200 over a half-built project."""
+    real = projects._run
+
+    def fake(argv, cwd, env):
+        if argv[0] == "npm":
+            return {"code": 127, "stdout": "", "stderr": "npm: command not found (simulated)", "seconds": 0.1}
+        return real(argv, cwd, env)
+
+    monkeypatch.setattr(projects, "_run", fake)
+    c = _client()
+    r = c.post("/api/projects", json={"name": "half-api", "steps": ["node", "readme"]})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "node" in detail and "nothing was deleted" in detail, detail
+    assert (sandbox / "half-api").is_dir(), "the folder is reported, not hidden"
+    assert not (sandbox / "half-api" / "README.md").exists()

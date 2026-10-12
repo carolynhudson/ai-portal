@@ -21,6 +21,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -44,7 +45,9 @@ from .core import (
     network,
     paths,
     personality,
+    portalsettings,
     presets_store,
+    projects,
     ratelimit,
     routerctl,
     serviceconf,
@@ -166,6 +169,39 @@ class AgentSyncBody(BaseModel):
     is refused rather than silently read as the default."""
     port: int | None = None
     posture: str = "project"
+
+
+class PortalSettingBody(BaseModel):
+    """One portal setting, raw. `value` stays `Any` for the same reason an apply payload does: a
+    number sent as a string, a path with a stray space, a null — each one is an answer the
+    validator has to be able to *name*, not a 422 that tells the operator nothing (§6.14.1n)."""
+    key: str
+    value: Any = None
+
+
+class ProjectCreateBody(BaseModel):
+    """A project to create: a name and the init boxes that were ticked (§6.14.1n). The steps are
+    raw strings because an unknown step id is a refusal the page should read, not a 422."""
+    name: str
+    steps: list[str] = []
+
+
+class ProjectAdoptBody(BaseModel):
+    """Adopt a folder that already exists inside the projects root."""
+    path: str
+    name: str | None = None
+
+
+class ProjectForgetBody(BaseModel):
+    """`confirm` because forgetting a project is a decision the page asks for. The folder on disk is
+    never deleted here — that is the operator's verb, not the portal's."""
+    path: str
+    confirm: bool = False
+
+
+class ProjectPlanBody(BaseModel):
+    """The ticked boxes, dry-run against this box's toolchains."""
+    steps: list[str] = []
 
 
 class ComfyConfigBody(BaseModel):
@@ -1306,6 +1342,93 @@ def create_app() -> FastAPI:
     def api_settings(_=Depends(_require_auth)):
         """Tunable settings (poll rates, feature flags) for the dashboard."""
         return db.current_settings()
+
+    @app.get("/api/settings/portal")
+    def api_settings_portal(_=Depends(_require_auth)):
+        """The portal's own settings, with the path each one resolves to (§6.14.1n)."""
+        return portalsettings.view()
+
+    @app.post("/api/settings/portal/validate")
+    def api_settings_portal_validate(body: PortalSettingBody, _=Depends(_require_auth)):
+        """Tell the page whether this value would be accepted, **without saving it**.
+
+        The projects root decides where an agent writes files, so the page asks before the
+        operator has typed Save: a relative path, a path outside the home, a path landing on a
+        file, and a path under an unwriteable ancestor are all refusals, and each names the fact.
+        """
+        if not portalsettings.is_writable(body.key):
+            return {"ok": False, "key": body.key,
+                    "error": f"unknown portal setting {body.key!r}; the page can write "
+                             f"{', '.join(portalsettings.writable_keys())}"}
+        if body.key == "projects_root":
+            return portalsettings.validate_projects_root(body.value)
+        return {"ok": False, "key": body.key, "error": f"{body.key} has no validation rule"}
+
+    @app.post("/api/settings/portal")
+    def api_settings_portal_set(body: PortalSettingBody, _=Depends(_require_auth)):
+        """Validate and store one portal setting. A refusal never reaches the database."""
+        out = portalsettings.set_value(body.key, body.value)
+        db.event("portal", "portal-setting", f"key={body.key} ok={out.get('ok')}")
+        if not out.get("ok"):
+            raise HTTPException(status_code=409, detail=out.get("error") or "the setting was refused")
+        return out
+
+    # ------------------------------------------------------ projects (§6.14.1n)
+    @app.get("/api/projects")
+    def api_projects(_=Depends(_require_auth)):
+        """The inactive-state payload: the registry, the folders the registry does not know, the
+        toolchains the init shortlist depends on, and the projects root's own health."""
+        return {"projects": projects.list_projects(),
+                "scan": projects.scan(),
+                "toolchains": projects.toolchains(),
+                "steps": {k: {"label": v["label"], "does": v["does"], "needs": v["needs"]}
+                          for k, v in projects.INIT_STEPS.items()},
+                "order": list(projects.INIT_ORDER),
+                "summary": projects.summary()}
+
+    @app.post("/api/projects/plan")
+    def api_projects_plan(body: ProjectPlanBody, _=Depends(_require_auth)):
+        """What the ticked boxes would do on **this** box: the steps that will run, and the ones
+        refused with the install command. Creates nothing."""
+        try:
+            return projects.plan_init(body.steps)
+        except projects.ProjectError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.post("/api/projects")
+    def api_projects_create(body: ProjectCreateBody, _=Depends(_require_auth)):
+        """Create a project folder under the projects root and run the init shortlist."""
+        try:
+            out = projects.create(body.name, body.steps)
+        except projects.ProjectError as exc:
+            db.event("project", "create-refused", str(exc)[:200])
+            raise HTTPException(409, str(exc)) from None
+        db.event("project", "create",
+                 f"name={out['name']} ran={','.join(out['ran']) or '-'} "
+                 f"refused={len(out['refused'])} ok={out['ok']}")
+        if not out["ok"]:
+            # Half a project with the failing step named, and nothing deleted (§6.14.1n).
+            raise HTTPException(409, out["warning"])
+        return out
+
+    @app.post("/api/projects/adopt")
+    def api_projects_adopt(body: ProjectAdoptBody, _=Depends(_require_auth)):
+        """Add an existing folder inside the projects root to the registry."""
+        try:
+            out = projects.adopt(body.path, body.name)
+        except projects.ProjectError as exc:
+            raise HTTPException(409, str(exc)) from None
+        db.event("project", "adopt", f"path={out['path']}")
+        return out
+
+    @app.post("/api/projects/forget")
+    def api_projects_forget(body: ProjectForgetBody, _=Depends(_require_auth)):
+        """Forget a project. The folder on disk is untouched; `confirm` is required."""
+        if not body.confirm:
+            raise HTTPException(409, "forgetting a project needs confirm: true")
+        out = projects.remove(body.path)
+        db.event("project", "forget", f"path={out['path']}")
+        return out
 
     # ------------------------------------------------- service controls (B)
     @app.get("/api/services")

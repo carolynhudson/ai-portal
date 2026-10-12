@@ -6,6 +6,7 @@ events); Phase A uses a slice of it and later phases fill the rest in.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -74,6 +75,11 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, value TEXT
 );
+-- Projects (§6.14.1n). `path` is the realpath, so a folder the operator adopted and a folder the
+-- portal created are the same row shape. `notes` is JSON: which init steps ran, which were refused.
+CREATE TABLE IF NOT EXISTS projects (
+  path TEXT PRIMARY KEY, name TEXT, created REAL, last_opened REAL, notes TEXT
+);
 """
 
 
@@ -92,15 +98,13 @@ def _conn() -> sqlite3.Connection:
 def init() -> None:
     c = _conn()
     c.executescript(SCHEMA)
-    try:  # pre-existing DBs: add the metadata column once
+    # Pre-existing DBs: add each column once. An existing column is the normal case here, not an
+    # exception worth a name — SQLite raises `duplicate column name` and we continue.
+    with contextlib.suppress(sqlite3.OperationalError):
         c.execute("ALTER TABLE model_files ADD COLUMN meta TEXT")
-    except sqlite3.OperationalError:  # column already there
-        pass
     for col in ("pid INTEGER", "boot TEXT"):
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             c.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
-        except sqlite3.OperationalError:  # already migrated
-            pass
     c.commit()
 
 
@@ -144,6 +148,9 @@ SETTINGS_DEFAULTS = {
     "metrics_poll_ms": 2000,   # host metrics chart refresh interval
     "router_metrics": True,    # llama router runs with --metrics (exposes /metrics)
     "remote_check_ttl_hours": 6.0,  # upstream probe cache (a few checks a day)
+    # Where the coding projects live. Validated by `portalsettings`, never by the page: this is
+    # the setting that decides where an agent gets to write files (§6.14.1n).
+    "projects_root": "~/ai-projects",
 }
 
 
