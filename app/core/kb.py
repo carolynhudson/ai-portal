@@ -41,6 +41,7 @@ DOC_ORDER = [
     ("PI_HARNESS_RESEARCH.md", "pi harness research — the pi-web spike and its measured gates"),
     ("HARNESS_LANDSCAPE_RESEARCH.md", "Harness landscape — ACP, web-native shapes, extension parity"),
     ("MEMORY_PLUGIN_RESEARCH.md", "Memory plugins — candidates, licences, engines measured on this box"),
+    ("PORTAL_POLISH.md", "Design and workflow debt — the operator's list, measured, with proposed shapes"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")

@@ -237,15 +237,18 @@ new queue number, not a silent revival of an old one.
   form, the model badge from the census, the context meter from per-step tokens, `/quit` returning to
   the inactive state with the session id left visible for resume. Projects' Launch button is the
   handoff point.
-- **(33) Polish wave 1 — the personalities page.** The operator's named page, and the one with the
-  most surface (1,258 template lines, 2,156-line module, four panels in one page). **Gate: the
-  operator enumerates the specific items first** — measured evidence (`layout_measure` numbers, the
-  UI sweep report, the deck/editor/presets flow) is paired with their list, then the slice is ordered.
+- **(33) Polish wave 1 — the personalities page workflow.** The operator enumerated the list on
+  2026-10-12; it is kept with measurements in `docs/PORTAL_POLISH.md`. Their item, confirmed: the page
+  is **6,800 px** of scroll and the settings editor is **5,298 px** in one block — 6.6 viewports, the
+  layout brief's limit is three. The proposed four-state shape (Now / Deck / Editor-opened-by-a-verb /
+  Reference in Help), plus the personality↔project connection, is the brief they asked to discuss.
+  **Gate: their agreement on the four states before code.**
 - **(34) Polish wave 2 — page map coherence.** Move the portal from feature-shaped pages to the
   layout doc's duty-shaped map, or change the map: what `/` keeps, what moves to `/service`,
   `/machine`, `/portal`, and which named pages never get built. Nav, breadcrumbs, the attention
   ribbon, empty and degraded states per page. This is the "features smashed together" fix, and it is
   a decision before code.
+  The operator's page-by-page list is the input: `docs/PORTAL_POLISH.md` §1, §7, §8.
 - **(35) The portal exposes MCP and skills.** `app/core/mcpserver.py`: router census, model inventory,
   projects registry, agents sync, presets state, and `inspect`/`lint` reads — plus `SKILL.md` files
   that teach the handoff (checkpoint format, where the plan/queue live, how to read the census).
@@ -259,6 +262,49 @@ new queue number, not a silent revival of an old one.
   terminating TLS at a sub-path with WebSocket forwarding, portal password gate plus a harness token.
   Not required for proof-of-concept, required before the family uses it from other machines.
 - **(39) Knowledgebase as a documentation site (§6.14.2).** Not started.
+
+The operator's design-debt enumeration (2026-10-12) is kept as `docs/PORTAL_POLISH.md`, each item
+paired with a measurement from this box and a proposed shape. It feeds 33 and 34, and adds:
+
+- **(40) Status page: a vitals strip, not a CPU chart.** Four tiles (GPU pool, VRAM, system RAM,
+  disk) with `ok`/`watch`/`danger` states from thresholds, a top-RSS line naming which llama-server
+  slot is the user, the router hero split into Serving / Census / Load sections, and **server-side
+  metrics history** so the Machine detail chart is populated the moment it opens. Measured cause of
+  the operator's complaint: `startMachinePoll()` polls only `if (d && d.open …)`, and the history
+  array lives in the browser — every page load starts at zero samples. Measured on this box: CPU
+  3.9%, VRAM 523,329,536/536,870,912 = **97%**, GTT pool 61.1/115.9 GB = 53%, RAM 58.2%, disk 35%.
+- **(40b) Harness row in the Tool Repository Update Status**, beside llama.cpp / ComfyUI /
+  huggingface-cli / Python / GPU drivers. The section itself is kept as designed — the operator's own
+  verdict, recorded so a later session does not "improve" it.
+- **(41) Settings page as control.** Network access becomes one mini-table per service with footnote
+  markers (measured: 104 characters in an 84 px service cell, 358 characters in a 250 px reachability
+  cell, 247 px given to an empty input, and 1 intersecting box pair at 1280×800). Controls for the
+  rates that already exist (`metrics_poll_ms`, `router_poll_ms`, `router_metrics`), the queue 40
+  thresholds, which units start at login, presets publish, harness config sync. Standing rule for
+  every new feature: does its value belong here.
+- **(42) Help page as a documentation site.** Measured: `.kb-toc` is 1,024 px of client width against
+  **13,749 px of content** — 13.4 viewports of horizontal scrolling, 208 nodes — and the 41 document
+  links go nowhere. Left tree, right viewer, search ribbon that stays out of the way. This is where
+  33's key reference moves to.
+- **(43) Models datagrid identity.** Measured: the sticky model-id column is 352 px holding 487–542
+  px of content, so the frozen column paints over the scrolling columns — structural, not a glitch.
+  Short model name as the row identity, source (`hub cache` / `library` / `path`) as its own column
+  beside the live light, one capability vocabulary with `paired` stating only what the pairing adds
+  (`+ embed:embeddinggemma`), and a grid contract assertion `scrollWidth ≤ clientWidth` on sticky
+  cells so this cannot come back silently.
+- **(44) Health page refresh.** The model store card reads `model directories 0` next to `files in
+  index 20 (274.1G)` — it counts the pre-hub-cache library layout, which is why it reads as empty.
+  Count by source, add the harness row, re-read every card against the subsystems the portal has now.
+- **(45) Model inventory management, design brief first.** Their flow bug is confirmed: choosing a
+  llama.cpp model in HF search lands in the ComfyUI safetensors download mode. Rules before features,
+  because the library was wiped once: **the portal never deletes a model file**, mutations are
+  planned and previewed then applied, writes are additive, `presets.ini` keeps `*.portal-prev`, and a
+  destination is named before any download starts.
+- **(46) ComfyUI models tree.** Columnar tree over ComfyUI's own folder groups with per-file detail
+  (format/quant, scheduler-visible, used-by), so it stops being sizes-only next to the llama.cpp grid.
+
+Priority, per the operator: 30–32 stay first. 33 and 45 are briefs the operator reviews before code.
+40, 41, 42, 43, 44 are in-place fixes that can interleave with the harness slices.
 
 **What is deliberately not in the queue:** the layout doc's `/models/detail`, `/machine/updates`
 split, and the L0/L1/L2 drill pages. They are architecture notes with no feature attached; when 34
