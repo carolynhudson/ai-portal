@@ -82,6 +82,16 @@ detail**, **a design spec before the build**, and **`~/ai-projects/*` as its own
 | `/projects` | Own the projects root: create a project from the init shortlist, list projects, and launch a pi session scoped to one. Inactive state only. |
 | `/pi` | Own the live agent session: transcript, tool calls, permission decisions, context meter, and `/quit`. Shows the session and nothing else while one is running. |
 
+**Page map status, measured 2026-10-12.** The map above is the target by duty. The portal ships
+seven pages: `/` `/models` `/health` `/personalities` `/settings` `/help` `/projects`. `/service`,
+`/service/router`, `/machine`, `/machine/updates`, `/portal`, `/models/detail` and `/pi` do not
+exist as routes — their duties are carried inside `/` and `/personalities` today, which is why
+the dashboard is 1,674 template lines and the personalities page 1,258. Canonical queue 34
+(`docs/PORTAL_PLAN.md` §0.1) is the decision that closes this: move the features to the duty-shaped
+map, or change the map. Until it runs, treat the rows above as the target and the seven pages as
+the present, and do not add a fifth panel to an existing page.
+
+
 ## L3 Core flow
 
 - **State list:** page load · loading (fetch in flight) · populated · degraded (probe/file/list
