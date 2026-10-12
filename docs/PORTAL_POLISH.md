@@ -63,23 +63,41 @@ The operator's report is confirmed: the search-and-select path sends you into th
 **ComfyUI safetensors mode** when you chose a llama.cpp model. Read the flow in
 `web/templates/models.html` and `app/core/modeladd.py` before touching it.
 
-**This is the slowest item on the list, deliberately.** The llama.cpp model library was wiped once.
-Any inventory system for it inherits that fact, so the rules are written before the features:
+**This is the slowest item on the list, deliberately.** The operator supplied the history that sets
+its rules: the library was lost during a previous feature — a personality-scoped symlink models
+library, meant to limit which models a personality may load — whose code removed **every subfolder of
+`~/ai/models/llama/`**. It was discovered only when nothing was recoverable except the Hugging Face
+download cache, which is what the portal has relied on since. Their policy, stated 2026-10-12:
 
-- **The portal never deletes a model file.** No verb removes anything from the hub cache or
-  `~/ai/models/llama`; a "remove" is a portal-side bookkeeping change with the file path printed and
-  the operator told what it now points at.
+- **Deletion is allowed, with confirmation that names the path and says it cannot be undone.**
+- **No unconfirmed removals and no bulk removals, especially around model libraries.** The verb is
+  one model at a time; the confirmation shows the resolved absolute path and the size, and there is
+  no "all", no glob, no directory target.
+- **The operator is asked before any task that mass-deletes or removes folders** — the standing
+  request, born of that loss. A report-only dry run (resolved absolute targets, recovery path
+  stated) precedes any such operation.
 - **Every mutation is planned, shown, then run** (the Projects page's pattern: plan → preview the
-  exact writes → apply), and writes are additive only: new file, new section, new index entry.
-- `presets.ini` keeps `*.portal-prev`; the index keeps a timestamped copy per write (it already
-  does, §6.12.10).
+  exact writes → apply). `presets.ini` keeps `*.portal-prev`; the index keeps a timestamped copy per
+  write (it already does, §6.12.10).
 - The download flow names the target: which library the file lands in, which section the preset gets,
   and what the router will be told. A llama.cpp pick must not inherit a ComfyUI destination.
 
-Connected to personalities and MCP by design: the inventory answers "which models exist, which are
-registered, which a personality can afford" — the same three reads the personalities deck and the
-harness launch already use (`routerctl`, `modelindex`, `personality.fits`). Queue 45 is planned as a
+**The cache is a real limitation, and the operator named it.** Everything lives in a blob store whose
+layout a person cannot read: "what is actually there, and what is usable" is not answerable by looking
+at it. Inventory work is the answer to that — a readable inventory with source, size, registration
+state and personality affordability, and a copy-to-library verb (additive) so a model can leave the
+cache's naming behind. Connected to personalities and MCP by design: the inventory answers "which
+models exist, which are registered, which a personality can afford" — the same three reads the deck
+and the harness launch already use (`routerctl`, `modelindex`, `personality.fits`). Queue 45 is a
 design brief first, reviewed by the operator, then built in slices.
+
+**Pinned as research, not scheduled (queue 47): personality-scoped model visibility.** The
+symlink-library idea — limit which models a personality may load, so a user or an agent cannot create
+an OOM condition by loading several large models at once. The operator is not pushing it back in
+because of how it was lost and its own issues; it becomes live if the Projects page needs per-project
+model visibility. Research must state the mechanism (symlinks in a per-personity directory pointed at
+by `--models-dir`? an allow-list at the router?), the failure mode that wiped the library, and the
+guard that makes it impossible to repeat.
 
 ## 4. Models page — the llama.cpp datagrid — canonical queue 43
 

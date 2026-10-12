@@ -297,9 +297,24 @@ paired with a measurement from this box and a proposed shape. It feeds 33 and 34
   Count by source, add the harness row, re-read every card against the subsystems the portal has now.
 - **(45) Model inventory management, design brief first.** Their flow bug is confirmed: choosing a
   llama.cpp model in HF search lands in the ComfyUI safetensors download mode. Rules before features,
-  because the library was wiped once: **the portal never deletes a model file**, mutations are
-  planned and previewed then applied, writes are additive, `presets.ini` keeps `*.portal-prev`, and a
-  destination is named before any download starts.
+  from the operator's policy after the library loss: deletion is allowed **only** with a confirmation
+  naming the resolved path and stating it cannot be undone; **no unconfirmed removals, no bulk
+  removals, nothing that targets a directory**; the operator is asked before any mass-delete or folder
+  removal, and a report-only dry run precedes it. Mutations are planned, previewed, then applied;
+  `presets.ini` keeps `*.portal-prev`; a destination is named before any download starts. The cache's
+  opacity is the operator's stated reason for the work — inventory must answer "what is there and what
+  is usable" by looking, with a copy-to-library verb that is additive.
+- **(47) Pinned as research, not scheduled: personality-scoped model visibility** (the symlink models
+  library that limits which models a personality may load, so several resident models cannot create an
+  OOM condition). The operator is not pushing it back in; it becomes live if the Projects page needs
+  per-project model visibility. The research must name the mechanism, the failure mode that wiped
+  `~/ai/models/llama/`, and the guard that makes it unrepeatable.
+
+**Interleave decision (operator, 2026-10-12):** queue **43** (models datagrid identity), **41**
+(settings as control) and **42** (help page) run interleaved with 30–32. Queue **33** is approved as
+the four-state design (Now / Deck / Editor-opened-by-a-verb / Reference in Help) and **40** as the
+vitals strip with the proposed thresholds (pool ≥85% danger, ≥70% watch; VRAM ≥90%; RAM ≥90%/≥75%;
+disk ≥90%) and the CPU chart out of the hero.
 - **(46) ComfyUI models tree.** Columnar tree over ComfyUI's own folder groups with per-file detail
   (format/quant, scheduler-visible, used-by), so it stops being sizes-only next to the llama.cpp grid.
 
