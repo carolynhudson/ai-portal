@@ -4282,10 +4282,38 @@ Queue **26** — skills, not extensions: design-playbook's `SKILL.md` set is ins
 `~/.agents/skills/` (discovered by opencode, pi, Codex and Cursor; `name` must match the directory).
 Keep new portal knowledge in skills and MCP tools, because those are the harness-agnostic halves.
 
-Queue **27** — persistent memory (hermes-memory's equivalent): decide between a plugin
-(`@mathew-cf/opencode-memory`, `@cioffi_ai/opencode-memory`, LanceDB-backed `opencode-memory-pro`) and
-the portal's own memory service exposed as queue 25's MCP tools. The portal's own is inspectable and
-shared by both harnesses; the plugins are one harness's private habit.
+Queue **27** — persistent memory (hermes-memory's equivalent). Researched and measured in
+`docs/MEMORY_PLUGIN_RESEARCH.md`; the recommendation is: adopt **`@mathew-cf/opencode-memory`**
+(Apache-2.0; git-tracked markdown store; hybrid keyword ✚ semantic search through `@mathew-cf/rag-cli`,
+a 36 MB native binary with a local quantized ONNX MiniLM — measured indexing this repo's 2,121 chunks
+in 11.8 s with no cloud and no router call; knowledge bases over source repositories for file-content
+retrieval; `session_search` across OpenCode, **Pi** and Codex; hooks that nudge search-first and remind
+the agent to write a retrospective **at compaction time**; skill dropped in `~/.agents/skills/` where pi
+looks too), and copy **`@cioffi_ai/opencode-memory`**'s *behaviour* into the portal's own conventions
+(tiers core/archival/temporary/pinned, per-fact provenance to the source session and messages, a
+contradiction lifecycle that flags instead of overwriting, `memory_useful`/`memory_irrelevant` retrieval
+feedback, typed options that fail setup on an unknown name). Rejected on measured facts: `ainative`
+(paid cloud, API key), `@staticeng` (UNLICENSED), `opencode-memory-pro` (`NOASSERTION` licence, 32
+releases in four days then silence), `claude-mem` (compression runs through Claude's Agent SDK in the
+cloud; documented token-burn issue #618; wants Bun **and** `uv` for Chroma; AGPL). Deferred:
+**OpenViking** — the one with a research pedigree (VikingMem, VLDB 2026; memory as a `viking://`
+filesystem with L0/L1/L2 summary tiers and a per-query browsing trajectory you can trace), but it is a
+second server (Python), AGPL-3.0 network copyleft, front-loaded write-time LLM cost, 598 open issues
+with same-day churn, and it needs a resident embedding ✚ VLM — which this box cannot hand it while the
+router runs `max_instances: 1` (measured: `/props`, and `POST /v1/embeddings` → `400 model '…' not
+found` for registered-but-unloaded ids). Gate list for adoption is in that doc.
+
+Queue **28** — `tools/layout_measure.py` becomes a **broadly usable layout-inspection tool** the agent
+can call: gaps, padding, density, overlap, off-scale tokens, contrast pairs, and screenshots, as
+measured facts about a rendered page (Playwright + Chromium installed and measured working here). The
+operator's stated preference is a **plugin** over a service (more direct), with an MCP server as an
+acceptable fallback if the plugin path is not viable; either way the bar is a robust tool: input
+validation on the URL/viewport/selectors, error trapping and recovery, and output that is legible to
+the agent **including error states, connection failures especially**. Preferred shape: an opencode
+plugin (`@opencode-ai/plugin` tool) whose implementation is a portal CLI the harness calls, so the
+same binary serves the portal's own `check-ui` job, the plugin, and MCP. **Not now** — the Projects
+page (queue 18's second half) comes first; this is the "do not forget it" note, with the requirements
+attached.
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

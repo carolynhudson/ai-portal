@@ -38,6 +38,9 @@ DOC_ORDER = [
     ("PORTAL_SETTINGS.md", "Settings reference — every key a personality can set, from the registry"),
     ("PORTAL_UI.md", "Interface baseline — tokens, scale, components, page ownership, measured gaps"),
     ("PORTAL_LAYOUT.md", "Layout spec — hero, ribbon, owner pages, sub-pages, acceptance criteria"),
+    ("PI_HARNESS_RESEARCH.md", "pi harness research — the pi-web spike and its measured gates"),
+    ("HARNESS_LANDSCAPE_RESEARCH.md", "Harness landscape — ACP, web-native shapes, extension parity"),
+    ("MEMORY_PLUGIN_RESEARCH.md", "Memory plugins — candidates, licences, engines measured on this box"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
