@@ -31,8 +31,8 @@ from pydantic import BaseModel
 
 from . import __version__, metrics, providers
 from . import router as router_mod
-from .core import config as cfg
 from .core import (
+    agentconfig,
     db,
     health,
     kb,
@@ -53,6 +53,7 @@ from .core import (
     systemd,
     updater,
 )
+from .core import config as cfg
 from .providers import PROVIDERS
 from .providers import get as get_provider
 
@@ -157,6 +158,14 @@ class NamedBody(BaseModel):
     apply would write, and because a config name is something other rows already reference."""
     name: str
     confirm: bool = False
+
+
+class AgentSyncBody(BaseModel):
+    """Regenerate the harness configs. `port` is a seam for the tests and for a router someone
+    started on a non-default port; `posture` is the permission shape (§6.14.1m), and an unknown one
+    is refused rather than silently read as the default."""
+    port: int | None = None
+    posture: str = "project"
 
 
 class ComfyConfigBody(BaseModel):
@@ -1268,6 +1277,30 @@ def create_app() -> FastAPI:
         page has to name those processes rather than report a unit state.
         """
         return routerctl.self_report()
+
+    # ------------------------------------------------------- harness configs (queue 18)
+    @app.get("/api/agents/status")
+    def api_agents_status(_=Depends(_require_auth)):
+        """What the two harness configs are, read without writing anything.
+
+        The harnesses read two files that describe one fact — which models this box can serve and where
+        the router answers — so the page shows both, the port they point at, and whether pi has a usable
+        credential. Credential values are never in this answer: presence only.
+        """
+        return agentconfig.status()
+
+    @app.post("/api/agents/sync")
+    def api_agents_sync(body: AgentSyncBody, _=Depends(_require_auth)):
+        """Regenerate both harness configs from the router's own account (§6.14.1m).
+
+        Writes, so it confirms in the page, logs an event, and refuses loudly when it has nothing to
+        generate from: an empty model list, a router that is not answering, or a file it cannot parse.
+        """
+        out = agentconfig.sync(port=body.port, posture=body.posture)
+        db.event("portal", "agents-sync", f"ok={out.get('ok')} models={out.get('models', 0)} posture={out.get('posture', body.posture)}")
+        if not out.get("ok"):
+            raise HTTPException(status_code=409, detail=out.get("error") or "the configs were not written")
+        return out
 
     @app.get("/api/settings")
     def api_settings(_=Depends(_require_auth)):

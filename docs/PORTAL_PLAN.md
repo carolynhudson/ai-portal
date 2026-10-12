@@ -4237,6 +4237,56 @@ proof-of-concept, required before production, per the operator.
   pinned if it ever happens, never pruned.
 
 
+#### 6.14.1m The portal generates the harness configs from the router (queue 18) — DONE
+
+`app/core/agentconfig.py` (§6.14.1m, queue 18) writes the two files that bind a coding agent to the
+portal's llama.cpp router, from the router itself: `~/.pi/agent/models.json` for pi's built-in
+`llama.cpp` provider, and `~/.config/opencode/opencode.json` for opencode (`npm:
+@ai-sdk/openai-compatible`, `baseURL: http://127.0.0.1:8080/v1`, a non-empty key, its own
+`llamacpp` provider id, compaction with `prune: true`). The model list is the **union** of the
+router's registered models and its currently loaded models — the state the operator described fighting
+with `/models`, where a picker lists a model the server refuses.
+
+The boundaries that make it safe to point a generator at files the operator also edits:
+
+- **Merge, never replace** — an existing file keeps every key it has; our provider joins theirs, and a
+  default `model` the operator chose is never moved.
+- **A file we cannot parse is a hard stop.** pi allows comments in `models.json`; reproducing a file we
+  cannot read is how a generator destroys a hand-written config, so an unparseable file is left alone
+  and named in the result.
+- **Nothing is written when the router has nothing to say** — an unreachable router or an empty model
+  list refuses; an empty picker is worse than no config.
+- **A changed file keeps one prior copy** (`*.portal-prev`); an unchanged file writes nothing, so
+  pressing the button twice is a no-op.
+- **`auth.json` is read for presence and never written** — the credential check answers `key_set`,
+  never the value, and never the URL. That is the operator's blank-key failure, made visible.
+- **Permissions are one of three named postures** (queue 23): `project` (edits allowed, arbitrary
+  shell asks, leaving the project directory asks), `project-auto` (shell allowed inside the project,
+  `external_directory` **denied** — full-auto is inside the project, not everywhere), `all`
+  (everything, with `~/ai/state/portal/secrets/**` denied). `doom_loop` asks in every posture.
+
+Endpoints: `GET /api/agents/status` (the two files' presence, model counts, base URL, posture,
+auth-key presence — no secrets), `POST /api/agents/sync {port?, posture}` (409 with the refusal text
+when the router has no models, the posture is unknown, or a file cannot be parsed). 17 tests in
+`tests/test_agentconfig.py`; `app/core/routerctl.py` gained `router_models()` (registered ∪ loaded).
+
+Queue **25** — the portal's own MCP server (`portalctl`), because the survey showed the two things pi
+gets from extensions that opencode does **not** have built in are memory and the portal's own context,
+and both are things only the portal can answer. Tools: `routerctl` (what is loaded, loaded now, loaded
+from where), `inspect` (measured page facts: computed styles, gaps, contrast, screenshots — Playwright
+is installed and measured working), `lint` (ruff/pyright in the project's own venv),
+`layout_measure` (§6.14.1l's tool). Registered into opencode through `POST /mcp` and into pi's config,
+so both harnesses get them.
+
+Queue **26** — skills, not extensions: design-playbook's `SKILL.md` set is installed in
+`~/.agents/skills/` (discovered by opencode, pi, Codex and Cursor; `name` must match the directory).
+Keep new portal knowledge in skills and MCP tools, because those are the harness-agnostic halves.
+
+Queue **27** — persistent memory (hermes-memory's equivalent): decide between a plugin
+(`@mathew-cf/opencode-memory`, `@cioffi_ai/opencode-memory`, LanceDB-backed `opencode-memory-pro`) and
+the portal's own memory service exposed as queue 25's MCP tools. The portal's own is inspectable and
+shared by both harnesses; the plugins are one harness's private habit.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

@@ -293,7 +293,40 @@ The RAG-shaped idea fits the portal exactly, and none of it lives in the harness
    prompt, so a compacted session re-reads its own checkpoint and the project's notes. Only build this
    after 1–3 prove insufficient; it is the only rung with TypeScript in it.
 
-## 9. Sources
+## 10. Extension parity, item by item (the operator's list, measured 2026-10-12)
+
+The question: does opencode have, or can it get, the pi extensions the operator relies on — to-do,
+ask-user-questions, web access, lens/linting, MCP, persistent memory — plus the nice-to-haves: better
+compaction and context control, design skills, and tools that show the agent what its changes do
+visually.
+
+| Need | pi side | opencode 1.19.0 answer | How it was measured |
+|---|---|---|---|
+| To-do list | `rpiv-todo` | **built in**: `todowrite` | tool list for the router model: `bash, read, glob, grep, edit, write, task, webfetch, todowrite, skill, question, invalid` |
+| Ask the user questions | `rpiv-ask-user-question` | **built in**: `question`, with its own permission key | in the tool list; `permission.question: allow/ask/deny` in the config docs; the API exposes a pending-question tool part |
+| Web access beyond search | `pi-web-access` | `webfetch` **built in**; `websearch` is a **provider slot with plugins**: `opencode-websearch-cited` 1.2.0 (LLM-grounded, with citations), `opencode-websearch` 0.6.0, `opencode-websearch-addons` 1.0.9 (OpenAI/Gemini native), `opencode-websearch-deepseek` 0.4.1 | the config line `"plugin": ["opencode-websearch-cited"]` plus a server restart put **`websearch_cited`** in the tool list — auto-install, zero portal code |
+| Lint / code-quality feedback | `pi-lens` | **built-in LSP + formatter integration**, each with granular per-tool permissions (`lsp`, `formatter`); ESLint feedback plugin `@madsoftwaredev/opencode-lint-feedback` | `GET /lsp` and `GET /formatter` answered `[]` on the live instance; the docs' permission list names them. Python-side feedback — the portal's own language — is the portal's to expose: `ruff` and `pyright` are on this box and the portal knows the venv (queue 25) |
+| MCP | `pi-mcp-adapter` | **built in**: `mcp` config (local + remote), `opencode mcp` CLI, `GET/POST /mcp` | measured: `GET /mcp` → `[]`, `POST /mcp {name,config}` → 200 |
+| Persistent memory | `pi-hermes-memory` | **plugins, several**: `@mathew-cf/opencode-memory` 2.3.0 (hybrid keyword + semantic search), `@cioffi_ai/opencode-memory` 1.7.2 (WRITE→DREAM→SURFACE), `opencode-memory-pro` 1.6.2 (LanceDB), `@openviking/opencode-plugin` (repo retrieval + long-term memory), `@mastra/opencode` (observational memory), `ainative-opencode-memory-mcp` 0.1.2 | npm registry search, names and versions read off the registry — none installed. No built-in. The portal's own service (queue 25) is the option that stays **inspectable and shared** by both harnesses |
+| Compaction / context growth | pi-internal + `@pi-unipi/compactor` | **built in**: a `compaction` agent (own model, temperature 0.5), config `compaction {auto, prune, reserved}`, `POST /session/:id/summarize`, per-step token accounting (`tokens {input, output, reasoning, cache:{read,write}}`); plugin `@tarquinen/opencode-dcp` 3.2.0 prunes obsolete tool outputs | `GET /agent` lists `compaction`; `POST /session/:id/summarize` → `True`; the token fields were read from a live router step. `prune: true` is DCP's idea and is in the portal-generated config |
+| Design skills (GUI/web) | `design-playbook` (installs into pi) | **the same files work**: skills are `SKILL.md` folders, discovered at `.opencode/skills/`, `.claude/skills/`, `.agents/skills/` (project and global); `name` must match the directory | the docs list those paths; the design-playbook skills are now in `~/.agents/skills/` (`design-baseline`, `ux-spec`, `ui-evaluator`, `craft-guard`, …) and `skill` is in the tool list. Agent Skills are a shared format — pi reads the same folders |
+| Visual feedback on the agent's own changes | *(none in pi)* | not an opencode feature — it is a **tool we expose**: Playwright + Chromium are installed and measured working here, and the portal has `tools/layout_measure.py` (gaps, padding, overlaps, contrast, as rendered) | exposed as MCP tools (queue 25): the agent calls `layout_measure`/`screenshot` and reads numbers back, the way it reads a lint report |
+| `pi-llama-cpp` (router provider) | — | **not needed**: the portal generates the provider config from the router — registered ∪ loaded models, non-empty key | `app/core/agentconfig.py` writes `~/.pi/agent/models.json` and `~/.config/opencode/opencode.json`; 17 tests in `tests/test_agentconfig.py` |
+| `pi-context-view` (debug overflowing context) | — | **not needed**: the harness page shows the meter — per-step tokens, `compaction.auto`, `reserved`, the `summarize` endpoint | the token fields above, read live from a router step |
+
+Two things this settles for the design:
+
+1. **The plugin mechanism answers "can we extend it?"** — `plugin: ["<npm package>"]` in the config the
+   portal generates is auto-installed by the server, proven by `websearch_cited` appearing in the tool
+   list after a restart. That is the extension door, and it is npm — the ecosystem the operator keeps
+   finding useful work in.
+2. **Skills are portable, plugins are not.** A `SKILL.md` folder is read by opencode, pi, Codex and
+   Cursor (`.agents/skills/` is the future-proof location); a pi extension is JavaScript against pi's API
+   and runs nowhere else. The guidance the operator bought (design-playbook) therefore sits in the
+   harness-agnostic column. Keep new portal knowledge in skills and MCP tools — both of which any
+   harness consumes — rather than in harness-specific extensions.
+
+## 11. Sources
 
 - ACP — agents list (`agentclientprotocol.com/get-started/agents`), clients list, Streamable HTTP &
   WebSocket transport RFD (`agentclientprotocol.com/rfds/streamable-http-websocket-transport`),
