@@ -12,6 +12,7 @@ import os
 
 import pytest
 
+from app import vitals
 from app.core import portalsettings
 
 
@@ -220,3 +221,68 @@ def test_the_write_endpoint_accepts_a_path_inside_the_home(sandbox, monkeypatch)
 def test_projects_root_is_in_the_settings_the_dashboard_reads():
     c = _client()
     assert c.get("/api/settings").json()["projects_root"] == "~/ai-projects"
+
+
+# --- the vitals thresholds (queue 41) -------------------------------------------------------
+#
+# The operator's rule for the dashboard's thresholds: they are portal settings, not constants in
+# the dashboard's script. A number the operator cannot change is a number the operator does not own,
+# and a page that writes a number the reader refuses quietly is a page that lies about saving.
+
+def test_the_vitals_thresholds_are_portal_settings():
+    """Registered in the same registry the settings page reads, with a numeric control. A key the
+    page does not know is a threshold the operator edits by editing a file."""
+    for key in vitals.THRESHOLD_KEYS:
+        assert key in portalsettings.PORTAL_SETTINGS, key
+        spec = portalsettings.PORTAL_SETTINGS[key]
+        assert spec["kind"] == "float", f"{key} renders as a {spec['kind']} control"
+        assert spec["default"] == vitals.DEFAULTS[key], f"{key} default is not vitals'"
+
+
+def test_the_threshold_defaults_the_page_shows_are_the_ones_the_strip_uses(sandbox):
+    """Two sources of truth for a number is two numbers that disagree. The page's `default` and
+    the reader's default are asserted equal, through the view the page consumes."""
+    view = portalsettings.view()
+    for key in vitals.THRESHOLD_KEYS:
+        assert view[key]["value"] == vitals.DEFAULTS[key], key
+        assert view[key]["kind"] == "float"
+
+
+def test_a_stored_threshold_replaces_only_that_threshold(sandbox, monkeypatch):
+    monkeypatch.setattr(portalsettings, "home", lambda: str(sandbox))
+    out = portalsettings.set_value("vram_danger", 50)
+    assert out["ok"] is True, out
+    assert portalsettings.get_value("vram_danger") == 50.0
+    assert portalsettings.get_value("pool_danger") == vitals.DEFAULTS["pool_danger"]
+
+
+def test_a_threshold_the_strip_would_ignore_is_refused_at_the_gate():
+    """`validate` is asked *before* Save. A value the reader would fall back on must not be
+    savable, because a saved value that does nothing is worse than a refused one."""
+    for bad in ("seventy", -1, 140, True, {"a": 1}):
+        out = portalsettings.validate_threshold("vram_danger", bad)
+        assert out["ok"] is False, f"{bad!r} was accepted"
+        assert "vram_danger" in out["error"], out
+    assert portalsettings.validate_threshold("vram_danger", 88)["ok"] is True
+
+
+def test_the_ladder_is_refused_at_the_gate(sandbox, monkeypatch):
+    """`pool_danger` below `pool_watch` is savable by a page with no rule and is the one
+    configuration that makes the strip lie: the danger rung fires before the watch rung exists."""
+    out = portalsettings.validate_threshold("pool_danger", 40.0)
+    assert out["ok"] is False and "pool_watch" in out["error"], out
+    out = portalsettings.validate_threshold("pool_watch", 95.0)
+    assert out["ok"] is False and "pool_danger" in out["error"], out
+    # Unset on the other side: a lone value has no rung to disagree with.
+    assert portalsettings.validate_threshold("vram_danger", 95.0)["ok"] is True
+
+
+def test_a_stored_threshold_set_that_cannot_be_read_is_said_by_the_strip():
+    """A threshold the operator saved that the reader cannot use must appear on the strip. Silent
+    fallback is the failure mode this repo has been bitten by in every other read path."""
+    snap = {"ts": 1.0, "memory": {"total": 100, "available": 50},
+            "disk": {"root": None, "ai": None}, "gpu": None,
+            "_thresholds": {"pool_watch": "seventy"}}
+    out = vitals.strip(snap)
+    assert out["thresholds_error"], out
+    assert "pool_watch" in out["thresholds_error"]

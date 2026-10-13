@@ -711,3 +711,49 @@ def test_launching_records_the_project_the_session_serves(sandbox, monkeypatch):
     assert row["serve"] == {"served": True, "session": "ses_new", "personality": "work", "sessions": 1}
     assert projects.serve_facts()["served"] == {"count": 1, "names": ["launched"],
                                                 "hostOk": True, "unknown": False}
+
+
+# --- the personality's projects, read from the serving record (queue 33's second half) --------
+#
+# The queue 33 brief states the personality↔project link in both directions. The launch half is
+# tested above. The other half is the personality editor's question — *given a personality, which
+# projects run with it* — and it is answerable from the record the launch already writes. A record
+# readable only as "is this project served" answers one page and not the other.
+
+def test_the_personalitys_projects_are_read_from_the_records_the_launches_wrote(sandbox, monkeypatch):
+    """The personality editor cannot ask the projects page. It needs the inverse view, built from
+    the records, with a host that answered: a personality with no project listed because the host
+    was unreachable is a page that states a fact about the host as a fact about the personality."""
+    for name, personality in (("alpha", "Agent-Swift"), ("beta", "Agent-Swift"), ("gamma", "Other")):
+        projects.create(name, ["git"], root=str(sandbox))
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda: {"ok": True, "byDirectory": {
+                            str(sandbox / name): [{"id": f"ses_{i}"}] for i, name in
+                            enumerate(("alpha", "beta", "gamma"))}, "count": 3})
+    projects.mark_served("alpha", "ses_0", "Agent-Swift")
+    projects.mark_served("beta", "ses_1", "Agent-Swift")
+    projects.mark_served("gamma", "ses_2", "Other")
+
+    snap = projects.serve_facts()
+    by = projects.by_personality(snap)
+    assert by["hostOk"] is True, by
+    assert sorted(by["projects"]["Agent-Swift"]) == ["alpha", "beta"], by
+    assert by["projects"]["Other"] == ["gamma"], by
+    assert "" not in by["projects"], "an unserved project has no personality and is not a row"
+    assert "reason" not in by, "a host that answered needs no reason attached to its answer"
+
+
+def test_the_inverse_view_says_when_the_host_could_not_confirm_any_of_it(sandbox, monkeypatch):
+    """A personality that *was* launched with a project, on a host that is down, is listed with the
+    reason the host could not confirm it. A page that showed an empty list there would be claiming
+    it checked."""
+    projects.create("quiet", ["git"], root=str(sandbox))
+    projects.mark_served("quiet", "ses_7", "Agent-Swift")
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda: {"ok": False, "error": "connection refused"})
+    snap = projects.serve_facts()
+    by = projects.by_personality(snap)
+    assert by["hostOk"] is False
+    # The registry knows the launch; the host could not confirm it. That is the case in question.
+    assert by["projects"]["Agent-Swift"] == ["quiet"], by
+    assert by["reason"], by

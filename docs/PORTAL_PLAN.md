@@ -292,8 +292,8 @@ new queue number, not a silent revival of an old one.
 The operator's design-debt enumeration (2026-10-12) is kept as `docs/PORTAL_POLISH.md`, each item
 paired with a measurement from this box and a proposed shape. It feeds 33 and 34, and adds:
 
-- **(40) Status page: a vitals strip, not a CPU chart.** Four tiles (GPU pool, VRAM, system RAM,
-  disk) with `ok`/`watch`/`danger` states from thresholds, a top-RSS line naming which llama-server
+- **(40) Status page: a vitals strip, not a CPU chart. — IN PROGRESS 2026-10-13.** Four tiles
+  (GPU pool, VRAM, system RAM, disk) with `ok`/`watch`/`danger` states from thresholds, a top-RSS line naming which llama-server
   slot is the user, the router hero split into Serving / Census / Load sections, and **server-side
   metrics history** so the Machine detail chart is populated the moment it opens. Measured cause of
   the operator's complaint: `startMachinePoll()` polls only `if (d && d.open …)`, and the history
@@ -4714,7 +4714,92 @@ the sections from the ticked stacks with C++ absent when C++ was not ticked, the
 without the git box, the operator's file left byte-for-byte, a pulled project getting the ignores,
 and `init_of` for adopted folders) and `tests/test_ui_contract.py` / `tests/ui/spec.json` for the
 sentence, its id, the plan line, and the result. **The spec's box count dropped from 7 to 6, with
-the reason in its comment**: a count of 7 means a box came back.
+the reason in its comment**: a count of 7 means a box came back. A later test added the fourth
+generalisation the rule needs — **a failed init does not leave the file behind** — and caught this
+slice's own implementation doing it.
+
+**Which projects are being served (queue 33's connection, 2026-10-13).** The queue 33 brief states
+the personality↔project link in both directions: the harness launches a project *with a
+personality*, and the personality editor names the projects that use it. The second half needs a
+fact the portal can measure and could not store. `serve_facts()` answers it — the registry plus
+**one** host call shared by every row (per-project asks turn a page refresh into N requests to a
+single user unit, and a host that dies mid-refresh answers some rows and not others) — where a
+project is served when the host has a live session for its folder and the registry names the
+session and personality the launch wrote. `mark_served` takes a name **or** a path (the launcher
+knows a path, the page knows a name; a verb that took one would be used two ways), resolved
+through `project_path`. A host that did not answer is `unknown` for every project, never "not
+served" — asked even with an empty registry, because only the host tells those two answers apart.
+The page's rows carry it (`is being served — session ses_x with <personality>`,
+`serving state unknown: …` in red, `not served` muted), read from the payload, not from the page's
+memory of what it launched.
+
+**The finding worth keeping:** `_live_sessions` ended up defined twice in the module during this
+slice, and the second definition silently shadowed the first — two tests then failed in a way that
+looked like the *payload's shape* was wrong. A duplicate top-level `def` is the quietest version of
+that bug: no error, no warning, the later body wins. The fix is the single definition; the rule is
+to read the failing assertion against the payload's actual keys before assuming the shape is wrong.
+
+##### 6.14.1p The dashboard's vitals strip, and thresholds the operator owns (queue 40 + 41, 2026-10-13)
+
+The operator's complaint, measured: the hero carried a **CPU line chart polled constantly**, on a
+box where AI work pegs the GPU and leaves CPU idle — **CPU 3.9% while VRAM read 97% and the GTT pool
+53%**. A chart of the number that never moves is the instrument that hides the one that does. The
+requirement, in their words: *critical metrics visible, occasionally updated, lighting up when
+things get dangerous.*
+
+**`app/vitals.py` is a pure function of a metrics snapshot and the router's resident workers**, and
+that purity is the reason the thresholds are testable at all: a strip computed inside the dashboard's
+poll would have to be tested on the machine it runs on. Four tiles in the operator's order —
+**pool, VRAM, RAM, disk** — each `ok` / `watch` / `danger` / `unknown`, a sample stamp on every tile
+("occasionally updated" without a stamp is a number the operator cannot age), and the line naming
+*who* holds the pool: **`llama-3.1-70b in slot 8080 holds 77.9 G`**, assembled from the census the
+portal already has rather than from a new probe.
+
+Three decisions in the shape:
+
+- **The pool carries the danger; VRAM is stated.** On this iGPU the VRAM figure is the driver's
+  ~512 MiB stub and reads ~97% *by design*. A tile that shouted there shouted every day and trained
+  the operator to ignore the strip, so near-full VRAM on an iGPU follows the pool's rung and says
+  why it looks full.
+- **The worst filesystem wins.** `/` and `~/ai` are separate here; a tile reporting the root's
+  number would call a full `~/ai` `ok`.
+- **Four states, not three.** "Not read" is never `ok`. The health pane has been bitten by this
+  twice — a missing amdgpu sysfs node, a disk probe that raised, a router that did not answer — and
+  in every one of those the box looked healthy.
+
+**Queue 41 in the same slice: the thresholds are portal settings.** Registered in `PORTAL_SETTINGS`
+with a numeric control, defaults read **from `vitals.DEFAULTS` rather than restated** (a default in
+two files is two numbers that will disagree), validated at the same gate the projects root uses, and
+`pool_danger` below `pool_watch` is refused — the one configuration that makes the strip light up in
+the wrong order and still look authoritative. A stored value the reader cannot use is **reported on
+the strip** (`thresholds_error`), never silently replaced by defaults: an operator edit that did
+nothing, invisibly, is worse than a refusal.
+
+**The findings worth keeping.**
+
+1. **A boundary test through `int()` truncation tests the truncation, not the threshold.** My first
+   version drove `pool_used` as `int(total * 69.9 / 100)`, which landed below the boundary the
+   assertion claimed it was at; the assertion then failed for a reason that looked like the
+   threshold being wrong. Keep percentages in floats at the boundary.
+2. **A pair rule must be checked from both sides.** Saving `pool_danger` alone has to look back at
+   `pool_watch`. My first derivation walked the ladder downwards only, and so silently skipped
+   exactly the half of the page that saves the lower rung — the check reported `ok` for a ladder
+   that was upside down.
+3. **A read path may not assume the app created the tables.** Reading a setting was the first thing
+   the dashboard did on a fresh box; `db.init()` is ensured in the accessor. Tests caught it, the
+   dashboard would not have.
+4. **My own test asserted the wrong semantics.** I asked 69.9% of the pool to be `watch`, which is a
+   strip that lights up at *any* value under the danger line. `watch` is the rung *between* watch and
+   danger; below the watch value is `ok`, and disk has no watch rung at all. The test was fixed
+   against the requirement, not the implementation.
+
+Tests: `tests/test_vitals.py` (11 — the four tiles in order, the stamp, the iGPU asymmetry, the
+thresholds at every boundary on both sides, "not read" is not `ok`, the worst filesystem, who holds
+the pool with a census that stayed silent, the settings keys and defaults, refused thresholds,
+partial sets, and the strip carrying no CPU tile at any CPU value), `tests/test_portalsettings.py`
+(6 — the thresholds registered as portal settings, the page's defaults equal to the reader's, a
+stored threshold replacing only itself, refusals at the gate before Save, the ladder refused, and a
+threshold the strip would ignore being *said* by the strip).
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

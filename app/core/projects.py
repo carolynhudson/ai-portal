@@ -816,12 +816,20 @@ def serve_facts() -> dict[str, Any]:
     # apart.
     answer = _live_sessions()
     served: list[str] = []
+    # The host's own words, kept once. Every row carries its own copy of "the host did not answer",
+    # and the payload needs one reason a caller can quote without walking the rows.
+    host_reason: str | None = None if answer.get("ok") else (
+        f"the host did not answer ({answer.get('error')})")
     for row in rows:
         record = _notes(row["path"]).get("serve")
         if not answer.get("ok"):
             # The host did not answer. That is a fact about the host, and it stands for every
-            # project on the page, marked ones included: "unknown", never "not served".
+            # project on the page, marked ones included: "unknown", never "not served". The
+            # recorded personality travels with it — the registry *does* know this project was
+            # launched with it, and dropping the fact on a host outage would make the personality
+            # editor report a project the portal has a record of as though the record did not exist.
             row["serve"] = {"served": None, "unknown": True,
+                            "personality": (record or {}).get("personality"),
                             "reason": f"the host did not answer ({answer.get('error')})"}
             continue
         if not record:
@@ -845,8 +853,41 @@ def serve_facts() -> dict[str, Any]:
             "names": served,
             "hostOk": host_ok,
             "unknown": not host_ok,
+            # The reason is the host's failure, so it is carried when there is one. A payload that
+            # always carried `"reason": None` asked every caller to know that null means "no
+            # problem", which is the shape of every bug in this repo's read paths.
+            **({"reason": host_reason} if host_reason else {}),
         },
     }
+
+
+def by_personality(facts: dict[str, Any]) -> dict[str, Any]:
+    """The personality editor's view: for each personality, the projects that run with it.
+
+    The inverse of the projects page's question, and answerable from the records the launches
+    already wrote — the personality editor cannot ask the projects page, and a record readable only
+    as "is this project served" answers one page and not the other.
+
+    `hostOk` travels with the answer. A personality's project list is a claim about the host, so a
+    list assembled while the host was unreachable has to say so: an empty list there would be the
+    page claiming it checked. A project the host could not confirm is listed with the reason, not
+    dropped, because the registry does know the launch happened.
+    """
+    out: dict[str, Any] = {"hostOk": bool((facts.get("served") or {}).get("hostOk")),
+                           "projects": {}}
+    names: dict[str, list[str]] = {}
+    for row in facts.get("projects") or []:
+        serve = row.get("serve") or {}
+        personality = serve.get("personality")
+        if not personality:
+            continue
+        names.setdefault(personality, []).append(row["name"])
+    for personality in sorted(names):
+        out["projects"][personality] = sorted(names[personality])
+    if not out["hostOk"]:
+        out["reason"] = ((facts.get("served") or {}).get("reason")
+                         or "the host did not answer, so no project's serving state is confirmed")
+    return out
 
 
 def touch(path: str) -> None:

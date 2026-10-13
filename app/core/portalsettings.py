@@ -34,6 +34,16 @@ from typing import Any
 
 from . import db
 
+
+# Read from the reader itself, not restated here: a default written in two files is two numbers
+# that will disagree. Imported lazily to keep `app.core` import-light.
+def _vitals_defaults() -> dict[str, float]:
+    from .. import vitals
+    return vitals.DEFAULTS
+
+
+_VITALS_DEFAULTS = _vitals_defaults()
+
 #: Every portal setting the page can write, with the shape the page needs. `kind` is the control;
 #: `default` is what the portal uses when nothing is stored.
 PORTAL_SETTINGS: dict[str, dict[str, Any]] = {
@@ -42,6 +52,46 @@ PORTAL_SETTINGS: dict[str, dict[str, Any]] = {
         "default": "~/ai-projects",
         "help": "The folder that holds the coding projects the harness works on. Projects are "
                 "sub-folders of it, and the harness is launched inside one.",
+    },
+    # The dashboard's vitals thresholds (queue 41). Registered here, in the registry the settings
+    # page reads, because the operator's rule is that a threshold they cannot change is a threshold
+    # they do not own. The numbers are the defaults the plan records for this box; the reader lives
+    # in `app.vitals`, and `get_value` below is the single place the two agree.
+    "pool_watch": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["pool_watch"],
+        "help": "GPU pool use at or above which the dashboard's pool tile turns to watch. The pool "
+                "is the memory models load into — the GTT aperture on an iGPU, VRAM on a card.",
+    },
+    "pool_danger": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["pool_danger"],
+        "help": "GPU pool use at or above which the pool tile turns to danger. Above this a model "
+                "that loads successfully can still fail as a bad model rather than as a full box.",
+    },
+    "vram_danger": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["vram_danger"],
+        "help": "VRAM use at or above which the VRAM tile turns to danger. On an iGPU the tile is "
+                "stated as the driver's ~512 MiB stub and follows the pool's rung instead, because "
+                "reading ~97% on that stub is this box's normal state.",
+    },
+    "ram_watch": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["ram_watch"],
+        "help": "System RAM used at or above which the RAM tile turns to watch.",
+    },
+    "ram_danger": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["ram_danger"],
+        "help": "System RAM used at or above which the RAM tile turns to danger. A quantising or "
+                "converting job that needs ~50 GiB of free RAM is refused below that.",
+    },
+    "disk_danger": {
+        "kind": "float",
+        "default": _VITALS_DEFAULTS["disk_danger"],
+        "help": "Filesystem used at or above which the disk tile turns to danger. The tile follows "
+                "the worst of `/` and `~/ai`, which are separate filesystems on this box.",
     },
 }
 
@@ -179,12 +229,92 @@ def projects_root(default: str | None = None) -> str:
     return _resolve(str(value))
 
 
+def get_value(key: str) -> Any:
+    """One stored portal setting, falling back to the registry's default.
+
+    The single accessor the reader uses, so a threshold read by the dashboard and a threshold shown
+    by the page cannot drift apart. The schema is ensured first: reading a setting is the first
+    thing the dashboard does on a fresh box, and a read path may not assume the app already
+    created the tables.
+    """
+    spec = PORTAL_SETTINGS.get(key)
+    if key in _registry_keys():
+        db.init()
+        stored = db.get_setting(key)
+        if stored is None:
+            return spec["default"] if spec else None
+        return stored
+    # Not a portal setting: the caller means a dashboard setting. The db's own view is the
+    # authority there — defaults overlaid with stored values — and it is *not* a registry row, so
+    # the portal's registry is deliberately not consulted. `projects_root` lives in both tables,
+    # and reading it out of the wrong one would answer a question nobody asked.
+    return db.current_settings().get(key)
+
+
+def validate_threshold(key: str, value: Any) -> dict[str, Any]:
+    """Can this number be this threshold? Answers with the reason, and stores nothing.
+
+    The rung check needs the *effective* value on the other side of the ladder, so the rule is
+    evaluated here, where the stored settings are visible, rather than in the page.
+    """
+    from .. import vitals
+
+    if key not in PORTAL_SETTINGS:
+        return {"ok": False, "key": key, "error": f"{key!r} is not a portal setting"}
+    one = vitals.validate_thresholds({key: value})
+    if not one["ok"]:
+        return {"ok": False, "key": key, "error": one["error"]}
+    # The pair this key belongs to, evaluated with the other side's *effective* value. A page that
+    # saved each rung alone, with no pair check, could store a ladder whose danger rung sits below
+    # its watch rung — a strip that lights up in the wrong order and looks authoritative.
+    # Both directions: `pool_watch -> pool_danger` names the danger side, and saving the danger
+    # side alone has to look back at the watch side. A derivation that only walked the ladder
+    # downwards silently skipped the half of the page that saves the lower rung.
+    pair_keys = {v for k, v in vitals._LADDER.items() if k == key}
+    pair_keys |= {k for k, v in vitals._LADDER.items() if v == key}
+    for other_key in sorted(pair_keys):
+        other = value if other_key == key else get_value(other_key)
+        if other is None:
+            continue
+        checked = vitals.validate_thresholds({key: value, other_key: other})
+        if not checked["ok"]:
+            return {"ok": False, "key": key, "error": checked["error"]}
+    return {"ok": True, "key": key, "value": one["value"][key]}
+
+
+def stored_thresholds() -> tuple[dict[str, Any], str | None]:
+    """The thresholds the operator stored, plus a reason they cannot be used.
+
+    A stored value the reader would fall back on is returned as `(defaults, the reason)` rather
+    than as silent defaults — the failure mode this repo has been bitten by in every other read
+    path.
+    """
+    from .. import vitals
+
+    db.init()
+    stored = {k: db.get_setting(k) for k in vitals.THRESHOLD_KEYS}
+    stored = {k: v for k, v in stored.items() if v is not None}
+    checked = vitals.validate_thresholds(stored)
+    if not checked["ok"]:
+        return dict(vitals.DEFAULTS), checked["error"]
+    out = dict(vitals.DEFAULTS)
+    out.update(checked["value"])
+    return out, None
+
+
 def set_value(key: str, value: Any) -> dict[str, Any]:
     """Validate and store one portal setting. Refusals never reach the database."""
     if key not in PORTAL_SETTINGS:
         return {"ok": False, "key": key,
                 "error": f"unknown portal setting {key!r}; the page can write "
                          f"{', '.join(sorted(PORTAL_SETTINGS))}"}
+
+    if key in vitals_keys():
+        v = validate_threshold(key, value)
+        if not v["ok"]:
+            return {"ok": False, "key": key, "error": v["error"]}
+        db.set_setting(key, float(value))
+        return {"ok": True, "key": key, "value": v["value"]}
 
     if key == "projects_root":
         v = validate_projects_root(value)
@@ -198,19 +328,32 @@ def set_value(key: str, value: Any) -> dict[str, Any]:
 
 def view() -> dict[str, Any]:
     """Everything the settings page needs: each key, its control, its stored and effective values."""
-    stored = db.current_settings()
     out: dict[str, Any] = {}
     for key, spec in PORTAL_SETTINGS.items():
-        effective = stored.get(key, spec["default"])
-        out[key] = {
+        effective = get_value(key)
+        row = {
             "kind": spec["kind"],
             "default": spec["default"],
             "help": spec["help"],
             "value": effective,
-            "path": _resolve(str(effective)),
-            "exists": os.path.isdir(_resolve(str(effective))),
         }
+        # `path`/`exists` describe a folder; a number has no path to resolve.
+        if spec["kind"] == "text":
+            row["path"] = _resolve(str(effective))
+            row["exists"] = os.path.isdir(row["path"])
+        out[key] = row
     return out
+
+
+def _registry_keys() -> tuple[str, ...]:
+    """The keys stored in the portal settings table, i.e. the ones this module owns."""
+    return tuple(PORTAL_SETTINGS)
+
+
+def vitals_keys() -> tuple[str, ...]:
+    """The threshold keys, so the reader and the page ask the same module for the list."""
+    from .. import vitals
+    return vitals.THRESHOLD_KEYS
 
 
 def writable_keys() -> tuple[str, ...]:
