@@ -1347,3 +1347,43 @@ def test_a_model_personality_can_be_created_for_a_model_the_page_lists(client, l
                        json={"name": "Card-User", "confirm": True}).status_code == 200
     assert client.post("/api/model-configs/delete",
                        json={"name": name, "confirm": True}).status_code == 200
+
+
+# ------------------------------------------------ the `used by` line (queue 33's page half, §6.14.1q)
+#
+# The brief states the connection in both directions, and the record half is in the plan. The page's
+# half is the editor's row: a personality has to show the projects that run with it. The data source
+# is `projects.by_personality(projects.serve_facts())` — the inverse view built from the records the
+# launches wrote (§6.14.1q). Asserted on the payload first: a page can print a sentence, and only the
+# payload says whether the portal answered with the host's answer attached.
+
+
+def test_the_personalities_payload_answers_which_projects_run_each_personality(client):
+    """D1: the editor's `used by` line is the payload's answer, not the page's inference.
+
+    `by_personality` is the inverse of the projects page's question and cannot be asked there, so
+    the personalities payload carries it. Two properties: the projects listed per personality come
+    from the records, and the host's state travels with the list — an editor that printed "no
+    projects" while the host was unreachable would be stating a fact about the host as a fact about
+    the personality.
+    """
+    body = client.get("/api/personalities").json()
+    assert "used_by" in body, "the payload does not answer the editor's `used by` question"
+    used = body["used_by"]
+    # The key is the inverse view's own key (`hostOk`), asserted as the pair of keys the view is
+    # defined by. Naming it `host_ok` *here* would be the page-side test inventing the shape of the
+    # component's answer, and the two halves of the connection are written in different files.
+    assert set(used) >= {"hostOk", "projects"}, ("the inverse view lost a field", sorted(used))
+    assert isinstance(used["hostOk"], bool), "the answer does not say whether the host confirmed it"
+    assert isinstance(used["projects"], dict), "the inverse view is not keyed by personality"
+
+
+def test_the_editor_shows_the_projects_that_run_with_the_personality_being_edited(client):
+    """The row is the brief's answer, on the surface where a personality is changed.
+
+    A personality edited without knowing a project runs with it is edited blind: the change lands on
+    the next launch of that project. The sentence is asserted on the page, with the payload's reason
+    visible when the host did not answer — the state the page cannot invent and must carry.
+    """
+    page = client.get("/personalities").text
+    assert 'id="ed-used-by"' in page, "the editor has no `used by` line"

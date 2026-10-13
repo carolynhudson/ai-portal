@@ -1142,7 +1142,8 @@
         "#mp-cards",
         "#mp-rest",
         ".mp-card",
-        ".mp-strip"
+        ".mp-strip",
+        "#ed-used-by"
       ],
       "expectText": [
         {
@@ -1339,6 +1340,16 @@
           ],
           "selector": ".ed-detail a[href^='/help#']",
           "minCount": 26
+        },
+        {
+          "_comment": [
+            "Queue 33 (§6.14.1q): the editor's `used by` line. The sandbox host never runs, so the",
+            "payload's answer is the unconfirmed state -- and the line has to carry the payload's reason",
+            "instead of reading as 'checked, nothing uses it'. A line that invents the host's answer is",
+            "how a personality gets edited blind."
+          ],
+          "selector": "#ed-used-by",
+          "contains": "cannot confirm"
         }
       ],
       "expectNoInjectedMarkup": [

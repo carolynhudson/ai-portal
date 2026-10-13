@@ -1033,6 +1033,12 @@ def create_app() -> FastAPI:
                                           {"cards": cards, "generated": generated,
                                            "configs": configs,
                                            "config_views": config_views,
+                                           # Queue 33's page half (§6.14.1q): the projects each
+                                           # personality runs, from the records the launches wrote.
+                                           # The host's fact, so it arrives on the payload and the page
+                                           # paints it — a page that invented it would be naming
+                                           # sessions it cannot see.
+                                           "used_by": projects.by_personality(projects.serve_facts()),
                                            "config_uses": {c["name"]: model_config
                                                            .assigned_personalities(c["name"])
                                                            for c in configs},
@@ -1081,6 +1087,13 @@ def create_app() -> FastAPI:
             "config_views": {p.get("name"): personality.settings_view(p, configs=config_by_name)
                              for p in people},
             "assigned": {c["name"]: model_config.assigned_personalities(c["name"]) for c in configs},
+            # Queue 33's page half (§6.14.1q): the editor answers *which projects run with this
+            # personality*, from the records the launches wrote. The inverse view cannot be asked on
+            # the projects page, and a personality edited without knowing a project runs with it is
+            # edited blind — the change lands on that project's next launch. `host_ok` travels with
+            # the answer: a list assembled while the host was unreachable must say so, because an
+            # empty list there is the page claiming it checked.
+            "used_by": projects.by_personality(projects.serve_facts()),
             "settings": _setting_specs(),
         }
 

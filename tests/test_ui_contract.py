@@ -1513,3 +1513,40 @@ def test_the_projects_page_says_when_a_launch_records_a_name_the_store_has_not()
     said = summary + render
 
     assert "personalities_named" in said, "the page ignores the payload's statement about its list"
+
+
+def test_the_personality_editor_shows_the_projects_that_run_with_it(client):
+    """Queue 33's page half (§6.14.1q): the editor's `used by` line, wired to the payload.
+
+    The brief states the connection in both directions. The record half is on the projects page;
+    this is the personality side, on the surface where a personality is changed — a personality
+    edited without knowing a project runs with it is edited blind, because the change lands on that
+    project's next launch.
+
+    Three properties, each a way the line goes quietly wrong:
+
+    - the answer is *read from the payload*, not inferred from the page's own model list. The page
+      knows personalities and models; it does not know sessions, and a page that assembled "used by"
+      from its own data would be inventing the host's fact.
+    - the line is per personality and updates when the editor moves to a different one; a sentence
+      computed once at load describes whichever personality happened to be selected then.
+    - when the host did not answer, the page carries the payload's reason. An empty line there is
+      the page claiming it checked.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert 'id="ed-used-by"' in tpl, "the editor has no `used by` line"
+
+    script = _script_of(tpl, "personalities")
+    assert "used_by" in script, "the line is not read from the payload's answer"
+
+    # The line moves with every other step-1 fact: it is painted by the same handler that syncs
+    # the identity row, so switching personality repaints it.
+    sync = _fn(script, "syncIdentity")
+    assert "UsedBy" in sync, "the line is not refreshed when the editor moves"
+
+    # The host's reason reaches the operator, in text.
+    said = "".join(_fn(script, f) for f in ("usedByLine",) if f"function {f}(" in script)
+    assert "reason" in said, "the line ignores the payload's reason for an unanswered host"
+
+    page = client.get("/personalities").text
+    assert 'id="ed-used-by"' in page, "the line is not rendered"

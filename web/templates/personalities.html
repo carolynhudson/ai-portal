@@ -308,7 +308,8 @@ h2{margin:18px 0 6px}
   unchanged, which is the same as not touching it.
 </p>
 <div class="pers-editor" id="pers-editor"
-     data-configs='{{ {"configs": configs, "uses": config_uses} | tojson }}'>
+     data-configs='{{ {"configs": configs, "uses": config_uses,
+                       "used_by": used_by} | tojson }}'>
   <div class="ed-row">
     <label for="ed-persona">personality</label>
     {# The personality's own current settings ride on its option (§6.14.1i), computed on the
@@ -373,6 +374,12 @@ h2{margin:18px 0 6px}
     {% endfor %}
   </div>
   <p class="mut" id="ed-attach-note"></p>
+  {# Queue 33's page half (§6.14.1q): which projects run with *this* personality. The answer is not
+     the page's to work out -- it names sessions on the host, so it arrives on the payload
+     (`used_by`, from projects.by_personality) and the script paints it. A personality edited
+     without knowing a project runs with it is edited blind: the change lands on that project's
+     next launch. #}
+  <p class="mut" id="ed-used-by"></p>
 
   <h3>2 Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
@@ -558,6 +565,10 @@ h2{margin:18px 0 6px}
   // in a <script> body is text that only becomes JavaScript after rendering. The data is read once,
   // from one place, and a card never works out "used by" for itself.
   const SHARED = readJSON($('pers-editor').dataset.configs || '{}');
+  // Queue 33 (§6.14.1q): the projects a personality runs, read from the same payload attribute.
+  // One read, one place — the same rule the shared-config cards above follow, so the `used by`
+  // line and the cards cannot disagree about the host's answer.
+  const USED_BY = SHARED.used_by || {hostOk: false, projects: {}};
   const CONFIGS = SHARED.configs || [];      // [{name, base_model, settings, note}]
   const CONFIG_USES = SHARED.uses || {};     // {name: [personality]}
   const configByName = {};
@@ -857,11 +868,39 @@ h2{margin:18px 0 6px}
     // is refreshed whenever the list moves. Two controls that can disagree about one list is the
     // deck bug §6.14.1c named, arriving in a new shape.
     if (openModel) fillCard(openModel);
+    // Queue 33 (§6.14.1q): the `used by` line belongs to the personality, so it moves with every
+    // other step-1 fact. A line computed once at load describes whoever was selected then.
+    paintUsedBy(shown);
     $('ed-identity-note').textContent = isNew
       ? 'Create stores the name, the model list, max resident and the [*] currently in the grid. It does not write presets.ini -- that stays Preview, then Apply.'
       : (b.editable
         ? `custom personality: Save stores name, model list, max resident, note and [*]. The router is not restarted, and presets.ini changes only through Apply.`
         : `${shown} is built-in: derived from the library, and refused by name at the write endpoints. Raise it on the deck, then create a new personality from its settings.`);
+  }
+
+  /* Queue 33's page half (§6.14.1q): the projects a personality runs.
+
+     The fact is the host's, so the page never assembles it -- it reads `used_by` off the payload the
+     route built from `projects.by_personality(projects.serve_facts())`, i.e. the records the launches
+     wrote. Two states the page must not invent:
+
+     - the host answered and a personality has projects: they are named, because editing the
+       personality changes that project's next launch;
+     - the host did not answer: the line says so with the payload's reason. An empty line there would
+       be the page claiming it checked. */
+  function usedByLine(name, view) {
+    const projects = (view.projects || {})[name] || [];
+    if (!view.hostOk) {
+      const listed = projects.length ? ` (launched with: ${projects.join(', ')})` : '';
+      return `used by: the portal cannot confirm -- ${view.reason || 'the host did not answer'}.${listed}`;
+    }
+    return projects.length
+      ? `used by ${projects.length} project(s) launched with ${name}: ${projects.join(', ')}.`
+      : 'used by: no project is being served with this personality.';
+  }
+
+  function paintUsedBy(name) {
+    $('ed-used-by').textContent = usedByLine(name, USED_BY);
   }
 
   function identityBody() {
