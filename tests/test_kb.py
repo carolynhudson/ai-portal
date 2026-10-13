@@ -293,3 +293,26 @@ def test_a_reference_that_names_nothing_is_none_not_a_guess():
     assert kb.find("no-such-section-anywhere") is None
     assert kb.find("") is None
     assert kb.find("\u00a7") is None
+
+
+def test_help_answers_a_key_section_with_the_document_that_defines_it(client):
+    """Queue 33 state 4: the settings reference lives on Help, not on the personalities page.
+
+    The personalities rows already link to these anchors (`/help#cache-ram`), and the anchors are
+    computed from `kb.anchor_of` so the page cannot invent one. For the reference to *leave* the
+    personalities page, Help has to answer those anchors with the section the document carries —
+    the same `settingrows` row data the personalities table rendered, since PORTAL_SETTINGS.md is
+    generated from it.
+    """
+    from app.core import settingrows
+
+    rows = settingrows.rows()
+    assert rows, "the registry has no rows to reference"
+    for r in rows[:6]:
+        ref = kb.anchor_of(r["key"])
+        assert ref, r["key"]
+        answer = client.get(f"/api/help/section/{ref}")
+        assert answer.status_code == 200, (ref, answer.status_code)
+        assert answer.json()["doc"] == "PORTAL_SETTINGS.md", answer.json()
+        s = kb.find(ref)
+        assert s and s["doc"] == "PORTAL_SETTINGS.md", (ref, s and s["doc"])

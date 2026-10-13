@@ -166,6 +166,13 @@ def _key_section(row: dict, resolved: dict[str, str] | None = None) -> list[str]
         lines += ["", f"*Side effect.* {settingrows.expand(row['detail'], resolved).strip()}"]
     if row.get("cite"):
         lines += ["", f"*Evidence.* `{row['cite'].strip()}`"]
+        # The citation is the evidence, and the section it names is where the measurement is written.
+        # The personalities table used to print this link per row; the reference is the document that
+        # owns the evidence, so it prints it here — a key whose citation names source lines only gets
+        # no link, because a link to a section that does not exist is the failure the guard is about.
+        if row.get("help_ref"):
+            lines += ["", f"*Measured in* §{row['help_ref']} "
+                        f"([/help#{row['help_ref']}](/help#{row['help_ref']}))."]
     lines.append("")
     return lines
 
@@ -191,6 +198,12 @@ def render(rows: list[dict] | None = None) -> str:
         "`app.core.settingrows.rows()`, the same rows the editor renders and the renderer",
         "validates (§6.14.1).",
         "",
+        "## Settings a personality can set",
+        "",
+        "The heading the personalities page links to (`/help#settings-a-personality-can-set`). The",
+        "table below is the same registry data the page's editor is built from, so a key added to",
+        "the registry appears here and in the form without either page being edited.",
+        "",
         "## 1. How to read a key",
         "",
         "- **scope** — *global only* keys live in the router's own section of `presets.ini`;",
@@ -203,7 +216,8 @@ def render(rows: list[dict] | None = None) -> str:
         "  by side because the gap between them is the whole reason a portal writes a key at all.",
         "- **the no-op line** — a key whose value equals the server's default is *omitted* from",
         "  the generated file. `llama-server` treats an absent preset key and a false one the",
-        "  same way, so writing the default is decoration (§4.10.0, measured against the build", "  in §6.12.26).",
+        "  same way, so writing the default is decoration (§4.10.0, measured against the build",
+        "  in §6.12.26).",
         "- **offerable per model when** — the editor hides a row on a model whose index facts",
         "  say the setting does not apply, e.g. `sliding_window` for the checkpoint keys.",
         "- **not writable here** — a key the router owns (`host`, `port`, `api-key`, `alias`,",

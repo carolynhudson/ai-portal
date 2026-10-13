@@ -182,17 +182,23 @@ function renderSummary(s) {
   add('Root', s.root_ok ? 'usable' : `refused: ${s.root_error}`);
 }
 
-function harnessSeed(h) {
+function harnessSeed(h, launch) {
   // §6.14.1o: the host reads `opencode.json` and `AGENTS.md` out of the cache home
   // the portal seeds before the host starts. A seeded host writes with the agent's
   // posture; an unseeded one writes with defaults. From the browser the two are
   // indistinguishable, so the page has to say which one this is — and say
   // "not started" for a host that never read anything, rather than "unseeded".
-  if (!h || h.detail) return 'host: the status read failed';
-  if (!h.listening) return 'host: not started';
+  //
+  // §6.14.1q: `launch.reason` is painted as **text**, not as a tooltip. The host-down reason and
+  // queue 30's shadow reason both arrive on the payload, and a disabled Launch that explains itself
+  // only on hover is a control with a secret — unreadable on a touch device, and unobservable to the
+  // UI harness. The words are the payload's own (`harnessctl.status()["note"]` for the shadow).
+  const reason = launch && !launch.available && launch.reason ? ` — ${launch.reason}` : '';
+  if (!h || h.detail) return `host: the status read failed${reason}`;
+  if (!h.listening) return `host: not started${reason}`;
   const seed = h.seed || {};
-  if (!seed.seeded) return 'host: unseeded — the agent runs with defaults';
-  return `host: seeded (${seed.files.join(', ')})`;
+  if (!seed.seeded) return `host: unseeded — the agent runs with defaults${reason}`;
+  return `host: seeded (${seed.files.join(', ')})${reason}`;
 }
 
 function renderSteps() {
@@ -263,7 +269,7 @@ function personalityChoice() {
   return sel.value || PERSONALITIES[0] || '';
 }
 
-function renderPersonalities(names) {
+function renderPersonalities(names, named) {
   PERSONALITIES = Array.isArray(names) ? names.slice() : [];
   const sel = $('#proj-personality');
   const keep = sel.value;
@@ -274,9 +280,20 @@ function renderPersonalities(names) {
     o.textContent = n;
     sel.append(o);
   }
+  // §6.14.1n: an empty store is a real state, and the launch resolves `default` from the registry's
+  // defaults, not from a stored personality. The list is stated by the payload's own
+  // `personalities_named`, so the page says what the record will name rather than presenting
+  // `default` as if it were a personality the personalities page has.
+  if (!PERSONALITIES.length) {
+    const o = el('option');
+    o.value = 'default';
+    o.textContent = named === false ? 'default (the portal defaults — no stored personality)'
+                                    : 'default';
+    sel.append(o);
+  }
   // The operator's choice survives a refresh that did not change the list; a refresh that dropped
   // the name falls back to the first option rather than leaving a select with no value.
-  sel.value = PERSONALITIES.includes(keep) ? keep : (PERSONALITIES[0] || '');
+  sel.value = PERSONALITIES.includes(keep) ? keep : (PERSONALITIES[0] || sel.options[0].value);
 }
 
 function renderRows(rows) {
@@ -372,7 +389,7 @@ async function refresh() {
     return;
   }
   PERSONALITIES = d.summary && d.summary.personalities ? d.summary.personalities : [];
-  renderPersonalities(PERSONALITIES);
+  renderPersonalities(PERSONALITIES, d.summary && d.summary.personalities_named);
   STATE = d;
   renderSummary(d.summary);
   renderRows(d.projects);
@@ -380,7 +397,7 @@ async function refresh() {
   // The seed is read, not assumed: the host can be started from a shell, and a page
   // that spelled "seeded" from its own config file would be lying about it.
   const h = await req('GET', '/api/harness/status');
-  $('#proj-host').textContent = harnessSeed(h);
+  $('#proj-host').textContent = harnessSeed(h, d.launch);
 }
 
 $('#proj-plan').addEventListener('click', () => plan());

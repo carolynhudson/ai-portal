@@ -400,3 +400,25 @@ def test_the_document_carries_no_unrendered_template_marks():
     text = DOC.read_text(encoding="utf-8")
     left = sorted(set(re.findall(r"\{([a-z_]+)\}", text)))
     assert not left, f"unresolved placeholders printed as-is: {left}"
+
+
+def test_every_key_section_prints_a_working_link_to_its_measured_evidence():
+    """§6.14.1q: the evidence link moved with the reference.
+
+    The personalities page used to carry a `href="/help#6.12.6"`-style citation link per row, and the
+    guard counted them against the registry. The reference is the document that owns the evidence, so
+    it prints the link per key section — and the count that used to be the page's is the document's:
+    every key whose citation names a section links it, and a key citing source lines only links
+    nothing, because a link to a section that does not exist is the failure this guard is about.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    links = re.findall(r'\[/?help#([\d.]+)\]\(/help#([\d.]+)\)', text)
+    assert links, "the reference prints no citation links"
+    assert all(a == b for a, b in links), f"label and target disagree: {links[:3]}"
+    refs = [a for a, _ in links]
+    missing = sorted({r for r in refs if not kb.find(r)})
+    assert not missing, f"citation links that open nothing: {missing}"
+
+    keys_with_cites = sum(1 for v in P.SETTINGS.values() if kb.ref_of(v.get("cite")))
+    assert len(refs) == keys_with_cites, (
+        len(refs), keys_with_cites, len(P.SETTINGS) - keys_with_cites)

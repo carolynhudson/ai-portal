@@ -293,51 +293,13 @@ h2{margin:18px 0 6px}
 })();
 </script>
 
-<h2 id="settings-keys">Settings a personality can set</h2>
-<p class="mut">
-  The keys the portal has a definition for, and therefore the keys a settings editor can
-  offer. Each row is the same definition the generator validates against, so what the page
-  explains and what the file is checked against cannot drift apart.
-  Keys the router controls (<span class="mono">host</span>, <span class="mono">port</span>,
-  <span class="mono">alias</span>, <span class="mono">model</span>,
-  <span class="mono">hf-repo</span>) are absent: it removes or overwrites them at launch, so
-  setting one would look like a setting and do nothing.
-</p>
-<div class="wrap" id="keys-wrap">
-<table class="keys" id="keys-table">
-  <thead><tr><th>key</th><th>type</th><th>where</th><th>default</th><th>what it does</th></tr></thead>
-  <tbody>
-  {# One row type, rendered from the registry's row data (app/core/settingrows.py, plan §6.14.1).
-     Nothing here decides what a key means: the kind, the scope, the rule sentence, the default,
-     the help link and the visibility facts all arrive on the row, so the page and the generator
-     cannot drift apart and a new key is a data edit. #}
-  {% for r in keys_rows %}
-    {# Attribute branches stay out of the tag: the checker reads a conditional attribute, and a
-       tag split across lines, as malformed markup. An empty data-visible-when means "no rule", #}
-    <tr data-key="{{ r.key }}" data-scope="{{ r.scope }}" data-kind="{{ r.kind }}" data-visible-when="{{ r.visible_when|join('+') }}">
-      <td class="k mono">{{ r.key }}
-        {% if r.aliases %}<div class="mut">{{ r.aliases|join(', ') }}</div>{% endif %}</td>
-      <td>{{ r.rule }}</td>
-      <td>{{ 'model only' if r.scope == 'model' else ('global and per-model' if r.scope == 'both' else 'global only') }}
-        {% if not r.writable %}<div class="mut">the router sets this</div>{% endif %}</td>
-      <td class="mono">{% if r.default is not none %}{{ r.default }}{% if r.unit %} <span class="mut">{{ r.unit }}</span>{% endif %}{% else %}—{% endif %}</td>
-      <td class="h">{{ r.help }}
-        {% if r.detail %}<div class="mut">side effect: {{ r.detail }}</div>{% endif %}
-        {% if r.help_ref %}<div><a class="mut" href="/help#{{ r.help_ref }}">why (§{{ r.help_ref }})</a></div>{% endif %}
-        {% if r.settings_ref %}<div><a class="mut" href="/help#{{ r.settings_ref }}">settings reference</a></div>{% endif %}
-        {% if r.visible_when %}<div class="mut">offerable per model when the file has {{ r.visible_when|join(' + ') }}</div>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
-
-{# ------------------------------------------------------------------ the editor
-   Controls are rendered from SETTINGS on the server, so the page cannot offer a control for a
-   key the registry has no definition for — the form and the validator are the same table. The
-   page fetches nothing until the operator presses Preview, which is what keeps the UI contract's
-   expectRequests empty and keeps the forbidden write routes unrequested. #}
 <h2 id="editor">Settings editor</h2>
+<p class="mut" id="pers-reference">
+  What a personality may set, its type, its default, and where each key comes from is the
+  <a href="/help#{{ reference_anchor }}">settings reference</a> on Help — the same registry rows
+  this form is built from, one section per key, linked from every row below. The reference moved
+  there (§6.14.1q / queue 33): it is reference material, and it sat in the middle of the working page.
+</p>
 <p class="mut">
   Propose changes, preview the exact file and the exact cost, then apply. Nothing is written and
   nothing is snapshotted until Apply, and Apply restarts {{ router_unit }} so the router actually

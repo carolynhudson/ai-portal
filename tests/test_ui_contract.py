@@ -559,19 +559,39 @@ def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
             f"{loader}() fills the panel without touching {btn}")
 
 
-def test_the_reference_links_come_from_the_row_and_not_from_the_template():
+def test_the_reference_links_come_from_the_row_and_not_from_the_template(client):
     """The anchors are row data, so the template names the field, never a key.
 
     The point of §6.14.1 is that a registry key is a data edit. That survives only while the
     template's link is `{{ r.settings_ref }}`: a template carrying `href="/help#ctx-size"` is a
     page that knows the registry's contents, and a key added tomorrow gets a row with no link.
+
+    §6.14.1q moved the keys table to the settings reference (queue 33, state 4), so the count is the
+    two editor grids, not table + grids. The *rule* is unchanged and is the reason the move was
+    safe: the anchor is a field on the row, in the page and in the document that renders it.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
-    assert tpl.count('href="/help#{{ r.settings_ref }}"') == 3, \
-        "the reference link belongs in the keys table and in both editor grids"
+    assert tpl.count('href="/help#{{ r.settings_ref }}"') == 2, \
+        "the reference link belongs in both editor grids (the keys table moved to the reference)"
     assert not re.search(r'href="/help#[a-z][a-z0-9-]*"', tpl), \
-        "the template hardcodes a settings anchor; the anchor is row data"
+        "the template hardcodes a per-key settings anchor; the anchor is row data"
     assert 'href="/help#{{ r.help_ref }}"' in tpl, "the plan-section link is gone with it"
+
+    # The one page-level anchor (the reference's own heading) is asserted **on the rendered page**:
+    # the rule that keeps a registry key a data edit is about per-key anchors, and a named section of
+    # the reference is not a key the registry can grow. Asserting it in the template source is what
+    # made the whole rule read as a template-file regex.
+    from app.core import kb
+
+    page = client.get("/personalities").text
+    anchor = kb.anchor_of("Settings a personality can set")
+    assert f'href="/help#{anchor}"' in page, "the page does not link the reference's own section"
+    assert kb.find(anchor) and kb.find(anchor)["doc"] == "PORTAL_SETTINGS.md", \
+        "the page links a heading that is not in the settings reference"
+
+    # The document that now owns the reference builds its links from the same row fields.
+    doc = (ROOT / "app" / "core" / "settingsdoc.py").read_text()
+    assert "row['help_ref']" in doc, "the reference's evidence link is not row data"
 
 
 def test_the_editor_grids_render_rows_and_hide_what_a_file_cannot_use():
@@ -1459,3 +1479,37 @@ def test_the_launch_is_disabled_by_the_shadowed_host_the_page_reports():
     assert "launch.disabled" in build and "available" in build, \
         "Launch is not disabled by the payload's launch state"
     assert "reason" in build, "a disabled Launch does not say why the host cannot take it"
+
+
+def test_the_launch_reason_is_shown_as_text_the_operator_can_read():
+    """A disabled button that explains itself only in a tooltip is a disabled button with a secret.
+
+    Queue 30's shadow and queue 33's host-down state both arrive as `launch.reason` on the payload
+    (§6.14.1q). Putting it in `title` alone means the operator must hover the exact control to learn
+    why their verb is unavailable — on a touch device, never. The reason is painted as visible text on
+    the host line, from the payload's own words.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    host = _fn(script, "harnessSeed")
+
+    assert "title" not in host, "the host line's explanation lives in a tooltip"
+    assert "reason" in host, "the host line does not carry the payload's reason"
+
+
+def test_the_projects_page_says_when_a_launch_records_a_name_the_store_has_not():
+    """§6.14.1n: a box with no stored personalities launches with the registry's `default`, which is
+    synthesized from defaults and is not a personality on the personalities page.
+
+    The payload states that fact (`summary.personalities_named`, tests/test_projects.py). The page
+    must say it, because the alternative is the projects page reporting "served with default" next to
+    a personalities page with no personality named `default` — the two pages disagreeing about a fact
+    visible on both.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    summary = _fn(script, "renderSummary")
+    render = _fn(script, "renderPersonalities")
+    said = summary + render
+
+    assert "personalities_named" in said, "the page ignores the payload's statement about its list"

@@ -832,3 +832,25 @@ def test_a_shadowed_host_is_not_a_host_a_launch_can_be_recorded_on(monkeypatch):
     assert out["available"] is False, out
     assert out["shadowed"] is True, out
     assert out["reason"] == shadowed["note"], out
+
+
+def test_the_summary_says_when_a_launch_has_no_personality_to_be_recorded_with(tmp_path, monkeypatch,
+                                                                               sandbox=None):
+    """A store with no personalities is a real state on a fresh box, and the launch resolves `default`
+    from the registry defaults rather than from a stored personality (§6.14.1n).
+
+    The page's row offers `default`, so the launch is possible — what is missing is the *statement*
+    that what gets recorded names no stored personality. Without it the projects page shows a project
+    "served with default" on a box where the personalities page has no personality named `default`,
+    and the two pages disagree about a fact the operator can see on both.
+    """
+    from app.core import personality
+    sandbox = tmp_path / "projects"
+    monkeypatch.setattr(projects.portalsettings, "projects_root", lambda *a, **k: str(sandbox))
+    monkeypatch.setattr(projects.portalsettings, "validate_projects_root",
+                        lambda value, **k: {"ok": True, "path": str(sandbox), "exists": True})
+    monkeypatch.setattr(personality, "all_personalities", list)
+
+    out = projects.summary()
+    assert out["personalities"] == [], out
+    assert out["personalities_named"] is False, "the payload hides that there is no personality"

@@ -43,12 +43,21 @@ import re  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core import config as cfg  # noqa: E402
-from app.core import db, modelindex as mi, paths, settingrows  # noqa: E402
-from app.core import kb  # noqa: E402
-from app.core import model_config as mc, personality as P  # noqa: E402
-from app.core import presets_store, systemd, updater  # noqa: E402
+from app.core import (  # noqa: E402
+    db,
+    kb,
+    paths,
+    presets_store,
+    settingrows,
+    systemd,
+    updater,
+)
+from app.core import model_config as mc  # noqa: E402
+from app.core import modelindex as mi
+from app.core import personality as P
 from app.main import app  # noqa: E402
 from tests.gguf_fixture import _write_fake_gguf, seed_hub_model  # noqa: E402
+
 # (was: `from tests.test_modelindex import ...` — importing another test module wins that
 # module's AI_PORTAL_HOME/AI_PORTAL_PASSWORD setdefault for the whole session; the shared
 # fixture module carries no env of its own.)
@@ -805,71 +814,51 @@ def test_a_key_the_router_owns_is_explained_and_never_offered_a_control(client, 
         "the editor offered a control for a key the router overwrites"
     assert "flash-attn" not in _rows_of(_grid(page, "ed-global")), \
         "the global grid offered a control for a key the router overwrites"
-    keys_table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
-    assert "flash-attn" in keys_table, "the keys table dropped a key instead of explaining it"
-    chunk = _rows_of(keys_table).get("flash-attn", "")
-    assert "the router sets this" in chunk, "the refusal is not stated on the row"
+    # §6.14.1q: the key's explanation lives in the reference now, not in a page table. The page's
+    # half of the claim (no control offered) is asserted above; the document's half is that a
+    # non-writable key is published **with the refusal on its section** — the sentence the page used
+    # to carry. The document prints such a key ("the keys table may show it and the editor may not",
+    # unchanged), so a key the router owns is explained where the reference is read.
+    from app.core import settingsdoc
+
+    rows = [dict(r, writable=r["key"] != "flash-attn") for r in settingrows.rows()]
+    doc = settingsdoc.render(rows)
+    section = doc[doc.index("### flash-attn"):]
+    nxt = re.search(r"^### ", section[10:], flags=re.M)
+    section = section[:10 + (nxt.start() if nxt else len(section))]
+    assert "not writable here" in section, "the reference omits the refusal"
+    assert "the router controls this key at launch" in section, "the refusal names no reason"
 
 
-def test_the_keys_table_is_the_registry_row_data_rendered(client):
-    """The page renders rows, so it cannot explain a key differently from the generator.
+# --------------------------------------------------------------------------- the reference moved (queue 33)
+#
+# §6.14.1q / docs/PORTAL_POLISH.md §7 state 4: the settings reference left the personalities page.
+# The page is a working surface; a 420 px table of key definitions between the deck and the editor
+# was reference material in the middle of it. The content was already generated into
+# docs/PORTAL_SETTINGS.md from the same `settingrows` rows, so the guards that read the page's table
+# moved to the document and the endpoint that serve it -- tests/test_settingsdoc.py -- and the page
+# keeps the links. Reading a moved guard is the point: the claim is about the row data, and it is
+# now asserted where the row data is published.
 
-    This is the guard for §6.14.1's first slice. The template used to decide what to show: the
-    kind string, the scope wording, the default, and whether a key was model-only were all worked
-    out in Jinja from `SETTINGS`. If those are computed in the template, a key added to the
-    registry needs a template edit, and a template can disagree with `accepts()` quietly. So the
-    page's row attributes are compared against `settingrows.rows()` -- and a template that
-    hardcodes a value stops matching.
+
+def test_the_personalities_page_carries_the_reference_as_a_link_and_not_as_a_table(client):
+    """The page hands the reference to the page that owns it, and keeps the deep links.
+
+    Queue 33 state 4. The table's content is the registry's row data, published on Help per key
+    (tests/test_kb.py proves `/help#cache-ram` answers the section PORTAL_SETTINGS.md carries), so
+    the page's half is: no 420 px table, one line pointing at the reference, and every key's row
+    still linking to its own anchor -- the rule the table carried, unchanged.
     """
     page = client.get("/personalities").text
-    table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
-    found = re.findall(
-        r'<tr data-key="([a-z0-9-]+)" data-scope="([a-z-]+)" data-kind="([a-z]+)" '
-        r'data-visible-when="([a-z_+]*)"', table)
-    assert found, "the settings table renders no row data -- the template is deciding again"
-    rendered = {k: (scope, kind, when.split('+') if when else []) for k, scope, kind, when in found}
-    rows = {r["key"]: r for r in settingrows.rows()}
-    assert set(rendered) == set(rows), \
-        f"page rows and registry rows differ: {sorted(set(rendered) ^ set(rows))[:6]}"
-    for key, (scope, kind, when) in rendered.items():
-        r = rows[key]
-        assert scope == r["scope"], (key, scope, r["scope"])
-        assert kind == r["kind"], (key, kind, r["kind"])
-        assert when == r["visible_when"], (key, when, r["visible_when"])
-    # Measured spellings and units reach the page, because a setting without its unit is a number
-    # the operator has to guess the meaning of.
-    assert "-ctxcp" in table and "--swa-checkpoints" in table, "the checkpoint row lost its spellings"
-    assert "8192" in table and "MiB" in table, "cache-ram lost its unit"
-    # A row the router owns says so on the row; the table shows such keys, the editor must not.
-    for key in ("metrics", "model", "mmproj"):
-        if key in rows:
-            assert rows[key]["writable"] is False
+
+    assert 'id="keys-table"' not in page, "the reference table is still between the deck and editor"
+    assert 'href="/help#settings-a-personality-can-set"' in page, \
+        "the page does not hand the reference to the page that owns it"
+    for key in ("cache-ram", "ctx-checkpoints"):
+        assert f'href="/help#{key}"' in page, f"the editor row for {key} lost its reference link"
 
 
 # ---------------------------------------------- the reference links: every key, its own section
-def _key_table(page: str) -> str:
-    start = page.index('id="keys-table"')
-    return page[start:page.index("</table>", start)]
-
-
-def test_the_page_links_every_key_to_its_own_section_of_the_settings_reference(client):
-    """The keys table is the index; the reference is the entry. The link has to be per key.
-
-    The generated reference documents each key under a heading named after it, and the row carries
-    that anchor (`settings_ref`). One link at the top of the table would send an operator to the
-    document and leave them to search it, which is the same as no link: the page already carries a
-    "what it does" sentence per row, and prose without a way to the full measurement is where
-    questions end.
-    """
-    page = client.get("/personalities").text
-    rows = _rows_of(_key_table(page))
-    assert rows, "the keys table rendered no rows"
-    for key, chunk in rows.items():
-        links = re.findall(r'href="/help#([a-z][a-z0-9-]*)"', chunk)
-        assert key in links, f"{key}: its row links to {links}, not to /help#{key}"
-        assert links.count(key) == 1, f"{key}: its row links to its reference section twice"
-
-
 def test_every_reference_link_the_page_prints_opens_the_settings_reference(client):
     """A link the page prints must open the document the page means.
 
@@ -907,25 +896,6 @@ def test_both_editor_grids_link_their_rows_into_the_reference(client):
                 continue
             assert f'href="/help#{key}"' in chunk, f"{grid}: the row for {key} has no reference link"
 
-
-def test_the_page_links_every_documented_setting_to_the_help_section_that_proves_it(client):
-    """Each key's citation becomes a working link — the prose is not the evidence.
-
-    The keys whose citations name source lines only (no section) are expected to render no
-    link: a link to a section that does not exist is the failure this guard is about, and it
-    is the failure mode the help page already had once.
-    """
-    page = client.get("/personalities").text
-    table = page[page.index('id="keys-table"'):page.index("</table>", page.index('id="keys-table"'))]
-    links = re.findall(r'href="/help#([\d.]+)"', table)
-    assert links, "the settings table carries no citation links"
-    missing = sorted({r for r in links if not kb.find(r)})
-    assert not missing, f"citation links that open nothing: {missing}"
-    # One link per key that cites a section. Keys citing source lines only are expected to
-    # render none, and that count is the difference between the two numbers below.
-    keys_with_cites = sum(1 for v in P.SETTINGS.values() if kb.ref_of(v.get("cite")))
-    assert len(links) == keys_with_cites, (len(links), keys_with_cites,
-                                           len(P.SETTINGS) - keys_with_cites)
 
 
 # ---------------------------------------------------------------- the deck (§6.14.1f)

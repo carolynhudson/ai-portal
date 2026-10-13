@@ -937,12 +937,19 @@ def summary() -> dict[str, Any]:
     root = portalsettings.projects_root()
     check = portalsettings.validate_projects_root(root)
     from . import personality
-    return {"root": root, "root_ok": check["ok"], "root_error": check.get("error"),
-            "registered": len(list_projects()), "unadopted": len(scan(root)),
-            "home": portalsettings.home(), "portal_home": portalsettings.portal_home(),
-            "model_library": str(paths.MODELS_ROOT),
-            "personalities": [p["name"] for p in personality.all_personalities()
-                              if p.get("name")]}
+    out = {"root": root, "root_ok": check["ok"], "root_error": check.get("error"),
+           "registered": len(list_projects()), "unadopted": len(scan(root)),
+           "home": portalsettings.home(), "portal_home": portalsettings.portal_home(),
+           "model_library": str(paths.MODELS_ROOT),
+           "personalities": [p["name"] for p in personality.all_personalities()
+                             if p.get("name")]}
+    # A store with no personalities is a real state on a fresh box, and the launch resolves `default`
+    # from the registry defaults rather than from a stored personality (§6.14.1n). The row can still
+    # launch — what must not be silent is that what gets recorded names no stored personality, or the
+    # projects page says "served with default" on a box where the personalities page has no
+    # personality named `default`, and the operator sees two pages disagree.
+    out["personalities_named"] = bool(out["personalities"])
+    return out
 
 
 def launch_facts() -> dict[str, Any]:

@@ -829,6 +829,7 @@ def create_app() -> FastAPI:
                                            "comfy": comfy,
                                            "comfy_categories": cp.categories() if cp else [],
                                            "comfyroot": str(paths.COMFY_MODELS),
+                                           # The reference left this page (§6.14.1q / queue 33) and lives on
                                            "home": str(paths.HOME)})
 
     @app.get("/settings")
@@ -1054,12 +1055,12 @@ def create_app() -> FastAPI:
                                            "model_row_limits": _model_row_limits(index_rows),
                                            "router_unit": paths.ROUTER_UNIT,
                                            "presets_path": str(paths.PRESETS_INI),
-                                           # The keys table renders one row type from the registry's row
-                                           # data (app/core/settingrows.py, plan §6.14.1): kind, scope,
-                                           # rule, default, unit, aliases, help link and visibility facts
-                                           # all arrive on the row, so the page cannot explain a key
-                                           # differently from the way the generator validates it.
-                                           "keys_rows": settingrows.rows(),
+                                           # The reference left this page (§6.14.1q / queue 33) and lives on
+                                           # Help, where its per-key anchors come from the same row data the
+                                           # editor grids link. Its own heading's anchor is computed by kb —
+                                           # the same rule the rows use — so the template names a field, not
+                                           # a key.
+                                           "reference_anchor": kb.anchor_of("Settings a personality can set"),
                                            "home": str(paths.HOME)})
 
     @app.get("/api/personalities")

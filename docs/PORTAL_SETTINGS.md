@@ -17,6 +17,12 @@ Written from the registry, so it cannot disagree with the form: the rows here ar
 `app.core.settingrows.rows()`, the same rows the editor renders and the renderer
 validates (§6.14.1).
 
+## Settings a personality can set
+
+The heading the personalities page links to (`/help#settings-a-personality-can-set`). The
+table below is the same registry data the page's editor is built from, so a key added to
+the registry appears here and in the form without either page being edited.
+
 ## 1. How to read a key
 
 - **scope** — *global only* keys live in the router's own section of `presets.ini`;
@@ -95,6 +101,8 @@ Prompt cache limit, in MiB of system RAM. Default 8192. 0 disables it. This is n
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.6`
 
+*Measured in* §6.12.6 ([/help#6.12.6](/help#6.12.6)).
+
 ### ctx-checkpoints
 
 - **scope**: global and per-model
@@ -113,6 +121,8 @@ Copies of a slot's cache, kept in system RAM. 32 per slot by default. Each costs
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.6`
 
+*Measured in* §6.12.6 ([/help#6.12.6](/help#6.12.6)).
+
 ### checkpoint-min-step
 
 - **scope**: global and per-model
@@ -129,6 +139,8 @@ Minimum tokens between cache checkpoints. Changes how often they are made, not h
 *Side effect.* Lower spacing means more checkpoints alive at once. The multiplier is this number, not the context length.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.6`
+
+*Measured in* §6.12.6 ([/help#6.12.6](/help#6.12.6)).
 
 ### cache-idle-slots
 
@@ -147,6 +159,8 @@ Save an idle slot's state when a new task starts. Costs system RAM, and needs ca
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.6`
 
+*Measured in* §6.12.6 ([/help#6.12.6](/help#6.12.6)).
+
 ### threads
 
 - **scope**: global and per-model
@@ -161,6 +175,8 @@ Save an idle slot's state when a new task starts. Costs system RAM, and needs ca
 CPU threads for the prompt pass. Threads 1 is the fastest value measured here, so set it on purpose.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.6`
+
+*Measured in* §6.12.6 ([/help#6.12.6](/help#6.12.6)).
 
 ### fit
 
@@ -177,6 +193,8 @@ Shrink unset settings so the model fits the device. It reads what other programs
 *Side effect.* May silently choose a smaller context than the model can address. A load can satisfy fit's target and still fail, because fit's projection omits the compute graph allocated after it (§6.12.7).
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.7`
+
+*Measured in* §6.12.7 ([/help#6.12.7](/help#6.12.7)).
 
 ### kv-unified
 
@@ -195,6 +213,8 @@ Shares one cache pool across slots. On: a client can use the whole pool. Off: it
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.21, llama-cpp.cpp:353-361`
 
+*Measured in* §6.12.21 ([/help#6.12.21](/help#6.12.21)).
+
 ### kv-unified-per-slot
 
 - **scope**: global and per-model
@@ -209,6 +229,8 @@ Tokens each slot may use. With ctx-size unset, the pool is slots x this number.
 *Side effect.* It caps a slot below the model's trained context by design -- that is the point, and the cost: KV paid per slot caps each client, and a value above the pool's per-slot share is reported as having no effect. Set ctx-size alongside it to price the pool you mean (§6.12.20).
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.15`
+
+*Measured in* §6.12.15 ([/help#6.12.15](/help#6.12.15)).
 
 ### fit-ctx
 
@@ -226,6 +248,8 @@ The smallest context fit may shrink a slot to. Works only when ctx-size is unset
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.7`
 
+*Measured in* §6.12.7 ([/help#6.12.7](/help#6.12.7)).
+
 ### fit-target
 
 - **scope**: global and per-model
@@ -241,6 +265,8 @@ Margin in MiB the fit adjustment leaves per device. Comma-separated for a per-de
 *Side effect.* Raising it makes fit shrink context sooner. It reserves aperture, not host RAM -- and the prompt cache and checkpoints live in host RAM, so a generous target does not prevent the kills this box actually gets.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.7`
+
+*Measured in* §6.12.7 ([/help#6.12.7](/help#6.12.7)).
 
 ### stop-timeout
 
@@ -307,6 +333,8 @@ Total tokens the server shares among its slots. A client gets this divided by th
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.20`
 
+*Measured in* §6.12.20 ([/help#6.12.20](/help#6.12.20)).
+
 ### n-gpu-layers
 
 - **scope**: global and per-model
@@ -322,6 +350,8 @@ Layers loaded to the GPU: 99 loads all of them. Lower numbers move work to syste
 *Side effect.* Weight layers moved out of the aperture become anonymous, unreclaimable RAM that cannot be paged out -- the signature every OOM kill in this box's journal carries (§6.12).
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.18`
+
+*Measured in* §6.12.18 ([/help#6.12.18](/help#6.12.18)).
 
 ### flash-attn
 
@@ -339,6 +369,8 @@ Speeds up attention. Needs v4: on a v3 GPU it makes output worse, not faster.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.19`
 
+*Measured in* §6.12.19 ([/help#6.12.19](/help#6.12.19)).
+
 ### parallel
 
 - **scope**: global and per-model
@@ -355,6 +387,8 @@ Slot count. Each slot gets its own window, so 2 slots halves what one client get
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.20, server.cpp:161-166`
 
+*Measured in* §6.12.20 ([/help#6.12.20](/help#6.12.20)).
+
 ### temp
 
 - **scope**: global and per-model
@@ -369,6 +403,8 @@ Slot count. Each slot gets its own window, so 2 slots halves what one client get
 *Side effect.* Quality, not capacity. Nothing here limits context.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
+
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
 
 ### top-k
 
@@ -385,6 +421,8 @@ Pick from the N most likely next words. 40 is the default; 0 means no limit.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
 
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
+
 ### top-p
 
 - **scope**: global and per-model
@@ -399,6 +437,8 @@ Sample from the smallest set of tokens whose cumulative probability reaches p; 1
 *Side effect.* Quality, not capacity.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
+
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
 
 ### min-p
 
@@ -415,6 +455,8 @@ Drop answers below this odds. 0.05 keeps more words than 0.1.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
 
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
+
 ### presence-penalty
 
 - **scope**: global and per-model
@@ -429,6 +471,8 @@ Penalty on tokens already present in the context.
 *Side effect.* Quality, not capacity.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
+
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
 
 ### repeat-penalty
 
@@ -445,6 +489,8 @@ Push down words you just used. 1.0 is off.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
 
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
+
 ### dry-multiplier
 
 - **scope**: global and per-model
@@ -459,6 +505,8 @@ Penalise phrases you repeat. 1.0 is off. 1.5 stops loops sooner.
 *Side effect.* Quality, not capacity.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.5`
+
+*Measured in* §6.12.5 ([/help#6.12.5](/help#6.12.5)).
 
 ### cache-prompt
 
@@ -476,6 +524,8 @@ Keep a finished slot's state so a similar request answers faster. Paid in host R
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.19`
 
+*Measured in* §6.12.19 ([/help#6.12.19](/help#6.12.19)).
+
 ### reasoning-budget
 
 - **scope**: global and per-model
@@ -491,6 +541,8 @@ Tokens the model may spend on private reasoning. -1 means no limit. The server r
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 4.10.3, server.cpp:360-363`
 
+*Measured in* §4.10.3 ([/help#4.10.3](/help#4.10.3)).
+
 ### reasoning-effort
 
 - **scope**: global and per-model
@@ -505,6 +557,8 @@ Reasoning level passed to the chat template. Qwen3.8-Flash-Next obeys this one, 
 *Side effect.* Session cost, not load cost -- and only honoured at all if the model's template reads the field.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 4.10.3`
+
+*Measured in* §4.10.3 ([/help#4.10.3](/help#4.10.3)).
 
 ### jinja
 
@@ -523,6 +577,8 @@ Serve the model's own chat template, with tool calling. Off, tool calls stop wor
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 4.10.5`
 
+*Measured in* §4.10.5 ([/help#4.10.5](/help#4.10.5)).
+
 ### keep
 
 - **scope**: global and per-model
@@ -537,6 +593,8 @@ Keep the last N tokens of a conversation. 0 ends a session when it runs out of r
 *Side effect.* Pinned tokens are charged against the slot's context for the whole session, not for the turns that used them.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.19`
+
+*Measured in* §6.12.19 ([/help#6.12.19](/help#6.12.19)).
 
 ### lazy-mode
 
@@ -554,6 +612,8 @@ Read big tensors from disk when needed, not from memory. auto applies above 4 Gi
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.18`
 
+*Measured in* §6.12.18 ([/help#6.12.18](/help#6.12.18)).
+
 ### spec-type
 
 - **scope**: global and per-model
@@ -570,6 +630,8 @@ Speculative decoding to run: a draft guesses the next tokens and the target veri
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.11, sec 6.12.17`
 
+*Measured in* §6.12.11 ([/help#6.12.11](/help#6.12.11)).
+
 ### spec-draft-sampling
 
 - **scope**: global and per-model
@@ -584,6 +646,8 @@ How the draft's guess is made: greedy takes its argmax, probabilistic samples it
 *Side effect.* Changes how many guesses are accepted, not what the draft costs. Meaningless with no speculative decoding running at all -- it is a knob on a draft, not a way to start one.
 
 *Evidence.* `docs/PORTAL_PLAN.md sec 6.12.26`
+
+*Measured in* §6.12.26 ([/help#6.12.26](/help#6.12.26)).
 
 ## 4. Keys the page will never offer
 
