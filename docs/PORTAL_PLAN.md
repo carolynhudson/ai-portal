@@ -246,6 +246,14 @@ new queue number, not a silent revival of an old one.
   restart ai-portal`; session alive after the browser closes; session resumable by id after a full
   box reboot; health/version answers the portal can read. Removal of `pi-web.service` +
   `pi-web-sessiond.service` and the provider drop-in lands in this slice.
+- **(31) DONE 2026-10-12 — both interfaces measured, HTTP kept.** `docs/HARNESS_LANDSCAPE_RESEARCH.md`
+  §10.5 has the side-by-side. The decisive measurement: `opencode acp` makes the agent a child of the
+  client's stdio pipe, so the session dies with the portal — the requirement forbids that; the
+  standalone HTTP server survives it (queue 30's gate). Secondary: ACP's `new_session` returned
+  `modes: []` and `models offered: 0` on 1.19.0, so census model binding has no ACP surface, and a
+  streaming client must implement `session/update` (measured: `Method not found`). `harnessctl.py`
+  (HTTP) is the client; ACP stays useful for external editors and for a future bridge, additive.
+
 - **(31) Interface spike, both ways, then one client.** Launch-in-a-cwd, stream-a-reply, answer-a-pending-question,
   implemented twice: opencode's HTTP API and ACP (`acp` python SDK, measured installable). Report the
   friction (auth, streaming, question round-trip, restart semantics, what each cannot express), pick

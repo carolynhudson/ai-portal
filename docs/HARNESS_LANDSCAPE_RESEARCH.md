@@ -326,6 +326,28 @@ Two things this settles for the design:
    harness-agnostic column. Keep new portal knowledge in skills and MCP tools — both of which any
    harness consumes — rather than in harness-specific extensions.
 
+## 10.5 Queue 31, measured both ways, and the one the portal keeps (2026-10-12)
+
+The three flows were implemented against the live 1.19.0 host over **HTTP**, and against
+`opencode acp` over the **ACP** python SDK, in a probe repo. The client the portal keeps is
+`app/core/harnessctl.py` (HTTP). Not because ACP is bad — because of one measured difference.
+
+| Flow | HTTP (`opencode serve`) | ACP (`opencode acp`, python `acp` SDK) |
+|---|---|---|
+| Launch in a cwd | `POST /session?directory=<cwd>` → id. **The directory is a query parameter**; a body key of the same name is ignored, measured: it created the session in the server's own cwd. | `new_session(cwd=…)` → id. Clean. |
+| Stream a reply | Poll `GET /session/{id}/message` (an `/event` SSE stream exists). Reply text and per-step `usage` come back. | `prompt()` streams `session/update` notifications. My stub client raised `Method not found: session/update` — a real client must implement the handler. More work, and it is where the token-by-token view comes from. |
+| Answer a pending question | Find the tool part with `state == "question"`, read its `questions[]`, answer with a tool-response part. Worked. | Elicitation over the same connection (the extension doc lists `elicitation/emulation.request`). Not exercised here. |
+| Model from the router census | Provider/model ids accepted in the message body, bound from the portal's own model list. | **`new_session` returned `modes: []` and `models offered: 0`** — opencode's ACP surface did not offer a model list to switch between. |
+| Who owns the process | The server is a **standalone daemon**. It survives a portal restart by construction (queue 30's gate: MainPID unchanged across `systemctl --user restart ai-portal`). | The agent is a **child of the client's stdio pipe**. If the portal process dies, the session dies with it — the exact thing the operator's requirement forbids. ACP needs a supervising host of its own. |
+| Extras | `/mcp`, `/lsp`, `/formatter`, `/config/providers`, `/global/health` all answered. | Permission requests, cancel, `usage` per prompt (measured: `total_tokens=8829 input_tokens=8814 output_tokens=15`). |
+
+**Decision.** HTTP for the portal page. The lifecycle fact is decisive: the requirement is that
+the session outlives the portal, and only the standalone server satisfies it without inventing a
+supervisor. ACP stays genuinely useful in two places the portal is not: (a) an external editor
+(Zed, `pi-acp`) talking to opencode, and (b) a future bridge where the portal exposes an ACP
+front-end to other agents. If a later need requires ACP's streaming or permission surface, the
+bridge is additive to `harnessctl`, not a replacement for it.
+
 ## 11. Sources
 
 - ACP — agents list (`agentclientprotocol.com/get-started/agents`), clients list, Streamable HTTP &
