@@ -78,6 +78,21 @@ _SCP_LIKE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^ \t\n]+$")
 _TEXT_MAX = 20000
 _TEXT_FILES = {"readme": "README.md", "agents": "AGENTS.md"}
 
+# The operator's rule for .gitignore: it is not a choice, it is a consequence of the choices.
+# Checking "git repository" should produce the file, filled in from the stacks that were picked.
+_GITIGNORE_BASE = (".DS_Store", "*.log", ".env", ".env.local", ".scratch/")
+_GITIGNORE_STACKS = {
+    "python": ("__pycache__/", "*.py[oc]", ".venv/", "*.egg-info/"),
+    "node": ("node_modules/", "dist/", "*.tsbuildinfo", ".npm/"),
+    "cpp": ("build/", "cmake-build-*/", "CMakeCache.txt", "compile_commands.json", "*.o", "*.so"),
+}
+
+#: A file the init would write, and a file that arrived with the remote, is a decision — not a
+#: merge conflict to resolve in code. The three answers are the ones the operator asked for.
+DECISIONS = ("replace", "keep", "append")
+_STAGING_MAX_AGE_S = 30 * 60
+_PLAN_ID = re.compile(r"^[0-9a-f]{32}$")
+
 #: The shortlist. Deliberately small: the common best practices for starting a coding project, and
 #: the details left to the agent inside the session, as the operator asked.
 INIT_STEPS: dict[str, dict[str, Any]] = {
@@ -123,14 +138,6 @@ INIT_STEPS: dict[str, dict[str, Any]] = {
         "commands": [],
         "files": {"README.md": "# ${name}\n\nWhat this project is, and how to run it.\n"},
     },
-    "gitignore": {
-        "label": ".gitignore",
-        "needs": [],
-        "does": "ignores for virtualenvs, node_modules, build output, and the portal's scratch tree",
-        "commands": [],
-        "files": {".gitignore": ".venv/\nnode_modules/\ndist/\nbuild/\n.scratch/\n__pycache__/\n*.pyc\n"
-                               ".env\n"},
-    },
     "agents": {
         "label": "AGENTS.md",
         "needs": [],
@@ -148,11 +155,83 @@ INIT_STEPS: dict[str, dict[str, Any]] = {
 }
 
 #: Order matters: files before the commit, toolchain steps before the files they sit inside.
-INIT_ORDER = ("git", "python", "node", "cpp", "readme", "gitignore", "agents")
+INIT_ORDER = ("git", "python", "node", "cpp", "readme", "agents")
 
 
 class ProjectError(Exception):
-    """A refusal with a sentence attached. The endpoint turns it into a 409, the page shows it."""
+    """A refusal with a sentence attached. The endpoint turns it into a 409, the page shows it.
+
+    `conflicts` carries the files the operator has to choose about (see `DECISIONS`) when a refusal
+    is "this needs an answer", so the page can ask instead of guessing.
+    """
+
+    def __init__(self, message: str, conflicts: list[dict[str, Any]] | None = None):
+        super().__init__(message)
+        self.conflicts = conflicts or []
+
+
+def compose_gitignore(steps: list[str]) -> str:
+    """The .gitignore for these choices: the base, then one labelled section per stack picked.
+
+    Deliberately not a checkbox. A git repository with no ignores is a repository that will commit
+    its own `.venv`, and asking the operator to remember that is asking them to do the portal's job.
+    """
+    lines = list(_GITIGNORE_BASE)
+    for step in INIT_ORDER:
+        if step in steps and step in _GITIGNORE_STACKS:
+            lines.append("")
+            lines.append(f"# {INIT_STEPS[step]['label']}")
+            lines.extend(_GITIGNORE_STACKS[step])
+    return "\n".join(lines) + "\n"
+
+
+def init_of(path: str) -> list[str]:
+    """The init steps the registry recorded for this folder, in init order.
+
+    The ignores are composed from the steps, so a folder that arrived by adoption has to answer the
+    same question a freshly created one does. A folder the registry does not know answers with
+    nothing — this page does not guess what a folder contains.
+    """
+    row = db.query("SELECT notes FROM projects WHERE path = ?", (os.path.realpath(path),))
+    if not row:
+        return []
+    try:
+        notes = json.loads(row[0]["notes"] or "{}")
+    except (TypeError, ValueError):
+        return []
+    ran = notes.get("init") or []
+    return [step for step in INIT_ORDER if isinstance(ran, list) and step in ran]
+
+
+def _write_gitignore(target: str, ran: list[str], log: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Write the derived ignores. Returns a failed-step record only if the write itself fails.
+
+    Not a step: `plan["run"]` is what the operator ticked, and the file is what those ticks imply.
+    Written after the loop and after the pull, so the file describes the folder as it ended up.
+    """
+    body = compose_gitignore(ran)
+    path = _safe_join(target, ".gitignore")
+    try:
+        if os.path.exists(path):
+            log.append({"step": "gitignore", "file": ".gitignore",
+                        "result": "left the file that was already there"})
+            return {"written": False, "kept": True, "sections": _sections(ran)}
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+    except OSError as exc:
+        log.append({"step": "gitignore", "file": ".gitignore",
+                    "result": f"failed: {type(exc).__name__}: {exc}"})
+        return {"step": "gitignore", "command": None, "code": -1,
+                "output": f"{type(exc).__name__}: {exc}"}
+    log.append({"step": "gitignore", "file": ".gitignore",
+                "result": "written from the boxes you picked"})
+    return {"written": True, "kept": False, "sections": _sections(ran)}
+
+
+def _sections(ran: list[str]) -> list[str]:
+    """The stacks the file speaks for — the page names them, so the operator sees what the
+    derivation was made from rather than trusting a file they did not ask for."""
+    return [step for step in INIT_ORDER if step in ran and step in _GITIGNORE_STACKS]
 
 
 def toolchains() -> dict[str, dict[str, Any]]:
@@ -315,7 +394,14 @@ def plan_init(steps: Any, tools: dict[str, dict[str, Any]] | None = None) -> dic
         run.append(step)
 
     run.sort(key=INIT_ORDER.index)
-    return {"ok": True, "run": run, "refused": refused}
+    return {
+        "ok": True,
+        "run": run,
+        "refused": refused,
+        # The file the boxes imply, named in the plan: the operator sees the ignores, and the
+        # sections the ticked stacks add, before the folder exists.
+        "gitignore": {"sections": _sections(run), "base": len(_GITIGNORE_BASE)},
+    }
 
 
 def project_path(name: str, root: str | None = None) -> str:
@@ -337,6 +423,11 @@ def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = 
     - `pull_first` pulls the remote's own default branch **before the init files are written**, so
       the repository's README wins and the portal's templates fill only the gaps — the file loop
       below already leaves an existing file alone, which is exactly the merge rule wanted here.
+
+    `.gitignore` is not a step the operator ticks. It is derived from the stacks that were picked
+    (`compose_gitignore`) and written last, so it is present on a project that ticked git, one that
+    did not, and one that arrived from a remote — and the same "leave the file that was already
+    there" rule that governs the templates leaves the operator's own ignores alone.
     """
     safe_name = validate_name(name)
     texts = validate_texts(texts)
@@ -413,6 +504,10 @@ def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = 
         if failed:
             break
 
+    gitignore_state = _write_gitignore(target, plan["run"], log)
+    if gitignore_state and "code" in gitignore_state:
+        failed = gitignore_state
+
     remote_failed = remote_state.get("error") if remote_state else None
 
     register(target, safe_name, notes={
@@ -420,6 +515,7 @@ def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = 
         "refused": plan["refused"],
         "remote": remote_state,
         "texts": sorted(_TEXT_FILES[k] for k in texts),
+        "gitignore": gitignore_state,
     })
 
     return {
@@ -432,6 +528,7 @@ def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = 
         "log": log,
         "failed": failed,
         "remote": remote_state,
+        "gitignore": gitignore_state,
         "warning": _warning(target, failed, remote_state),
     }
 
@@ -541,8 +638,13 @@ def _run(argv: list[str], cwd: str, env: dict[str, str]) -> dict[str, Any]:
 
 # ------------------------------------------------------ registry + scan ----------------------
 
-def register(path: str, name: str | None = None, notes: dict | None = None) -> dict[str, Any]:
-    """Add a folder to the registry. Adoption is validated like creation."""
+def register(path: str, name: str = "", notes: dict | None = None) -> dict[str, Any]:
+    """Add a folder to the registry. Adoption is validated like creation.
+
+    The name defaults to the folder's own: the registry records the folder name, so a caller that
+    has a path has a name, and making the caller repeat it invites a registry entry that disagrees
+    with the folder it points at.
+    """
     real = os.path.realpath(path)
     if not os.path.isdir(real):
         raise ProjectError(f"{real} is not a folder, so it cannot be a project")

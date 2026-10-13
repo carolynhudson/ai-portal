@@ -6,7 +6,7 @@
   "for every page automatically; this file only adds what cannot be derived:",
   "which endpoints a page must have called, which tabs form a group, which",
   "controls must not be stuck disabled, and what a destructive request must",
-  "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
+  "look like. Add a page here when you add one to the app — test_ui_integration",
   "fails if the app serves an HTML page with no spec."
  ],
  "blockMutations": [
@@ -272,7 +272,7 @@
     },
     {
      "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-     "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
+     "matches": "\\d+ tok · \\d+\\.\\d t/s"
     },
     {
      "selector": "#pulse-lanes .lane",
@@ -304,7 +304,7 @@
     },
     {
      "_comment": [
-      "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
+      "§6.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
       "MainPID=0 (so no router process, and every server found is outside the unit) and the",
       "fixture seeds a llama-server the portal does not control. So these are the panel's",
       "branch-specific sentences, not a shape that both branches happen to share."
@@ -417,7 +417,7 @@
    "_disabled_comment": [
     "These three are enabled by the dashboard's own fixtures and locked only",
     "by the bar: this is the bar's doing, not the page's. The restore path is",
-    "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
+    "asserted by mutation \"job bar never unlocks the controls again\" — a",
     "static spec cannot see a lock that was never released, so it has to be",
     "broken in the template to know it is tested."
    ],
@@ -441,7 +441,7 @@
   {
    "_comment": [
     "The other half of the bar: the job finished, possibly while you were",
-    "elsewhere, and said it failed. The bar must still say so \u2014 and the",
+    "elsewhere, and said it failed. The bar must still say so — and the",
     "controls must be usable again."
    ],
    "name": "jobbar-finished",
@@ -647,7 +647,7 @@
      "contains": "amdrocm-base9.9"
     },
     {
-     "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
+     "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."
     },
     {
      "selector": "#gpu-stack .kv",
@@ -770,7 +770,7 @@
         "pids": [],
         "proc_read": true,
         "purgeable": false,
-        "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
+        "why_not": "~/ai/bin still links into it (llama-cli (broken link)) — this build is what the router is configured to run"
        },
        {
         "name": "llama.cpp-b10796",
@@ -1270,7 +1270,7 @@
       "settings. The sentence has to say that, not merely that the region is non-empty."
      ],
      "selector": "#ed-summary",
-     "contains": "no changes \u2014 these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
+     "contains": "no changes — these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
     },
     {
      "after_select": true,
@@ -1296,7 +1296,7 @@
     },
     {
      "_comment": [
-      "the deck (plan \u00a76.14.1f): one strip per personality, so ten personalities is ten",
+      "the deck (plan §6.14.1f): one strip per personality, so ten personalities is ten",
       "lines and choosing between them needs no scrolling"
      ],
      "selector": "#pers-deck .pers-strip",
@@ -1418,6 +1418,7 @@
     "#proj-name",
     "#proj-namerule",
     "#proj-steps",
+    "#proj-gitignore",
     "#proj-plan",
     "#proj-create",
     "#proj-plan-out",
@@ -1438,7 +1439,7 @@
       "with empty strings, which expectVisible cannot see."
      ],
      "selector": "#proj-summary",
-     "matches": "Projects root \\S+ \u00b7 Registered \\d+ \u00b7 Folders not in the registry \\d+"
+     "matches": "Projects root \\S+ · Registered \\d+ · Folders not in the registry \\d+"
     },
     {
      "_comment": [
@@ -1449,11 +1450,24 @@
     },
     {
      "_comment": [
-      "the shortlist is rendered from the server's step list, not hardcoded markup"
+      "the operator's rule (§6.14.1o, queue 18): .gitignore is a consequence of the",
+      "boxes, not a box. The page states it beside the boxes, so the operator is not",
+      "left to wonder where the file in `git status` came from. The sweep ticks every",
+      "box, so this sentence is read on the surface that makes it."
+     ],
+     "selector": "#proj-gitignore",
+     "contains": ".gitignore is not a box"
+    },
+    {
+     "_comment": [
+      "the shortlist is rendered from the server's step list, not hardcoded markup.",
+      "Six boxes, not seven: .gitignore dropped out of the shortlist when it became a",
+      "consequence of them (§6.14.1o), so this count is the shape of the operator's",
+      "rule — a count of 7 means a box came back."
      ],
      "selector": "#proj-steps .proj-step",
      "matches": "Git repository",
-     "minCount": 7
+     "minCount": 6
     },
     {
      "_comment": [

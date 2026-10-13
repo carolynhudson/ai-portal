@@ -32,6 +32,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -128,6 +129,48 @@ def _first_pid(line: str) -> int | None:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def cache_dir(port: int) -> Path:
+    """The host's cache home. opencode reads `opencode.json` and `AGENTS.md` from
+    `$XDG_CACHE_HOME/opencode`, so this directory is the host's whole view of the
+    agent's configuration."""
+    return paths.STATE / "harness" / f"host-{port}"
+
+
+def seed_cache_home(port: int, log=print) -> dict:
+    """Copy the portal-generated agent config into the cache home the host reads.
+
+    The gate this implements (plan §6.14.1o): a session created over the API reads
+    `opencode.json` and the `AGENTS.md` files out of that cache home, and a host
+    started with an empty one answers from defaults — no posture, no compaction,
+    none of the plugins. `agentconfig` is the component that generates those files
+    from the router census, so the copy is the portal's job, and it happens before
+    the unit starts: a host seeded after it read an empty directory stays unseeded.
+    """
+    cache = cache_dir(port)
+    src = Path(os.environ.get("OPENCODE_CONFIG_DIR")
+               or paths.HOME / ".config" / "opencode")
+    if not (src / "opencode.json").exists():
+        return {"ok": False, "cache": str(cache),
+                "error": f"the host has no agent config to run with: {src / 'opencode.json'} "
+                       "does not exist; sync the harness configs first"}
+    cache.mkdir(parents=True, exist_ok=True)
+    files = []
+    shutil.copy2(src / "opencode.json", cache / "opencode.json")
+    files.append("opencode.json")
+    if (src / "AGENTS.md").exists():
+        shutil.copy2(src / "AGENTS.md", cache / "AGENTS.md")
+        files.append("AGENTS.md")
+    log(f"seeded {cache} ({', '.join(files)})")
+    return {"ok": True, "cache": str(cache), "files": files}
+
+
+def seed_state(port: int) -> dict:
+    """What the running host's cache home actually holds. Reported, never assumed."""
+    cache = cache_dir(port)
+    files = [n for n in ("opencode.json", "AGENTS.md") if (cache / n).exists()]
+    return {"seeded": "opencode.json" in files, "files": files, "cache": str(cache)}
+
+
 def env_mapping(port: int, password: str) -> dict[str, str]:
     return {
         "HARNESS_HOST": DEFAULT_HOST,
@@ -136,6 +179,11 @@ def env_mapping(port: int, password: str) -> dict[str, str]:
         # opencode reads its model/provider config from here; the portal's generator
         # (agentconfig.py) writes that file from the router census.
         "OPENCODE_CONFIG_DIR": str(paths.HOME / ".config" / "opencode"),
+        # Measured (plan §6.14.1o): an API-created session reads `opencode.json` and
+        # `AGENTS.md` out of `$XDG_CACHE_HOME/opencode`, not out of OPENCODE_CONFIG_DIR.
+        # Pointing it at the directory `seed_cache_home` fills is what makes a session
+        # in a project see the agent config.
+        "XDG_CACHE_HOME": str(cache_dir(port)),
         # The port pre-flight is a portal module, and systemd starts us from $HOME.
         "HARNESS_PYTHON": sys.executable,
         "PYTHONPATH": str(REPO_ROOT),
@@ -281,6 +329,7 @@ def status(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> dict[str, Any]
         "unit": u, "port": port, "listening": bool(owner),
         "listener_pid": (owner or {}).get("pid"), "health": h,
         "key_present": key_present(), "shadowed": shadowed,
+        "seed": seed_state(port),
     }
     owner_pid = (owner or {}).get("pid")
     if shadowed:
@@ -297,6 +346,12 @@ def status(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> dict[str, Any]
     return out
 
 
+def start_unit(port: int, log=print) -> dict:
+    """Enable and start the unit. The moment the host begins reading its cache home."""
+    return subprocess.run(["systemctl", "--user", "enable", "--now", HARNESS_UNIT],
+                          capture_output=True, text=True, timeout=120, check=False)
+
+
 def start(port: int = DEFAULT_PORT, log=print) -> dict[str, Any]:
     """Install env + wrapper + unit, then start the host. Refuses a busy port."""
     port = _int(port, DEFAULT_PORT)
@@ -307,6 +362,9 @@ def start(port: int = DEFAULT_PORT, log=print) -> dict[str, Any]:
             + (f" by pid {owner['pid']}" if owner else "")
             + "; the harness host refuses to shadow it"
         )
+    seed = seed_cache_home(port, log)
+    if not seed.get("ok"):
+        raise HarnessError(seed.get("error") or "the harness host cannot be seeded")
     units.write_env(HARNESS_SERVICE, env_mapping(port, ensure_key(log)), log=log)
     units.write_wrapper(HARNESS_SERVICE, wrapper_body(), log=log)
     upath = units.unit_path(HARNESS_UNIT)
@@ -314,8 +372,7 @@ def start(port: int = DEFAULT_PORT, log=print) -> dict[str, Any]:
     upath.write_text(unit_text())
     log(f"wrote {upath}")
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, timeout=60)
-    r = subprocess.run(["systemctl", "--user", "enable", "--now", HARNESS_UNIT],
-                       capture_output=True, text=True, timeout=120, check=False)
+    r = start_unit(port, log)
     if r.returncode != 0:
         raise HarnessError(f"{HARNESS_UNIT} did not start: {(r.stderr or r.stdout).strip()[:240]}")
     return status(port)

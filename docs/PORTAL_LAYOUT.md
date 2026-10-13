@@ -166,6 +166,15 @@ the present, and do not add a fifth panel to an existing page.
     process died a new client loaded the session and the agent recalled the exact command. ACP's
     HTTP/WebSocket transports are an experimental RFD and stay unused; stdio is the stable one, and
     the portal's own page is the browser surface.
+  - **The host's configuration is seeded by the portal, before the host starts.** Measured
+    (`docs/HARNESS_LANDSCAPE_RESEARCH.md` §4): a session created over the host's HTTP API reads
+    `opencode.json` and the `AGENTS.md` files out of `$XDG_CACHE_HOME/opencode` — *not* out of
+    `OPENCODE_CONFIG_DIR`. A host started with an empty cache home answers from defaults: none of
+    the posture, compaction, or plugin configuration the portal generates reaches the agent. So
+    `start` copies the generated config into the host's cache home and points `XDG_CACHE_HOME` at
+    it, refuses to start a host it cannot seed (a host with nothing to read is not a host the page
+    may call ready), and `status` reports the seed the running host carries — `seeded: false` is
+    said, never omitted.
   - Two records, because they answer different questions. A **registry** under
     `~/ai/state/portal/pi-sessions/records.jsonl` (session id, harness, unit, project path, started,
     ended, exit, model bound) and the harness's own session file. The user journal is persistent here

@@ -1184,3 +1184,73 @@ def test_the_page_states_what_pull_first_does():
     tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
     assert "before the init files are written" in tpl
     assert "origin" in tpl, "the page does not say the remote becomes origin"
+
+
+# ------------------------------------------------------------------ the harness seed
+#
+# §6.14.1o: the host is seeded with the agent config it reads, before it starts. The
+# page has to say which of the two the running host is, because the difference is
+# invisible to the operator otherwise: a seeded host writes with the agent's posture,
+# an unseeded one writes with defaults, and both look identical from the browser.
+
+def test_the_projects_page_reports_the_seed_the_harness_host_carries():
+    """§6.14.1o: the page reads the host's seed off the status endpoint and says seeded,
+    unseeded, and not started — three states, the last one not spelled 'unseeded'."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    assert "/api/harness/status" in script, "the page never reads the harness host's state"
+    # The seed is read off the payload. A page that spelled it from its own config file
+    # would report a seed the running host does not carry.
+    assert "seed.files" in script, "the page reads the status and drops the seed"
+    assert "seed.seeded" in script, "the page never asks the host's payload whether it is seeded"
+    assert "seeded" in script and "unseeded" in script
+
+    # The third state: a host that is not running has no seed to carry, and the page
+    # must not call that "unseeded" (it never read anything) nor "seeded".
+    seed_row = script[script.index("harnessSeed"):] if "harnessSeed" in script else script
+    assert "not started" in seed_row, "a host that is not running is reported by its seed state"
+
+
+def test_the_projects_page_renders_the_seed_at_page_load_and_on_refresh():
+    """A seed that is only read when the operator clicks something is a seed that is
+    stale at load — the host may have been started from the command line."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    refresh = script[script.index("async function refresh"):]
+    refresh = refresh[:refresh.index("$('#proj-plan')")]
+    assert "harnessSeed" in refresh, "refresh() does not refresh the seed"
+
+
+# ------------------------------------------------- the derived .gitignore (queue 18, the operator's rule)
+#
+# The operator's words: checking "git repository" should produce .gitignore, filled from
+# the stacks that were picked. That makes the file a consequence, not a box — so the page
+# has to say what it wrote and from what, because a file the operator never ticked and
+# never sees named is a file they will find in `git status` and not recognize.
+
+def test_the_projects_page_says_the_gitignore_arrives_with_the_boxes_not_as_one():
+    """The shortlist must not offer .gitignore as a box; the page says where it comes from.
+
+    The boxes come from `INIT_STEPS`, so the page has no hard-coded list to check here — what is
+    checked is the sentence the operator reads beside the boxes, because that is where a
+    consequence has to be announced.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    assert 'value="gitignore"' not in tpl, "the page offers a .gitignore box of its own"
+    # The paragraph the operator reads before ticking anything — the one the boxes live under.
+    intro = tpl[tpl.index('id="proj-namerule"'):]
+    intro = intro[:intro.index('id="proj-steps"')]
+    assert ".gitignore" in intro, "the boxes are shown with no word about the file they imply"
+    assert "not a box" in intro, "the page does not say the file is a consequence, not a choice"
+
+
+def test_the_projects_page_reports_the_ignores_it_wrote_after_a_create():
+    """The plan and the create result both name the file: the plan so the operator sees it
+    before creating, the result so the operator sees what actually happened."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    plan = _fn(script, "plan")
+    assert "gitignore" in plan, "the plan does not mention the file it will write"
+    create = script[script.index("#proj-create')"):]
+    assert ".gitignore" in create, "the create result drops the file the page says it wrote"

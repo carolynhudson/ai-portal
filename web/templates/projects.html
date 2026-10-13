@@ -51,6 +51,8 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 
 <div id="proj-summary" class="proj-line"></div>
 
+<p class="proj-mut" id="proj-host">host: reading…</p>
+
 <div class="proj-grid">
   <div class="card">
     <h3>New project</h3>
@@ -64,6 +66,11 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       portal's own best practices, not a place to type commands. A box whose toolchain is not on
       this machine is refused by name, with the install statement, and the boxes that can run still
       run.</p>
+    <p class="proj-mut" id="proj-gitignore"><code>.gitignore</code> is not a box: it is written with
+      the boxes you picked. The base ignores are always there, and each stack you tick — Python, Node, C++ —
+      adds its own section. A project that ticks nothing still gets the base, because a folder
+      that gets a repository later is the folder this file exists for. A
+      <code>.gitignore</code> the project already has is left exactly as it is.</p>
     <div id="proj-steps" class="proj-steps"></div>
     <details class="proj-more" id="proj-more">
       <summary>Opening text and a git remote</summary>
@@ -166,6 +173,19 @@ function renderSummary(s) {
   add('Root', s.root_ok ? 'usable' : `refused: ${s.root_error}`);
 }
 
+function harnessSeed(h) {
+  // §6.14.1o: the host reads `opencode.json` and `AGENTS.md` out of the cache home
+  // the portal seeds before the host starts. A seeded host writes with the agent's
+  // posture; an unseeded one writes with defaults. From the browser the two are
+  // indistinguishable, so the page has to say which one this is — and say
+  // "not started" for a host that never read anything, rather than "unseeded".
+  if (!h || h.detail) return 'host: the status read failed';
+  if (!h.listening) return 'host: not started';
+  const seed = h.seed || {};
+  if (!seed.seeded) return 'host: unseeded — the agent runs with defaults';
+  return `host: seeded (${seed.files.join(', ')})`;
+}
+
 function renderSteps() {
   const box = $('#proj-steps');
   box.textContent = '';
@@ -210,6 +230,13 @@ async function plan() {
     const li = el('li'); li.textContent = `refused: ${r.step} — ${r.reason}`; li.dataset.tone = 'bad';
     refuses.append(li);
   });
+  // The file the boxes imply, named in the plan: a .gitignore the operator cannot see in the
+  // plan is a file they meet for the first time in `git status`.
+  const ign = el('li');
+  ign.textContent = d.gitignore && d.gitignore.sections.length
+    ? `writes: .gitignore — with the ${d.gitignore.sections.join(', ')} sections`
+    : 'writes: .gitignore — the base ignores';
+  runs.append(ign);
   out.append(runs, refuses);
   if (!d.run.length && !d.refused.length) {
     const p = el('p'); p.textContent = 'nothing ticked.'; out.append(p);
@@ -288,6 +315,10 @@ async function refresh() {
   renderSummary(d.summary);
   renderRows(d.projects);
   renderUnadopted(d.scan);
+  // The seed is read, not assumed: the host can be started from a shell, and a page
+  // that spelled "seeded" from its own config file would be lying about it.
+  const h = await req('GET', '/api/harness/status');
+  $('#proj-host').textContent = harnessSeed(h);
 }
 
 $('#proj-plan').addEventListener('click', () => plan());
@@ -314,7 +345,9 @@ $('#proj-create').addEventListener('click', async () => {
   out.textContent = d.ok
     ? `created ${d.name} in ${d.root}. ran: ${d.ran.join(', ') || 'nothing'}` +
       (d.refused.length ? `. refused: ${d.refused.map(r => `${r.step} (${r.reason})`).join('; ')}` : '') +
-      (d.remote ? `. remote ${d.remote.pulled ? 'pulled ' + d.remote.branch : 'added'} from ${d.remote.url}` : '')
+      (d.remote ? `. remote ${d.remote.pulled ? 'pulled ' + d.remote.branch : 'added'} from ${d.remote.url}` : '') +
+      (d.gitignore ? `. ${d.gitignore.kept ? '.gitignore left as the project had it'
+        : '.gitignore written'}` : '')
     : d.warning;
   await refresh();
 });

@@ -243,7 +243,7 @@ def ui_server():
         # verbs (Launch, Forget) exist only on registry rows: a sandbox with an empty registry can
         # assert the empty-state sentence and nothing else, and the sweep never drives a row button.
         rj = httpx.post(f"{base}/api/projects", headers=hdr, timeout=60, json={
-            "name": "ui-registered-app", "steps": ["readme", "gitignore", "agents"]})
+            "name": "ui-registered-app", "steps": ["readme", "node", "agents"]})
         assert rj.status_code == 200, f"seed project: {rj.status_code} {rj.text}"
         yield {"base": base, "cookie": f"aipp={token}", "home": home, "syscalls": syscalls}
     finally:

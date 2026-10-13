@@ -4555,7 +4555,7 @@ support for the hard half already exists in `@jmfederico/pi-web` (queue 16): the
 separate systemd user unit, sessions survive restarting the web server, and `GET /api/sessions?cwd=`
 answers the running list — what is missing is the portal's side of it.
 
-#### 6.14.1n Projects: the registry, the init shortlist, and the projects root
+#### 6.14.1n Projects: the registry, the init shortlist, and the projects root — DONE
 
 The operator's design for the pi harness page has two states, and this is the first one: **inactive**,
 where projects are created, adopted, forgotten and chosen; and **operational**, where a running session
@@ -4661,6 +4661,57 @@ option. The measurements that shaped it:
 Tests: `tests/test_projects.py` (14 added: text, the remote shapes, the pull order against a real
 local repository, the dead-remote path, the endpoint carrying all four fields) and
 `tests/test_ui_contract.py` / `tests/ui/spec.json` for the fields, the payload and the copy.
+
+##### 6.14.1o The init shortlist's consequences, and the host's cache home (2026-10-13)
+
+Two things the operator asked for, one on the page and one under it.
+
+**The seed is in place before the host starts.** A session created over the harness API reads
+`opencode.json` and the `AGENTS.md` files out of the host's cache home
+(`~/.cache/ai-portal/harness/<port>/cache`), and a host started with an empty one answers from
+defaults — no posture, no compaction, none of the plugins. `seed_cache_home(port)` copies the
+portal-generated config there **before** the unit starts, refuses to start a host it cannot seed
+(the host has no config to run with — sync the harness configs first), and reports the files it
+carried, because the page shows a file list. `status()` answers the same facts from the seed on
+disk, with `seeded: false` when there is none, and the harness page shows the seeded state.
+
+**`.gitignore` is a consequence, not a box.** The operator asked
+for it directly: *checking "git repository" should produce `.gitignore`, filled in from the stacks
+that were picked, and checking the other boxes should fill it further.* The box was removed from the
+shortlist — seven boxes became six — and the file is now **derived** by `compose_gitignore(steps)`:
+a base every project gets (`.DS_Store`, `*.log`, `.env`, `.env.local`, `.scratch/`) plus one labelled
+section per stack (`Python` → `__pycache__/`, `.venv/`; `Node` → `node_modules/`, the lockfile
+variants; `C++` → `build/`, `CMakeCache.txt`, `compile_commands.json`).
+
+The rule generalises three ways, and all three are tested:
+
+- **Written even when the git box is not ticked.** A folder with no `.gitignore` is a folder that
+  will get a repository later; the file is derived, costs nothing, and the operator should not have
+  to remember to ask for it.
+- **Written after a pull.** `git clone` carries no ignores the portal can rely on, and a project
+  whose first commit includes `node_modules` is the exact failure the file exists to prevent. The
+  pull lands first, the derived file goes in after, and a repository that has its own keeps it —
+  the same "leave the file that was already there" rule that governs the templates.
+- **Never overwriting what the operator wrote.** The derivation is additive. A portal that replaced
+  the operator's ignores would be the portal knowing better than the project.
+
+`init_of(path)` reads the same facts back out of the registry, so an **adopted** folder composes the
+ignores its recorded steps imply, and a folder the registry does not know composes the base only —
+this page does not invent facts about folders it has not seen.
+
+The page states the rule where the operator reads it: the sentence beside the boxes
+(`#proj-gitignore`, "`.gitignore` is not a box: it is written with the boxes you picked"), the plan
+(a `writes: .gitignore — with the python, node sections` line, so the file is visible before the
+folder exists), and the create result (`… .gitignore written`, or `.gitignore left as the project had
+it`). A file the operator never ticked and never sees named is a file they meet for the first time
+in `git status` and do not recognise.
+
+Tests: `tests/test_projects.py` (6 added: the shortlist no longer offers the box, the base alone,
+the sections from the ticked stacks with C++ absent when C++ was not ticked, the file written
+without the git box, the operator's file left byte-for-byte, a pulled project getting the ignores,
+and `init_of` for adopted folders) and `tests/test_ui_contract.py` / `tests/ui/spec.json` for the
+sentence, its id, the plan line, and the result. **The spec's box count dropped from 7 to 6, with
+the reason in its comment**: a count of 7 means a box came back.
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

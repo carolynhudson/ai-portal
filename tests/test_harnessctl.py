@@ -14,10 +14,15 @@ secret is written to a sandbox home.
 """
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import socket
 import tempfile
+import types
 from pathlib import Path
+
+import pytest
 
 os.environ.setdefault("AI_PORTAL_PASSWORD", "test-password-123")
 os.environ.setdefault("AI_PORTAL_HOME",
@@ -28,7 +33,6 @@ import sys  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core import harnessctl, paths  # noqa: E402
-
 
 # conftest pins AI_PORTAL_HOME to a throwaway tree before app.core.paths resolves, so
 # paths.PORTAL_STATE is already sandbox-scoped. These tests clear the secret between
@@ -42,6 +46,11 @@ def _fresh_state():
     k = paths.PORTAL_STATE / harnessctl.KEY_FILE_NAME
     if k.exists():
         k.unlink()
+
+
+def _cache(port: int = 4096) -> Path:
+    """The cache home the host is started with — the directory it reads its config from."""
+    return harnessctl.cache_dir(port)
 
 
 # --- the secret ---------------------------------------------------------------------
@@ -262,3 +271,119 @@ def test_prompt_sends_the_opencode_message_shape(monkeypatch):
     assert seen["path"] == "/session/ses_1/message"
     assert seen["body"] == {"parts": [{"type": "text", "text": "hello"}]}
     assert seen["query"] == {"directory": PROJ}
+
+
+# --- the host is seeded with the agent config it reads (queue 40, plan §6.14.1o) ---
+#
+# The gate measured that a session created over the API reads `opencode.json` and
+# `AGENTS.md` out of the cache home the host is started with (`XDG_CACHE_HOME`), and
+# that a host started with an empty cache home answers the model question from the
+# router alone — it never sees the agent's posture, compaction, or plugins. Seeding
+# is the step the portal owns, so it belongs in `start()`, and the page has to be
+# able to tell the operator which of the two the host is running with.
+
+def test_start_seeds_the_hosts_cache_home_before_the_unit_starts(monkeypatch):
+    """Order matters: a cache home seeded *after* the host starts teaches a host that has
+    already read an empty directory."""
+    _fresh_state()
+    home = _cache(4096)
+    if home.exists():
+        shutil.rmtree(home)
+    # The agent config the seed copies from.
+    oc = paths.HOME / ".config" / "opencode"
+    oc.mkdir(parents=True, exist_ok=True)
+    (oc / "opencode.json").write_text(json.dumps({"model": "x"}))
+    (oc / "AGENTS.md").write_text("# posture\n")
+
+    seen = {}
+
+    def fake_unit(port, log=print):
+        # What the host's cache home holds at the moment the unit is asked to start.
+        seen["seeded_at_start"] = (home / "opencode.json").exists()
+        seen["seeded_posture_at_start"] = (home / "AGENTS.md").exists()
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(harnessctl, "port_free", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(harnessctl.units, "write_env", lambda *a, **k: None)
+    monkeypatch.setattr(harnessctl.units, "write_wrapper", lambda *a, **k: None)
+    monkeypatch.setattr(harnessctl.units, "unit_path", lambda name: home / "unit")
+    monkeypatch.setattr(harnessctl, "start_unit", fake_unit)
+    monkeypatch.setattr(harnessctl.subprocess, "run", lambda *a, **k: types.SimpleNamespace(
+        returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(harnessctl, "status", lambda port=4096: {"ok": True, "port": port})
+    out = harnessctl.start(4096)
+    assert out["ok"] is True
+    assert seen.get("seeded_at_start") is True, "the config must be in place before the host starts"
+    assert seen.get("seeded_posture_at_start") is True
+
+
+def test_start_refuses_a_host_it_cannot_seed(monkeypatch):
+    """A host with nothing to read is a host answering from defaults. The portal says so
+    and refuses, rather than starting a host the page would call ready."""
+    _fresh_state()
+    home = _cache(4096)
+    if home.exists():
+        shutil.rmtree(home)
+    if (paths.HOME / ".config" / "opencode" / "opencode.json").exists():
+        (paths.HOME / ".config" / "opencode" / "opencode.json").unlink()
+    monkeypatch.setattr(harnessctl, "port_free", lambda port, host="127.0.0.1": True)
+    started = []
+    monkeypatch.setattr(harnessctl.subprocess, "run",
+                        lambda *a, **k: started.append(a) or types.SimpleNamespace(
+                            returncode=0, stdout="", stderr=""))
+    with pytest.raises(harnessctl.HarnessError) as exc:
+        harnessctl.start(4096)
+    assert "config" in str(exc.value)
+    assert not any("enable" in str(a) for a in started), "the unit must not be started"
+
+
+def test_status_reports_the_seed_the_running_host_carries(monkeypatch):
+    """The operator's question is 'is the agent I launch in a project configured?' The
+    page answers it from the seed on disk, and says `seeded: false` when there is none."""
+    _fresh_state()
+    monkeypatch.setattr(harnessctl, "unit_state",
+                        lambda unit="ai-harness": {"unit": unit, "active": "active",
+                                                   "sub": "running", "main_pid": 5,
+                                                   "enabled": True})
+    monkeypatch.setattr(harnessctl, "listener", lambda port: {"pid": 5, "line": "x"})
+    monkeypatch.setattr(harnessctl, "health",
+                        lambda port, host="127.0.0.1", password=None, timeout=6.0:
+                        {"ok": True, "auth": "yes", "url": "x"})
+    monkeypatch.setattr(harnessctl, "seed_state",
+                        lambda port: {"seeded": True, "files": ["opencode.json", "AGENTS.md"],
+                                      "cache": "/x/host-4096"})
+    st = harnessctl.status(4096)
+    assert st["seed"]["seeded"] is True
+    assert "AGENTS.md" in st["seed"]["files"]
+
+
+def test_status_says_the_host_is_unseeded_rather_than_omitting_the_fact(monkeypatch):
+    _fresh_state()
+    monkeypatch.setattr(harnessctl, "unit_state",
+                        lambda unit="ai-harness": {"unit": unit, "active": "active",
+                                                   "sub": "running", "main_pid": 5,
+                                                   "enabled": True})
+    monkeypatch.setattr(harnessctl, "listener", lambda port: {"pid": 5, "line": "x"})
+    monkeypatch.setattr(harnessctl, "health",
+                        lambda port, host="127.0.0.1", password=None, timeout=6.0:
+                        {"ok": True, "auth": "yes", "url": "x"})
+    monkeypatch.setattr(harnessctl, "seed_state",
+                        lambda port: {"seeded": False, "files": [], "cache": "/x/host-4096"})
+    st = harnessctl.status(4096)
+    assert st["seed"]["seeded"] is False
+
+
+def test_the_seed_says_which_files_it_carried(monkeypatch):
+    """The page shows a file list, so the seed has to report the files it carried. A seed that
+    reported only `ok` would let the page name files the host never received."""
+    _fresh_state()
+    home = _cache(4097)
+    if home.exists():
+        shutil.rmtree(home)
+    oc = paths.HOME / ".config" / "opencode"
+    oc.mkdir(parents=True, exist_ok=True)
+    (oc / "opencode.json").write_text(json.dumps({"model": "x"}))
+    (oc / "AGENTS.md").write_text("# posture\n")
+    out = harnessctl.seed_cache_home(4097)
+    assert out["ok"] is True
+    assert set(out["files"]) == {"opencode.json", "AGENTS.md"}, out

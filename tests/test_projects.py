@@ -14,9 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from app.core import db
-from app.core import portalsettings
-from app.core import projects
+from app.core import db, portalsettings, projects
+
 
 @pytest.fixture(autouse=True)
 def sandbox(tmp_path, monkeypatch):
@@ -116,8 +115,8 @@ def test_the_plan_runs_what_this_box_can_do_and_refuses_the_rest_with_the_instal
 
 
 def test_a_missing_toolchain_does_not_abort_the_other_boxes(sandbox):
-    plan = projects.plan_init(["node", "readme", "gitignore"], _tools(node=True))
-    assert plan["run"] == ["readme", "gitignore"], "a missing toolchain must not take README with it"
+    plan = projects.plan_init(["node", "readme"], _tools(node=True))
+    assert plan["run"] == ["readme"], "a missing toolchain must not take README with it"
     assert {r["step"] for r in plan["refused"]} == {"node"}, plan["refused"]
 
 
@@ -145,7 +144,7 @@ def test_the_toolchain_probe_reports_what_it_found_and_the_version_line(sandbox)
 # --- creation -----------------------------------------------------------------------------
 
 def test_create_makes_the_folder_and_the_files_and_registers_it(sandbox):
-    out = projects.create("spike-app", ["readme", "gitignore", "agents"], root=str(sandbox))
+    out = projects.create("spike-app", ["node", "readme", "agents"], root=str(sandbox))
     assert out["ok"], out
     target = sandbox / "spike-app"
     assert (target / "README.md").read_text().startswith("# spike-app")
@@ -349,13 +348,13 @@ def test_create_through_the_endpoint_answers_409_with_the_name_rule(sandbox):
 
 def test_create_through_the_endpoint_creates_and_logs_the_event(sandbox):
     c = _client()
-    r = c.post("/api/projects", json={"name": "api-app", "steps": ["readme", "gitignore"]})
+    r = c.post("/api/projects", json={"name": "api-app", "steps": ["readme"]})
     assert r.status_code == 200, r.text
     assert (sandbox / "api-app" / "README.md").is_file()
     events = db.query("SELECT kind, detail FROM events WHERE actor='project' ORDER BY id")
     assert events and events[-1]["kind"] == "create"
     detail = events[-1]["detail"]
-    assert "name=api-app" in detail and "ran=readme,gitignore" in detail, detail
+    assert "name=api-app" in detail and "ran=readme" in detail, detail
 
 
 def test_forgetting_requires_confirm(sandbox):
@@ -481,7 +480,7 @@ def test_a_remote_implies_the_git_box(sandbox, upstream):
 
 
 def test_pulling_first_keeps_the_repositorys_files(sandbox, upstream):
-    out = projects.create("pulled", ["git", "readme", "agents", "gitignore"], root=str(sandbox),
+    out = projects.create("pulled", ["git", "readme", "agents"], root=str(sandbox),
                           texts={"readme": "# MINE\n\nmy text"}, remote=f"file://{upstream}",
                           pull_first=True)
     assert out["ok"] and out["remote"]["pulled"]
@@ -510,7 +509,7 @@ def test_the_create_endpoint_carries_text_and_a_remote(sandbox, upstream):
     c = _client()
     r = c.post("/api/projects", json={
         "name": "api-pulled",
-        "steps": ["git", "readme", "gitignore"],
+        "steps": ["git", "readme"],
         "readme_text": "# From the page\n\nthe operator's own first line\n",
         "remote": f"file://{upstream}",
         "pull_first": True,
@@ -538,3 +537,85 @@ def test_a_remote_that_does_not_answer_is_a_warning_not_a_refusal(sandbox):
     assert "The remote is not configured" in detail
     # the folder and its files are left: the warning is a statement, not an undo
     assert (sandbox / "api-dead-remote" / "README.md").exists()
+
+
+# --- .gitignore is a consequence of the boxes, not a box (the operator's rule) ---------
+#
+# The operator's words: checking "git repository" should produce .gitignore, filled in
+# from the stacks that were picked, and checking the other boxes should fill it further.
+# A checkbox asks the operator to remember that a git repository without ignores will
+# commit its own .venv; the portal knows which stacks it was asked to install, so the
+# file is derived. The file is also derived on a project that arrives from a remote —
+# `git clone` carries no ignores the portal can rely on, and a project whose first
+# commit includes node_modules is the failure the file exists to prevent.
+
+def test_gitignore_is_not_a_checkbox_the_operator_has_to_think_of():
+    steps = list(projects.INIT_STEPS)
+    assert "gitignore" not in steps, "the shortlist still asks the operator to tick the ignores"
+    assert projects.INIT_ORDER == ("git", "python", "node", "cpp", "readme", "agents")
+
+
+def test_checking_git_alone_writes_the_base_ignores(sandbox):
+    target = sandbox / "base-only"
+    projects.create("base-only", ["git"], root=str(sandbox))
+    text = (target / ".gitignore").read_text()
+    for needle in projects._GITIGNORE_BASE:
+        assert needle in text.splitlines(), f"the base ignores are missing {needle!r}"
+    # No stack section: the operator picked nothing that needs one.
+    assert "node_modules/" not in text
+    assert "__pycache__/" not in text
+
+
+def test_the_ignores_are_filled_from_the_stacks_that_were_picked(sandbox):
+    projects.create("stacks", ["git", "python", "node"], root=str(sandbox))
+    text = (sandbox / "stacks" / ".gitignore").read_text()
+    assert "node_modules/" in text and "__pycache__/" in text and ".venv/" in text
+    # C++ was not picked, so its build output is not in a C++-less project.
+    assert "CMakeCache.txt" not in text
+    # Labelled sections, so the file reads as an account of the choices and an agent can
+    # extend one section without guessing which stack a line belongs to.
+    for label in ("Python", "Node"):
+        assert f"# {label}" in text
+
+
+def test_the_ignores_are_written_even_when_git_is_not_ticked(sandbox):
+    """A folder with no .gitignore is a folder that will get a git repository later. The
+    file is cheap, it is derived, and writing it costs nothing the operator asked to avoid."""
+    target = sandbox / "no-git"
+    projects.create("no-git", ["readme"], root=str(sandbox))
+    assert (target / ".gitignore").exists()
+    assert ".env" in (target / ".gitignore").read_text()
+
+
+def test_adopted_steps_are_what_the_ignores_are_composed_from(sandbox):
+    """Adoption records the init steps a folder was built from. A portal that adopted a Node
+    project and then composed its ignores without that fact would write a file that ignores
+    nothing the folder actually produces."""
+    target = sandbox / "adopted-node"
+    target.mkdir()
+    projects.register(str(target))
+    assert projects.init_of(str(target)) == []
+
+    projects.register(str(target), notes={"init": ["git", "node"]})
+    assert projects.init_of(str(target)) == ["git", "node"]
+    text = projects.compose_gitignore(projects.init_of(str(target)))
+    assert "node_modules/" in text and "__pycache__/" not in text
+
+    # A folder the registry does not know composes nothing: inventing steps for a folder the
+    # portal never saw is the invention this whole page refuses everywhere else.
+    assert projects.init_of(str(sandbox / "unknown")) == []
+    assert projects.compose_gitignore([]) == "\n".join(projects._GITIGNORE_BASE) + "\n"
+
+
+def test_the_derived_ignores_are_the_same_whether_the_stacks_came_from_ticks_or_from_adoption():
+    text = projects.compose_gitignore(["git", "node"])
+    assert "node_modules/" in text and "__pycache__/" not in text
+
+
+def test_a_project_pulled_from_a_remote_gets_the_ignores_too(sandbox, upstream):
+    """`git clone` carries no ignores the portal can rely on. The pull lands first, the
+    derived file goes in after, and a repository that already has its own keeps it."""
+    projects.create("from-remote", ["git", "node"], root=str(sandbox),
+                    remote=f"file://{upstream}", pull_first=True)
+    text = (sandbox / "from-remote" / ".gitignore").read_text()
+    assert "node_modules/" in text
