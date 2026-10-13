@@ -208,6 +208,10 @@ def _write_gitignore(target: str, ran: list[str], log: list[dict[str, Any]]) -> 
 
     Not a step: `plan["run"]` is what the operator ticked, and the file is what those ticks imply.
     Written after the loop and after the pull, so the file describes the folder as it ended up.
+
+    A failed init does not get the file. The folder's creation is reported as failed, and writing
+    ignores into a folder the portal is about to be told to delete (or rebuild) would leave the
+    derived file as the only thing the operator made by hand and never asked for.
     """
     body = compose_gitignore(ran)
     path = _safe_join(target, ".gitignore")
@@ -504,9 +508,11 @@ def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = 
         if failed:
             break
 
-    gitignore_state = _write_gitignore(target, plan["run"], log)
-    if gitignore_state and "code" in gitignore_state:
-        failed = gitignore_state
+    gitignore_state: dict[str, Any] | None = None
+    if failed is None:
+        gitignore_state = _write_gitignore(target, plan["run"], log)
+        if gitignore_state and "code" in gitignore_state:
+            failed = gitignore_state
 
     remote_failed = remote_state.get("error") if remote_state else None
 

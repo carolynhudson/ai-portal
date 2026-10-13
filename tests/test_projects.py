@@ -619,3 +619,21 @@ def test_a_project_pulled_from_a_remote_gets_the_ignores_too(sandbox, upstream):
                     remote=f"file://{upstream}", pull_first=True)
     text = (sandbox / "from-remote" / ".gitignore").read_text()
     assert "node_modules/" in text
+
+
+def test_a_failed_init_does_not_leave_the_derived_ignores_behind(sandbox, monkeypatch):
+    """The derivation is a consequence of the boxes that ran. A folder whose init failed is
+    reported as failed, and the file the operator never ticked is not what a half-built folder
+    should be left with."""
+    real = projects._run
+
+    def fake(argv, cwd, env):
+        if argv[0] == "npm":
+            return {"code": 127, "stdout": "", "stderr": "npm: command not found", "seconds": 0.0}
+        return real(argv, cwd, env)
+
+    monkeypatch.setattr(projects, "_run", fake)
+    out = projects.create("broken", ["git", "node", "readme"], root=str(sandbox))
+    assert out["ok"] is False
+    assert not (sandbox / "broken" / ".gitignore").exists(), \
+        "a failed init left a derived .gitignore in a folder the report calls failed"

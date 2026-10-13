@@ -4694,6 +4694,9 @@ The rule generalises three ways, and all three are tested:
   the same "leave the file that was already there" rule that governs the templates.
 - **Never overwriting what the operator wrote.** The derivation is additive. A portal that replaced
   the operator's ignores would be the portal knowing better than the project.
+- **Not written into a failed init.** The file is a consequence of the boxes that *ran*. A folder
+  whose init failed is reported as failed, and leaving behind a derived file the operator never
+  ticked would make the half-built folder look more finished than it is.
 
 `init_of(path)` reads the same facts back out of the registry, so an **adopted** folder composes the
 ignores its recorded steps imply, and a folder the registry does not know composes the base only —
