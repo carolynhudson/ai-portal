@@ -1157,3 +1157,30 @@ def test_the_projects_page_promises_the_name_rule_the_server_enforces():
         except proj.ProjectError:
             refuses = True
         assert refuses is (not ok), f"{shape}: the page tells the operator {ok}, the server answers {not refuses}"
+
+
+def test_the_projects_page_offers_opening_text_and_a_remote():
+    """§6.14.1n, the operator's additions: README.md / AGENTS.md text fields, a remote, and the
+    pull-first option. The fields exist, and the create call carries all of them."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    for el in ("proj-readme", "proj-agents", "proj-remote", "proj-pull"):
+        assert f'id="{el}"' in tpl, f"the create card is missing {el}"
+    assert "<textarea id=\"proj-readme\"" in tpl and "<textarea id=\"proj-agents\"" in tpl, \
+        "the opening text is a single-line input: README.md and AGENTS.md are documents"
+
+    post = script[script.index("req('POST', '/api/projects'"):]
+    for field, el in (("readme_text", "proj-readme"), ("agents_text", "proj-agents"),
+                      ("remote", "proj-remote"), ("pull_first", "proj-pull")):
+        assert field in post, f"the create call does not send {field}"
+        assert f"$('#{el}')" in post, f"the create call does not read {el}"
+    assert "d.remote" in post, "the page creates a project and never reports what the remote became"
+
+
+def test_the_page_states_what_pull_first_does():
+    """The pull order is the whole design of the remote field: the repository's files arrive before
+    the templates. The page says so, in the same words the tests prove."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    assert "before the init files are written" in tpl
+    assert "origin" in tpl, "the page does not say the remote becomes origin"

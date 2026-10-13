@@ -4637,6 +4637,31 @@ Queue 18's first half (model binding) is done: `app/core/agentconfig.py` generat
 configs from the census. Queue **29** is §6.14.1m end to end; the Projects page's Launch button is the
 handoff point, and is labelled as such on the page.
 
+**Added on the operator's request (2026-10-12), after the project moved to GitHub.** The create card
+now carries **opening text** for `README.md` and `AGENTS.md` and a **git remote** with a pull-first
+option. The measurements that shaped it:
+
+- Supplying text implies the box: text for `README.md` writes the file even when the box is not
+  ticked, and a remote implies the git box. A field the operator filled is an instruction, not a flag.
+- A remote is validated **before git sees it**. `ext::` is refused by name — it is git's own "run this
+  command to reach the remote" transport — and a URL carrying a password is refused, because git
+  stores it in the project's `.git/config` in the clear, where the project's own code can read it.
+  `https://`, `http://`, `ssh://`, `git+ssh://`, `git://`, `file://` and the scp-like
+  `user@host:path` are accepted.
+- The remote's default branch is **read from the remote** (`git ls-remote --symref … HEAD`), not
+  assumed: on this box `git init` defaults to `master` while GitHub's is `main`, so a fixed branch
+  name fails half the time. The symref line is `ref: refs/heads/main\tHEAD` — the branch is the
+  first token, not the tail.
+- **Pull first means before the init files are written.** The file loop already leaves an existing
+  file alone, so a repository's own `README.md` survives and the portal's templates fill only the
+  gaps — the merge rule a fresh clone needs, with no merge logic of our own.
+- A remote that does not answer is a **warning, not a refusal**: `origin` is not configured, the
+  folder and its files stay, and the project is registered. Measured with `file:///no/such/repo.git`.
+
+Tests: `tests/test_projects.py` (14 added: text, the remote shapes, the pull order against a real
+local repository, the dead-remote path, the endpoint carrying all four fields) and
+`tests/test_ui_contract.py` / `tests/ui/spec.json` for the fields, the payload and the copy.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

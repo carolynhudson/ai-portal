@@ -1423,7 +1423,12 @@
     "#proj-plan-out",
     "#proj-rows",
     "#proj-unadopted",
-    "#proj-data"
+    "#proj-data",
+    "#proj-readme",
+    "#proj-agents",
+    "#proj-remote",
+    "#proj-pull",
+    "#proj-more"
    ],
    "expectText": [
     {
@@ -1449,6 +1454,28 @@
      "selector": "#proj-steps .proj-step",
      "matches": "Git repository",
      "minCount": 7
+    },
+    {
+     "_comment": [
+      "the opening text and the remote are the operator's additions to the create card;",
+      "the copy states the pull order, which is what the tests prove"
+     ],
+     "selector": "#proj-more",
+     "contains": "Pull from the remote first"
+    },
+    {
+     "_comment": [
+      "the sentence is matched up to its line break: textContent keeps the newline the"
+     ],
+     "selector": "#proj-more",
+     "contains": "empty means the portal's own"
+    },
+    {
+     "_comment": [
+      "a remote is named where the operator types it"
+     ],
+     "selector": "#proj-more",
+     "contains": "origin"
     }
    ],
    "expectInert": [

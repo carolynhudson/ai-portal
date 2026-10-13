@@ -21,6 +21,10 @@
 .proj-line b{font-weight:600}
 .proj-mut{color:var(--mut);font-size:.85rem;margin:0 0 10px}
 .proj-steps{display:grid;gap:6px;margin:8px 0}
+.proj-more{margin:10px 0}
+.proj-field{display:block;margin:8px 0;font-size:.95em}
+.proj-field textarea,.proj-field input[type=text]{width:100%;box-sizing:border-box;font-family:inherit;margin-top:4px}
+.proj-check{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:.95em}
 .proj-step{display:flex;gap:9px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);
   border-radius:7px;background:var(--panel)}
 .proj-step[data-unavailable="yes"]{border-style:dashed;opacity:.72}
@@ -61,6 +65,25 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       this machine is refused by name, with the install statement, and the boxes that can run still
       run.</p>
     <div id="proj-steps" class="proj-steps"></div>
+    <details class="proj-more" id="proj-more">
+      <summary>Opening text and a git remote</summary>
+      <p class="proj-mut">Your words go in the files as written; empty means the portal's own
+        template. A remote is added as <code>origin</code>. <b>Pull from the remote first</b>
+        fetches that repository's own default branch before the init files are written, so its
+        README is kept and the templates fill only the gaps.</p>
+      <label class="proj-field">README.md — opening text
+        <textarea id="proj-readme" rows="4" placeholder="empty = the portal's template"></textarea>
+      </label>
+      <label class="proj-field">AGENTS.md — what the agent reads on entry
+        <textarea id="proj-agents" rows="4" placeholder="empty = the portal's template"></textarea>
+      </label>
+      <label class="proj-field">Git remote (becomes origin)
+        <input id="proj-remote" type="text" autocomplete="off" spellcheck="false"
+               placeholder="git@github.com:you/your-repo.git">
+      </label>
+      <label class="proj-check"><input id="proj-pull" type="checkbox">
+        <span>Pull from the remote first</span></label>
+    </details>
     <p style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0">
       <button id="proj-plan">Plan</button>
       <button id="proj-create" class="primary">Create project</button>
@@ -273,7 +296,14 @@ $('#proj-create').addEventListener('click', async () => {
   const out = $('#proj-create-out');
   out.dataset.tone = '';
   out.textContent = 'creating…';
-  const d = await req('POST', '/api/projects', {name: $('#proj-name').value.trim(), steps: ticked()});
+  const d = await req('POST', '/api/projects', {
+    name: $('#proj-name').value.trim(),
+    steps: ticked(),
+    readme_text: $('#proj-readme').value,
+    agents_text: $('#proj-agents').value,
+    remote: $('#proj-remote').value.trim(),
+    pull_first: $('#proj-pull').checked,
+  });
   if (d.detail) {
     out.dataset.tone = 'bad';
     out.textContent = `refused: ${d.detail}`;
@@ -283,7 +313,8 @@ $('#proj-create').addEventListener('click', async () => {
   out.dataset.tone = d.ok ? 'good' : 'bad';
   out.textContent = d.ok
     ? `created ${d.name} in ${d.root}. ran: ${d.ran.join(', ') || 'nothing'}` +
-      (d.refused.length ? `. refused: ${d.refused.map(r => `${r.step} (${r.reason})`).join('; ')}` : '')
+      (d.refused.length ? `. refused: ${d.refused.map(r => `${r.step} (${r.reason})`).join('; ')}` : '') +
+      (d.remote ? `. remote ${d.remote.pulled ? 'pulled ' + d.remote.branch : 'added'} from ${d.remote.url}` : '')
     : d.warning;
   await refresh();
 });

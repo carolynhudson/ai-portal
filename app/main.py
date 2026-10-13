@@ -190,9 +190,17 @@ class PortalSettingBody(BaseModel):
 
 class ProjectCreateBody(BaseModel):
     """A project to create: a name and the init boxes that were ticked (§6.14.1n). The steps are
-    raw strings because an unknown step id is a refusal the page should read, not a 422."""
+    raw strings because an unknown step id is a refusal the page should read, not a 422.
+
+    The opening text and the remote are the operator's additions: README.md and AGENTS.md content,
+    and a git remote to attach as `origin` — with `pull_first` meaning the remote's own history
+    arrives before the init files are written, so a repository's README is not overwritten."""
     name: str
     steps: list[str] = []
+    readme_text: str = ""
+    agents_text: str = ""
+    remote: str = ""
+    pull_first: bool = False
 
 
 class ProjectAdoptBody(BaseModel):
@@ -1460,17 +1468,28 @@ def create_app() -> FastAPI:
         except projects.ProjectError as exc:
             raise HTTPException(409, str(exc)) from None
 
+    def _remote_word(state: dict | None) -> str:
+        """One word for the event log: what the remote ended up as."""
+        if not state:
+            return "none"
+        return "pulled" if state.get("pulled") else ("added" if state.get("added") else "failed")
+
     @app.post("/api/projects")
     def api_projects_create(body: ProjectCreateBody, _=Depends(_require_auth)):
         """Create a project folder under the projects root and run the init shortlist."""
         try:
-            out = projects.create(body.name, body.steps)
+            out = projects.create(
+                body.name, body.steps,
+                texts={"readme": body.readme_text, "agents": body.agents_text},
+                remote=body.remote, pull_first=body.pull_first,
+            )
         except projects.ProjectError as exc:
             db.event("project", "create-refused", str(exc)[:200])
             raise HTTPException(409, str(exc)) from None
         db.event("project", "create",
                  f"name={out['name']} ran={','.join(out['ran']) or '-'} "
-                 f"refused={len(out['refused'])} ok={out['ok']}")
+                 f"refused={len(out['refused'])} ok={out['ok']} "
+                 f"remote={_remote_word(out.get('remote'))}")
         if not out["ok"]:
             # Half a project with the failing step named, and nothing deleted (§6.14.1n).
             raise HTTPException(409, out["warning"])

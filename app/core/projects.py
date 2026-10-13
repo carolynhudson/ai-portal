@@ -69,6 +69,15 @@ INSTALL_HINT = {
 _NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _MAX_NAME = 64
 
+#: A remote is handed to git. `ext::` is git's own "run this command to talk to the remote"
+#: transport, so it is refused by name, not by scheme list; a password in the URL is refused
+#: because git writes it into `.git/config` in the clear, where the project's own files can read it.
+_REMOTE_MAX = 500
+_REMOTE_SCHEMES = ("https://", "http://", "ssh://", "git+ssh://", "git://", "file://")
+_SCP_LIKE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^ \t\n]+$")
+_TEXT_MAX = 20000
+_TEXT_FILES = {"readme": "README.md", "agents": "AGENTS.md"}
+
 #: The shortlist. Deliberately small: the common best practices for starting a coding project, and
 #: the details left to the agent inside the session, as the operator asked.
 INIT_STEPS: dict[str, dict[str, Any]] = {
@@ -187,6 +196,93 @@ def validate_name(name: Any) -> str:
     return raw
 
 
+def validate_remote(url: Any) -> str:
+    """A remote URL, validated before git ever sees it.
+
+    The refusals are specific because a remote is not a string, it is an instruction to git:
+    `ext::sh -c ...` is a working git remote that runs a command, and a URL carrying a password
+    ends up readable by anything inside the project.
+    """
+    rule = ("an https://, http://, ssh://, git+ssh://, git:// or file:// URL, or the scp-like form "
+            "user@host:path, with no spaces and at most 500 characters")
+    if not isinstance(url, str):
+        raise ProjectError(f"a remote must be a string. The rule: {rule}")
+    raw = url.strip()
+    if not raw:
+        raise ProjectError(f"a remote cannot be an empty value. The rule: {rule}")
+    if len(raw) > _REMOTE_MAX:
+        raise ProjectError(f"a remote is {len(raw)} characters, over the {_REMOTE_MAX} limit")
+    if any(c.isspace() for c in raw):
+        raise ProjectError(f"{raw!r} contains a space. The rule: {rule}")
+    low = raw.lower()
+    if low.startswith("ext::"):
+        raise ProjectError(
+            f"{raw!r} is refused: git's ext:: transport runs a command to reach the remote, "
+            f"and the portal will not hand git a command. The rule: {rule}"
+        )
+    if low.startswith(_REMOTE_SCHEMES):
+        rest = raw.split("://", 1)[1]
+        if not rest.strip("/"):
+            raise ProjectError(f"{raw!r} has a scheme and no repository path. The rule: {rule}")
+        authority = rest.split("/", 1)[0]
+        userinfo = authority.rsplit("@", 1)[0] if "@" in authority else ""
+        if ":" in userinfo:
+            raise ProjectError(
+                f"{raw!r} carries a password in the URL. Refused: git stores it in the project's "
+                f".git/config in the clear, where the project's own code can read it. Use ssh://, "
+                f"or https:// with a credential helper"
+            )
+        return raw
+    if _SCP_LIKE.match(raw):
+        return raw
+    raise ProjectError(f"{raw!r} is not a git remote. The rule: {rule}")
+
+
+def validate_texts(texts: Any) -> dict[str, str]:
+    """The operator's opening text for README.md and AGENTS.md, keyed by step id.
+
+    Empty text is no text: the step's own template is used. Supplying text implies the box, so a
+    project created with only a README sentence still gets the file.
+    """
+    if texts is None:
+        return {}
+    if not isinstance(texts, dict):
+        raise ProjectError("project text must be an object keyed by " + ", ".join(_TEXT_FILES))
+    out: dict[str, str] = {}
+    for key, value in texts.items():
+        if key not in _TEXT_FILES:
+            raise ProjectError(
+                f"{key!r} is not a file the portal writes text into; it writes "
+                f"{', '.join(_TEXT_FILES.values())}"
+            )
+        if not isinstance(value, str):
+            raise ProjectError(f"the text for {_TEXT_FILES[key]} must be text")
+        body = value.replace("\r\n", "\n").strip()
+        if not body:
+            continue
+        if len(body) > _TEXT_MAX:
+            raise ProjectError(
+                f"the text for {_TEXT_FILES[key]} is {len(body)} characters, over the {_TEXT_MAX} "
+                f"limit — that is a document, not a first entry"
+            )
+        out[key] = body
+    return out
+
+
+def remote_default_branch(url: str, cwd: str, env: dict[str, str]) -> str | None:
+    """The remote's own default branch, read from the remote. `git pull origin main` on a remote
+    whose default is `master` is a failure the page would have to explain; this reads the answer."""
+    r = _run(["git", "ls-remote", "--symref", url, "HEAD"], cwd, env)
+    if r["code"] != 0:
+        return None
+    for line in (r["stdout"] or "").splitlines():
+        if line.startswith("ref: refs/heads/"):
+            # the line is `ref: refs/heads/main<TAB>HEAD`; the branch is the first token
+            tail = line[len("ref: refs/heads/"):].split()
+            return tail[0] if tail and tail[0] != "HEAD" else None
+    return None
+
+
 def plan_init(steps: Any, tools: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Split the requested steps into what will run and what is refused, with the reason.
 
@@ -227,13 +323,33 @@ def project_path(name: str, root: str | None = None) -> str:
     return os.path.join(root, name)
 
 
-def create(name: Any, steps: Any, root: str | None = None) -> dict[str, Any]:
+def create(name: Any, steps: Any, root: str | None = None, texts: dict | None = None,
+           remote: str | None = None, pull_first: bool = False) -> dict[str, Any]:
     """Create a project folder, run the requested init steps, register it.
 
     Refusals happen before anything exists. Once the folder exists, a failing step is reported —
     not undone — because a half-built folder the page can name is a better state than a vanished one.
+
+    The three additions the operator asked for, and how they order:
+
+    - `texts` is the opening text for README.md / AGENTS.md. Supplying text implies the box.
+    - `remote` is a validated git remote, added as `origin` right after `git init`. It implies git.
+    - `pull_first` pulls the remote's own default branch **before the init files are written**, so
+      the repository's README wins and the portal's templates fill only the gaps — the file loop
+      below already leaves an existing file alone, which is exactly the merge rule wanted here.
     """
     safe_name = validate_name(name)
+    texts = validate_texts(texts)
+    remote_url = validate_remote(remote) if remote not in (None, "") else None
+    # What the operator asked for implies the boxes: text for README.md means the README step, and
+    # a remote means a git repository. The page sends the boxes it shows, so this is the API's
+    # honesty, not the page's.
+    if isinstance(steps, list):
+        wanted = list(steps)
+        wanted += [k for k in texts if k not in wanted]
+        if remote_url and "git" not in wanted:
+            wanted.append("git")
+        steps = wanted
     root = root or portalsettings.projects_root()
     check = portalsettings.validate_projects_root(root)
     if not check["ok"]:
@@ -254,10 +370,17 @@ def create(name: Any, steps: Any, root: str | None = None) -> dict[str, Any]:
     except OSError as exc:
         raise ProjectError(f"{target} could not be created: {type(exc).__name__}: {exc}") from exc
 
+    # The operator's words, not the template. Expanding ${name} first keeps the heading useful.
+    specs: dict[str, dict[str, Any]] = {k: dict(v) for k, v in INIT_STEPS.items()}
+    for step, body in texts.items():
+        specs[step]["files"] = dict(specs[step].get("files") or {})
+        specs[step]["files"][_TEXT_FILES[step]] = body
+
     log: list[dict[str, Any]] = []
     failed: dict[str, Any] | None = None
+    remote_state: dict[str, Any] | None = None
     for step in plan["run"]:
-        spec = INIT_STEPS[step]
+        spec = specs[step]
         try:
             for d in spec.get("dirs", []):
                 os.makedirs(_safe_join(target, _expand(d, safe_name)), exist_ok=True)
@@ -284,13 +407,23 @@ def create(name: Any, steps: Any, root: str | None = None) -> dict[str, Any]:
             if r["code"] != 0:
                 failed = {"step": step, "command": argv, "code": r["code"], "output": r["stderr"][:600]}
                 break
+        if step == "git" and remote_url and remote_state is None:
+            # a remote that does not answer is not a reason to stop building the folder
+            remote_state = _wire_remote(target, remote_url, bool(pull_first), log)
         if failed:
             break
 
-    register(target, safe_name, notes={"init": plan["run"], "refused": plan["refused"]})
+    remote_failed = remote_state.get("error") if remote_state else None
+
+    register(target, safe_name, notes={
+        "init": plan["run"],
+        "refused": plan["refused"],
+        "remote": remote_state,
+        "texts": sorted(_TEXT_FILES[k] for k in texts),
+    })
 
     return {
-        "ok": failed is None,
+        "ok": failed is None and remote_failed is None,
         "name": safe_name,
         "path": target,
         "root": root,
@@ -298,12 +431,76 @@ def create(name: Any, steps: Any, root: str | None = None) -> dict[str, Any]:
         "refused": plan["refused"],
         "log": log,
         "failed": failed,
-        "warning": None if failed is None else (
-            f"{target} was created and step {failed['step']} failed ({' '.join(failed['command'])} "
-            f"exited {failed['code']}). The files written before it are left in place — nothing was "
-            f"deleted. Fix the cause and tick the step again, or delete the folder."
-        ),
+        "remote": remote_state,
+        "warning": _warning(target, failed, remote_state),
     }
+
+
+#: What to do about a failed step, in the sentence the page shows. The remote is its own case:
+#: a project whose remote did not attach is a working local project, not a half-created one.
+_RECOVER = {
+    "remote": "The remote is not configured; the project is usable without it, and "
+              "'Adopt' is not needed — add it again from the project's row once the cause is fixed.",
+    "default": "Fix the cause and tick the step again, or delete the folder.",
+}
+
+
+def _wire_remote(target: str, url: str, pull: bool,
+                 log: list[dict[str, Any]]) -> dict[str, Any]:
+    """Add the remote as `origin`, and optionally pull its default branch first.
+
+    The default branch is read from the remote (`ls-remote --symref`), not assumed: `git pull origin
+    main` against a repository whose default is `master` is a failure the page would have to explain.
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    state: dict[str, Any] = {"url": url, "name": "origin", "added": False,
+                             "branch": None, "pulled": False, "error": None}
+    branch = remote_default_branch(url, target, env)
+    log.append({"step": "remote", "command": ["git", "ls-remote", "--symref", url, "HEAD"],
+                "code": 0 if branch else -1, "branch": branch})
+    if not branch:
+        state["error"] = {
+            "step": "remote", "command": ["git", "ls-remote", url], "code": -1,
+            "note": "the remote did not answer",
+            "output": f"git ls-remote found no default branch at {url}. A private repository needs "
+                      f"this box's ssh key or credential helper; a typo needs the URL fixed"}
+        return state
+    r = _run(["git", "remote", "add", "origin", url], target, env)
+    log.append({"step": "remote", "command": ["git", "remote", "add", "origin", url], **r})
+    if r["code"] != 0:
+        state["error"] = {"step": "remote", "command": ["git", "remote", "add", "origin", url],
+                          "code": r["code"], "output": r["stderr"][:600]}
+        return state
+    state["added"] = True
+    state["branch"] = branch
+    if not pull:
+        return state
+    argv = ["git", "pull", "--no-rebase", "--allow-unrelated-histories", "-q", "origin", branch]
+    r = _run(argv, target, env)
+    log.append({"step": "remote", "command": argv, **r})
+    if r["code"] != 0:
+        state["error"] = {"step": "remote", "command": argv, "code": r["code"],
+                          "output": r["stderr"][:600],
+                          "note": f"origin was added and points at {branch}; the pull did not complete"}
+        return state
+    state["pulled"] = True
+    return state
+
+
+def _warning(target: str, failed: dict | None, remote_state: dict | None) -> str | None:
+    """One sentence for the page: what failed, what survived, and what to do next."""
+    if failed is None and remote_state and remote_state.get("error"):
+        err = remote_state["error"]
+        return (f"{target} was created with its files. The remote did not attach "
+                f"({err.get('note') or ' '.join(err['command'])} exited {err['code']}). "
+                f"{_RECOVER['remote']}")
+    if failed is None:
+        return None
+    return (f"{target} was created and step {failed['step']} failed "
+            f"({' '.join(failed['command'])} exited {failed['code']}). "
+            f"The files written before it are left in place — nothing was deleted. "
+            f"{_RECOVER.get(failed['step'], _RECOVER['default'])}")
 
 
 def _expand(text: str, name: str) -> str:

@@ -9,6 +9,8 @@ Every test here runs against a temporary projects root — nothing touches the o
 from __future__ import annotations
 
 import os
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -393,3 +395,146 @@ def test_a_half_created_project_is_answered_as_a_failure_the_operator_can_act_on
     assert "node" in detail and "nothing was deleted" in detail, detail
     assert (sandbox / "half-api").is_dir(), "the folder is reported, not hidden"
     assert not (sandbox / "half-api" / "README.md").exists()
+
+
+# --- opening text and a git remote (§6.14.1n, the operator's additions) --------------------
+#
+# The operator added the project to GitHub and asked for: initial text for README.md and AGENTS.md,
+# and a remote field with the option to pull first. The pull order is the design: the remote's
+# files arrive **before** the init templates are written, and the file loop leaves an existing file
+# alone — which is exactly the merge rule a fresh clone needs.
+
+def _git(cwd, *argv):
+    return subprocess.run(["git", *argv], cwd=str(cwd), capture_output=True, text=True,
+                          check=True, stdin=subprocess.DEVNULL)
+
+
+@pytest.fixture
+def upstream(tmp_path):
+    """A real git repository with its own README, on its default branch `main`."""
+    src = tmp_path / "upstream"
+    src.mkdir()
+    _git(src, "init", "-q", ".")
+    _git(src, "config", "user.email", "upstream@example.invalid")
+    _git(src, "config", "user.name", "Upstream")
+    (src / "README.md").write_text("# Upstream\n\nthe repository's own text\n")
+    (src / "LICENSE").write_text("MIT\n")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-qm", "seed")
+    _git(src, "branch", "-m", "main")
+    return src
+
+
+def test_the_text_fields_replace_the_templates(sandbox):
+    out = projects.create("with-text", ["git", "readme"], root=str(sandbox),
+                          texts={"readme": "# My project\n\nBuilt on the portal.\n"})
+    readme = Path(out["path"], "README.md").read_text()
+    assert readme.startswith("# My project")
+    assert "the repository's" not in readme
+    # a box that was not ticked is not written: text implies its own file, not the whole set
+    assert not Path(out["path"], "AGENTS.md").exists()
+
+
+def test_supplying_text_implies_the_box(sandbox):
+    out = projects.create("text-only", [], root=str(sandbox),
+                          texts={"agents": "# Rules\n\nrun the tests\n"})
+    assert "agents" in out["ran"]
+    assert "run the tests" in Path(out["path"], "AGENTS.md").read_text()
+    assert not Path(out["path"], "README.md").exists()
+
+
+def test_text_length_is_bounded(sandbox):
+    with pytest.raises(projects.ProjectError) as exc:
+        projects.create("long-text", [], root=str(sandbox), texts={"readme": "x" * 30000})
+    assert "over the 20000 limit" in str(exc.value)
+    assert not (sandbox / "long-text").exists()
+
+
+@pytest.mark.parametrize("url", ["ext::sh -c whoami", "ext::true", "https://user:pw@host/a.git",
+                                 "", "   ", "github.com/a/b", "https://host/a b", "file://",
+                                 "a" * 600])
+def test_a_remote_is_refused_before_git_sees_it(url):
+    with pytest.raises(projects.ProjectError):
+        projects.validate_remote(url)
+
+
+@pytest.mark.parametrize("url", ["git@github.com:you/your-repo.git", "https://github.com/a/b.git",
+                                 "ssh://git@github.com/you/repo.git", "git@host:/srv/repo.git",
+                                 "https://user@host/a.git"])
+def test_the_remote_shapes_the_portal_accepts(url):
+    assert projects.validate_remote(url) == url
+
+
+def test_the_remote_is_added_as_origin_with_its_own_default_branch(sandbox, upstream):
+    out = projects.create("attached", ["git", "readme"], root=str(sandbox),
+                          remote=f"file://{upstream}")
+    assert out["ok"] and out["remote"]["added"] and not out["remote"]["pulled"]
+    assert out["remote"]["branch"] == "main"
+    assert _git(Path(out["path"]), "remote", "-v").stdout.count("origin") == 2
+    # no pull: the portal's own README template is what the folder has
+    assert "What this project is" in Path(out["path"], "README.md").read_text()
+
+
+def test_a_remote_implies_the_git_box(sandbox, upstream):
+    out = projects.create("no-git-box", ["readme"], root=str(sandbox), remote=f"file://{upstream}")
+    assert "git" in out["ran"] and out["remote"]["added"]
+
+
+def test_pulling_first_keeps_the_repositorys_files(sandbox, upstream):
+    out = projects.create("pulled", ["git", "readme", "agents", "gitignore"], root=str(sandbox),
+                          texts={"readme": "# MINE\n\nmy text"}, remote=f"file://{upstream}",
+                          pull_first=True)
+    assert out["ok"] and out["remote"]["pulled"]
+    target = Path(out["path"])
+    # the repository's README wins over the operator's opening text, and its files are in place
+    assert (target / "README.md").read_text().startswith("# Upstream")
+    assert (target / "LICENSE").exists()
+    # the templates fill only the gaps
+    assert (target / "AGENTS.md").exists() and (target / ".gitignore").exists()
+    assert "seed" in _git(target, "log", "--oneline").stdout
+
+
+def test_a_remote_that_does_not_answer_leaves_a_usable_project(sandbox):
+    out = projects.create("dead-remote", ["git", "readme"], root=str(sandbox),
+                          remote="file:///does/not/exist.git")
+    assert not out["ok"] and out["remote"]["added"] is False
+    assert (sandbox / "dead-remote" / "README.md").exists()
+    assert "The remote is not configured" in out["warning"]
+    # the project is in the registry: a remote is not a reason to forget a folder
+    assert [r["path"] for r in projects.list_projects()] == [out["path"]]
+
+
+# --- the endpoint carries the text and the remote (D1: the page's verbs are the API's verbs) ---
+
+def test_the_create_endpoint_carries_text_and_a_remote(sandbox, upstream):
+    c = _client()
+    r = c.post("/api/projects", json={
+        "name": "api-pulled",
+        "steps": ["git", "readme", "gitignore"],
+        "readme_text": "# From the page\n\nthe operator's own first line\n",
+        "remote": f"file://{upstream}",
+        "pull_first": True,
+    })
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] and out["remote"]["added"] and out["remote"]["pulled"]
+    readme = Path(out["path"], "README.md").read_text()
+    # the pull happens before the files are written, so the repository's README is what survives
+    assert readme.startswith("# Upstream")
+
+    bad = c.post("/api/projects", json={"name": "api-refused", "steps": ["git"],
+                                        "remote": "ext::sh -c whoami"})
+    assert bad.status_code == 409
+    assert "ext::" in bad.json()["detail"]
+    assert not (sandbox / "api-refused").exists()
+
+
+def test_a_remote_that_does_not_answer_is_a_warning_not_a_refusal(sandbox):
+    c = _client()
+    r = c.post("/api/projects", json={"name": "api-dead-remote", "steps": ["git", "readme"],
+                                      "remote": "file:///no/such/repo.git"})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "The remote is not configured" in detail
+    # the folder and its files are left: the warning is a statement, not an undo
+    assert (sandbox / "api-dead-remote" / "README.md").exists()
