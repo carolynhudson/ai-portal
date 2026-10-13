@@ -221,6 +221,24 @@ new queue number, not a silent revival of an old one.
 
 ### Canonical queue (30 →), ordered by what blocks what
 
+- **(30) DONE 2026-10-12 — the opencode host, managed and gated, measured on this box.**
+  `app/core/harnessctl.py` + `GET /api/harness/status` + `POST /api/harness/start`. The unit
+  `ai-harness.service` runs `opencode serve` on 127.0.0.1:4096; the password is generated once to
+  `~/ai/state/portal/harness.key` (0600) and reaches the unit through `~/ai/config/harness.env`.
+  Measured: host healthy, `version 1.19.0`, unit MainPID == the port's listener. **Gate 1 (portal
+  restart):** `systemctl --user restart ai-portal` left MainPID 320472 untouched, the session
+  `ses_ecd8ddd4fffe…` was listed for its cwd, its 2 messages survived, and the follow-up prompt was
+  answered (4 messages). **Gate 2 (browser close):** nothing to survive — the host holds no browser
+  state; every page fact is a read. **Gate 3 (reboot analogue):** `systemctl --user restart
+  ai-harness` (process dies, only `opencode.db` survives) — the id was resumable from disk, the
+  session titled "GATE1" answered again (6 messages). A physical box reboot remains unmeasured; the
+  mechanism is the same file. **Gate 4 (no shadow):** a second start refused —
+  `port 4096 is in use by pid 320818; the harness host refuses to shadow it`.
+  Session facts the page must copy: the directory is a **query parameter** (`?directory=`; a body
+  key of the same name is ignored — measured: it created the session in the server's own cwd), the
+  prompt body is `{parts:[{type:"text",text:…}]}`, and sessions carry a title opencode derives from
+  the first prompt.
+
 - **(30) The opencode host, managed and gated.** `opencode serve` as its own systemd user unit
   (`ai-harness`), fixed port, **refusing to start on a busy port** — measured artifact: a second
   `opencode serve` on a busy port is answered by the first server, so a shadowed host is invisible.
@@ -317,6 +335,14 @@ vitals strip with the proposed thresholds (pool ≥85% danger, ≥70% watch; VRA
 disk ≥90%) and the CPU chart out of the hero.
 - **(46) ComfyUI models tree.** Columnar tree over ComfyUI's own folder groups with per-file detail
   (format/quant, scheduler-visible, used-by), so it stops being sizes-only next to the llama.cpp grid.
+
+- **(48) Finalization, for after feature-complete — the operator's request, recorded, explicitly
+  not to be worked on or planned now.** A real audit of what this project requires (tools, libraries,
+  system binaries, versions), with `docs/` and the requirements files made to say exactly that, and an
+  install script that stands up the portal on a clean system. Later extensions named by the operator:
+  other operating systems, and llama.cpp builds chosen for other GPU/NPU targets, with the same
+  hardware tuning applied to parts like PyTorch. This is the gate for publishing the repo, not a
+  development item.
 
 Priority, per the operator: 30–32 stay first. 33 and 45 are briefs the operator reviews before code.
 40, 41, 42, 43, 44 are in-place fixes that can interleave with the harness slices.

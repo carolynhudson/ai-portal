@@ -36,6 +36,7 @@ from .core import (
     agentconfig,
     db,
     health,
+    harnessctl,
     kb,
     llamakey,
     logsetup,
@@ -160,6 +161,14 @@ class NamedBody(BaseModel):
     """Delete one personality or model config. `confirm` because a delete changes what the next
     apply would write, and because a config name is something other rows already reference."""
     name: str
+    confirm: bool = False
+
+
+class HarnessStartBody(BaseModel):
+    """Start the harness host. `port` is a seam for tests and for a host someone wants off the
+    default; `confirm` because this installs a systemd unit and starts a service that outlives the
+    portal — it is not a button to press twice by accident."""
+    port: int | None = None
     confirm: bool = False
 
 
@@ -1336,6 +1345,42 @@ def create_app() -> FastAPI:
         db.event("portal", "agents-sync", f"ok={out.get('ok')} models={out.get('models', 0)} posture={out.get('posture', body.posture)}")
         if not out.get("ok"):
             raise HTTPException(status_code=409, detail=out.get("error") or "the configs were not written")
+        return out
+
+    # ------------------------------------------------- harness host (queue 30)
+    @app.get("/api/harness/status")
+    def api_harness_status(_=Depends(_require_auth)):
+        """What the harness host is, as the page needs to say it.
+
+        The unit's own state is not the answer. Measured on this box: a second
+        `opencode serve` on a busy port starts "successfully" and every request is
+        answered by the **first** server — so the read names the process that owns the
+        port, and says plainly when that process is not the unit's.
+        """
+        return harnessctl.status()
+
+    @app.post("/api/harness/start")
+    def api_harness_start(body: HarnessStartBody, request: Request,
+                          _=Depends(_require_auth)):
+        """Install and start `ai-harness`: opencode as a service that is not a child of the portal.
+
+        That separation is the operator's requirement: a session must outlive
+        `systemctl --user restart ai-portal`, a closed browser, and a reboot of the portal box
+        (which leaves the session id readable so the Projects page can resume it). Refuses a busy
+        port rather than shadowing it; refuses without `confirm`.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="starting the harness host installs a unit and starts a service; confirm first")
+        port = body.port or harnessctl.DEFAULT_PORT
+        if not 1024 <= port <= 65535:
+            raise HTTPException(status_code=400, detail="the harness port must be between 1024 and 65535")
+        try:
+            out = harnessctl.start(port, log=lambda m: print("[ai-portal]", m))
+        except harnessctl.HarnessError as e:
+            db.event("portal", "harness-start", f"refused: {e}")
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        db.event("portal", "harness-start", f"port={port} version={out.get('health', {}).get('version')}")
         return out
 
     @app.get("/api/settings")
