@@ -1100,6 +1100,18 @@
         "/api/updates/llamacpp",
         "/api/model-configs/delete"
       ],
+      "_expectAbsent_comment": [
+        "§6.14.1q / queue 33 state 4: the settings reference moved off this page to Help.",
+        "A 420 px table of key definitions between the deck and the editor was reference",
+        "material in the middle of a working page (docs/PORTAL_POLISH.md §7, measured 6,800 px).",
+        "Its content is generated from the same settingrows rows and published per key on /help;",
+        "the guards that read its rows moved to tests/test_settingsdoc.py and the page test reads",
+        "the link instead."
+      ],
+      "expectAbsent": [
+        "#keys-table",
+        "#keys-wrap"
+      ],
       "expectVisible": [
         "#pers-safe",
         "#pers-default",
@@ -1148,14 +1160,6 @@
           "_comment": "a diff is a proposal, and the page has to say which",
           "selector": "#pers-safe",
           "contains": "presets.ini it would write"
-        },
-        {
-          "_comment": [
-            "The editor is where a setting gets typed, so both grids carry the same route to the",
-            "measurement: 12 global rows plus 14 per-model rows."
-          ],
-          "selector": ".ed-detail a[href^='/help#']",
-          "minCount": 26
         },
         {
           "_comment": [
@@ -1328,9 +1332,10 @@
         },
         {
           "_comment": [
-            "The route to the measurement stays on every row: 12 global + 14 per-model rows each link",
-            "their key's own section. This is the count the keys table used to carry (32) split to the",
-            "rows that remain, and it is the rule that keeps a registry key a data edit."
+            "The editor is where a setting gets typed, so both grids carry the route to the",
+            "measurement: 12 global rows plus 14 per-model rows. §6.14.1q moved the keys",
+            "table's 32 links to the reference document (tests/test_settingsdoc.py proves the",
+            "count there); the 26 that remain are the rows a decision is made on."
           ],
           "selector": ".ed-detail a[href^='/help#']",
           "minCount": 26

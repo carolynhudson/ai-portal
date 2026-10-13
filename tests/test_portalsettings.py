@@ -142,7 +142,13 @@ def test_a_refused_value_never_reaches_the_store(sandbox, monkeypatch):
 
 
 def test_view_reports_the_effective_value_and_the_path_it_resolves_to(sandbox, monkeypatch):
-    monkeypatch.setattr(portalsettings.db, "current_settings", lambda: {"projects_root": "~/ai-projects"})
+    # The store is the sandbox's own row, written the way the page writes it. Patching
+    # `db.current_settings` process-wide leaks into every later test in the process — the portal's
+    # read endpoint answers through it, so a patched read made *this* test's assertions pass while
+    # the endpoint test behind it stopped reading a store at all (measured: green alone, failing in
+    # the full suite). A fixture's mutations must be as local as the fixture's home.
+    portalsettings.db.init()
+    portalsettings.db.set_setting("projects_root", "~/ai-projects")
     monkeypatch.setenv("HOME", str(sandbox))
     v = portalsettings.view()["projects_root"]
     assert v["kind"] == "text" and v["default"] == "~/ai-projects"
@@ -218,9 +224,14 @@ def test_the_write_endpoint_accepts_a_path_inside_the_home(sandbox, monkeypatch)
     assert store["projects_root"] == str(target), "the endpoint stores the string; db.set_setting does the encoding"
 
 
-def test_projects_root_is_in_the_settings_the_dashboard_reads():
+def test_projects_root_is_in_the_settings_the_dashboard_reads(sandbox):
+    # Asserted against *this* sandbox's store: the default is $HOME-derived, and a test that
+    # asserts a literal without seeding the store passes only when an earlier test in the process
+    # happens to have left that literal behind.
+    portalsettings.db.init()
+    portalsettings.db.set_setting("projects_root", str(sandbox / "ai-projects"))
     c = _client()
-    assert c.get("/api/settings").json()["projects_root"] == "~/ai-projects"
+    assert c.get("/api/settings").json()["projects_root"] == str(sandbox / "ai-projects")
 
 
 # --- the vitals thresholds (queue 41) -------------------------------------------------------
