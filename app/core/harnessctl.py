@@ -346,8 +346,13 @@ def status(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> dict[str, Any]
     return out
 
 
-def start_unit(port: int, log=print) -> dict:
-    """Enable and start the unit. The moment the host begins reading its cache home."""
+def start_unit(port: int, log=print) -> subprocess.CompletedProcess:
+    """Enable and start the unit. The moment the host begins reading its cache home.
+
+    The annotation is the caller's contract, not decoration: `start()` reads `.returncode`,
+    `.stderr`, and `.stdout` off this value, and a `-> dict` annotation promised a shape the
+    function has never returned (subprocess.run, with text=True, answers a CompletedProcess).
+    """
     return subprocess.run(["systemctl", "--user", "enable", "--now", HARNESS_UNIT],
                           capture_output=True, text=True, timeout=120, check=False)
 
@@ -395,6 +400,8 @@ def _request(method: str, path: str, body: dict | None = None, port: int = DEFAU
     tok = base64.b64encode(f"opencode:{pw}".encode()).decode()
     req.add_header("authorization", "Basic " + tok)
     try:
+        # The scheme and host are checked by `_local_request` (http only, loopback only) before this
+        # line is reached, and every URL is built by `base()`; see test_the_client_never_leaves_loopback.
         with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - local host, pinned scheme
             raw = r.read().decode()
         return r.status, (json.loads(raw) if raw.strip() else None)
@@ -424,6 +431,66 @@ def create_session(cwd: str, port: int = DEFAULT_PORT) -> dict:
     if code != 200 or not isinstance(body, dict) or "id" not in body:
         raise HarnessError(f"session create refused (HTTP {code}): {str(body)[:160]}")
     return body
+
+
+def launch_project(name_or_path: str, personality: str | None = None,
+                   port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """The portal's launch of a project: create the session **inside** the project folder, and
+    record the session and the personality on the registry row, in one verb.
+
+    Queue 33's brief states the personality↔project link in both directions, and the launch is the
+    only call site where all three facts exist at once — the session id the host returned, the
+    project folder, and the personality the operator picked. Everywhere else, one of the three is
+    already gone by the time anyone asks, and the projects page is left answering from the browser's
+    memory of what it launched (§6.14.1n).
+
+    The directory the session is created with *is* the project: a session created somewhere else
+    records a serving fact the host cannot confirm, and `serve_facts` finds no session for the
+    folder the page says is served.
+
+    A project that is not in the registry has no row to record the pair on. The session is created
+    anyway — the operator asked for it — and the answer names the missing fact, because a page that
+    launched a session it cannot list has to say why the projects page will not show it.
+    """
+    from . import projects
+
+    # Resolve the folder through the projects component, so a name goes through the same rule every
+    # other name on that page goes through.
+    target = projects.project_path(projects.validate_name(name_or_path)) \
+        if os.path.sep not in str(name_or_path) else os.path.realpath(name_or_path)
+    # The host's state is checked before the session is created, not after: a session opened on a
+    # host that is starting, restarting, or shadowed by the first listener on the port is a session
+    # the portal records as serving a project and cannot list afterwards. The projects page reads
+    # `launch.available` from this same `status()` call, so the operator's button and this verb agree
+    # about the host.
+    # The host check is the projects payload's `launch.available`, read from the same facts: a
+    # session is only launchable when the unit owns the port and the host answers health.
+    listening = bool(listener(port))
+    health_out = health(port)
+    ok = bool(listening and (health_out.get("auth_failed") or health_out.get("ok")))
+    if not ok:
+        raise HarnessError(
+            "the harness host is not answering"
+            + (f" ({health_out.get('error')})" if health_out.get("error") else "")
+            + "; a session cannot be launched, and the pair cannot be recorded on a project the "
+              "host has no session for")
+    created = create_session(target, port=port)
+    session_id = str(created.get("id"))
+    recorded = False
+    reason: str | None = None
+    try:
+        marked = projects.mark_served(target, session_id, personality)
+        recorded = bool(marked.get("ok"))
+    except projects.ProjectError as exc:
+        # The folder is not in the registry. That is a fact about the registry, not a reason to
+        # abandon the session the operator asked for.
+        reason = str(exc)
+    out: dict[str, Any] = {"ok": True, "session": session_id, "path": target,
+                           "port": port, "personality": personality,
+                           "recorded": recorded, "session_facts": created}
+    if reason:
+        out["reason"] = reason
+    return out
 
 
 def session(session_id: str, cwd: str | None = None, port: int = DEFAULT_PORT) -> dict:

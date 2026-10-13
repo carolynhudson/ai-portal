@@ -176,6 +176,15 @@ editor carries a **used by** line (projects and sessions that name it, from the 
 and the launch pickers list personalities, not bare model ids. Design consequence: activation is a
 first-class verb, not a side effect of the deck's raise action.
 
+**Done in the launch slice (plan §6.14.1q, 2026-10-13): the connection's record half.** The launch
+now *is* a pick-a-personality verb on the projects page: `POST /api/projects/launch` creates the
+session inside the project folder with the personality chosen from the payload's list
+(`summary.personalities`, i.e. `personality.all_personalities()`) and records the pair on the
+registry row. The projects page answers *"this project is served, with this personality"* from the
+payload; and `projects.by_personality(serve_facts())` answers the inverse — the projects a
+personality runs — from the same records. That is the `used by` line's data source, ready for the
+personalities slice (the editor's row itself is queue 33's page work, not this one).
+
 ## 8. Settings page — canonical queue 41
 
 The named annoyance is confirmed, numerically. The Network access table is **1,026 px** wide with

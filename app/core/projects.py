@@ -926,10 +926,51 @@ def _describe(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def summary() -> dict[str, Any]:
-    """The projects card's facts: root, what is in it, what is missing from it."""
+    """The projects card's facts: root, what is in it, what is missing from it, and the
+    personalities a launch can be recorded with (§6.14.1n / queue 33).
+
+    The personality list is the personalities component's own names, read through
+    `all_personalities()`. A list assembled here — from a template file, a directory listing, or a
+    literal — drifts from the names the personalities page stores, and the launch ends up recording
+    a personality that no longer exists.
+    """
     root = portalsettings.projects_root()
     check = portalsettings.validate_projects_root(root)
+    from . import personality
     return {"root": root, "root_ok": check["ok"], "root_error": check.get("error"),
             "registered": len(list_projects()), "unadopted": len(scan(root)),
             "home": portalsettings.home(), "portal_home": portalsettings.portal_home(),
-            "model_library": str(paths.MODELS_ROOT)}
+            "model_library": str(paths.MODELS_ROOT),
+            "personalities": [p["name"] for p in personality.all_personalities()
+                              if p.get("name")]}
+
+
+def launch_facts() -> dict[str, Any]:
+    """The launch verb, stated by the portal: the endpoint the row posts to, and whether a session
+    can be launched on this box right now.
+
+    `available` is the host's answer, not the page's opinion. A page that invented an endpoint would
+    keep the row inert while the real verb existed; a page that invented `available` would launch
+    against a host that is not answering. The host's state is read through `harnessctl.status()`,
+    which is what the harness page reads, so the two pages cannot disagree about a host.
+
+    A **shadowed** host is not launchable. Queue 30 measured that a second host on a busy port starts
+    "successfully" and every request is answered by the first listener: a pair recorded there is a
+    fact about a session the portal cannot list, and the project's row would show it as served. The
+    refusal quotes the harness page's own sentence for that state, so the operator is given one
+    explanation and not two.
+    """
+    from . import harnessctl
+
+    st = harnessctl.status()
+    h = st.get("health") or {}
+    shadowed = bool(st.get("shadowed"))
+    up = bool(st.get("listening") and h.get("ok")) and not shadowed
+    out: dict[str, Any] = {"endpoint": "/api/projects/launch", "available": up,
+                           "state": st.get("unit", {}).get("ActiveState") or "unknown",
+                           "shadowed": shadowed}
+    if shadowed:
+        out["reason"] = st.get("note")
+    elif not up:
+        out["reason"] = "the harness host is not answering, so a session cannot be launched"
+    return out

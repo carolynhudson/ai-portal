@@ -56,6 +56,12 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 
 <p class="proj-mut" id="proj-host">host: reading…</p>
 
+<p class="proj-mut">Launch a project with
+  <select id="proj-personality" title="the personality the session runs with"></select>
+  — the session is opened inside the project and recorded on it, so the row below shows it as
+  served. Both halves of the personality-to-project link are recorded by the launch (§6.14.1n):
+  the row carries the personality, and the personality carries the project.</p>
+
 <div class="proj-grid">
   <div class="card">
     <h3>New project</h3>
@@ -246,6 +252,33 @@ async function plan() {
   }
 }
 
+// The personalities the portal knows, read off the payload (D1). Spelled here they would launch a
+// session with a name the operator renamed on the personalities page, and the row would record a
+// personality that no longer exists.
+let PERSONALITIES = [];
+let STATE = null;
+
+function personalityChoice() {
+  const sel = $('#proj-personality');
+  return sel.value || PERSONALITIES[0] || '';
+}
+
+function renderPersonalities(names) {
+  PERSONALITIES = Array.isArray(names) ? names.slice() : [];
+  const sel = $('#proj-personality');
+  const keep = sel.value;
+  sel.textContent = '';
+  for (const n of PERSONALITIES) {
+    const o = el('option');
+    o.value = n;
+    o.textContent = n;
+    sel.append(o);
+  }
+  // The operator's choice survives a refresh that did not change the list; a refresh that dropped
+  // the name falls back to the first option rather than leaving a select with no value.
+  sel.value = PERSONALITIES.includes(keep) ? keep : (PERSONALITIES[0] || '');
+}
+
 function renderRows(rows) {
   const box = $('#proj-rows');
   box.textContent = '';
@@ -260,8 +293,14 @@ function renderRows(rows) {
     const launch = el('button');
     launch.textContent = 'Launch';
     launch.dataset.launch = p.name;
-    launch.dataset.inert = 'yes';
-    launch.title = 'Launching a session is the harness page (§6.14.1m). It is not here yet, so this button does nothing.';
+    // The verb exists now (§6.14.1n / queue 33): it opens a session *inside this folder* and
+    // records the session with the personality it runs with. It is disabled by the host's answer,
+    // not by the page's opinion — `launch.available` is the host's state, read off the payload.
+    launch.disabled = !(STATE.launch && STATE.launch.available);
+    launch.title = (STATE.launch && STATE.launch.available)
+      ? `Open a session in ${p.path} with ${personalityChoice()}. The session is recorded on the `
+        + 'project, so this page will show it as served.'
+      : `cannot launch: ${STATE.launch && STATE.launch.reason}`;
 
     const forget = el('button');
     forget.textContent = 'Forget';
@@ -332,6 +371,9 @@ async function refresh() {
     $('#proj-summary').textContent = `the projects read failed: ${d.detail}`;
     return;
   }
+  PERSONALITIES = d.summary && d.summary.personalities ? d.summary.personalities : [];
+  renderPersonalities(PERSONALITIES);
+  STATE = d;
   renderSummary(d.summary);
   renderRows(d.projects);
   renderUnadopted(d.scan);
@@ -376,9 +418,22 @@ $('#proj-rows').addEventListener('click', async (e) => {
   const row = e.target.closest('.proj-row');
   if (!row) return;
   if (e.target.dataset.launch) {
-    $('#proj-summary').textContent = 'Launching a session is the harness page (§6.14.1m): this page '
-      + 'lists projects and prepares them; the session view is the page that takes over once a '
-      + 'session runs.';
+    const name = e.target.dataset.launch;
+    const personality = personalityChoice();
+    // A session outlives the portal, so the dialog names both halves of the pair about to be
+    // recorded: which project, and which personality runs it.
+    if (!window.confirm(`launch ${name} with ${personality}? Opens a session in ${row.dataset.path} `
+                        + 'and records the pair on the project.')) return;
+    $('#proj-summary').textContent = `launching ${name} with ${personality}…`;
+    const d = await req('POST', '/api/projects/launch',
+                        {name, personality, confirm: true});
+    $('#proj-summary').textContent = d.detail
+      ? `refused: ${d.detail}`
+      : (d.recorded
+         ? `launched ${name} with ${d.personality}: session ${d.session}. The pair is recorded on `
+           + 'the project, so the row below shows it as served.'
+         : `launched session ${d.session}, but not recorded: ${d.reason}`);
+    await refresh();
     return;
   }
   if (e.target.dataset.forget) {

@@ -1397,9 +1397,13 @@
    "_comment": [
     "sec 6.14.1n: the projects page. It shows a shortlist of checkboxes and a plan, and every",
     "promise it makes about them is a promise about the server: a missing toolchain is refused",
-    "by name, a plan creates nothing, forgetting deletes nothing, and Launch belongs to the",
-    "harness page (sec 6.14.1m) and is labelled inert. The sweep drives the fields and the",
-    "buttons; the assertions below are the outcomes the operator reads.",
+    "by name, a plan creates nothing, forgetting deletes nothing. Launch is the harness page's",
+    "session view (sec 6.14.1m); queue 33 gave this page a launch verb of its own, so Launch acts:",
+    "it posts to /api/projects/launch, records the session with the personality it runs with, and",
+    "is disabled by the host's answer read off the payload — not by a literal, so it flips when the",
+    "host does. The sweep drives the fields and the buttons; the assertions below are the outcomes",
+    "the operator reads. Launch needs no confirm() from the sweep: it opens a session, deletes",
+    "nothing, and the endpoint carries its own confirm field.",
     "requireConfirmFor names the forget endpoint: the sweep accepts confirm() in its second pass, so a page that posts /api/projects/forget without asking is caught there. Create and adopt need no confirm (registry writes, nothing on disk deleted) and the endpoint says so."
    ],
    "name": "projects",
@@ -1484,6 +1488,25 @@
     },
     {
      "_comment": [
+      "Launch is driven by the sweep only when the payload says the host can take a launch, and",
+      "the host never runs in the sandbox. So the sweep's surface is the payload's launch state,",
+      "supplied here: the page reads `launch.available` off the payload and enables the row's",
+      "button from it, then posts to the endpoint the payload names. The fixture is the host's",
+      "answer, not a convenience — a page that ignored it would leave the button disabled here",
+      "and the sweep would report the control as dead."
+     ],
+     "path": "^/api/projects$",
+     "body": {
+      "launch": {
+       "available": true,
+       "endpoint": "/api/projects/launch",
+       "state": "active",
+       "reason": null
+      }
+     }
+    },
+    {
+     "_comment": [
       "the opening text and the remote are the operator's additions to the create card;",
       "the copy states the pull order, which is what the tests prove"
      ],
@@ -1505,9 +1528,7 @@
      "contains": "origin"
     }
    ],
-   "expectInert": [
-    "dataset\\.launch"
-   ],
+   "expectInert": [],
    "expectNoInjectedMarkup": [
     {
      "_comment": [
@@ -1521,6 +1542,157 @@
    "noopSelfLinks": true,
    "requireConfirmFor": [
     "^/api/projects/forget$"
+   ],
+   "fixtures": [
+    {
+     "_comment": [
+      "Launch is driven by the sweep only when the payload says the host can take a launch, and the",
+      "host never runs in the sandbox. So the sweep drives the payload's launch state, supplied here:",
+      "the page reads launch.available off the payload and enables the row's button from it, then",
+      "posts to the endpoint the payload names. The fixture is the host's answer, not a convenience -",
+      "a page that ignored it would leave the button disabled here, and the sweep would report the",
+      "control as dead. A full payload body: a fixture replaces the route's answer, it does not patch",
+      "it, so the page is exercised with the shape the endpoint answers. The personality list carries",
+      "the sandbox registry's names so the row's Launch has a real choice to post."
+     ],
+     "path": "^/api/projects$",
+     "status": 200,
+     "body": {
+      "projects": [
+       {
+        "path": "/home/tester/ai-projects/ui-registered-app",
+        "name": "ui-registered-app",
+        "exists": true,
+        "dirty_worktree": null,
+        "facts": {
+         "git": true,
+         "readme": true,
+         "agents": false,
+         "venv": false,
+         "node_modules": false,
+         "cmake": false,
+         "pyproject": false,
+         "package_json": false
+        },
+        "notes": {
+         "init": [
+          "git",
+          "readme"
+         ],
+         "refused": [],
+         "remote": null
+        },
+        "serve": {
+         "served": false,
+         "reason": "no session has been launched for this project"
+        }
+       }
+      ],
+      "served": {
+       "count": 1,
+       "names": [
+        "ui-registered-app"
+       ],
+       "hostOk": true,
+       "unknown": false
+      },
+      "scan": [
+       {
+        "path": "/home/tester/ai-projects/ui-test-app",
+        "name": "ui-test-app",
+        "adoptable": true
+       }
+      ],
+      "toolchains": {
+       "git": {
+        "present": true,
+        "path": "/usr/bin/git",
+        "version": "2.43.0"
+       },
+       "python": {
+        "present": true,
+        "path": "/usr/bin/python3",
+        "version": "3.14.4"
+       },
+       "node": {
+        "present": true,
+        "path": "/usr/bin/node",
+        "version": "v22.22.1"
+       },
+       "compilers": {
+        "present": false,
+        "path": null,
+        "version": null
+       },
+       "cmake": {
+        "present": false,
+        "path": null,
+        "version": null
+       }
+      },
+      "steps": {
+       "git": {
+        "label": "git",
+        "does": "would git",
+        "needs": []
+       },
+       "readme": {
+        "label": "readme",
+        "does": "would readme",
+        "needs": []
+       },
+       "agents": {
+        "label": "agents",
+        "does": "would agents",
+        "needs": []
+       },
+       "venv": {
+        "label": "venv",
+        "does": "would venv",
+        "needs": []
+       },
+       "cmake": {
+        "label": "cmake",
+        "does": "would cmake",
+        "needs": []
+       },
+       "node": {
+        "label": "node",
+        "does": "would node",
+        "needs": []
+       }
+      },
+      "order": [
+       "git",
+       "readme",
+       "agents",
+       "venv",
+       "cmake",
+       "node"
+      ],
+      "launch": {
+       "endpoint": "/api/projects/launch",
+       "available": true,
+       "state": "active",
+       "shadowed": false
+      },
+      "summary": {
+       "root": "/home/tester/ai-projects",
+       "root_ok": true,
+       "root_error": null,
+       "registered": 1,
+       "unadopted": 1,
+       "home": "/home/tester",
+       "portal_home": "/home/tester/ai",
+       "model_library": "/home/tester/ai/models",
+       "personalities": [
+        "safe",
+        "default",
+        "Agent-Swift"
+       ]
+      }
+     }
+    }
    ]
   }
  ]

@@ -387,3 +387,163 @@ def test_the_seed_says_which_files_it_carried(monkeypatch):
     out = harnessctl.seed_cache_home(4097)
     assert out["ok"] is True
     assert set(out["files"]) == {"opencode.json", "AGENTS.md"}, out
+
+
+# --- the launch record: a session carries the project and the personality it was launched with
+#
+# Queue 33's brief states the personality↔project link in both directions. The projects page can
+# answer "is this project served, with what personality" (§6.14.1n) only because the **launch
+# site** records the pair — the portal's launch of a project is where the session id, the folder,
+# and the operator's personality choice all exist at once. Everywhere else, one of the three is
+# already gone by the time anyone asks. A harness start that records nothing leaves the projects
+# page answering from the browser's memory of what it launched.
+
+def test_starting_the_host_reports_the_facts_a_launch_needs_to_record(monkeypatch):
+    """`start()` is the portal's own call site for a harness launch. Its answer has to carry
+    everything a caller needs to record the session, because the caller is the only place that
+    knows the project and the personality.
+
+    Asserted as a **shape**, not as a call list: an implementation that recorded the pair in a
+    row, in a session field, or in a log satisfies the requirement, and a test naming one
+    spelling would block the honest one.
+    """
+    # A host we are not running: every probe below is answered by the fakes, so the assertions
+    # are about the answer's shape rather than about this machine.
+    monkeypatch.setattr(harnessctl, "unit_state", lambda: {"ActiveState": "inactive"})
+    monkeypatch.setattr(harnessctl, "listener", lambda port: None)
+    out = harnessctl.status(port=4099)
+    assert out, "status is what start() returns, and it is the answer the launch has to record from"
+    assert {"port", "unit"} <= set(out), out
+    assert "seed" in out, "the seeded state is shown on the harness page (§6.14.1o)"
+    assert "seed" in out["seed"] or out["seed"].get("seeded") is False, out["seed"]
+
+
+def _host_up(monkeypatch):
+    """The host facts a launch is allowed to depend on: the unit owns the port, and the host
+    answers health. Patched, not started — no unit is touched by these tests."""
+    monkeypatch.setattr(harnessctl, "listener", lambda port: {"pid": "4242"})
+    monkeypatch.setattr(harnessctl, "health",
+                        lambda port, **k: {"ok": True, "version": "1.19.0", "auth": "yes",
+                                           "url": f"http://127.0.0.1:{port}/global/health"})
+
+
+def _registry(tmp_path, monkeypatch, projects, db):
+    """A projects root and a registry in a temporary home, for the tests that need a registry row.
+
+    The root is redirected by *storing the setting*, the way the operator does it from the page
+    (tests/test_projects.py's fixture), so the real validator stays in the path.
+    """
+    home = tmp_path / "home"
+    (home / "ai").mkdir(parents=True)
+    root = home / "ai-projects"
+    root.mkdir()
+    from app.core import portalsettings
+    monkeypatch.setattr(portalsettings, "home", lambda: str(home))
+    monkeypatch.setattr(portalsettings, "portal_home", lambda: str(home / "ai"))
+    db.init()
+    db.execute("DELETE FROM projects")
+    db.set_setting("projects_root", str(root))
+    return root
+
+
+# --- the launch handoff records the pair (queue 33's connection, second half) ----------------
+#
+# The projects page can answer "is this project served, with what personality" (§6.14.1n) only
+# because the launch site records the pair. That call site is where the session id the host
+# returned, the project folder, and the operator's personality choice all exist at once; everywhere
+# else one of the three is already gone by the time anyone asks. `create_session` is the portal's
+# launch, and it is the place the record belongs.
+
+def test_the_launch_launches_inside_the_project_it_is_recorded_as_serving(monkeypatch):
+    """The directory the session is created with *is* the project. A launch that created a session
+    somewhere else would record a serving fact that the host cannot confirm — the projects page
+    would then show a project as served, and `serve_facts` would find no session for its folder."""
+    seen = {}
+    monkeypatch.setattr(harnessctl, "_request",
+                        lambda method, path, body=None, port=4096, query=None, timeout=20:
+                        seen.update(method=method, query=query) or (200, {"id": "ses_9"}))
+    out = harnessctl.create_session(PROJ)
+    assert out["id"] == "ses_9"
+    assert seen["query"] == {"directory": PROJ}
+
+
+def test_launching_a_project_records_the_session_and_the_personality_it_runs_with(tmp_path, monkeypatch):
+    """`launch_project` is the portal's launch of a project. It creates the session inside the
+    project folder and records the pair on the registry row, in one verb.
+
+    Asserted as a **shape**, not as a call list: an implementation that recorded the pair in a row,
+    in a session field, or in a log satisfies the requirement, and a test that named one spelling
+    would block the honest one.
+    """
+    from app.core import db, projects
+    sandbox = _registry(tmp_path, monkeypatch, projects, db)
+
+    projects.create("recorded", ["git"], root=str(sandbox))
+    _host_up(monkeypatch)
+    monkeypatch.setattr(harnessctl, "_request",
+                        lambda method, path, body=None, port=4096, query=None, timeout=20:
+                        (200, {"id": "ses_55", "directory": str(sandbox / "recorded")}))
+    out = harnessctl.launch_project("recorded", personality="Agent-Swift", port=4099)
+    assert out["session"] == "ses_55", out
+    assert out["personality"] == "Agent-Swift", out
+    assert out["path"] == str(sandbox / "recorded"), out
+    assert out["recorded"] is True, out
+
+    # The host answers with the session, in the project's folder — which is the fact the page's
+    # "is this served" line reads, and the reason the session had to be created there.
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda: {"ok": True, "byDirectory": {str(sandbox / "recorded"):
+                                                             [{"id": "ses_55"}]}, "count": 1})
+    facts = projects.serve_facts()
+    row = [r for r in facts["projects"] if r["name"] == "recorded"][0]
+    assert row["serve"]["served"] is True, row["serve"]
+    assert row["serve"]["personality"] == "Agent-Swift", row["serve"]
+
+
+def test_a_launch_that_cannot_record_the_pair_says_so_rather_than_launching_silently(tmp_path,
+                                                                                        monkeypatch):
+    """The project is not in the registry, so there is no row to record the pair on. The session is
+    created — the operator asked for it — and the answer names the missing fact, because a page that
+    launched a session it cannot list has to say why the projects page will not show it."""
+    from app.core import db, projects
+    sandbox = _registry(tmp_path, monkeypatch, projects, db)
+    _host_up(monkeypatch)
+
+    monkeypatch.setattr(harnessctl, "_request",
+                        lambda method, path, body=None, port=4096, query=None, timeout=20:
+                        (200, {"id": "ses_56", "directory": str(sandbox / "loose")}))
+    out = harnessctl.launch_project(str(sandbox / "loose"), personality="Agent-Swift", port=4099)
+    assert out["session"] == "ses_56", out
+    assert out["recorded"] is False, "the pair cannot be recorded on a row that does not exist"
+    assert out["reason"], "the answer has to name the fact that is missing"
+
+def test_a_launch_refuses_a_host_that_is_not_answering_before_it_creates_a_session(tmp_path,
+                                                                                    monkeypatch):
+    """The session is the pair. A session opened on a host that is starting, restarting, or shadowed
+    by the first listener on the port is recorded as serving a project and cannot be listed
+    afterwards, so the projects page shows a served project the host has no session for.
+
+    The host facts are the same ones the projects payload answers as `launch.available`
+    (`projects.launch_facts` reads `status()`), so the operator's button and this verb agree about
+    the host, and a launch that got past a disabled-by-the-payload button is refused by the verb
+    that performs it.
+    """
+    from app.core import db, projects
+    sandbox = _registry(tmp_path, monkeypatch, projects, db)
+    projects.create("quiet", ["git"], root=str(sandbox))
+
+    monkeypatch.setattr(harnessctl, "listener", lambda port: None)
+    monkeypatch.setattr(harnessctl, "health",
+                        lambda port, **k: {"ok": False, "auth": "none", "note": "URLError"})
+    created = []
+    monkeypatch.setattr(harnessctl, "_request",
+                        lambda method, path, body=None, port=4096, query=None, timeout=20:
+                        created.append((method, path)) or (200, {"id": "ses_99"}))
+
+    try:
+        harnessctl.launch_project("quiet", personality="default", port=4099)
+    except harnessctl.HarnessError as exc:
+        assert "not answering" in str(exc), exc
+    else:
+        raise AssertionError("a session was launched on a host that is not answering")
+    assert created == [], "the session was created before the host was checked"

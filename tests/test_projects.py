@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core import db, portalsettings, projects
+from app.core import db, personality, portalsettings, projects
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +100,8 @@ def test_a_tool_that_is_not_on_the_path_is_reported_absent(sandbox, monkeypatch)
     monkeypatch.setattr(projects.shutil, "which", lambda tool: None)
     census = projects.toolchains()
     assert all(v["present"] is False for v in census.values()), census
-    assert all(census[t].get("hint") for t in projects.INSTALL_HINT), "an absent tool must come with the install statement"
+    assert all(census[t].get("hint") for t in projects.INSTALL_HINT), \
+        "an absent tool must come with the install statement"
 
 
 def test_the_plan_runs_what_this_box_can_do_and_refuses_the_rest_with_the_install_command(sandbox):
@@ -188,7 +189,8 @@ def test_a_failing_step_leaves_the_folder_and_names_the_step(sandbox, monkeypatc
     assert (target / "tsconfig.json").is_file()
     assert not (target / "README.md").exists(), "steps after the failure do not run"
     assert "nothing was deleted" in out["warning"] and "npm" in out["warning"]
-    assert [r["name"] for r in projects.list_projects()] == ["half-built"], "a half project is a fact the page can show"
+    assert [r["name"] for r in projects.list_projects()] == ["half-built"], \
+        "a half project is a fact the page can show"
 
 
 def test_git_init_runs_with_the_project_as_its_working_directory(sandbox):
@@ -724,7 +726,7 @@ def test_the_personalitys_projects_are_read_from_the_records_the_launches_wrote(
     """The personality editor cannot ask the projects page. It needs the inverse view, built from
     the records, with a host that answered: a personality with no project listed because the host
     was unreachable is a page that states a fact about the host as a fact about the personality."""
-    for name, personality in (("alpha", "Agent-Swift"), ("beta", "Agent-Swift"), ("gamma", "Other")):
+    for name, pers in (("alpha", "Agent-Swift"), ("beta", "Agent-Swift"), ("gamma", "Other")):
         projects.create(name, ["git"], root=str(sandbox))
     monkeypatch.setattr(projects, "_live_sessions",
                         lambda: {"ok": True, "byDirectory": {
@@ -757,3 +759,76 @@ def test_the_inverse_view_says_when_the_host_could_not_confirm_any_of_it(sandbox
     # The registry knows the launch; the host could not confirm it. That is the case in question.
     assert by["projects"]["Agent-Swift"] == ["quiet"], by
     assert by["reason"], by
+
+
+# --------------------------------- the payload's facts, from the endpoint the page reads (queue 33)
+#
+# The page assembles its personality list, its disabled Launch, and its row wording out of the
+# payload. Those are page concerns, and tests/test_ui_contract.py checks them. What this file checks
+# is the payload's side of the same line: the portal answers the personality names it guarantees,
+# answers a list of names, and answers the launch verb the row posts to. A payload that dropped any
+# of the three leaves the page assembling the fact from its own memory.
+
+def test_the_projects_summary_offers_the_personalities_the_portal_guarantees():
+    out = projects.summary()
+    assert "personalities" in out, "the projects summary has no personality list"
+    assert isinstance(out["personalities"], list), out["personalities"]
+    assert all(isinstance(n, str) and n for n in out["personalities"]), out["personalities"]
+    # The names the portal guarantees. `Agent-Swift`/`Agent-Deep` are test fixtures invented for the
+    # serving tests; the personalities component's own guarantees are these, and the list that the
+    # page offers has to contain them — a launch with no personality to pick is no launch.
+    assert set(personality.RESERVED_NAMES) <= set(out["personalities"]), out["personalities"]
+
+
+def test_the_personalities_offered_are_the_names_the_personalities_component_knows():
+    """The list is the personalities component's names, not a copy the projects component keeps.
+
+    The personality the launch records has to be a name the registry can resolve: a list assembled
+    from a template file, a directory, or a literal in this file drifts from the names the
+    personalities page stores, and the row ends up recording a personality that no longer exists.
+    """
+    from app.core import personality
+
+    out = projects.summary()
+    assert set(out["personalities"]) == {p["name"] for p in personality.all_personalities()}, \
+        "the projects page offers names the personalities component does not know"
+
+
+def test_the_launch_verb_is_stated_with_the_host_state_it_depends_on():
+    """The Launch button's state is the host's state, stated by the portal.
+
+    `available` is a bool and the endpoint is named, because the page has to post to the verb that
+    records the pair: a page that invented an endpoint would keep the row inert while the real verb
+    existed, and a page that invented `available` would launch against a host that is not answering.
+    """
+    out = projects.launch_facts()
+    assert {"endpoint", "available"} <= set(out), out
+    assert isinstance(out["available"], bool), out
+    assert out["endpoint"].startswith("/api/projects/"), out
+
+
+def test_a_shadowed_host_is_not_a_host_a_launch_can_be_recorded_on(monkeypatch):
+    """Queue 30's measurement, applied to queue 33's record: when the unit is not the listener, every
+    session on the port belongs to a process the portal does not supervise.
+
+    The projects page must therefore *disable* Launch on a shadowed host, not merely warn: a pair
+    recorded there is a fact about a session the portal cannot list, and the row would show the
+    project as served. The refusal's words are the harness page's own (`status()["note"]`), so the
+    two pages give the operator one explanation rather than two.
+    """
+    from app.core import harnessctl
+
+    shadowed = {
+        "unit": {"ActiveState": "active", "MainPID": "111"},
+        "listening": True,
+        "listener_pid": "999",
+        "shadowed": True,
+        "health": {"ok": True, "auth": "yes"},
+        "note": "port 4096 is held by pid 999, not by the harness unit (MainPID 111); a request to "
+                "this port is answered by that process",
+    }
+    monkeypatch.setattr(harnessctl, "status", lambda *a, **k: dict(shadowed))
+    out = projects.launch_facts()
+    assert out["available"] is False, out
+    assert out["shadowed"] is True, out
+    assert out["reason"] == shadowed["note"], out

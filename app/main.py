@@ -35,8 +35,8 @@ from . import router as router_mod
 from .core import (
     agentconfig,
     db,
-    health,
     harnessctl,
+    health,
     kb,
     llamakey,
     logsetup,
@@ -201,6 +201,17 @@ class ProjectCreateBody(BaseModel):
     agents_text: str = ""
     remote: str = ""
     pull_first: bool = False
+
+
+class ProjectLaunchBody(BaseModel):
+    """Launch a session for a project. `personality` is the operator's choice and is recorded with
+    the session (§6.14.1n / queue 33): the launch is the only place the session id, the folder, and
+    the personality exist together. `confirm` because this starts a session on the harness host that
+    outlives the portal."""
+    name: str
+    personality: str = ""
+    port: int | None = None
+    confirm: bool = False
 
 
 class ProjectAdoptBody(BaseModel):
@@ -1442,6 +1453,10 @@ def create_app() -> FastAPI:
                 "steps": {k: {"label": v["label"], "does": v["does"], "needs": v["needs"]}
                           for k, v in projects.INIT_STEPS.items()},
                 "order": list(projects.INIT_ORDER),
+                # The page's Launch verb, stated by the portal. A page that invented it would keep
+                # the row button inert while the endpoint existed, or post to a verb that does not
+                # exist while the endpoint was down.
+                "launch": projects.launch_facts(),
                 "summary": projects.summary()}
 
     @app.get("/projects")
@@ -1460,6 +1475,32 @@ def create_app() -> FastAPI:
     def api_projects(_=Depends(_require_auth)):
         """The projects page's data, as an endpoint (D1: every read is also an endpoint)."""
         return _projects_payload()
+
+    @app.post("/api/projects/launch")
+    def api_projects_launch(body: ProjectLaunchBody, _=Depends(_require_auth)):
+        """Launch a session **inside** a project and record the session with the personality it runs
+        with (§6.14.1n / queue 33).
+
+        The launch is the call site that knows all three facts at once — the session id the host
+        returned, the project folder, and the operator's personality choice. Recorded here, the
+        projects page can answer "is this project being served, with what" from the payload on its
+        next refresh instead of from the browser's memory of what it clicked (D1).
+
+        Refuses a host that is not answering, and a project outside the registry: a session the
+        page cannot list is a fact the answer has to name, not one to drop.
+        """
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="launching a session starts work on the harness host; confirm first")
+        try:
+            out = harnessctl.launch_project(body.name, personality=body.personality or None)
+        except (harnessctl.HarnessError, projects.ProjectError) as exc:
+            db.event("project", "launch-refused", f"name={body.name} {exc}")
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        db.event("project", "launch",
+                 f"name={out['path']} session={out['session']} "
+                 f"personality={out.get('personality') or '-'} recorded={out['recorded']}")
+        return out
 
     @app.post("/api/projects/plan")
     def api_projects_plan(body: ProjectPlanBody, _=Depends(_require_auth)):

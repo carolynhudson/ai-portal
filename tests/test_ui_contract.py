@@ -1080,21 +1080,34 @@ def test_the_projects_page_asks_before_it_forgets_and_says_what_forgetting_does_
     assert "/api/projects/forget" in rows, "Forget is not wired to the endpoint"
 
 
-def test_the_projects_page_labels_the_launch_it_cannot_perform():
-    """§6.14.1m is the harness page. Until it exists, Launch must read as the harness page's verb,
-    not as a button that silently does nothing."""
+def test_the_launch_button_is_disabled_by_the_hosts_answer_not_by_the_pages_opinion():
+    """§6.14.1m is the harness page's session view; §6.14.1n / queue 33 gave the projects page a
+    launch verb of its own. So Launch is no longer an inert label — it acts. What has to stay true
+    is the *reason* it is disabled: the host's answer, read off the payload.
+
+    A button that is disabled by a literal is a button that lies once the host starts; a button
+    disabled by the payload's `launch.available` flips when the host does, which is the fact the
+    operator needs (D1).
+    """
     tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
     script = _script_of(tpl, "projects.html")
     # Asserted on the line that *builds the button*. `data-inert="yes"` also appears in the page's
     # CSS, where it styles the control — an assertion satisfied by a stylesheet proves nothing about
     # the control the page renders.
-    assert "launch.dataset.inert = 'yes'" in script, "the Launch control is not built as inert"
+    rows = script[script.index("function renderRows"):]
+    rows = rows[:rows.index("function renderUnadopted")]
+    build = rows[rows.index("const launch = el("):]
+    build = build[:build.index("const forget = el(")]
+    assert "launch.disabled" in build, "the Launch control's state is not set where the button is built"
+    assert "available" in build, "Launch is disabled by the page's opinion, not the host's answer"
 
-    rows = script[script.index("$('#proj-rows').addEventListener"):]
-    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
-    launch = rows[rows.index("dataset.launch"):]
+    rows2 = script[script.index("$('#proj-rows').addEventListener"):]
+    rows2 = rows2[:rows2.index("$('#proj-unadopted').addEventListener")]
+    launch = rows2[rows2.index("dataset.launch"):]
     launch = launch[:launch.index("dataset.forget")]
-    assert "req(" not in launch, "the inert Launch posts a request: an inert control that acts"
+    assert "req(" in launch, "Launch is a control that does not act"
+    assert "harness" not in launch.lower(), \
+        "Launch tells the operator to go to the harness page instead of launching"
 
 
 def test_the_projects_page_reports_the_refusal_of_every_row_verb():
@@ -1274,3 +1287,175 @@ def test_the_projects_page_shows_the_serving_state_of_every_row():
     assert "serve" in script, "the page never reads the serving state the payload carries"
     assert "is being served" in tpl or "being served" in tpl, \
         "the page has no words for a project that is running"
+
+
+# ------------------------------------ the projects page launches a project (queue 33's connection)
+
+def test_the_projects_page_launches_through_the_verb_that_records_the_pair():
+    """The page's Launch is the operator's launch of a project. It posts to the endpoint that
+    creates the session inside the project folder **and records the session and the personality**
+    (§6.14.1n), and it refreshes so the row's serving state comes from the payload, not from the
+    page's memory of what it clicked (D1).
+
+    Asserted on the line that handles the click, the way this file asserts the other row verbs:
+    a string that also appears in the page's CSS proves nothing about the control it renders.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    launch = rows[rows.index("dataset.launch"):]
+    launch = launch[:launch.index("dataset.forget")]
+
+    assert "/api/projects/launch" in launch, "Launch is not wired to the endpoint that records the pair"
+    assert "req(" in launch, "Launch is a button that does not act"
+    assert "refresh(" in launch, "Launch does not re-read the payload; the row keeps the browser's memory"
+
+
+def test_the_projects_page_names_the_project_launch_it_refuses():
+    """A launch can be refused — the host is not running, the folder is not in the registry, the
+    personality is unknown. The summary has to carry the refusal, as it does for every other row
+    verb: an error-swallowing button is indistinguishable from one that worked."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    launch = rows[rows.index("dataset.launch"):]
+    launch = launch[:launch.index("dataset.forget")]
+    assert "detail" in launch, "the launch's refusal is dropped"
+
+
+def test_the_projects_payload_states_the_launch_verb_the_page_uses(client):
+    """The page's Launch and the endpoint behind it are one fact, stated by the portal.
+
+    The payload names the endpoint the row posts to and says whether the host can take a launch at
+    all. A page that invented both would keep the row inert while the endpoint existed, or post to a
+    verb that does not exist while the host was down — and a *contract* test that asserted the
+    launch's answer shape would pass on a payload that described a verb no row used.
+    """
+    body = client.get("/api/projects").json()
+    assert "launch" in body, "the payload cannot say how a project is launched"
+    assert {"endpoint", "available"} <= set(body["launch"]), body["launch"]
+    assert body["launch"]["endpoint"] == "/api/projects/launch", body["launch"]
+    assert isinstance(body["launch"]["available"], bool), body["launch"]
+
+
+# ------------------------------- the personality half of the link is recorded by the launch (queue 33)
+
+def test_the_projects_page_lets_the_operator_choose_the_personality_the_session_runs_with():
+    """Queue 33: "when a project is launched, a personality is picked and the session is created,
+    recording the link." A picked personality is a choice the operator makes, so the page has to
+    present the personalities the portal knows — read off the payload, not spelled from a list the
+    page maintains (D1)."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    assert 'id="proj-personality"' in tpl, "the page launches without a personality choice"
+    assert "<select" in tpl and "proj-personality" in tpl, "the choice is not a control"
+
+    # The options come from the payload. A page that hard-coded two names would launch a session with
+    # a personality the operator renamed on the personalities page, and the row would record a name
+    # that no longer exists.
+    render = script[script.index("function renderPersonalities"):]
+    render = render[:render.index("function renderRows")]
+    assert "PERSONALITIES" in render, "the options are not stored from the payload"
+    refresh = script[script.index("async function refresh"):]
+    refresh = refresh[:refresh.index("$('#proj-plan')")]
+    assert "renderPersonalities" in refresh, "the personality list is not refreshed with the payload"
+    assert "summary" in refresh, "the personality list is not read from the payload's facts"
+
+
+def test_the_project_row_shows_the_personality_the_launch_recorded():
+    """The row is the project's half of the link: "project → the personality it is served with."
+    The name has to come from the payload's serving fact, because it is the launch's record that put
+    it there (§6.14.1n / queue 33)."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    rows = script[script.index("function renderRows"):]
+    rows = rows[:rows.index("function renderUnadopted")]
+    assert "st.personality" in rows, "the row shows the serving state without the personality"
+
+
+def test_the_payload_carries_the_personalities_the_page_offers(client):
+    """The personality names the launch records must be the portal's names, in the payload the page
+    reads. Asserted on the payload rather than the page: a page can spell a select, and only the
+    payload says which personalities actually exist on this box.
+
+    The two built-ins the portal guarantees are in it, and it is a list of names — a dict of
+    personalities would leave the page assembling labels the row then records as a personality.
+    """
+    body = client.get("/api/projects").json()
+    assert "personalities" in body["summary"], "the payload has no personality list for the page"
+    names = body["summary"]["personalities"]
+    assert isinstance(names, list) and all(isinstance(n, str) for n in names), names
+    assert names, "the payload offers an empty personality list"
+
+
+def test_the_projects_page_says_what_the_launch_recorded():
+    """The operator's sentence after a launch carries the record, not just the click: the project,
+    the personality it was launched with, the session, and whether the pair reached the project's
+    row.
+
+    `d.recorded` is the fact the projects page's serving state is built from, so a page that
+    dropped it would report "the row below shows it as served" for a launch the registry never
+    heard about — the exact gap queue 33 is about.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    launch = rows[rows.index("dataset.launch"):]
+    launch = launch[:launch.index("dataset.forget")]
+
+    for fact in ("d.recorded", "d.session", "d.personality", "d.reason"):
+        assert fact in launch, f"the launch's answer drops {fact}"
+    assert "recorded" in launch and "not recorded" in launch, \
+        "a launch the registry never heard about is reported as a record"
+
+
+def test_the_launch_says_what_it_will_start_before_it_starts():
+    """A launch opens a session on a host that outlives the portal, so the confirm names both sides
+    of the pair it is about to record — the project and the personality.
+
+    The row's Launch is not a destructive verb (it deletes nothing, and the endpoint's own
+    `confirm` is what the sweep is exempt from), so this is the page's own confirmation, not the
+    sweep's: an operator who clicked the wrong row's button needs to see which project and which
+    personality they are about to start, in the dialog.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    rows = script[script.index("$('#proj-rows').addEventListener"):]
+    rows = rows[:rows.index("$('#proj-unadopted').addEventListener")]
+    launch = rows[rows.index("dataset.launch"):]
+    launch = launch[:launch.index("dataset.forget")]
+
+    assert "window.confirm(" in launch, "a launch starts a host session without asking"
+    dialog = launch[launch.index("window.confirm("):launch.index("window.confirm(") + 600]
+    assert "name" in dialog and "personality" in dialog, \
+        "the launch confirm does not name both halves of the pair it records"
+    assert "confirm: true" in launch, "Launch posts without the confirm the endpoint requires"
+
+
+def test_the_launch_is_disabled_by_the_shadowed_host_the_page_reports():
+    """Queue 30's shadow, queue 33's record. When the unit is not the listener, every session on the
+    port belongs to a process the portal does not supervise, so the pair the launch records is a fact
+    about a session the portal cannot list — the project's row would read as served with a session
+    nobody owns.
+
+    The page disables Launch from the payload's `available`, and the payload's `available` is false on
+    a shadowed host with the harness page's own sentence as the reason (see
+    tests/test_projects.py::test_a_shadowed_host_is_not_a_host_a_launch_can_be_recorded_on). What this
+    test pins is the page's half: the *reason* is shown in the control's own words, so a disabled
+    button is not a mystery.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    rows = script[script.index("function renderRows"):]
+    rows = rows[:rows.index("function renderUnadopted")]
+    build = rows[rows.index("const launch = el("):]
+    build = build[:build.index("const forget = el(")]
+
+    assert "launch.disabled" in build and "available" in build, \
+        "Launch is not disabled by the payload's launch state"
+    assert "reason" in build, "a disabled Launch does not say why the host cannot take it"

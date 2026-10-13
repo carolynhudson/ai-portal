@@ -4545,8 +4545,10 @@ attached.
 Queue **29** *(2026-10-12: this is canonical queue **32**. The requirement below is unchanged; the host
 is opencode, not pi-web — see §0.1's decision record. The pi-web measurements quoted here are the
 fallback evidence, not the plan.)* — §6.14.1m end to end: **the pi harness page and the session host that
-survives a portal restart.** The Projects page (queue 18, §6.14.1n) is built and its Launch button is labelled as this
-queue's verb. What it needs: the session host as its own supervised unit (not a child of the portal
+survives a portal restart.** The Projects page (queue 18, §6.14.1n) is built, and queue 33 gave it a
+**launch verb of its own** (§6.14.1q): the row's Launch creates the session inside the project and
+records the pair on the registry row, so this queue's remaining work is the session *view*, not the
+launch. What it needs: the session host as its own supervised unit (not a child of the portal
 service), the per-project live-session read with the session id a page can deep-link to, model binding
 from the census (queue 18's generator already emits the ids), the two page states (inactive = projects,
 operational = the session and nothing else), and `/quit` returning the page to the inactive state with
@@ -4800,6 +4802,100 @@ partial sets, and the strip carrying no CPU tile at any CPU value), `tests/test_
 (6 — the thresholds registered as portal settings, the page's defaults equal to the reader's, a
 stored threshold replacing only itself, refusals at the gate before Save, the ladder refused, and a
 threshold the strip would ignore being *said* by the strip).
+
+##### 6.14.1q The launch records the pair — project ⇄ personality (queue 33, 2026-10-13)
+
+Queue 33's brief states the link in **both directions**: a launched project records the personality
+it runs with, and the personality carries the projects running it. The projects page (§6.14.1n) could
+already answer *"is this project being served?"* — it read the host's live sessions by directory. What
+it could not answer was **with what**, because the personality was known only to the browser that
+clicked the button.
+
+**The launch is the record site**, and the reason is positional, not stylistic: the session id the host
+returned, the project folder, and the operator's personality choice all exist together at exactly one
+call site. Everywhere else, one of the three is already gone by the time anyone asks. So
+`harnessctl.launch_project()` creates the session **inside the project directory** and records the pair
+on the registry row in the same verb, and `projects.py` keeps the record it already wrote (the
+`notes.serve` stamp) readable in both directions: `serve_facts()` per project, `by_personality()` per
+personality, and the inverse view the personality editor needs is derived from the same records.
+
+The directory is the load-bearing half. `create_session` puts the folder in the **query parameter**
+(queue 30's measurement: a body key named `directory` is ignored and the session lands in the
+server's own cwd), and `serve_facts` finds a served project by matching live sessions on that
+directory. A session created anywhere else records a serving fact the host cannot confirm — the page
+would show the project as served and the read would find nothing.
+
+**Refusals are said, not dropped.** A project that is not in the registry has no row to record on: the
+session is created anyway (the operator asked for it) and the answer carries `recorded: false` with the
+reason, because a page that launched a session it cannot list has to say why the projects page will not
+show it.
+
+**The page's side.** Launch is no longer an inert label pointing at the harness page — it acts:
+`POST /api/projects/launch` with the name, the personality from a `<select>` populated from the
+payload, and `confirm`. Two properties the harness checks:
+
+- the button is disabled by **the payload's `launch.available`**, which is the host's own state read
+  through `harnessctl.status()`. A button disabled by a literal is a button that lies once the host
+  starts; one disabled by the payload flips when the host does. In the UI sandbox the host never runs,
+  so the spec supplies the host's answer as a fixture and the sweep drives the real button.
+- **a shadowed host is not launchable** (queue 30's measurement, applied to queue 33's record): when
+  the unit is not the listener, every session on the port belongs to a process the portal does not
+  supervise, so the pair recorded there describes a session the portal cannot list and the row would
+  read as served. `launch_facts()` answers `available: false` with the harness page's own sentence as
+  `reason`, `launch_project()` refuses the same way before it creates a session, and the page puts the
+  reason in the disabled button's own words. `projects.py`, `main.py` and `harnessctl.py` agree on the
+  shadow because all three read it from one `status()`.
+- the personality list is read from `summary.personalities`, which is `personality.all_personalities()`
+  — the personalities component's own names. A list assembled in `projects.py` from a file, a
+  directory, or a literal drifts from the names the personalities page stores, and the row ends up
+  recording a personality that no longer exists.
+
+**The findings worth keeping.**
+
+1. **`"served"` collides with the vocabulary of its own payload.** My first row key carried the bool,
+   and the payload already has a top-level `served` block (the host's census) whose value is a *list of
+   names*. A name, a bool, and a record of a live session are three things; the block is `served`, the
+   record on a row is `serve`, and `served: true` inside it means the host answered **and** confirmed
+   this folder — `null` with `unknown: true` is the host not answering, which is not "not served".
+2. **A test that asserts a call list blocks the honest implementation.** My first pair test asserted
+   which methods `launch_project` calls. Any of three correct designs (stamp on the row, a session
+   field, a log line) satisfies the requirement; the test was rewritten as a **shape** assertion —
+   `serve_facts()` reports the project served, with the personality, after the launch.
+3. **The fake must hook the function the module has.** My ordering test hooked a `start_unit` variant
+   that does not exist and silently never fired; the test passed while proving nothing. Hook the real
+   call site, and assert the fact the *page* reads, not the path the code took.
+4. **An assertion satisfied by a stylesheet proves nothing about the control.** `data-inert="yes"`
+   appears in this page's CSS *and* in its JS. Assert on the line that builds the button.
+5. **`launch.dataset.inert = 'yes'` was a contract test, and queue 33 changed the contract.** The
+   "inert Launch" tests (§6.14.1m's placeholder) are now the "Launch is disabled by the host's answer"
+   tests, in both the contract file and the UI spec (`expectInert` for the page is empty). Deleting an
+   obsolete assertion is part of the slice; leaving it makes the suite resist the feature.
+6. **A verb that outlives the portal asks for a confirmation, in the page's own words.** Launch opens
+   a session on a host that survives a portal restart, so the dialog names **both halves of the pair**
+   it is about to record — which project, which personality. The endpoint's `confirm` field and the
+   sweep's confirm gate are not the same thing: the field is the page's declaration, the gate is the
+   harness's check that a dialog happened first.
+7. **Check the host *before* the session exists, not after.** A session opened on a host that is not
+   answering (starting, restarting, shadowed) is a session the portal records as serving a project and
+   cannot list afterwards. The gate is the same fact the payload's `launch.available` is built from, so
+   a click that got past a disabled button is refused by the verb that performs it.
+
+**Left deliberately for the harness page (§6.14.1m, queue 29/32).** The session *view*: deep-linking a
+session id, model binding from the census, and `/quit` returning to the inactive state with the id
+visible. The projects page records the pair and shows it; the operational state is that page's.
+
+Tests: `tests/test_projects.py` (the serving record read back as facts, `by_personality` from the
+records the launches wrote, the personalities offered being the component's names, the launch verb
+stated with the host's state), `tests/test_harnessctl.py` (the launch opens the session inside the
+project it records as serving; the pair recorded; a launch that cannot record says so),
+`tests/test_ui_contract.py` (the launch wired to the endpoint that records the pair, the personality
+`<select>` refreshed from the payload, the row showing `st.personality`, the summary sentence
+distinguishing recorded from not-recorded, the button's state read off the host),
+`tests/ui/spec.json` (the projects page drives the live Launch: the sweep posts to
+`/api/projects/launch` **behind the page's own confirm**, and the payload's host answer is supplied by
+fixture because the sandbox host never runs), plus the shadow test in `tests/test_projects.py`
+(a shadowed host answers `available: false` with the harness page's sentence, and no session is
+created on it).
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 
