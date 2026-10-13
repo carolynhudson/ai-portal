@@ -1434,7 +1434,9 @@ def create_app() -> FastAPI:
         One function for the page and the endpoint, so the page cannot show a toolchain census that
         differs from the one the plan endpoint answers with.
         """
-        return {"projects": projects.list_projects(),
+        facts = projects.serve_facts()
+        return {"projects": facts["projects"],
+                "served": facts["served"],
                 "scan": projects.scan(),
                 "toolchains": projects.toolchains(),
                 "steps": {k: {"label": v["label"], "does": v["does"], "needs": v["needs"]}

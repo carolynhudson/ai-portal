@@ -77,7 +77,37 @@ class Sandbox:
         proot.mkdir(parents=True)
         (proot / "ui-test-app").mkdir()
         (proot / "<img src=x onerror=alert(1)>").mkdir()
+        # The registry knows one project (§6.14.1n). A page whose rows come from an empty registry
+        # proves nothing about the row shape, so the sweep sees a registered project with the facts
+        # an init writes.
+        (proot / "ui-registered-app").mkdir()
+        (proot / "ui-registered-app" / "README.md").write_text("# ui-registered-app\n")
+        (proot / "ui-registered-app" / ".gitignore").write_text(".DS_Store\n*.log\n.env\n")
+        self._registry_row(proot / "ui-registered-app")
         self._seed_health()
+
+    def _registry_row(self, target) -> None:
+        """A registry row for the seeded project, written the way adoption writes one.
+
+        The database is created by the server on first connect, so this writes after it exists.
+        """
+        import sqlite3
+        import time
+
+        db = self.home / "ai" / "state" / "portal" / "portal.db"
+        db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (path TEXT PRIMARY KEY, name TEXT, "
+            "created REAL, last_opened REAL, notes TEXT)")
+        notes = {"init": ["git", "readme"], "refused": [], "remote": None,
+                 "gitignore": {"written": True, "kept": False, "sections": []}}
+        conn.execute(
+            "INSERT OR REPLACE INTO projects (path, name, created, last_opened, notes) "
+            "VALUES (?,?,?,?,?)",
+            (str(target), target.name, time.time(), None, json.dumps(notes)))
+        conn.commit()
+        conn.close()
 
     def _seed_health(self) -> None:
         """A machine the health pane can answer about deterministically.

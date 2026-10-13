@@ -40,6 +40,9 @@
 .proj-name{font-weight:600}
 .proj-path{color:var(--mut);font-size:.78rem;grid-column:1/-1}
 .proj-facts{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:.75rem;color:var(--mut);grid-column:1/-1}
+.proj-serve{font-size:.75rem;grid-column:1/-1}
+.proj-serve[data-tone="good"]{color:var(--ok,#2b8a3e)}
+.proj-serve[data-tone="bad"]{color:var(--bad,#b33030)}
 .proj-verbs{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 </style>
@@ -274,7 +277,24 @@ function renderRows(rows) {
       (p.notes && p.notes.refused && p.notes.refused.length
         ? ` — init refused: ${p.notes.refused.map(r => r.step).join(', ')}` : '');
 
-    row.append(name, verbs, path, facts);
+    // Is a session serving this project, and with what personality (§6.14.1n / queue 33). The
+    // answer is the host's, read through the payload — not the page remembering what it launched.
+    const serve = el('span', 'proj-serve');
+    const st = p.serve || {};
+    if (st.served === true) {
+      serve.textContent = `is being served — session ${st.session}`
+        + (st.personality ? ` with ${st.personality}` : '')
+        + (st.sessions > 1 ? ` (+${st.sessions - 1} more)` : '');
+      serve.dataset.tone = 'good';
+    } else if (st.served === null) {
+      serve.textContent = `serving state unknown: ${st.reason}`;
+      serve.dataset.tone = 'bad';
+    } else {
+      serve.textContent = 'not served';
+      serve.dataset.tone = 'muted';
+    }
+
+    row.append(name, verbs, path, facts, serve);
     verbs.append(launch, forget);
     box.append(row);
   }

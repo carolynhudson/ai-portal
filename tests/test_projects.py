@@ -637,3 +637,77 @@ def test_a_failed_init_does_not_leave_the_derived_ignores_behind(sandbox, monkey
     assert out["ok"] is False
     assert not (sandbox / "broken" / ".gitignore").exists(), \
         "a failed init left a derived .gitignore in a folder the report calls failed"
+
+
+# --- the registry knows a project is served by a personality (§6.14.1n, the queue 33 connection)
+#
+# The queue 33 brief states the connection in both directions: the harness launches a project with a
+# personality, and the personality editor names the projects that use it. The second half is a fact
+# the portal can already see and does not record — the harness host is fixed and a project's cwd is
+# its path, so "project X is being served now" is observable. Record it, and the connection becomes
+# two reads instead of a guess.
+
+def test_a_project_being_served_is_a_fact_the_registry_records(sandbox, monkeypatch):
+    """The page asks "is this project running?" and answers from the host. The registry has to be
+    able to carry the answer, because a fact the portal can measure and cannot store is a fact the
+    projects page will answer from the browser's memory."""
+    target = sandbox / "served"
+    projects.create("served", ["git", "readme"], root=str(sandbox))
+
+    def fake_live():
+        return {"ok": True, "byDirectory": {str(sandbox / "served"): [{"id": "ses_1"}]}, "count": 1}
+
+    monkeypatch.setattr(projects, "_live_sessions", fake_live)
+    snap = projects.serve_facts()
+    row = [r for r in snap["projects"] if r["name"] == "served"][0]
+    assert row["serve"]["served"] is False, "nothing is live, so nothing is recorded as served"
+    assert row["serve"]["reason"]
+    assert snap["served"]["count"] == 0
+
+    projects.mark_served(str(target), "ses_1")
+    snap = projects.serve_facts()
+    row = [r for r in snap["projects"] if r["name"] == "served"][0]
+    assert row["serve"]["served"] is True and row["serve"]["session"] == "ses_1"
+    assert snap["served"]["count"] == 1
+    assert "served" in snap["served"]["names"]
+
+
+def test_serving_facts_name_the_host_that_answered(sandbox, monkeypatch):
+    """"No project is served" and "the host did not answer" are different answers, and only one of
+    them is a fact about the projects."""
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda: {"ok": False, "error": "connection refused"})
+    snap = projects.serve_facts()
+    assert snap["served"]["hostOk"] is False
+    assert snap["served"]["unknown"] is True
+    assert all(r["serve"]["served"] is not True for r in snap["projects"])
+
+
+def test_serving_a_project_is_recorded_by_name_and_path(sandbox):
+    """Adoption and launch both know a project by a path; the page launches by name. A verb that
+    took only one of them would be a verb the two callers would each use a different way."""
+    target = sandbox / "named"
+    projects.create("named", ["git"], root=str(sandbox))
+    out = projects.mark_served("named", "ses_9")
+    assert out["path"] == str(target) and out["session"] == "ses_9"
+    assert projects.mark_served(str(target), "ses_9")["name"] == "named"
+    with pytest.raises(projects.ProjectError):
+        projects.mark_served("not-a-project", "ses_9")
+
+
+def test_launching_records_the_project_the_session_serves(sandbox, monkeypatch):
+    """The launch call site is the only place that knows both halves — the session id the host
+    returned and the personality the operator picked. `mark_served` exists for that call site, and
+    a launch that does not record is the fact this slice exists to record.
+
+    The harness launch is queue 32's endpoint (the page's Launch button is labelled inert, §6.14.1n);
+    the requirement is recorded here so the slice that builds it cannot lose the write."""
+    target = sandbox / "launched"
+    projects.create("launched", ["git"], root=str(sandbox))
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda: {"ok": True, "byDirectory": {str(target): [{"id": "ses_new"}]}, "count": 1})
+    projects.mark_served(str(target), "ses_new", personality="work")
+    row = [r for r in projects.serve_facts()["projects"] if r["name"] == "launched"][0]
+    assert row["serve"] == {"served": True, "session": "ses_new", "personality": "work", "sessions": 1}
+    assert projects.serve_facts()["served"] == {"count": 1, "names": ["launched"],
+                                                "hostOk": True, "unknown": False}

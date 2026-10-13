@@ -1471,6 +1471,19 @@
     },
     {
      "_comment": [
+      "queue 33's connection needs the page to answer 'is this project being served?'",
+      "The registry is seeded with one project in the UI sandbox, so this is read on a",
+      "real row: 'not served' is the host's answer, not a string the page spelled.",
+      "The host is not running in the sandbox, so the honest answers are 'not served'",
+      "and 'serving state unknown' — both are accepted, because a page that printed",
+      "'is being served' for a project with no host would pass a fixture-only test."
+     ],
+     "selector": "#proj-rows .proj-serve",
+     "matches": "not served|serving state unknown",
+     "minCount": 1
+    },
+    {
+     "_comment": [
       "the opening text and the remote are the operator's additions to the create card;",
       "the copy states the pull order, which is what the tests prove"
      ],

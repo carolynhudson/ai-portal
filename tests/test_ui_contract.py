@@ -1254,3 +1254,23 @@ def test_the_projects_page_reports_the_ignores_it_wrote_after_a_create():
     assert "gitignore" in plan, "the plan does not mention the file it will write"
     create = script[script.index("#proj-create')"):]
     assert ".gitignore" in create, "the create result drops the file the page says it wrote"
+
+
+# --------------------------------------------- the project is being served (§6.14.1n, queue 33's connection)
+
+def test_the_projects_endpoint_answers_which_projects_are_being_served(client):
+    """The page's Launch handoff is only honest if the page can say what is already launched. The
+    payload carries the host's answer, and the page's rows read it (D1)."""
+    body = client.get("/api/projects").json()
+    assert "served" in body, "the payload cannot say what is launched"
+    assert {"count", "names", "hostOk", "unknown"} <= set(body["served"]), body["served"]
+    for row in body["projects"]:
+        assert "serve" in row, f"the row for {row['name']} cannot say whether it is served"
+
+
+def test_the_projects_page_shows_the_serving_state_of_every_row():
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+    assert "serve" in script, "the page never reads the serving state the payload carries"
+    assert "is being served" in tpl or "being served" in tpl, \
+        "the page has no words for a project that is running"

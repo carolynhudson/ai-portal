@@ -713,6 +713,142 @@ def list_projects() -> list[dict[str, Any]]:
     return [_describe(dict(r)) for r in rows]
 
 
+# --- the project is being served (§6.14.1n / queue 33) -----------------------------------------
+#
+# The queue 33 brief states the personality↔project connection in both directions: the harness
+# launches a project *with a personality*, and the personality editor names the projects that use
+# it. The second half needs a fact the portal can measure and could not store: a project is being
+# served when the host has a live session for its folder. The registry stores which session (and
+# which personality) the launch wrote down, and the host confirms it is still there.
+
+def _live_sessions() -> dict[str, Any]:
+    """Every session the host reports, grouped by the directory it names for each — **one host
+    call**, shared by every row of a read.
+
+    Asking per project turns a page refresh into N requests to a host that is a single user unit,
+    and a host that dies mid-refresh would answer some rows and not others. Read from the module by
+    name so a test, a page, and the CLI can all supply the host's answer.
+    """
+    try:
+        from app.core import harnessctl
+    except ImportError:  # pragma: no cover - the package always carries it
+        return {"ok": False, "error": "the harness component is not importable"}
+    try:
+        rows = harnessctl.list_sessions()
+    except Exception as exc:  # a host that will not answer is a fact, not a crash
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = os.path.realpath(str(row.get("directory") or row.get("path") or ""))
+        grouped.setdefault(key, []).append(row)
+    return {"ok": True, "byDirectory": grouped, "count": len(rows)}
+
+
+def live_sessions(directory: str) -> dict[str, Any]:
+    """The host's sessions for one project folder. `{"ok": False, "error": …}` when the host did
+    not answer — the difference between "no sessions" and "no host" is a fact the page must keep."""
+    answer = _live_sessions()
+    if not answer.get("ok"):
+        return answer
+    rows = answer["byDirectory"].get(os.path.realpath(directory), [])
+    return {"ok": True, "sessions": rows}
+
+
+def _notes(path: str) -> dict[str, Any]:
+    row = db.query("SELECT notes FROM projects WHERE path = ?", (os.path.realpath(path),))
+    if not row:
+        return {}
+    try:
+        return json.loads(row[0]["notes"] or "{}")
+    except (TypeError, ValueError):
+        return {}
+
+
+def mark_served(name_or_path: str, session: str, personality: str | None = None) -> dict[str, Any]:
+    """Record that a session serves this project, on the registry row.
+
+    A project is named by a path by the launcher and by a name by the page; a verb that accepted
+    only one of them would be used two ways by the two callers. The name is resolved through
+    `project_path`, so it goes through the same rule every other name on this page goes through.
+    """
+    if not session or not isinstance(session, str):
+        raise ProjectError("a served project has to name the session that serves it")
+    if os.path.sep in name_or_path:
+        target = os.path.realpath(name_or_path)
+        row = db.query("SELECT name FROM projects WHERE path = ?", (target,))
+        if not row:
+            raise ProjectError(f"{target} is not in the registry, so it cannot be marked as served")
+        safe, path = row[0]["name"], target
+    else:
+        safe = validate_name(name_or_path)
+        path = project_path(safe)
+        if not os.path.isdir(path):
+            raise ProjectError(f"{path} is not a folder, so no session can be serving it")
+    notes = _notes(path)
+    notes["serve"] = {"session": session, "personality": personality, "at": time.time()}
+    db.execute("UPDATE projects SET notes=?, last_opened=? WHERE path=?",
+               (json.dumps(notes), time.time(), path))
+    return {"ok": True, "name": safe, "path": path, "session": session, "personality": personality}
+
+
+def clear_served(path: str) -> dict[str, Any]:
+    """A session that ended is a fact that stops being true. The folder and its history are
+    untouched; only the "served by this session" fact is dropped."""
+    real = os.path.realpath(path)
+    notes = _notes(real)
+    if "serve" not in notes:
+        return {"ok": True, "path": real, "was_served": False}
+    notes.pop("serve")
+    db.execute("UPDATE projects SET notes=? WHERE path=?", (json.dumps(notes), real))
+    return {"ok": True, "path": real, "was_served": True}
+
+
+def serve_facts() -> dict[str, Any]:
+    """The registry plus the host's answer for each project, in one read.
+
+    The page's question is "is this project being served, and with what". The host answers it per
+    project directory; the registry answers "with what personality", because that is the fact the
+    launch wrote down. A host that did not answer is reported as unknown, never as "not served".
+    """
+    rows = list_projects()
+    # One host call for the whole read. Asked even when the registry is empty: "no project is
+    # served" and "the host did not answer" are different answers, and only the host tells them
+    # apart.
+    answer = _live_sessions()
+    served: list[str] = []
+    for row in rows:
+        record = _notes(row["path"]).get("serve")
+        if not answer.get("ok"):
+            # The host did not answer. That is a fact about the host, and it stands for every
+            # project on the page, marked ones included: "unknown", never "not served".
+            row["serve"] = {"served": None, "unknown": True,
+                            "reason": f"the host did not answer ({answer.get('error')})"}
+            continue
+        if not record:
+            row["serve"] = {"served": False,
+                            "reason": "no session has been launched for this project"}
+            continue
+        live = answer["byDirectory"].get(os.path.realpath(row["path"]), [])
+        ids = [str(s.get("id")) for s in live]
+        if record.get("session") in ids:
+            row["serve"] = {"served": True, "session": record["session"],
+                            "personality": record.get("personality"), "sessions": len(live)}
+            served.append(row["name"])
+        else:
+            row["serve"] = {"served": False,
+                            "reason": f"the session {record.get('session')} is not on the host"}
+    host_ok = bool(answer.get("ok"))
+    return {
+        "projects": rows,
+        "served": {
+            "count": len(served),
+            "names": served,
+            "hostOk": host_ok,
+            "unknown": not host_ok,
+        },
+    }
+
+
 def touch(path: str) -> None:
     db.execute("UPDATE projects SET last_opened=? WHERE path=?", (time.time(), os.path.realpath(path)))
 
