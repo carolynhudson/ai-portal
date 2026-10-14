@@ -207,11 +207,35 @@ green in the UI harness for the first time** — the 19 failures were the unseed
 index, no seeded personality, no presets, no router), not the page: `Sandbox` alone does not seed,
 the pytest fixture does.
 
-**What the height measure needs now.** The instrument measures a *server*. To measure the repo's
-code the repo's code has to be running, which means a sandbox portal on the repo's tree (the same
-home the UI harness uses) rather than the live portal. Until that number exists, the honest statement
-about this page's height is the deployed 6,430 px, plus the fact that the editor — the block under the
-420 px — no longer paints its fields until a verb opens them.
+**The measure now exists, and it retires the number this queue has been carrying.**
+`tools/layout_measure_repo.py` (commit `affc5a1`) drives the UI harness's own sandbox fixture — the
+seeded home, the seeded models/presets/registry, the uvicorn subprocess on this working tree — and
+runs the same Chromium geometry pass. Measured on the repo's code:
+
+| viewport | scroll | blocks | tallest | above the fold |
+| -------- | ------ | ------ | ------- | -------------- |
+| 1280×800 laptop | **800 px** | 2 | **147 px** | 2 of 2 |
+| 390×844 phone | **1,252 px** | 2 | 173 px | 2 of 2 |
+
+The **6,430 px / 3 blocks / 5,335 px-tallest** figure in §7 above and in plan §6.14.1q is a
+**deployed-server** measurement: the live portal serves the code it started with, so it reports that
+server's layout, not this checkout's. It is kept above as the record of the defect state 3 was written
+against — the 6,430 px is no longer any page's height. State 3 removed it, and the instrument is what
+lets the removal be *stated* rather than asserted.
+
+**Deck density, measured (queue 33's remaining visual item).** A card strip is **43 px** (22.5 px line
++ 9 px padding top and bottom), the card 45 px, the deck gap 6 px — so **49 px per personality**, at
+the ~46 px target, and 10 personalities is a 490 px deck. The 30-second glance is therefore not a
+height problem: the facts a card must answer *from the strip* — which models it covers, the largest
+model's peak RAM against the aperture, and the reason when it cannot be served — are already computed
+in the payload, and the strip carries a fits badge with no figure. **Proposed next slice: put the
+aperture and peak-RAM figure in the strip line, with the reason when it does not fit** (the deck's own
+budget facts, not a page-side calculation), asserted in `spec.json` as text on a real row.
+
+**One instrument gap to keep honest.** `layout_measure.py` hard-fails a block taller than three
+viewports, so a repo-code run exits 1 when such a block exists — a gate today, and the hook the
+layout spec's L6 evidence item needs to become *required evidence* rather than "declared, not yet
+available" (`docs/PORTAL_LAYOUT.md` L6, capture seed "hero-populated screenshot").
 
 ## 8. Settings page — canonical queue 41
 

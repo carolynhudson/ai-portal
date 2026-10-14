@@ -1083,9 +1083,26 @@ def create_app() -> FastAPI:
         configs = model_config.rows()
         people = personality.all_personalities()
         config_by_name = {c["name"]: c for c in configs}
+        # The per-personality budget verdict, on the payload: the page's strips print it, and an
+        # endpoint that answers the deck's headline number with nothing leaves a script to infer it
+        # from `budget_bytes` (the pool), which is not the same fact.
+        verdicts = []
+        for p in people:
+            name = p.get("name")
+            try:
+                # `render()`'s budget dict is the deck's verdict: it carries the personality's own
+                # name, so a card-to-verdict pairing that read a position would be catchable here.
+                v = dict(personality.render(p, budget).get("budget") or {})
+            except personality.PersonalityError as exc:
+                # A personality that cannot be rendered is a card that says so, not a card that
+                # disappears — the same rule the page follows.
+                v = {"error": str(exc)}
+            v["name"] = str(name)
+            verdicts.append(v)
         return {
             "budget_bytes": budget,
             "personalities": [personality.describe(p, budget) for p in people],
+            "budgets": verdicts,
             "personalities_on_disk": [p["name"] for p in personality.stored()],
             # Queue 33's Now strip (§6.14.1q, state 1), same fact as the page's: which personality's
             # file is on disk, plus the model and slot the router itself reports.

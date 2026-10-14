@@ -1653,3 +1653,35 @@ def test_the_editor_steps_move_without_moving_a_field(client):
     # API a layer would use to touch fields, and its absence is the assertion.
     for forbidden in ("innerHTML", "appendChild", "ed-field", "querySelectorAll", ".value"):
         assert forbidden not in steps, f"the step layer touches field internals ({forbidden})"
+
+
+def test_the_deck_strip_carries_the_budget_figure_it_computes(client):
+    """Queue 33's 30-second glance: the strip line answers *can this run* without a click.
+
+    The deck's strip measured 43 px per card (49 px with the gap) — the deck is already dense
+    enough, so the glance is not a height problem. What a strip cannot answer today is the
+    question the badge asserts: a card reads "worst case fits" with no figure beside it, so the
+    operator has to raise the card to see what "fits" was measured against.
+
+    The figure is the payload's own (`generated[i]['budget']`, the same `Budget.as_dict()` the
+    card body prints). This asserts the strip's line carries cost + aperture, so the badge and
+    the number cannot disagree by being printed in different places.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    strip = tpl[tpl.index('class="pers-strip"'):tpl.index('<div class="pers-body">')]
+    assert "badge" in strip, "the strip carries no badge at all"
+    assert "fits" in strip, "the strip's fits verdict is not in the strip"
+    assert "worst_case_bytes" in strip and "budget_bytes" in strip, (
+        "the strip states a verdict with no figure: 'fits' is unanchored until the number "
+        "the verdict came from is on the same line")
+    # The figure must be read from THIS card's generated row. `loop.index` is 1-based and
+    # `generated` is ordered by card, so a strip built with `loop.index` prints the NEXT card's
+    # budget — a number that is real, formatted, and belongs to somebody else.
+    assert "generated[loop.index0]" in tpl[tpl.index('<div class="pers" id="pers-deck">'):tpl.index('class="pers-strip"')], (
+        "the deck's per-card budget row is not indexed 0-based")
+    # The strip line must stay one line: the deck's density claim is 49 px per personality,
+    # and a strip that wraps onto a second line is 71 px and a 710 px deck for ten rows.
+    css = tpl[tpl.index(".pers-strip{"):tpl.index(".pers-strip:hover")]
+    assert "white-space:nowrap" in css, "the strip line is allowed to wrap"
+    assert "overflow:hidden" in css and "text-overflow:ellipsis" in css, (
+        "a strip that overflows must clip, not push the page wider")

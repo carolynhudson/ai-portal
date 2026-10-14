@@ -1438,3 +1438,68 @@ def test_the_now_strip_answers_from_the_router_and_not_from_the_presets_file(cli
     assert "running" in now, "the payload's answer has no running state"
     assert "slot" in now or now.get("running") is None, \
         "a running personality is reported with no slot"
+
+
+def test_each_strip_prints_the_budget_of_its_own_card(client, library):
+    """Queue 33's glance, and the bug class it was written into.
+
+    The deck's strips are painted from `generated`, the per-card budget list. The loop's
+    `loop.index` is 1-based; `generated` is ordered by card. A strip built with `loop.index`
+    prints the NEXT card's figure — a real, correctly formatted number that belongs to somebody
+    else, and the page's own budget test (which counted formatted spans) could not see it.
+
+    `default` is checked against a second copy of the deck built with `loop.index`, so the
+    comparison runs against a deck that prices every card exactly once and is misaligned by one.
+    `safe` is checked against its own pricing directly: it names one hub model, so it prices the
+    same at every position and can only catch a strip that lost its figure, not one that borrowed
+    somebody else's.
+    """
+    import re
+
+    page = client.get("/personalities").text
+    # The strip's own attribute, read from the strip element. `data-card` is on the CARD, which
+    # closes before the strip's tag, so an interval regex between the two never matches: it asks
+    # for a tag that contains both, and no tag does.
+    strips = re.findall(r'<button[^>]*class="pers-strip"[^>]*data-raises="([^"]+)"[^>]*'
+                        r'data-worst-case="([0-9]*)"', page, re.S)
+    assert len(strips) >= 2, f"expected a strip per card, got {strips}"
+    named = dict(strips)
+    assert set(named) >= {"safe", "default"}, named
+
+    b = mi._pool_bytes()
+
+    def worst(card_index: int) -> str:
+        """The figure the strip of `card_index` prints: `generated[<index>]`, where the template
+        uses index0 (0-based) or index (1-based, i.e. the NEXT card). Returns "" when the priced
+        dict has no figure, which is what the template renders as an empty attribute.
+        """
+        order = [c["name"] for c in client.get("/api/personalities").json()["personalities"]]
+        priced = P.budget_for(P.find(order[card_index]), b).as_dict()
+        v = priced.get("worst_case_bytes")
+        return "" if v is None else str(v)
+
+    order = [c["name"] for c in client.get("/api/personalities").json()["personalities"]]
+    for pos, name in enumerate(order):
+        if name not in named:
+            continue
+        assert named[name] == worst(pos), (
+            f"the {name} strip prints {named[name]!r}; {name} is card {pos} and prices itself at "
+            f"{worst(pos)!r}, while the NEXT card prices at {worst(pos + 1) if pos + 1 < len(order) else None!r} "
+            f"— a strip built with loop.index prints that last number")
+
+    api = client.get("/api/personalities").json()
+    assert "budgets" in api, "the payload does not answer the deck's per-card verdict"
+    # The verdict dict IS the budget (`render()["budget"]`), so its fields sit at the top level.
+    # `.get("budget")` on it answers None for every card — which reads as "the library prices
+    # nothing" and would have made this test pass a deck that printed no numbers at all.
+    per_card = {c["name"]: c for c in api["budgets"]}
+    for name, printed in strips:
+        want = per_card.get(name) or {}
+        assert printed == ("" if want.get("worst_case_bytes") is None
+                           else str(want["worst_case_bytes"])), (
+            f"the {name} strip prints {printed!r}, the payload prices {name} at "
+            f"{want.get('worst_case_bytes')!r}")
+
+    assert int(named["default"]) > int(named["safe"]), (
+        "the two cards priced identically: the fixture lost its size gap, so this test can no "
+        "longer tell a correct deck from an off-by-one one")

@@ -6,7 +6,7 @@
     "for every page automatically; this file only adds what cannot be derived:",
     "which endpoints a page must have called, which tabs form a group, which",
     "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app — test_ui_integration",
+    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
     "fails if the app serves an HTML page with no spec."
   ],
   "blockMutations": [
@@ -272,7 +272,7 @@
         },
         {
           "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok · \\d+\\.\\d t/s"
+          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
         },
         {
           "selector": "#pulse-lanes .lane",
@@ -304,7 +304,7 @@
         },
         {
           "_comment": [
-            "§6.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
+            "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
             "MainPID=0 (so no router process, and every server found is outside the unit) and the",
             "fixture seeds a llama-server the portal does not control. So these are the panel's",
             "branch-specific sentences, not a shape that both branches happen to share."
@@ -417,7 +417,7 @@
       "_disabled_comment": [
         "These three are enabled by the dashboard's own fixtures and locked only",
         "by the bar: this is the bar's doing, not the page's. The restore path is",
-        "asserted by mutation \"job bar never unlocks the controls again\" — a",
+        "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
         "static spec cannot see a lock that was never released, so it has to be",
         "broken in the template to know it is tested."
       ],
@@ -441,7 +441,7 @@
     {
       "_comment": [
         "The other half of the bar: the job finished, possibly while you were",
-        "elsewhere, and said it failed. The bar must still say so — and the",
+        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
         "controls must be usable again."
       ],
       "name": "jobbar-finished",
@@ -647,7 +647,7 @@
           "contains": "amdrocm-base9.9"
         },
         {
-          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."
+          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
         },
         {
           "selector": "#gpu-stack .kv",
@@ -770,7 +770,7 @@
                 "pids": [],
                 "proc_read": true,
                 "purgeable": false,
-                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) — this build is what the router is configured to run"
+                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
               },
               {
                 "name": "llama.cpp-b10796",
@@ -1101,9 +1101,9 @@
         "/api/model-configs/delete"
       ],
       "_expectAbsent_comment": [
-        "§6.14.1q / queue 33 state 4: the settings reference moved off this page to Help.",
+        "\u00a76.14.1q / queue 33 state 4: the settings reference moved off this page to Help.",
         "A 420 px table of key definitions between the deck and the editor was reference",
-        "material in the middle of a working page (docs/PORTAL_POLISH.md §7, measured 6,800 px).",
+        "material in the middle of a working page (docs/PORTAL_POLISH.md \u00a77, measured 6,800 px).",
         "Its content is generated from the same settingrows rows and published per key on /help;",
         "the guards that read its rows moved to tests/test_settingsdoc.py and the page test reads",
         "the link instead."
@@ -1159,6 +1159,16 @@
           ],
           "selector": "#pers-default",
           "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB \\([-\\d.]+ spare\\)"
+        },
+        {
+          "_comment": [
+            "Queue 33's 30-second glance: the strip line carries the figure the fits badge was measured",
+            "against. A card that reads 'worst case fits' with no number is a verdict the operator has",
+            "to raise the card to audit -- the click the glance exists to remove. Asserted on the strip",
+            "(.pers-strip), not the card body, so the badge and the number are on the same line."
+          ],
+          "selector": "#pers-default .pers-strip",
+          "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB"
         },
         {
           "_comment": "a diff is a proposal, and the page has to say which",
@@ -1254,7 +1264,7 @@
             "settings. The sentence has to say that, not merely that the region is non-empty."
           ],
           "selector": "#ed-summary",
-          "contains": "no changes — these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
+          "contains": "no changes \u2014 these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
         },
         {
           "after_select": true,
@@ -1280,7 +1290,7 @@
         },
         {
           "_comment": [
-            "the deck (plan §6.14.1f): one strip per personality, so ten personalities is ten",
+            "the deck (plan \u00a76.14.1f): one strip per personality, so ten personalities is ten",
             "lines and choosing between them needs no scrolling"
           ],
           "selector": "#pers-deck .pers-strip",
@@ -1327,7 +1337,7 @@
         },
         {
           "_comment": [
-            "The reference moved to Help, and the page hands it over as one named link (§6.14.1q).",
+            "The reference moved to Help, and the page hands it over as one named link (\u00a76.14.1q).",
             "The anchor is computed server-side by kb.anchor_of() and passed as a template field --",
             "the same rule the row links use, so the template names a field and never a key."
           ],
@@ -1337,7 +1347,7 @@
         {
           "_comment": [
             "The editor is where a setting gets typed, so both grids carry the route to the",
-            "measurement: 12 global rows plus 14 per-model rows. §6.14.1q moved the keys",
+            "measurement: 12 global rows plus 14 per-model rows. \u00a76.14.1q moved the keys",
             "table's 32 links to the reference document (tests/test_settingsdoc.py proves the",
             "count there); the 26 that remain are the rows a decision is made on."
           ],
@@ -1346,7 +1356,7 @@
         },
         {
           "_comment": [
-            "Queue 33 (§6.14.1q): the editor's `used by` line. The sandbox host never runs, so the",
+            "Queue 33 (\u00a76.14.1q): the editor's `used by` line. The sandbox host never runs, so the",
             "payload's answer is the unconfirmed state -- and the line has to carry the payload's reason",
             "instead of reading as 'checked, nothing uses it'. A line that invents the host's answer is",
             "how a personality gets edited blind."
@@ -1356,21 +1366,21 @@
         },
         {
           "_comment": [
-            "Queue 33 §6.14.1q state 1: the Now strip in the sandbox, where no router runs.",
+            "Queue 33 \u00a76.14.1q state 1: the Now strip in the sandbox, where no router runs.",
             "The strip's model and slot come from the router's own account, so the sandbox state is the",
-            "state where it must NOT claim a model or a port — it names the state and points at the deck."
+            "state where it must NOT claim a model or a port \u2014 it names the state and points at the deck."
           ],
           "selector": "#pers-now",
           "contains": "nothing is active"
         },
         {
           "_comment": [
-            "Queue 33 §6.14.1q, state 3: the editor opens collapsed, opened by a verb.",
+            "Queue 33 \u00a76.14.1q, state 3: the editor opens collapsed, opened by a verb.",
             "The measured defect is a page one block taller than three viewports (10,295 px on a",
             "phone), and the block is the editor printing every field of every key as one column.",
             "It is fixed by the page deciding what you read first, not by removing content: the",
             "deck is the reading surface, the editor is opened by a verb, and it names the step it",
-            "shows. Asserted as visible text — expectVisible cannot tell a collapsed editor from",
+            "shows. Asserted as visible text \u2014 expectVisible cannot tell a collapsed editor from",
             "an editor that is simply always open."
           ],
           "selector": "#ed-collapsed-note",
@@ -1436,7 +1446,7 @@
         "by name, a plan creates nothing, forgetting deletes nothing. Launch is the harness page's",
         "session view (sec 6.14.1m); queue 33 gave this page a launch verb of its own, so Launch acts:",
         "it posts to /api/projects/launch, records the session with the personality it runs with, and",
-        "is disabled by the host's answer read off the payload — not by a literal, so it flips when the",
+        "is disabled by the host's answer read off the payload \u2014 not by a literal, so it flips when the",
         "host does. The sweep drives the fields and the buttons; the assertions below are the outcomes",
         "the operator reads. Launch needs no confirm() from the sweep: it opens a session, deletes",
         "nothing, and the endpoint carries its own confirm field.",
@@ -1479,7 +1489,7 @@
             "with empty strings, which expectVisible cannot see."
           ],
           "selector": "#proj-summary",
-          "matches": "Projects root \\S+ · Registered \\d+ · Folders not in the registry \\d+"
+          "matches": "Projects root \\S+ \u00b7 Registered \\d+ \u00b7 Folders not in the registry \\d+"
         },
         {
           "_comment": [
@@ -1490,7 +1500,7 @@
         },
         {
           "_comment": [
-            "the operator's rule (§6.14.1o, queue 18): .gitignore is a consequence of the",
+            "the operator's rule (\u00a76.14.1o, queue 18): .gitignore is a consequence of the",
             "boxes, not a box. The page states it beside the boxes, so the operator is not",
             "left to wonder where the file in `git status` came from. The sweep ticks every",
             "box, so this sentence is read on the surface that makes it."
@@ -1502,8 +1512,8 @@
           "_comment": [
             "the shortlist is rendered from the server's step list, not hardcoded markup.",
             "Six boxes, not seven: .gitignore dropped out of the shortlist when it became a",
-            "consequence of them (§6.14.1o), so this count is the shape of the operator's",
-            "rule — a count of 7 means a box came back."
+            "consequence of them (\u00a76.14.1o), so this count is the shape of the operator's",
+            "rule \u2014 a count of 7 means a box came back."
           ],
           "selector": "#proj-steps .proj-step",
           "matches": "Git repository",
@@ -1515,7 +1525,7 @@
             "The registry is seeded with one project in the UI sandbox, so this is read on a",
             "real row: 'not served' is the host's answer, not a string the page spelled.",
             "The host is not running in the sandbox, so the honest answers are 'not served'",
-            "and 'serving state unknown' — both are accepted, because a page that printed",
+            "and 'serving state unknown' \u2014 both are accepted, because a page that printed",
             "'is being served' for a project with no host would pass a fixture-only test."
           ],
           "selector": "#proj-rows .proj-serve",
@@ -1528,7 +1538,7 @@
             "the host never runs in the sandbox. So the sweep's surface is the payload's launch state,",
             "supplied here: the page reads `launch.available` off the payload and enables the row's",
             "button from it, then posts to the endpoint the payload names. The fixture is the host's",
-            "answer, not a convenience — a page that ignored it would leave the button disabled here",
+            "answer, not a convenience \u2014 a page that ignored it would leave the button disabled here",
             "and the sweep would report the control as dead."
           ],
           "path": "^/api/projects$",

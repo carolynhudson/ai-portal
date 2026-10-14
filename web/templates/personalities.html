@@ -19,9 +19,13 @@
    opening anything. */
 .pers{display:grid;gap:6px}
 .pers-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 14px}
-.pers-strip{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;width:100%;
+/* The strip is the 30-second-glance line (queue 33): name, verdict, the figure the verdict was
+   measured against, the two ceilings, and the models it covers -- in ONE line, so a card stays 49 px
+   and ten personalities stay a 490 px deck. Clipping is the honest overflow: a strip that wraps is a
+   71 px card and a 710 px deck, and a strip that pushes the page wider is a horizontal scrollbar. */
+.pers-strip{display:flex;flex-wrap:nowrap;align-items:baseline;gap:4px 12px;width:100%;
   background:transparent;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;
-  padding:9px 0}
+  padding:9px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pers-strip:hover{color:var(--acc)}
 .pers-strip .pers-name{font-weight:600}
 .pers-card .pers-body{display:none}
@@ -141,20 +145,26 @@ h2{margin:18px 0 6px}
      data-serving="{{ now.serving or '' }}"
      data-slot="{{ now.slot if now.slot is not none else '' }}"
      data-router-ok="{{ 'yes' if now.routerOk else 'no' }}">
+  {# One id, both states. The strip's stop verb is ONE control whose enabled state is the router's
+     answer, and `paintNow` re-reads it from the payload. The two-state branch that preceded this
+     carried the same id on both buttons, so a page rendered with a running router contained two
+     #pers-now-stop: the script found one, the browser could not name the other. #}
+  <b>Now:</b>
   {% if now.running %}
-    <b>Now:</b> <span class="mono">{{ now.running }}</span>
+    <span class="mono">{{ now.running }}</span>
     {% if now.serving %} serving <span class="mono">{{ now.serving }}</span>{% endif %}
     {% if now.slot %} on <span class="mono">:{{ now.slot }}</span>{% endif %}
     {% if now.loaded %} · {{ now.loaded }} model{{ 's' if now.loaded != 1 else '' }} loaded{% endif %}
-    <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp">stop the router</button>
+    <button type="button" class="btn sm pers-now-stop" data-stop="llamacpp">stop the router</button>
     <span class="mut">Stopping it takes the router down for every profile; Apply is what starts
       another personality.</span>
   {% else %}
-    <b>Now:</b> nothing is active.
+    nothing is active.
     {% if now.reason %}<span class="mut">{{ now.reason }}</span>{% endif %}
-    <span class="mut">Apply a personality below to make one active, or
-      <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp" disabled>nothing to stop</button>
-      — the verb stops what is loaded, and it unlocks when something is.</span>
+    <button type="button" class="btn sm pers-now-stop" id="pers-now-stop" data-stop="llamacpp"
+            disabled>nothing to stop</button>
+    <span class="mut">the verb stops what is loaded, and it unlocks when something is — apply a
+      personality below to make one active.</span>
   {% endif %}
 </div>
 
@@ -176,6 +186,8 @@ h2{margin:18px 0 6px}
      tests assert the two agree. #}
   <div class="pers-card" id="pers-{{ c.name }}" data-card="{{ c.name }}" data-raised="{% if c.active %}yes{% else %}no{% endif %}">
     <button type="button" class="pers-strip" data-raises="{{ c.name }}"
+            data-worst-case="{{ b.get('worst_case_bytes') if b.get('worst_case_bytes') is not none else '' }}"
+            data-budget="{{ b.get('budget_bytes') if b.get('budget_bytes') is not none else '' }}"
             aria-expanded="{% if c.active %}true{% else %}false{% endif %}">
       <span class="pers-name mono">{{ c.name }}</span>
       {% if c.active %}
@@ -191,6 +203,15 @@ h2{margin:18px 0 6px}
       {# Not "14/1 models": read off the live page that looked like a fraction that was
          over its limit. Attached models and the residency ceiling are two numbers, and the
          strip is the line an operator chooses from. #}
+      {# Queue 33's glance: the verdict and the number it was measured against, on the SAME line.
+         "fits" with no figure is a verdict the operator has to raise the card to audit -- the click
+         the glance exists to remove. The budget is read via `g`, the generated row for THIS card
+         (`generated[loop.index0]`): an earlier attempt used `loop.index`, which is 1-based, so each
+         strip printed the NEXT card's figure and the last printed nothing. Built as one line -- a
+         template newline survives into the rendered text and breaks the match. #}
+      {% if b.get('worst_case_bytes') is not none and b.get('budget_bytes') %}
+        <span class="mut">heaviest {{ (b.get('worst_case_bytes') / 1073741824)|round(1) }} GiB of {{ (b.get('budget_bytes') / 1073741824)|round(1) }} GiB</span>
+      {% endif %}
       <span class="mut">{{ (c.models or [])|length }} models · max {{ c.models_max }} resident</span>
     </button>
     <div class="pers-body">
@@ -1450,7 +1471,10 @@ h2{margin:18px 0 6px}
     const el = $('pers-now');
     el.textContent = parts.join('  ');
     if (now.reason) el.textContent = `${el.textContent}  ${now.reason}`;
-    const b = $('pers-now-stop');
+    // The verb is ONE control found by class, for the same reason the markup is one branch: a strip
+    // that paints the id in one state and not the other gives the script an element to find in only
+    // half the states the strip can be in.
+    const b = document.querySelector('.pers-now-stop');
     b.disabled = !(now.loaded || now.running);
     b.textContent = b.disabled ? 'nothing to stop' : 'stop the router';
   }
