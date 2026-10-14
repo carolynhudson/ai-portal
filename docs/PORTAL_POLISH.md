@@ -326,6 +326,17 @@ section list is **13.4 viewports of horizontal scrolling**, 208 nodes in one rib
 - Queue 33's key reference and queue 45's inventory notes land *here*, which is the point of fixing
   this page before sending reference material to it.
 
+**Done — plan §6.14.2a.** The TOC's ribbon is gone: `.kb-toc` declared `columns:2`, which
+balances a long list across the inline axis — 253 sections became 13.4 viewports of horizontal
+scrolling (1,024 px client width against 13,749 px of content), and the widest element on the
+page was the page's own index. `column-count:1` with the scroll kept, and the index now groups
+by document with a heading per group, because a flat list of 235 numbered links answers *"which
+section"* and not *"which document am I in"*. Guarded on the declaration itself, so a reverted
+rule fails in milliseconds. Suite: 1082 passed, 3 skipped; UI integration 15 passed.
+
+**Still open here:** the two-pane layout (left rail + document viewer), search as a collapsed
+affordance, and the 41 in-page document links that go nowhere.
+
 ## Order, and what blocks what
 
 | Queue | Item | Blocks / blocked by |

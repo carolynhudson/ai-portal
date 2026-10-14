@@ -13,8 +13,14 @@
 .kb-hit .kb-addr{color:var(--acc);font-size:12px;font-family:ui-monospace,monospace}
 .kb-hit .kb-meta{font-size:12px;color:var(--mut);margin:0 0 6px}
 .kb-hit .kb-ex{font-size:13px;color:var(--mut)}
+/* One column, scrolling vertically. `columns:2` measured 1,024 px of client width against
+   13,749 px of content (docs/PORTAL_POLISH.md §9): multi-column layout balances a long list
+   ACROSS the inline axis, so a 253-section index becomes 13.4 viewports of horizontal
+   scrolling that the box's own overflow-y cannot reach. */
 .kb-toc{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 14px;
-  max-height:220px;overflow-y:auto;font-size:12px;columns:2;column-gap:18px}
+  max-height:260px;overflow-y:auto;font-size:12px;column-count:1}
+.kb-toc-doc{margin:0 0 8px}
+.kb-toc-doc-h{font-size:12px;font-weight:600;margin:0 0 2px;position:sticky;top:0;background:var(--panel)}
 .kb-toc a{display:block;color:inherit;text-decoration:none;padding:1px 0;opacity:.85}
 .kb-toc a:hover{color:var(--acc);opacity:1}
 .kb-toc .l3{padding-left:10px;opacity:.75}
@@ -68,8 +74,16 @@
   </div>
   {% else %}
   <div class="kb-toc" id="kb-toc">
-    {% for t in toc %}
-    <a class="l{{ t.level }}" href="/help#{{ t.id }}">§{{ t.id }} {{ t.title }}</a>
+    {% for d, dtitle in docs %}
+    {% set rows = toc | selectattr("doc", "equalto", d) | list %}
+    {% if rows %}
+    <div class="kb-toc-doc">
+      <div class="kb-toc-doc-h">{{ dtitle }}</div>
+      {% for t in rows %}
+      <a class="l{{ t.level }}" href="/help#{{ t.id }}">§{{ t.id }} {{ t.title }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% endfor %}
   </div>
   {% endif %}

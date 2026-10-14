@@ -653,6 +653,59 @@ def test_the_help_line_is_the_control_you_click():
     assert '.ed-detail:not([open])>summary .ed-more-open{display:none}' in tpl
 
 
+def test_the_help_toc_is_a_list_that_scrolls():
+    """A 253-section list in a 220 px box is a vertical list, never a column ribbon.
+
+    docs/PORTAL_POLISH.md §9 measured the help page's TOC at 1,024 px of client width against
+    13,749 px of content -- 13.4 viewports of horizontal scrolling, 208 nodes in one ribbon.
+    The cause is the CSS multi-column layout (`columns:2`): columns balance content ACROSS
+    the inline axis, so a long vertical list becomes a wide one that the box's own
+    `overflow-y:auto` cannot reach. The reader scans a table of contents top to bottom; a
+    ribbon makes the scan a horizontal hunt, and the widest element on the page is the page's
+    own index.
+
+    The guard is on the declaration, not on a screenshot: the same class of cheap mirror the
+    tab-geometry test uses, so a reverted rule is caught in milliseconds.
+    """
+    tpl = (ROOT / "web" / "templates" / "help.html").read_text()
+    head = tpl[:tpl.index("</style>")] if "</style>" in tpl else tpl
+    rule = re.search(r"\.kb-toc\s*\{([^}]*)\}", head, re.S)
+    assert rule, "no .kb-toc rule in the help page's own stylesheet"
+    decls = rule.group(1)
+    for prop in ("column-count", "columns"):
+        m = re.search(rf"(^|[;\s]){prop}\s*:\s*([^;]+)", decls)
+        assert not m or m.group(2).strip() in ("1", "1 auto", "auto 1"), (
+            f".kb-toc declares {prop}: {m.group(2).strip()!r}. A multi-column TOC is a ribbon: "
+            "columns balance the list across the inline axis, so 253 sections become 13.4 "
+            "viewports of horizontal scrolling (measured: 1,024 px client width, 13,749 px "
+            "content, docs/PORTAL_POLISH.md §9). The TOC is a vertical list.")
+    assert "overflow-y:auto" in decls or "overflow:auto" in decls, (
+        f".kb-toc has no vertical scroll in {decls.strip()!r}: a capped-height index that "
+        "cannot scroll hides the sections below the fold, which is the failure the ribbon "
+        "was a workaround for")
+
+
+def test_the_help_toc_is_an_outline_of_documents():
+    """A table of contents groups by document, so the reader knows which file they are in.
+
+    docs/PORTAL_PLAN.md §6.14.2: the help page's outline lists the living documents and their
+    top-level headings. A flat ribbon of 235 links with section numbers does not answer "which
+    document is §6.14.1u in" -- and a reader scanning an index reads it as a tree, not as a list.
+
+    The guard is on the template's loop: the outline is one group per document, each with a
+    heading, so the shape is asserted where it is written.
+    """
+    tpl = (ROOT / "web" / "templates" / "help.html").read_text()
+    toc = tpl[tpl.index('class="kb-toc"'):tpl.index("{% endif %}", tpl.index('class="kb-toc"'))]
+    assert "kb-toc-doc" in toc, (
+        "the help TOC renders one flat list of links: an outline has to name the document each "
+        "section belongs to, which is the first thing a reader scanning an index wants")
+    assert "kb-toc-doc-h" in toc, (
+        "the TOC has document groups without a heading for each group")
+    assert "equalto" in toc, (
+        "the TOC loop does not group sections by document")
+
+
 def test_a_row_is_one_line():
     """Name, control and default share the line; the default sits right of the control.
 

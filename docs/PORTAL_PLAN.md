@@ -5202,6 +5202,35 @@ Suite: **1080 passed, 3 skipped.** UI integration: **15 passed**, personalities 
 pytest, not on the live page: the sandbox cannot be made unpriceable without reaching the
 operator's model library (§ portal-test-sandbox).
 
+##### 6.14.2a The help index is a vertical outline, not a column ribbon (queue 42, 2026-10-14)
+
+§9 of `docs/PORTAL_POLISH.md` measured the help page's TOC at **1,024 px of client width against
+13,749 px of content** — 13.4 viewports of horizontal scrolling. The cause is one CSS declaration:
+`columns:2` on `.kb-toc`. Multi-column layout balances content **across the inline axis**, so a
+long vertical list becomes a wide one that the box's own `overflow-y:auto` cannot reach: the
+horizontal overflow is the page's *index*, and the widest element on the page is the thing the
+reader uses to find things.
+
+Two changes, each guarded:
+
+1. **`column-count:1`, with the scroll kept.** The index scrolls vertically, which is the reading
+   order of a table of contents. The guard asserts the declaration (`columns` / `column-count`
+   must be 1) **and** that the rule keeps `overflow-y:auto` — a capped-height index that cannot
+   scroll hides the sections below the fold, which is the failure the ribbon was a workaround for.
+2. **The outline groups by document.** `kb.toc()` returns every section at level ≥ 2 (235 of
+   them). Printed flat, the index answers *"which section is §6.14.1u"* and not *"which document
+   am I in"* — and §6.14.2's shape is documents and their headings, not a ribbon. The template
+   now loops `docs` and filters `toc` per document, with a sticky heading per group.
+
+The guard is the cheap-mirror kind (same shape as `test_tab_geometry_holds_the_four_rules`): it
+asserts the declaration in the page's own stylesheet, so a reverted rule is caught in
+milliseconds instead of in a browser sweep. Mutation check: restoring `columns:2` and restoring
+the flat loop each failed the guard, and both were reverted.
+
+**Not in this slice.** The left-rail/two-pane layout, the document viewer as a pane (not the
+inline section panel), and search as a collapsed affordance — the rest of §6.14.2's sequence. The
+41 dead in-page document links §9 names are not touched here.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
