@@ -4897,6 +4897,70 @@ fixture because the sandbox host never runs), plus the shadow test in `tests/tes
 (a shadowed host answers `available: false` with the harness page's sentence, and no session is
 created on it).
 
+##### 6.14.1q page slices — the reference table, the `used by` line, and the Now strip (2026-10-13)
+
+The four states were approved as the shape of this page; these are the three slices that moved the
+page toward it, in the order they landed.
+
+**Reference out of the page (state 4: Reference in Help).** The settings reference table — the key
+table the editor had carried since §6.14.1i — left the page for `docs/PORTAL_SETTINGS.md`, the
+document the Help page already renders. A page that carries the reference and the editor carries two
+things that drift: the table the editor prints and the document an operator reads can disagree about
+what a key means, and nothing detects it. The page keeps a citation link into the document's own
+anchor. The guards that protected the table in `tests/test_personality_routes.py` moved **with the
+content** to the document that now carries it — a guard left behind on removed content is a test that
+protects nothing and blocks the next change.
+
+**The editor's `used by` line (the pair, from the personality side).** §6.14.1q records the pair on
+the registry row; the projects page shows which personality a project runs with. This is the inverse
+direction, on the surface where a personality is *changed*: a personality edited without knowing a
+project runs with it is edited blind, because the change lands on that project's next launch.
+`/api/personalities` and the editor element carry `used_by` =
+`projects.by_personality(projects.serve_facts())` — the records the launches wrote, not a page-side
+inference. The page knows personalities and models; it does not know sessions, and a page that
+assembled "used by" from its own data would be inventing the host's fact. The line is painted in
+`syncIdentity`, so it moves with every other step-1 fact (a line computed once at load describes
+whichever personality was selected then), and in the host-did-not-answer state it prints the payload's
+reason: **an empty line there is the page claiming it checked.**
+
+**The Now strip (state 1).** The deck answers *which* personality; the brief asks for the surface that
+answers *what the router is doing* — the running personality, the model it is serving, the slot it
+answers on, and the verb that stops it. Two facts, two sources, kept separate:
+
+- which personality is active is presets.ini's fact (its file is the file Apply would write,
+  §6.14.1l), **passed into** `personality.now_state()` from the deck loop, so the page states it once;
+- the model and slot are the router's own account (`GET /v1/models`, the port from its env file).
+  Neither is knowable from the library: a listed model may not be loaded, and a port in a template is
+  not a port the router bound. Unreachable router → the strip names the reason and **never prints a
+  slot it did not receive**.
+
+The strip's stop verb goes through `POST /api/services/llamacpp/stop` — confirm-gated, refused while
+an update is mid-swap — and lives **outside the personality-editor functions**: stopping the router is
+not a fact about the personality being edited.
+
+**Findings worth keeping.**
+
+1. **A verb belongs to the function boundary its tests read.** My first stop handler sat between
+   `applyIt`'s closing brace and the next `addEventListener`, inside the function the card tests
+   extract by name — a router-stop verb appeared inside the personality editor's function, and
+   `assert "postConfig" not in detach` failed. Where a control's handler lives is a statement about
+   what the control is for.
+2. **Name the answer's key where the answer is defined.** My page-half test asserted `host_ok`;
+   the view is defined with `hostOk`. A test written in the page's file that renames the component's
+   own key invents that component's shape — assert the key pair the view is defined by.
+3. **A `\` in a heredoc is a literal backslash.** It survived into a JS string in the page and
+   broke the sweep. Write page JS with a script that writes the file, not a shell heredoc.
+4. **A disabled control's reason must be visible text, not a tooltip.** The `reason` a disabled
+   Launch carries was in the button's `title`: unobservable to the UI harness and invisible on a touch
+   device. `expectText` on `#proj-launch` is the assertion that makes it observable.
+
+Tests: `tests/test_personality_routes.py` (the reference table is the document's, the citation anchor
+resolves, `used_by` on the payload with the inverse view's own keys, the Now strip's slot and model
+coming from the router), `tests/test_ui_contract.py` (the line wired to the payload and repainted on
+personality switch, the strip above the deck carrying its stop verb, the reason as visible text),
+`tests/ui/spec.json` (`#ed-used-by` says "cannot confirm" and `#pers-now` says "nothing is active" in
+the sandbox — the states the page cannot invent and must carry).
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The
