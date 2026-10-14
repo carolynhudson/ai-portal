@@ -185,6 +185,21 @@ payload; and `projects.by_personality(serve_facts())` answers the inverse — th
 personality runs — from the same records. That is the `used by` line's data source, ready for the
 personalities slice (the editor's row itself is queue 33's page work, not this one).
 
+**State 4 is done (plan §6.14.1q slice C, 2026-10-13).** The keys table left the page. The reference's
+citation links moved with it — `settingsdoc` prints *Measured in* §N per key section — and the page
+keeps one line naming the reference plus a link per row (`settings_ref`, `help_ref`: row data, the
+rule unchanged). The guards moved with the content: the per-key anchor, citation-count and
+refusal-stated assertions now read the document and the `/help` endpoint, where the row data is
+published, and the page is asserted on its half (no table, the link present, no control for a key the
+router owns).
+
+**The 6,800 px measure is unchanged, and the slice says why.** `tools/layout_measure.py` on the
+current code: **6,800 px, 3 blocks, tallest 5,298 px (Global ([*]))** — identical to the 2026-10-12
+measurement. Removing the table's 420 px did not move the number because the live portal process
+serves the code it started with, and a page measured against a server running older code reports that
+server's layout, not the repo's. The measurement below the 420 px is the editor block, and that is
+what state 3 (the editor opened by a verb, as steps) is for.
+
 ## 8. Settings page — canonical queue 41
 
 The named annoyance is confirmed, numerically. The Network access table is **1,026 px** wide with
