@@ -4961,6 +4961,60 @@ personality switch, the strip above the deck carrying its stop verb, the reason 
 `tests/ui/spec.json` (`#ed-used-by` says "cannot confirm" and `#pers-now` says "nothing is active" in
 the sandbox — the states the page cannot invent and must carry).
 
+##### 6.14.1r The page read by default — the editor opened by a verb, as steps (queue 33 states 2 and 3, 2026-10-13)
+
+The defect this slice answers is numeric, not aesthetic. `tools/layout_measure.py` on the deployed
+code: `/personalities` **6,430 px in three blocks**, tallest `2 Global ([*])` at **5,335 px** laptop /
+**10,295 px** phone, while the deck above it is 484 px. The page opens on a wall of fields, which is
+*Editing* on arrival. The approved shape reads by default and **opens editing by a verb**.
+
+**State 3.** The editor is collapsed by default; *Open the settings editor* is the verb. The state is
+an **attribute on the editor element** (`data-ed-view`, `data-ed-step`) — the page's own deck idiom
+(`data-raised`) — and CSS paints the visible step from it. Opening is a navigation, not a save: Save
+stays at the editor's foot, so "open" cannot be read as a mutation, and *Close the editor* never
+implies a save.
+
+**State 2, inside the editor.** Four steps in the page's own idiom: each carries the step state
+(`data-ed-step` / `data-current`) **and the step's name**, so "which one am I on" is text an operator
+reads, not a number to infer. A collapsed editor is a reading surface, not a form: its row names the
+personality, the values it sets, and which projects run it — so *Read by default* holds even with no
+personality selected.
+
+**The markup is composed in one place.** The row markup is built in one function with one data source
+and two renderings (collapsed row, open editor). Two hand-written copies of the same facts are two
+things that drift.
+
+**Findings worth keeping.**
+
+1. **A gate exemption is a last resort; prefer the state the gate is describing.** The stepper's
+   current-step button moved you to the step you were standing on — no DOM change, so the UI gate
+   called it dead. The fix was not `expectInert` (the page arguing with the gate) but stating the
+   current step as text: a `<b>`, not a verb. A control that changes nothing is not a control.
+2. **The sandbox is seeded by the pytest fixture, not by `Sandbox` itself.** A bare `Sandbox` run
+   renders unseeded states, so a page that is green under pytest is red under the bare sandbox. This
+   is why the personalities page's 19 failures vanished once the fixture seeded the model index: they
+   were all the unseeded page (empty index, `UI-Test-Work` absent, presets absent, no router),
+   not defects. Verify attribution — check which fixtures a failing assertion needs — before treating
+   a sandbox red as a page defect.
+3. **A sandbox cannot assert a live router.** A live router's state is not knowable in a sandbox, so
+   the spec cannot require a strip that names one. A *control* can always assert its reason: the
+   strip's stop verb starts disabled with its reason as visible text, asserted in the sandbox
+   (queue 31 finding 4 — the reason is text, never a tooltip).
+
+Tests: `tests/test_ui_contract.py` (collapsed by default and opened by a verb; the four named steps;
+the state as an element attribute; the row composed from one source; save not in the open verb; the
+stop verb's reason as text), `tests/ui/spec.json` (`#ed-summary` asserts the values the collapsed row
+names — the same sentence the open editor titles with; `#ed-steps` the named current step;
+`#pers-now-stop` the stop reason). **The personalities page is green in the UI harness for the first
+time** — all 19 pre-existing failures resolved. Full suite: 1090 passed, 3 skipped, 0 failed.
+
+**Not in this slice.** A 150 px verb at the very bottom of a 6,430 px page answers nothing for a
+reader at the top; the strip the dashboard has (`#dash-harness-now`) is the sibling for a state the
+code cannot answer in a sandbox (a serving session needs a running harness). The *global* answer to
+the page's height — the deck's density and fold placement, a 30-second glance — is queue 33 state 1's
+remaining part, and it needs a measure against the repo's code, which the instrument can only do
+against a server running that code.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

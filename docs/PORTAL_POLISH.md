@@ -200,6 +200,19 @@ serves the code it started with, and a page measured against a server running ol
 server's layout, not the repo's. The measurement below the 420 px is the editor block, and that is
 what state 3 (the editor opened by a verb, as steps) is for.
 
+**Queue 33 states 2 and 3 landed (plan §6.14.1r, 2026-10-13).** The editor is collapsed by default and
+opened by a verb, its four steps carry their state and their names on the element, and the collapsed
+row names the personality, the values it sets, and which projects run it. **The personalities page is
+green in the UI harness for the first time** — the 19 failures were the unseeded sandbox (empty model
+index, no seeded personality, no presets, no router), not the page: `Sandbox` alone does not seed,
+the pytest fixture does.
+
+**What the height measure needs now.** The instrument measures a *server*. To measure the repo's
+code the repo's code has to be running, which means a sandbox portal on the repo's tree (the same
+home the UI harness uses) rather than the live portal. Until that number exists, the honest statement
+about this page's height is the deployed 6,430 px, plus the fact that the editor — the block under the
+420 px — no longer paints its fields until a verb opens them.
+
 ## 8. Settings page — canonical queue 41
 
 The named annoyance is confirmed, numerically. The Network access table is **1,026 px** wide with
