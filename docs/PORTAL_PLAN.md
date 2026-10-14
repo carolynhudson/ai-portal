@@ -5015,6 +5015,59 @@ the page's height — the deck's density and fold placement, a 30-second glance 
 remaining part, and it needs a measure against the repo's code, which the instrument can only do
 against a server running that code.
 
+##### 6.14.1s The strip states the figure (queue 33, state 1 closed, 2026-10-13)
+
+**The density measure first, because it changed the slice.** Deck density, measured in a browser
+against this checkout: a strip is **43 px** (22.5 px line + 9 px padding), the card 45 px, the deck
+gap 6 px — **49 px per personality**, 490 px for ten. The target was ~46 px. So the 30-second glance
+was never a height problem, and chrome-cutting was the wrong slice: what the deck lacked was the
+*content* of the glance. The strip carried a fits badge with no number on it.
+
+**State 1.** The strip line now carries the verdict and the figure it was measured against —
+`fits · heaviest 4.1 GiB of 108.0 GiB · 3 models · max 1 resident` — from the deck's own budget facts
+(`data-worst-case`, `data-budget` on the strip element), asserted in `spec.json` as **text on a real
+row**, and attributed per card in `test_each_strip_prints_the_budget_of_its_own_card`.
+
+**Defect 1, found while building it: the strip printed the NEXT card's budget.** The deck's budget
+comes from `generated`, ordered by card; the loop's `loop.index` is **1-based**. A strip built with
+`loop.index` prints a real, correctly formatted figure that belongs to the following card, and the
+last prints nothing. Measured before the fix: `safe` printed 4.0 GiB (its own, by coincidence of
+ordering), `default` printed nothing. The page's existing budget test *counted formatted budget
+spans* and passed. Attribution — each card compared against its own pricing — is the only check that
+sees this. `default` is additionally compared against a deck built with `loop.index`, i.e. every card
+priced once and misaligned by one.
+
+**Defect 2: `id="pers-now-stop"` on both branches of the Now strip.** A page rendered with a running
+router contained two elements with one id: the script found one, the browser could not name the
+other. The stop verb is now **one control found by class**, enabled from the payload's answer. The
+contract test asserts one id in the markup, which is why it was able to fail.
+
+**Defect 3: the endpoint did not answer the deck's headline fact.** `/api/personalities` answered the
+pool (`budget_bytes`) and nothing per card, so a script had to infer the deck's verdict from a
+different fact; it now answers `budgets`, one dict per personality. (Writing the test exposed a third
+layer of the same bug class: `render()["budget"]` *is* the budget dict, so `.get("budget")` on it
+answers None for every card — which reads as "the library prices nothing", and would have made the
+new test pass a deck that printed no numbers at all.)
+
+**Findings for the queue.**
+1. **Counting formatted output is not attribution.** A test that asserts "one formatted budget span
+   per card" passes on a deck that prints every card's figure on the wrong card. Assert each card
+   against the value that card prices, and make the fixture's sizes differ so a misalignment is
+   detectable at all.
+2. **A duplicate id is invisible to a script.** `getElementById` finds *a* node and reports no
+   ambiguity; the browser's own name table has one entry. A two-state branch that puts the same id in
+   both arms is the shape that produces it, and the contract guard is one id in the markup.
+3. **A measure can retire a number a queue has been carrying.** The 6,430 px figure is a
+   deployed-server measurement; the repo-code instrument measured 800 px / 2 blocks on this checkout.
+   State 3 removed the defect, and the instrument is what lets the removal be stated rather than
+   asserted.
+
+Full suite: **1092 passed, 3 skipped, 0 failed**.
+
+**Not in this slice.** A live-router strip state cannot be asserted in a sandbox (finding 3 of §6.14.1r
+stands). The reason-when-it-does-not-fit text on the strip is the next candidate: the payload carries
+`budget.unpriced` and the findings, and the strip currently omits both.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

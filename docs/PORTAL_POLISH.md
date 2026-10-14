@@ -228,9 +228,18 @@ lets the removal be *stated* rather than asserted.
 the ~46 px target, and 10 personalities is a 490 px deck. The 30-second glance is therefore not a
 height problem: the facts a card must answer *from the strip* — which models it covers, the largest
 model's peak RAM against the aperture, and the reason when it cannot be served — are already computed
-in the payload, and the strip carries a fits badge with no figure. **Proposed next slice: put the
-aperture and peak-RAM figure in the strip line, with the reason when it does not fit** (the deck's own
-budget facts, not a page-side calculation), asserted in `spec.json` as text on a real row.
+in the payload, and the strip carried a fits badge with no figure.
+
+**Done — `8747a40`, plan §6.14.1s.** The strip line reads
+`fits · heaviest 4.1 GiB of 108.0 GiB · 3 models · max 1 resident`, from the deck's own budget facts,
+asserted in `spec.json` as text on a real row and attributed per card. Building it exposed a strip that
+printed the **NEXT** card's budget (`loop.index` is 1-based against a card-ordered list) — real,
+correctly formatted numbers, on the wrong cards, invisible to the page's existing budget test, which
+counted formatted spans. A second defect in the same area: `id="pers-now-stop"` sat on both branches of
+the Now strip, so a page with a running router had two elements with one id. Suite: 1092 passed.
+
+**Still open:** the *reason when it does not fit* on the strip. The payload carries `budget.unpriced`
+and the findings; the strip omits both.
 
 **One instrument gap to keep honest.** `layout_measure.py` hard-fails a block taller than three
 viewports, so a repo-code run exits 1 when such a block exists — a gate today, and the hook the
