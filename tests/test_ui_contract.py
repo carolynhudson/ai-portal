@@ -1550,3 +1550,106 @@ def test_the_personality_editor_shows_the_projects_that_run_with_it(client):
 
     page = client.get("/personalities").text
     assert 'id="ed-used-by"' in page, "the line is not rendered"
+
+
+# --------------------------------------------------- §6.14.1q state 3: the editor as steps
+#
+# The page's one measured defect (docs/PORTAL_LAYOUT.md, L6): one block taller than three viewports.
+# tools/layout_measure.py on the deployed code: /personalities is 6,430 px in three blocks, and the
+# tallest is `2 Global ([*])` at 5,335 px on a laptop — 10,295 px on a phone. The deck is 484 px. The
+# height is the editor, printed as one long column of every field of every key.
+#
+# The approved shape is the editor **opened by a verb, as steps**. These assertions are the shape,
+# each one a way the "fix" degenerates:
+#   - a `display:none` toggle with no state: a control that hides content and says nothing about
+#     what is visible is a layout trick, not a state. The state lives on the element, as an attribute
+#     the page's own deck already uses (`data-raised`), and every step is reachable.
+#   - a collapsed control with no words: a `>` that closes the editor leaves no way back.
+#   - steps with no names: a page that says "2" and "3" is an index, not a step an operator can aim at.
+#   - a second copy of the fields under a tab: two grids means two sources of truth for one setting.
+#
+# The fields themselves are asserted by the existing editor tests (row data, the one-object-at-a-time
+# rule, the shared-config cards). Nothing here moves a field; it changes what is visible at once.
+
+
+def _steps_section(script: str) -> str:
+    """The step-state code, bounded by its own two markers.
+
+    The step layer is deliberately NOT inside loadPersona/syncIdentity/summarize: the editor tests
+    read those functions by name, and a step handler absorbed into an editor function would be
+    claiming that showing a step is part of loading a personality (that absorbed-handler mistake is
+    recorded in plan §6.14.1q's findings). A named marker is how a layer says where it lives — and
+    the section is bounded, because a layer that runs to the end of the script is not a layer: it
+    absorbs every handler written after it, and a rule about that layer would be a rule about the
+    page.
+    """
+    start = script.find("// STEPS:")
+    assert start >= 0, (
+        "the step layer is not marked. The editor's functions are read by name by this file's other "
+        "tests, so the step-state code has to declare where it lives"
+    )
+    end = script.find("// STEPS END:", start)
+    assert end >= 0, "the step layer does not declare where it ends"
+    return script[start:end]
+
+
+def test_the_editor_opens_as_steps_and_says_which_one_is_open(client):
+    """The editor block is one step at a time, with the step named in text.
+
+    `data-step` on the editor element (the page's idiom: state is an attribute, not a class the
+    script flips), one visible section at a time, a stepper naming the steps, and the current step
+    stated where the operator reads it.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert 'id="pers-editor"' in tpl
+    assert "data-ed-step" in tpl, "the editor carries no step state"
+    # The sections the editor's own tests read by id, declared as steps. Names are data attributes
+    # and the ids stay exactly where they are: `ed-global` remains the grid the row tests read, and
+    # step 2 wraps it. A stepper that renamed the ids would move the editor's own guards.
+    for sec in ("ed-identity", "ed-global-fields", "ed-model-step", "ed-review"):
+        assert f'data-ed-step-name="{sec}"' in tpl, f"editor section {sec} is not a step"
+    assert 'id="ed-steps"' in tpl, "the editor has no stepper naming its steps"
+    assert tpl.count('id="ed-global"') == 1, "the stepper must not duplicate the field grids"
+
+    script = _script_of(tpl, "personalities")
+    steps = _steps_section(script)
+    assert "data-ed-step" in steps, "the step state is not what the script writes"
+    assert "ed-steps-list" in steps, "the stepper is not painted by the step layer"
+    # One visible section, stated in text an operator can read.
+    assert re.search(r"textContent|innerText", steps), "the current step is not stated in text"
+
+
+def test_the_editor_collapses_to_the_deck_behind_its_own_collapse_verb(client):
+    """The verb that opens the editor is matched by a verb that closes it, with words.
+
+    Collapsed is the page's default reading state (the operator complained about 6,800 px of scroll),
+    and a collapsed editor with no way back is how a page becomes unreadable in a new way.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert 'id="ed-open"' in tpl, "the editor has no verb that opens it"
+    assert 'id="ed-collapse"' in tpl, "the editor has no verb that closes it"
+    script = _script_of(tpl, "personalities")
+    steps = _steps_section(script)
+    assert "ed-open" in steps and "ed-collapse" in steps, "the collapse verbs are not wired"
+    assert "hidden" in steps, "the collapse verbs are not shown and hidden by the state"
+    assert "collapsed" in tpl, "the collapsed state is not named on the page"
+
+
+def test_the_editor_steps_move_without_moving_a_field(client):
+    """The step layer shows and hides the sections the editor tests already assert on.
+
+    The grid ids stay singletons — a stepper implemented by duplicating the field grids is two
+    sources of truth for one setting, which is the failure the editor's own tests were written for.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert tpl.count('id="ed-global"') == 1
+    assert tpl.count('id="ed-model-fields"') == 1
+    assert tpl.count('id="ed-model"') == 1, "the target <select> id must stay the single one"
+
+    script = _script_of(tpl, "personalities")
+    steps = _steps_section(script)
+    # The layer shows and hides sections by setting the editor's own attributes. It does not rebuild
+    # fields, copy grids, write values, or reach into a field: `querySelectorAll` is the selection
+    # API a layer would use to touch fields, and its absence is the assertion.
+    for forbidden in ("innerHTML", "appendChild", "ed-field", "querySelectorAll", ".value"):
+        assert forbidden not in steps, f"the step layer touches field internals ({forbidden})"

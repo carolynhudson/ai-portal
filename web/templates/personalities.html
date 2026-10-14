@@ -80,6 +80,22 @@ table.keys td.h{color:var(--mut)}
 h2{margin:18px 0 6px}
 /* The flow's three steps as one line above the fields they name: a list, not three headings, so the
    line stays short and the headings remain the thing the sections are titled by. */
+/* Queue 33 §6.14.1q state 3: the editor as steps, and the deck as the reading surface.
+   The state is an attribute on the editor element (`data-ed-view`, `data-ed-step`) -- the page's own
+   deck idiom -- so the visible step is a fact about the element, not a class the script flips.
+   Collapsed by default: the page's measured defect is one block taller than three viewports, and the
+   editor is what makes it tall. */
+.pers-editor[data-ed-view="collapsed"] [data-ed-step-name],
+.pers-editor[data-ed-view="collapsed"] .ed-steps,
+.pers-editor[data-ed-view="collapsed"] .ed-row:not(.ed-open-row){display:none}
+.pers-editor[data-ed-view="open"] .ed-open-row{margin-bottom:2px}
+.pers-editor[data-ed-view="open"] [data-ed-step-name]{display:none}
+.pers-editor[data-ed-view="open"][data-ed-step="1"] [data-ed-step-name="ed-identity"],
+.pers-editor[data-ed-view="open"][data-ed-step="2"] [data-ed-step-name="ed-global-fields"],
+.pers-editor[data-ed-view="open"][data-ed-step="3"] [data-ed-step-name="ed-model-step"],
+.pers-editor[data-ed-view="open"][data-ed-step="4"] [data-ed-step-name="ed-review"]{display:block}
+.ed-steps button{background:none;border:0;padding:0;cursor:pointer;font:inherit;color:inherit}
+.ed-steps li[data-current="yes"]{color:var(--acc);border-bottom-color:var(--acc);font-weight:600}
 .ed-steps{display:flex;flex-wrap:wrap;gap:4px 16px;list-style:none;margin:10px 0 2px;padding:0;
   font-size:.78rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
 .ed-steps li[data-step]{border-bottom:2px solid var(--line);padding-bottom:2px}
@@ -137,8 +153,8 @@ h2{margin:18px 0 6px}
     <b>Now:</b> nothing is active.
     {% if now.reason %}<span class="mut">{{ now.reason }}</span>{% endif %}
     <span class="mut">Apply a personality below to make one active, or
-      <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp">stop the router</button>
-      to stop what is loaded.</span>
+      <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp" disabled>nothing to stop</button>
+      — the verb stops what is loaded, and it unlocks when something is.</span>
   {% endif %}
 </div>
 
@@ -335,9 +351,24 @@ h2{margin:18px 0 6px}
   are editing is the configuration, not an empty form -- and a field you leave alone is sent
   unchanged, which is the same as not touching it.
 </p>
-<div class="pers-editor" id="pers-editor"
+{# Queue 33 §6.14.1q, state 3: the editor as steps.
+     The page's measured defect is one block taller than three viewports (tools/layout_measure.py on
+     the deployed code: /personalities 6,430 px in three blocks, tallest `2 Global ([*])` at 5,335 px
+     laptop / 10,295 px phone; the deck is 484 px). The height is the editor printing every field of
+     every key as one column.
+     State lives on the element as an attribute -- the page's own deck idiom (`data-raised`) -- and
+     the editor opens collapsed: the deck is the reading surface, the editor is opened by a verb. #}
+<div class="pers-editor" id="pers-editor" data-ed-view="collapsed" data-ed-step="1"
      data-configs='{{ {"configs": configs, "uses": config_uses,
                        "used_by": used_by} | tojson }}'>
+
+  <section data-ed-step-name="ed-identity">
+  <div class="ed-row ed-open-row">
+    <button type="button" id="ed-open" class="cta">Open the settings editor</button>
+    <span class="mut" id="ed-collapsed-note"></span>
+    <button type="button" id="ed-collapse" hidden>Close the editor</button>
+  </div>
+  <ol class="ed-steps" id="ed-steps-list" hidden></ol>
   <div class="ed-row">
     <label for="ed-persona">personality</label>
     {# The personality's own current settings ride on its option (§6.14.1i), computed on the
@@ -368,11 +399,10 @@ h2{margin:18px 0 6px}
      presentation; what it commits to is that step 1 owns the personality itself -- its name, how many
      models may be resident, the note, which models it covers, create/save/delete -- and steps 2 and 3
      own the settings it carries. Creating lives here, not on the deck: the deck's one verb is raising. #}
-  <ol class="ed-steps" id="ed-steps">
-    <li data-step="1">1 personality</li>
-    <li data-step="2">2 global settings</li>
-    <li data-step="3">3 model settings</li>
-  </ol>
+  <p class="mut" id="ed-steps">
+    <b>Three steps.</b> 1 the personality itself &middot; 2 global ([*]) settings &middot;
+    3 per-model settings. Creating lives here, not on the deck: the deck&rsquo;s one verb is raising.
+  </p>
 
   <div class="ed-row">
     <label for="ed-new-name" class="mono">name</label>
@@ -408,7 +438,9 @@ h2{margin:18px 0 6px}
      without knowing a project runs with it is edited blind: the change lands on that project's
      next launch. #}
   <p class="mut" id="ed-used-by"></p>
+  </section>
 
+  <section data-ed-step-name="ed-global-fields">
   <h3>2 Global ([*])</h3>
   <div class="ed-grid" id="ed-global">
     {# The row component (§6.14.1): NAME [control] default on one line, the help sentence as the
@@ -458,6 +490,9 @@ h2{margin:18px 0 6px}
     {% endfor %}
   </div>
 
+  </section>
+
+  <section data-ed-step-name="ed-model-step">
   <h3>3 Per model</h3>
   {# The model personalities live here, as one card per model this personality covers (§6.14.1f
      answer 2). One per model, not an arbitrary pile: presets.ini has one section per model, and
@@ -547,6 +582,9 @@ h2{margin:18px 0 6px}
     {% endfor %}
   </div>
 
+  </section>
+
+  <section data-ed-step-name="ed-review">
   <p class="mut" id="ed-summary">no edits proposed</p>
 
   <div class="ed-row">
@@ -563,6 +601,7 @@ h2{margin:18px 0 6px}
     personality does not cover. The last one matters because a section the router ignores looks
     exactly like a setting that took effect.
   </p>
+  </section>
 </div>
 
 <script>
@@ -854,6 +893,100 @@ h2{margin:18px 0 6px}
     if (mid) loadModel(mid);
     else summarize();
   }
+
+  // STEPS: queue 33 §6.14.1q state 3, the editor's own step layer, deliberately outside
+  // loadPersona / syncIdentity / summarize.
+  //
+  // It is outside them because showing a step is not part of loading a personality: the editor's
+  // tests read those functions by name, and a step handler absorbed into one of them would claim
+  // that the step state belongs to the personality (plan §6.14.1q records the absorbed-handler
+  // mistake this avoids). It touches no field: the sections move, the fields stay where the editor's
+  // own tests assert them, in the grids whose ids must stay singletons.
+  const STEPS = [
+    {n: 1, id: 'ed-identity', label: 'personality'},
+    {n: 2, id: 'ed-global-fields', label: 'global ([*])'},
+    {n: 3, id: 'ed-model-step', label: 'per model'},
+    {n: 4, id: 'ed-review', label: 'review'},
+  ];
+  const editorEl = () => $('pers-editor');
+  const stepState = () => editorEl().getAttribute("data-ed-view");  // 'collapsed' | 'open'
+  const currentStep = () => Number(editorEl().getAttribute("data-ed-step") || 1);
+
+  // The stepper is painted from STEPS: a <li> per step, each carrying the step state and naming the
+  // step, so "which one am I on" is text an operator reads, not a number to infer.
+  //
+  // The current step is a <b>, not a button. A button that moves you to the step you are standing on
+  // changes nothing, and the UI gate is right to call that dead -- the page would have to declare the
+  // exemption, which is the page arguing with the gate. The current step is not a verb: it is the
+  // answer to "which one am I on", and it is stated as the step's own text.
+  const paintStepper = () => {
+    const list = $('ed-steps-list');
+    list.replaceChildren(...STEPS.map((st) => {
+      const li = node('li');
+      li.dataset.step = String(st.n);
+      const current = stepState() === "open" && currentStep() === st.n;
+      li.setAttribute("data-current", String(current));
+      const label = `${st.n} ${st.label}`;
+      if (current) {
+        li.append(node('b', null, label));
+        return li;
+      }
+      const b = node('button', null, label);
+      b.type = 'button';
+      b.setAttribute("data-step-to", String(st.n));
+      li.append(b);
+      return li;
+    }));
+  };
+
+  // The current step stated in text, in the row the collapse verbs live in.
+  // Collapsed: the row states the verb it carries. Open: the same row states which step is
+  // showing. The sentence is never empty in either state, so the row is not a control that does
+  // nothing and the step you are on is always readable as text.
+  const paintStepNote = () => {
+    const open = stepState() === 'open';
+    const st = STEPS[currentStep() - 1] || STEPS[0];
+    $('ed-collapse').hidden = !open;
+    $('ed-open').hidden = open;
+    $('ed-collapsed-note').textContent = open
+      ? `Step ${st.n} of ${STEPS.length}: ${st.label}. The other steps stay on the page and are`
+        + ' listed above — nothing is disabled by being off-screen.'
+      : 'The settings editor is closed. The deck above is the reading surface; opening the editor'
+        + ' is what lets you change a personality.';
+    $('ed-steps-list').hidden = !open;
+  };
+
+  function setStep(n) {
+    const st = STEPS.find((x) => x.n === n) || STEPS[0];
+    editorEl().setAttribute("data-ed-step", String(st.n));
+    editorEl().setAttribute("data-ed-view", "open");
+    paintStepper();
+    paintStepNote();
+  }
+
+  function openEditor() { setStep(currentStep()); }
+  function collapseEditor() {
+    editorEl().setAttribute("data-ed-view", "collapsed");
+    paintStepper();
+    paintStepNote();
+  }
+
+  // Opening the editor is the one verb the editor has when it is collapsed, and collapsing is the
+  // verb it has when it is open. Both are stated in text: the collapsed row carries a sentence, the
+  // stepper's note says which step is showing. `paintStepNote` hides one verb and shows the other,
+  // so the page never offers a verb that does nothing.
+  $('ed-open').addEventListener('click', openEditor);
+  $('ed-collapse').addEventListener('click', collapseEditor);
+
+  $('ed-steps-list').addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.getAttribute("data-step-to");
+    if (b) setStep(Number(b));
+  });
+  paintStepper();
+  paintStepNote();
+  // STEPS END: the step layer's state is `data-ed-view` and `data-ed-step` on the editor element.
+  // The layer reads nothing and writes nothing inside a field, which is why it has no use for
+  // querySelectorAll: the sections move, the fields stay exactly where the editor's tests read them.
 
   /* Step 1 (§6.14.1f answer 2): the personality itself -- its name, how many models may be resident,
      its note, which models it covers, and create / save / delete. These are page verbs on
@@ -1282,23 +1415,61 @@ h2{margin:18px 0 6px}
   // that requires confirm and refuses while an update is mid-swap (§6.14.1l), not a bare call. It
   // is deliberately outside the personality-editor functions: stopping the router is a fact about
   // the whole host, not about the personality being edited.
+  async function stopRouter() {
+    const b = $('pers-now-stop');
+    if (!confirm('Stop the router? Every profile stops answering.')) return;
+    b.disabled = true;
+    const r = await fetch('/api/services/llamacpp/stop', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: true}),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      b.disabled = false;
+      $('pers-now').insertAdjacentText('beforeend', ` refused: ${data.detail || r.status}`);
+      return;
+    }
+    // The strip reports the router's live state, so the strip is what gets re-read. Reloading the
+    // page would discard the edits sitting in the editor, and stopping the router is not a reason
+    // to lose them.
+    $('pers-now').insertAdjacentText('beforeend', ' stopping; the strip refreshes below.');
+    pollNow();
+  }
+
+  // The strip's answer is live: the same fact `personality.now_state()` builds at render time, read
+  // off /api/personalities (D1: every read is also an endpoint). The text is rebuilt from the
+  // payload's answer, so a strip never keeps a slot the router stopped reporting.
+  const NOW = SHARED.now || null;
+
+  function paintNow(now) {
+    if (!now) return;
+    const parts = [now.running ? `Now: ${now.running}` : 'Now: nothing is active.'];
+    if (now.serving) parts.push(`serving ${now.serving}`);
+    if (now.slot) parts.push(`on :${now.slot}`);
+    if (now.loaded) parts.push(`${now.loaded} model${now.loaded === 1 ? '' : 's'} loaded`);
+    const el = $('pers-now');
+    el.textContent = parts.join('  ');
+    if (now.reason) el.textContent = `${el.textContent}  ${now.reason}`;
+    const b = $('pers-now-stop');
+    b.disabled = !(now.loaded || now.running);
+    b.textContent = b.disabled ? 'nothing to stop' : 'stop the router';
+  }
+
+  async function pollNow() {
+    try {
+      const r = await fetch('/api/personalities');
+      if (r.ok) paintNow((await r.json()).now);
+    } catch (e) { /* the strip keeps the last answer it stated */ }
+  }
+
   const nowStop = $('pers-now-stop');
   if (nowStop) {
-    nowStop.addEventListener('click', async () => {
-      if (!confirm('Stop the router? Every profile stops answering.')) return;
-      nowStop.disabled = true;
-      const r = await fetch('/api/services/llamacpp/stop', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({confirm: true}),
-      });
-      const data = await r.json().catch(() => ({}));
-      nowStop.disabled = false;
-      if (!r.ok) {
-        $('pers-now').insertAdjacentText('beforeend', ` refused: ${data.detail || r.status}`);
-        return;
-      }
-      location.reload();
-    });
+    paintNow(NOW);
+    nowStop.addEventListener('click', stopRouter);
+    // The refresh is driven by the strip's own verb, not by a timer. A 20 s interval made every
+    // request the sweep reported belong to no control, and a background poll of the whole page
+    // payload is not how a strip stays current: the strip goes stale when the router is stopped,
+    // and that is exactly the moment pollNow() runs.
   }
 
 

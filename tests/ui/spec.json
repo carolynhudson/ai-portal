@@ -1144,7 +1144,9 @@
         ".mp-card",
         ".mp-strip",
         "#ed-used-by",
-        "#pers-now"
+        "#pers-now",
+        "#ed-open",
+        "#ed-steps-list"
       ],
       "expectText": [
         {
@@ -1360,6 +1362,20 @@
           ],
           "selector": "#pers-now",
           "contains": "nothing is active"
+        },
+        {
+          "_comment": [
+            "Queue 33 §6.14.1q, state 3: the editor opens collapsed, opened by a verb.",
+            "The measured defect is a page one block taller than three viewports (10,295 px on a",
+            "phone), and the block is the editor printing every field of every key as one column.",
+            "It is fixed by the page deciding what you read first, not by removing content: the",
+            "deck is the reading surface, the editor is opened by a verb, and it names the step it",
+            "shows. Asserted as visible text — expectVisible cannot tell a collapsed editor from",
+            "an editor that is simply always open."
+          ],
+          "selector": "#ed-collapsed-note",
+          "matches": "[Oo]pen the settings editor|opening the editor",
+          "note": "collapsed: the editor is opened by a verb"
         }
       ],
       "expectNoInjectedMarkup": [

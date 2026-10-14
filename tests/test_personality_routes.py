@@ -1169,6 +1169,10 @@ def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, libra
     body = client.get("/personalities").text
     for sel in ('id="ed-new-name"', 'id="ed-models-max"', 'id="ed-note"', 'id="ed-attach"',
                 'id="ed-create"', 'id="ed-save"', 'id="ed-delete"', 'id="ed-steps"'):
+        # `ed-steps` names the three steps in words. It is a paragraph, not a list of buttons: a
+        # step that is already showing is a control that changes nothing, and the UI gate is right
+        # to call that dead. The stepper the editor moves through is `ed-steps-list`, painted by
+        # the step layer, and its own guards live in test_ui_contract.
         assert sel in body, f"step 1 is missing {sel}"
     # The attach list is the two kinds a personality's `models` accepts, both of them named on the
     # page: a library model id, and a stored config with the file it renames.
@@ -1252,8 +1256,16 @@ def test_the_page_says_what_an_empty_field_means(client):
 
 
 def _shared_data(body: str) -> dict:
-    """The editor's shared-object data, read off the attribute the page reads it from."""
-    m = re.search(r'id="pers-editor"\s+data-configs=\'([^\']*)\'', body)
+    """The editor's shared-object data, read off the attribute the page reads it from.
+
+    Read from the element's whole start tag: asserting the attribute's *position* inside the tag
+    (id immediately followed by data-configs) makes a layout attribute added between them —
+    `data-ed-view`, state 3 — look like the data went missing. The contract is "the editor element
+    carries this attribute", which is what the page's own reader depends on.
+    """
+    tag = re.search(r'<div class="pers-editor"[^>]*>', body)
+    assert tag, "the editor element is not rendered"
+    m = re.search(r'data-configs=\'([^\']*)\'', tag.group(0))
     assert m, "the editor carries no shared-object data"
     return json.loads(html.unescape(m.group(1)))
 
