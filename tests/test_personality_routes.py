@@ -921,6 +921,62 @@ def textOf(markup: str) -> str:
     return " ".join(re.sub(r"<[^>]+>", " ", markup).split())
 
 
+_VERDICT_WORDS = ("fits", "over", "cannot", "unknown", "bounded", "judged")
+
+
+def _verdictWords(text: str) -> list:
+    return [w for w in text.split() if w in _VERDICT_WORDS]
+
+
+def _textOfStrip(markup: str) -> str:
+    return " ".join(re.sub(r"<[^>]+>", " ", markup).split())
+
+
+def _badgeList(markup: str) -> list:
+    return [b.strip() for b in re.findall(
+        r'<span class="[^"]*\bbadge\b[^"]*"[^>]*>([^<]*)</span>', markup)]
+
+
+def stripBadge(markup: str) -> str:
+    """The single verdict word(s) the strip badges -- the glance's answer, on its own."""
+    return " ".join(_badgeList(markup))
+
+
+def _reasonClauses(markup: str) -> list:
+    """Reason clauses as printed: one per span, so a clause is the template's unit and not a
+    string the guard invents by splitting a joined one.
+
+    `class="mut pers-reason"` is not matched by a pattern whose class attribute must END at
+    `pers-reason`: the real class list is `mut pers-reason`, so the regex found nothing, the
+    clause loop iterated zero times, and the unpriceable card's doubled verdict -- the exact
+    defect this rule was written for -- passed the whole suite.
+    """
+    return [c.strip() for c in re.findall(
+        r'<span class="[^"]*\bpers-reason\b[^"]*"[^>]*>([^<]*)</span>', markup) if c.strip()]
+
+
+def stripReason(markup: str) -> str:
+    """The reason clauses the strip prints beside the badge."""
+    return " ".join(_reasonClauses(markup))
+
+
+def stripVerdict(markup: str) -> str:
+    """The strip's verdict text: badges and reason clauses only, joined as the reader sees them.
+
+    Selecting the spans (rather than stripping tags from the whole button) is what makes a
+    length guard mean something: the raw markup carries `data-worst-case="4311748793"` and
+    friends, so a guard written against it measures attribute bytes, and a deck that printed
+    no verdict at all would pass.
+
+    `class="badge yes"` is not matched by a `[^"]*badge[^"]*` pattern anchored at the quote:
+    the class attribute ENDS at "badge", so every verdict badge was skipped and the measured
+    string was the reason clauses alone -- a strip with no badge at all passed the guard.
+    """
+    spans = re.findall(r'<span class="[^"]*\b(?:badge\b[^"]*|pers-reason)\b"[^>]*>([^<]*)</span>',
+                       markup)
+    return " ".join(" ".join(x.split()) for x in spans)
+
+
 def test_the_deck_prints_one_line_per_personality(client):
     """Every personality gets a strip naming it, its fit, and its model count -- and a body."""
     body = client.get("/personalities").text
@@ -1606,28 +1662,240 @@ def test_the_strip_states_the_reason_when_a_card_cannot_be_served(client, monkey
     assert "RAM" not in safe, f"the RAM reason leaked to the aperture card: {safe!r}"
     assert "aperture" not in default, f"the aperture reason leaked to the RAM card: {default!r}"
 
+# --- forcing a budget state, at the measurement layer ------------------------------------
+#
+# A guard that hand-edits a card's findings asserts the deck against a state the host
+# cannot produce, and the deck then goes green against a wording the validator never
+# writes. So the states below are forced by replacing what the budget is COMPUTED FROM
+# (a model's peak cost, installed RAM, the aperture, the host caches) -- never by
+# editing the dict it returns, and never by editing the personality (models, models_max),
+# which would change WHICH personality the card is and leave the assertions running
+# against a card the page does not have.
 
-def test_the_strip_says_which_models_it_could_not_price(client, monkeypatch, library):
-    """`budget unknown` with no names is a verdict with no next step.
+STRIP_MAX = 120
+_PEAK = 30 * GIB
+_CACHE = 8 * GIB
+_RAM = 122 * GIB
+_POOL = 108 * GIB
 
-    An unpriced model is the one reason the operator can act on without opening the card:
-    the names are in the payload (`unpriced`) and are the models to index or remove.
+
+def _measure(monkeypatch, *, peak=_PEAK, cache=_CACHE, ram=_RAM, pool=_POOL) -> None:
+    """Pin every measurement the budget is computed from.
+
+    Called per test, never at module scope: a module-level patch would leak into the other
+    fifty route tests in this file and price their cards with this guard's numbers.
     """
-    real = P.budget_for
+    monkeypatch.setattr(mi, "peak_bytes", lambda row, ctx=None: peak)
+    monkeypatch.setattr(mi, "host_cache_bytes",
+                        lambda row, **kw: {"total_bytes": cache, "notes": []})
+    monkeypatch.setattr(mi, "ram_total_bytes", lambda: ram)
+    monkeypatch.setattr(mi, "_pool_bytes", lambda: pool)
 
-    def mutate(personality, budget_bytes=None):
-        b = real(personality, budget_bytes)
-        if personality.get("name") == "safe":
-            b.unpriced = ["Unpriceable-7B.gguf"]
-            b.fits = P.FITS_UNKNOWN
-            b.worst_case_bytes = None
-        return b
 
-    monkeypatch.setattr(P, "budget_for", mutate)
-    strips = {n: textOf(m) for n, m in _strips(client.get("/personalities").text).items()}
-    safe = strips["safe"]
-    assert "Unpriceable-7B.gguf" in safe, (
-        f"the safe strip reads {safe!r}: an unpriced model is named in the payload and must "
-        "appear on the strip, because it is the reason with an action attached")
-    assert "cannot price" in safe, (
-        f"the strip names the model without saying what is wrong with it: {safe!r}")
+def _unpriceable(monkeypatch) -> None:
+    """Force the one state where a priced card's worst case is unbounded.
+
+    There are two ways a card becomes unpriced, and they are not the same state: a MISSING
+    model makes `describe()` raise `PersonalityError`, so the API answers 409 and there is no
+    card to read. The state with a strip is the one where every model resolves and one of them
+    cannot be COSTED -- which is what a GGUF whose header cannot be priced produces today.
+    `peak_bytes` is the pricing step, so it answers None for the fallback card's model. No
+    name is invented and the library stays exactly the fixture's.
+    """
+    ghost = P.SAFE["models"][0]
+
+    def peak(row, ctx=None):
+        return None if row.get("id") == ghost else 30 * GIB
+
+    monkeypatch.setattr(mi, "peak_bytes", peak)
+    monkeypatch.setattr(mi, "host_cache_bytes",
+                        lambda row, **kw: {"total_bytes": 8 * GIB, "notes": []})
+    monkeypatch.setattr(mi, "ram_total_bytes", lambda: 122 * GIB)
+    monkeypatch.setattr(mi, "_pool_bytes", lambda: 108 * GIB)
+
+
+def _states() -> list:
+    """(label, force, [(strip phrase, host phrase)], words the strip must NOT carry, badge).
+
+    The "must not" list is the point of the table: a card over RAM must not read "fits", and
+    a card that fits the aperture must not read "over the aperture". Both are true sentences
+    about a DIFFERENT card, which is exactly how a deck-scale verdict goes wrong (§6.14.1s).
+
+    The 5th column is the badge this state must produce -- asserted against the table, not
+    read off the page: a guard that takes the verdict from the markup and compares it with the
+    markup cannot notice the verdict changing. It also licenses the clause rule below: a reason
+    clause that repeats its own state's badge word answers the question twice.
+
+    Matching is per (strip phrase, host phrase) PAIR, not on a flat word list. "worst case ...
+    fits with 78.0 GiB spare" is an ok-severity note about the models the router loads AT MOST
+    models_max of at once -- a fact about a subset, not a verdict on the card. Paired on words
+    alone, an unpriceable card would oblige its strip to print "fits", letting the note about a
+    subset outrank the fact about the card.
+    """
+    return [
+        ("fits both ceilings",
+         lambda mp: _measure(mp),
+         [("fits", "fits with")], ["over"], "fits"),
+        ("over RAM, inside the aperture",
+         lambda mp: _measure(mp, peak=90 * GIB, ram=95 * GIB),
+         [("over RAM", "physical memory")], ["fits", "aperture"], "over RAM"),
+        ("over the aperture",
+         lambda mp: _measure(mp, peak=140 * GIB, ram=200 * GIB),
+         [("over the aperture", "exceeds")], ["fits"], "does not fit"),
+        ("no aperture to measure",
+         lambda mp: _measure(mp, pool=0),
+         [("no readable memory budget", "no readable memory budget")], ["fits", "over"],
+         "budget unknown"),
+        ("a model the library cannot price",
+         _unpriceable,
+         [("cannot price", "cannot be priced")], ["fits"], "cannot be bounded"),
+    ]
+
+
+def _licensed() -> dict:
+    """Ceiling words a clause may use, derived from the state table that drives the guard below.
+
+    Written as a hand-kept list, the rule becomes a third thing the template has to agree with:
+    when a state was added to the table, the clause rule silently rejected its only honest
+    wording ("no readable memory budget" names the ceiling -- `budget` -- and is in no list I
+    thought to add). Each state's clauses are licensed by the ceiling its own verdict phrase
+    names, so a new state licenses its own words and nothing is kept in sync by hand.
+    """
+    out: dict[str, set[str]] = {}
+    for label, _force, want, _forbidden, _badge in _states():
+        words: set[str] = set()
+        for phrase, _host in want:
+            words.update(w.lower() for w in phrase.split())
+        out[label] = words
+    return out
+
+
+def test_a_card_inside_the_aperture_and_over_ram_is_not_badged_as_fitting(
+        client, monkeypatch, library):
+    """The badge used to answer the aperture. The card is over the machine.
+
+    "fits" on a card the validator puts over RAM is the page's worst available lie, and it has
+    a specific shape on this box: the operator reads a green badge, applies, and the kernel
+    kills llama-server -- which is what the recorded OOM events looked like. The strip must
+    answer the RAM ceiling, and must NOT say "over the aperture" for a card that fits the
+    aperture.
+    """
+    _measure(monkeypatch, peak=90 * GIB, ram=95 * GIB)
+    api = client.get("/api/personalities").json()
+    page = client.get("/personalities").text
+    hits = 0
+    for card in api["personalities"]:
+        name = card["name"]
+        findings = card.get("findings") or []
+        strip = textOf(_strips(page)[name])
+        over_ram = any("physical memory" in f.get("message", "") for f in findings)
+        if not over_ram:
+            continue
+        hits += 1
+        assert "over RAM" in strip, (
+            f"the {name} strip does not name the ceiling its own finding names "
+            f"({[f['message'] for f in findings if 'physical memory' in f['message']]}); "
+            f"the strip reads {strip!r}")
+        assert "fits" not in strip.split(), (
+            f"the {name} strip badges a card the validator puts over RAM as 'fits': {strip!r}")
+        assert "aperture" not in strip, (
+            f"the {name} strip says 'over the aperture' for a card whose finding is the RAM "
+            f"ceiling: {strip!r}")
+    assert hits, (
+        "no card was forced over RAM, so nothing above was asserted: "
+        f"{[f.get('message') for c in api['personalities'] for f in c.get('findings') or []]}")
+
+
+def test_the_strip_verdict_matches_the_findings_in_every_state(client, monkeypatch, library):
+    """Deck-scale wording, checked card by card against that card's own findings, in five states.
+
+    The strip is the operator's 30-second answer to "can I run this". Each state asserts what
+    the strip must carry, what it must NOT, and that the state was reached at all -- a loop
+    that forces five states and matches none of them proves less than it looks like it proves.
+    """
+    seen: set[str] = set()
+    licensed = _licensed()
+    for label, force, want, forbidden, badge_word in _states():
+        force(monkeypatch)
+        api = client.get("/api/personalities").json()
+        page = client.get("/personalities").text
+        cards = {c["name"]: c for c in api["personalities"]}
+        for name, markup in _strips(page).items():
+            findings = cards[name].get("findings") or []
+            verdict = stripVerdict(markup)
+            badge, clauses = stripBadge(markup), _reasonClauses(markup)
+            assert len(_badgeList(markup)) <= 1, (
+                f"[{label}] the {name} strip carries {len(_badgeList(markup))} verdicts "
+                f"{_badgeList(markup)!r} ({verdict!r}); the glance answers the question once")
+            assert badge == badge_word, (
+                f"[{label}] the {name} strip badges {badge!r}; this state's verdict is "
+                f"{badge_word!r}. Asserted against the table, not against the strip: a guard "
+                "that reads the verdict off the page and compares it to the page cannot "
+                "notice the verdict changing.")
+            # The strip is a sentence, so it has a subject: the card's name. A deck line that
+            # reads "over RAM by 3.0 GiB" with the name printed by a NEIGHBOURING card is the
+            # attribution bug this deck has already had once (§6.14.1s), and a guard that reads
+            # only the spans cannot see it -- the name lives outside them.
+            assert name in _textOfStrip(markup), (
+                f"[{label}] the strip whose aria-raises is {name!r} does not print {name!r} "
+                "among its text; the deck line the operator reads is the sentence that names "
+                f"the card it judges: {_textOfStrip(markup)!r}")
+            # Severity decides which findings LICENSE a strip phrase. The ok-severity note is
+            # the host's positive verdict ("worst case ... fits with 78.0 GiB spare"); the
+            # strip's job is to carry the verdict, so the positive state is asserted against
+            # it. An ok note never licenses a phrase that names a problem -- "over RAM",
+            # "over the aperture", "cannot price" only arrive from bad/warn findings, which is
+            # what the forbidden list checks.
+            if not any(h in f.get("message", "") for f in findings for _, h in want):
+                continue
+            seen.add(label)
+            for w, host in want:
+                assert w in verdict, (
+                    f"[{label}] the {name} strip's verdict is {verdict!r} while its findings "
+                    f"say {[f['message'] for f in findings]} -- the phrase {w!r} (licensed by "
+                    f"{host!r}) is missing")
+            for w in forbidden:
+                assert w not in verdict.split(), (
+                    f"[{label}] the {name} strip's verdict {verdict!r} carries {w!r} for a "
+                    f"card whose findings are {[f['message'] for f in findings]}")
+            assert len(verdict) <= STRIP_MAX, (
+                f"[{label}] the {name} strip's verdict runs {len(verdict)} characters "
+                f"({verdict!r}); deck-scale is <= {STRIP_MAX}")
+            # A reason clause states the MEASUREMENT it made: a number, or the ceiling it could
+            # not measure. "does not fit" + "over the aperture by 32.0 GiB" removes the click
+            # that would go look the number up; a clause with neither is the badge restated in
+            # longer words -- which is what the unpriceable card did (badge "cannot be
+            # bounded", reason "cannot price 1: <model>": the verdict twice, no cause).
+            for clause in clauses:
+                low = clause.lower()
+                # The rule is about SENTENCES, not words. "over RAM by 3.0 GiB" shares "over RAM"
+                # with the badge and is not a second verdict -- it is the badge's measurement.
+                # "cannot be bounded" beside "cannot price 1: X" is a second verdict: a clause
+                # that is a verdict in its own right, with no figure attached to it.
+                assert not _isVerdictClause(clause, badge_word), (
+                    f"[{label}] the {name} strip's reason clause {clause!r} is a verdict, not a "
+                    f"cause: the strip answers the question twice ({badge!r} + {clause!r}) and "
+                    "states no reason")
+                assert re.search(r"\d", clause) or any(w in low for w in licensed[label]), (
+                    f"[{label}] the {name} strip's reason clause {clause!r} states neither a "
+                    f"figure nor the ceiling this state's verdict ({sorted(licensed[label])}) "
+                    f"is about, so it restates the badge {badge!r} in longer words; the glance "
+                    "exists to remove the click that would look the number up")
+    labels = [x[0] for x in _states()]
+    assert seen == set(labels), (
+        f"forced {sorted(labels)} but only {sorted(seen)} reached a card's findings, so the "
+        "loop above proved less than it looks like it proved")
+
+
+def _isVerdictClause(clause: str, badge_word: str) -> bool:
+    """True when a clause is a verdict in its own right, not the badge's measurement.
+
+    A clause that ends in a number carries the measurement the verdict was made from, so it is
+    a cause. A clause with no figure that carries the state's verdict wording is the verdict
+    restated. Words alone cannot separate them -- "over RAM by 3.0 GiB" shares every word with
+    its badge and is the honest form -- so the figure decides.
+    """
+    low = clause.lower()
+    has_number = bool(re.search(r"\d", clause))
+    verdictish = any(w in low for w in _VERDICT_WORDS) or badge_word.lower() in low
+    return verdictish and not has_number

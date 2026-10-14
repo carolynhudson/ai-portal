@@ -865,6 +865,27 @@
       "path": "/personalities",
       "expectTitle": "Personalities",
       "expectRequests": [],
+      "expectInert": [
+        "_comment",
+        "^a\\[nth=3\\]$",
+        "^select#mp-attach-1\\[nth=157\\]$"
+      ],
+      "_expectInert_comment": [
+        "a[nth=3] is the sidebar's own Personalities link: the sweep reaches it on the personalities",
+        "page, where clicking it is a reload of the page the harness is already driving. Inert by",
+        "definition on every page (the nav link for the page you are on), and asserted inert for the",
+        "other pages by their own expectNoRequests.",
+        "",
+        "select#mp-attach-1 is the attach select on the seeded model card, in the state the page",
+        "lands in: UI-Test-Cfg is attached, so the select opens on `UI-Test-Cfg`, and the only",
+        "options the page offers for that file are `none` and `UI-Test-Cfg` (a config attaches only",
+        "to the file it was built on). A select whose options are those two, with the current value",
+        "already chosen, has no third state: the sweep's choice lands on the value it already had.",
+        "",
+        "Declared inert rather than swept as a no-op, and paired with the selectCases below that",
+        "drive the two transitions the select DOES have (attach, detach), so the exemption covers",
+        "the state, not the control."
+      ],
       "+requireConfirmFor": [
         "^/api/personalities/apply$",
         "^/api/personalities/delete$",
@@ -1184,6 +1205,34 @@
           ],
           "selector": "#pers-deck .pers-strip .pers-reason",
           "maxCount": 0
+        },
+        {
+          "_comment": [
+            "Plan 6.14.1u: one verdict per strip, and the verdict answers BOTH ceilings.",
+            "The badge used to answer the aperture only, so a card the validator puts over",
+            "physical RAM was badged green -- and an OOM the kernel delivers is exactly what",
+            "that looks like on this box, not a GPU error. The live sandbox fits both",
+            "ceilings, so the page's assertion is the count: a badge per strip, and the",
+            "running badge is the second one a strip is allowed. The five states themselves",
+            "(over RAM, over the aperture, unpriced, unmeasurable, fits) are forced in",
+            "tests/test_personality_routes.py, where the badge WORDS are asserted against a",
+            "table -- a page harness can only see the state the sandbox happens to be in."
+          ],
+          "selector": "#pers-deck .pers-strip .badge",
+          "maxCount": 3
+        },
+        {
+          "_comment": [
+            "A strip's sentence names the card it judges. The deck has already printed a",
+            "neighbour's NUMBER (6.14.1s, loop.index against a 0-ordered list); the same",
+            "class of bug applies to sentences, and a guard that reads only the badge and",
+            "reason spans cannot see it -- the card name lives outside those spans. The",
+            "state guard asserts name-in-strip per card; this pins it on the live page.",
+            "Asserted as the strip's own first span, not as deck-wide text, because",
+            "textOf-style deck text always contains every card's name."
+          ],
+          "selector": "#pers-safe .pers-strip .pers-name",
+          "contains": "safe"
         },
         {
           "_comment": "a diff is a proposal, and the page has to say which",

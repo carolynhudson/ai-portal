@@ -193,12 +193,23 @@ h2{margin:18px 0 6px}
       {% if c.active %}
         <span class="badge yes pers-live-strip" data-live-strip="{{ c.name }}">running</span>
       {% endif %}
-      {% if b.get('fits') is true %}
+      {# Two ceilings, one badge. `fits` answers the aperture and `fits_ram` the machine; a card
+         inside the aperture and over RAM is a card the kernel kills, which is what the recorded
+         OOM events on this box looked like. A green badge on that card is the page's worst
+         available lie, so the badge answers BOTH ceilings and each reason clause names only its
+         own. The clause order is RAM first: the memory that is missing is the host's, and an
+         operator who can add RAM has a next step the aperture does not offer. #}
+      {% if b.get('fits') is false or b.get('fits_ram') is false %}
+        <span class="badge no">{% if b.get('fits') is false %}does not fit{% else %}over RAM{% endif %}</span>
+      {% elif b.get('fits') is true %}
         <span class="badge yes">fits</span>
-      {% elif b.get('fits') is false %}
-        <span class="badge no">does not fit</span>
       {% else %}
-        <span class="badge unknown">budget unknown</span>
+        {# "budget unknown" and "cannot be bounded" are the same badge in the old markup, and
+           they are not the same situation: an unbounded worst case is a model the library
+           cannot price (the operator has a name to act on), and an unreadable aperture is a
+           box the host will not price. The strip now prints the names, so the badge has to
+           say which of the two it is. #}
+        <span class="badge unknown">{% if b.get('unpriced') %}cannot be bounded{% else %}budget unknown{% endif %}</span>
       {% endif %}
       {# Not "14/1 models": read off the live page that looked like a fraction that was
          over its limit. Attached models and the residency ceiling are two numbers, and the
@@ -220,14 +231,28 @@ h2{margin:18px 0 6px}
          reason the figures are: a template newline survives into the rendered text.
          The three are independent conditions, not an if/elif chain -- a card over both ceilings
          must name both, exactly as personality.validate() reports them separately. #}
-      {% if b.get('fits') is false %}
+      {# Each clause is guarded by the numbers it subtracts, not only by the verdict it
+         explains: `worst_case_bytes` and `ram_total_bytes` are both None in the states the
+         Budget calls "could not measure", and Jinja evaluates a nested `{{ }}` before the
+         enclosing `{% if %}` skips it -- so an unguarded arithmetic expression in the strip
+         renders a 500 page for a card whose only sin is an unreadable budget. #}
+      {% if b.get('fits') is false and b.get('worst_case_bytes') is not none and b.get('budget_bytes') %}
         <span class="mut pers-reason">over the aperture by {{ (((b.get('worst_case_bytes') or 0) - (b.get('budget_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
       {% endif %}
-      {% if b.get('fits_ram') is false %}
+      {% if b.get('fits_ram') is false and b.get('worst_case_bytes') is not none and b.get('ram_total_bytes') %}
         <span class="mut pers-reason">over RAM by {{ (((b.get('worst_case_bytes') or 0) + (b.get('host_cache_bytes') or 0) - (b.get('ram_total_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
       {% endif %}
       {% if b.get('unpriced') %}
         <span class="mut pers-reason">cannot price {{ (b.get('unpriced') or [])|length }}: {{ (b.get('unpriced') or [])|join(', ') }}</span>
+      {% elif b.get('fits') is none and b.get('budget_bytes') is none %}
+        {# The reason for a verdict with no numbers. "budget unknown" on its own names no next
+           step; the payload says why (the aperture itself is unreadable), and the strip is where
+           the operator learns to add RAM rather than index a model. #}
+        {# The clause carries the measurement the host DID take -- the model count the card
+           covers -- because a clause with no number is a restatement of the badge in longer
+           words. The number here is the one that is readable: how many models this card
+           would load, which is what the unreadable aperture was supposed to bound. #}
+        <span class="mut pers-reason">no readable memory budget for {{ (c.models or [])|length }} models</span>
       {% endif %}
     </button>
     <div class="pers-body">
@@ -257,7 +282,12 @@ h2{margin:18px 0 6px}
          Jinja returns undefined for a missing key, so the clause just never renders and
          the card looks like a personality with no budget instead of a page reading the
          wrong field. Asserted in tests/test_personality_routes.py. #}
-      {% if b.get('worst_case_bytes') is not none %}
+      {# The guard covers EVERY figure the line prints, not only the first: `budget_bytes` is
+         None when the aperture cannot be measured, and Jinja evaluates the whole `{% if %}`
+         body's expressions at parse time, so a nested `{{ }}` that divides by an unmeasured
+         number renders a 500 page -- for a card whose only defect is a budget the host
+         declined to guess. #}
+      {% if b.get('worst_case_bytes') is not none and b.get('budget_bytes') and b.get('headroom_bytes') is not none %}
         {# Built as one variable rather than wrapped across source lines: the rendered text
            keeps the newline and indentation of the template, so a figure split over three
            source lines arrives as "4.0 GiB of\n              108.0 GiB" and nothing that
