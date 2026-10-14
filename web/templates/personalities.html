@@ -213,6 +213,22 @@ h2{margin:18px 0 6px}
         <span class="mut">heaviest {{ (b.get('worst_case_bytes') / 1073741824)|round(1) }} GiB of {{ (b.get('budget_bytes') / 1073741824)|round(1) }} GiB</span>
       {% endif %}
       <span class="mut">{{ (c.models or [])|length }} models · max {{ c.models_max }} resident</span>
+      {# Queue 33's glance, the half the figure did not close (§6.14.1t): "does not fit" is a
+         verdict with no next step. The reason is already computed (Budget's two ceilings plus
+         `unpriced`) and lives in the payload; the strip was printing none of it, so the operator
+         had to raise the card to learn WHICH ceiling failed. Each clause is one line for the same
+         reason the figures are: a template newline survives into the rendered text.
+         The three are independent conditions, not an if/elif chain -- a card over both ceilings
+         must name both, exactly as personality.validate() reports them separately. #}
+      {% if b.get('fits') is false %}
+        <span class="mut pers-reason">over the aperture by {{ (((b.get('worst_case_bytes') or 0) - (b.get('budget_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
+      {% endif %}
+      {% if b.get('fits_ram') is false %}
+        <span class="mut pers-reason">over RAM by {{ (((b.get('worst_case_bytes') or 0) + (b.get('host_cache_bytes') or 0) - (b.get('ram_total_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
+      {% endif %}
+      {% if b.get('unpriced') %}
+        <span class="mut pers-reason">cannot price {{ (b.get('unpriced') or [])|length }}: {{ (b.get('unpriced') or [])|join(', ') }}</span>
+      {% endif %}
     </button>
     <div class="pers-body">
     <p class="pers-note">{{ c.note }}</p>

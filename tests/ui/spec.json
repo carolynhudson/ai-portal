@@ -1169,6 +1169,21 @@
           ],
           "selector": "#pers-default .pers-strip",
           "matches": "heaviest [\\d.]+ GiB of [\\d.]+ GiB"
+        
+        },
+        {
+          "_comment": [
+            "Queue 33 (plan §6.14.1t): the reason, on the line the verdict is on.",
+            "A strip that reads 'does not fit' has told the operator the bad half and stopped;",
+            "the reason (which of the two ceilings, by how much, or which models are unpriceable)",
+            "was computed and carried in the payload and printed nowhere. In this sandbox every",
+            "card fits, so the assertion is the negative: a fitting card carries NO reason clause.",
+            "That is a real guard -- a reason printed unconditionally is how a verdict with no",
+            "defect ends up labelled as one, and the per-card attribution rule (the strip printed",
+            "the NEXT card's figure) applies to sentences exactly as it applies to numbers."
+          ],
+          "selector": "#pers-deck .pers-strip .pers-reason",
+          "maxCount": 0
         },
         {
           "_comment": "a diff is a proposal, and the page has to say which",

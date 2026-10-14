@@ -915,6 +915,12 @@ def _strips(body: str) -> dict:
     return out
 
 
+def textOf(markup: str) -> str:
+    """The strip's visible text: tags and template whitespace removed, so a sentence the
+    template builds across source lines is matched as the reader sees it."""
+    return " ".join(re.sub(r"<[^>]+>", " ", markup).split())
+
+
 def test_the_deck_prints_one_line_per_personality(client):
     """Every personality gets a strip naming it, its fit, and its model count -- and a body."""
     body = client.get("/personalities").text
@@ -1474,7 +1480,12 @@ def test_each_strip_prints_the_budget_of_its_own_card(client, library):
         dict has no figure, which is what the template renders as an empty attribute.
         """
         order = [c["name"] for c in client.get("/api/personalities").json()["personalities"]]
-        priced = P.budget_for(P.find(order[card_index]), b).as_dict()
+        # `find` answers None for a name the store does not have, and budget_for takes a
+        # personality dict -- a bare call here prices nothing and raises on the None, so the
+        # absence of a card has to be the assertion, not a TypeError inside the helper.
+        card = P.find(order[card_index])
+        assert card is not None, f"the deck lists {order[card_index]!r}, the store does not have it"
+        priced = P.budget_for(card, b).as_dict()
         v = priced.get("worst_case_bytes")
         return "" if v is None else str(v)
 
@@ -1484,7 +1495,8 @@ def test_each_strip_prints_the_budget_of_its_own_card(client, library):
             continue
         assert named[name] == worst(pos), (
             f"the {name} strip prints {named[name]!r}; {name} is card {pos} and prices itself at "
-            f"{worst(pos)!r}, while the NEXT card prices at {worst(pos + 1) if pos + 1 < len(order) else None!r} "
+            f"{worst(pos)!r}, while the NEXT card prices at "
+            f"{worst(pos + 1) if pos + 1 < len(order) else None!r} "
             f"— a strip built with loop.index prints that last number")
 
     api = client.get("/api/personalities").json()
@@ -1503,3 +1515,119 @@ def test_each_strip_prints_the_budget_of_its_own_card(client, library):
     assert int(named["default"]) > int(named["safe"]), (
         "the two cards priced identically: the fixture lost its size gap, so this test can no "
         "longer tell a correct deck from an off-by-one one")
+
+
+# ------------------------------------------------- the reason, on the strip (§6.14.1t)
+#
+# Queue 33's glance is "you know, in 30 seconds, what is running and what can be served".
+# The strip answers the second half with a verdict and the figure it was measured against.
+# For a card whose verdict is NOT "fits" the strip says "does not fit" and stops: the
+# reason exists in the payload (budget.unpriced, heaviest, fits_ram, host_notes) and in
+# findings, and the strip omitted all of it. The operator saw a red word and had to raise the
+# card to learn WHICH of the three reasons applies -- the click the glance exists to remove.
+# Assertions here are per-card and text-bearing, in the style of the strip-figure guard above:
+# a marker read from the strip element cannot be mis-attributed by slicing the page, and a
+# count of formatted spans cannot see a reason printed on the wrong card or at the wrong scale.
+
+GIB = 1 << 30
+
+
+def priced(name: str) -> dict:
+    """The card's own budget, before any mutation -- the numbers the strip must agree with.
+
+    `find` answers None for a name the store does not have, and `budget_for` takes a
+    personality dict: assert the card exists rather than let a TypeError be the failure.
+    """
+    card = P.find(name)
+    assert card is not None, f"the fixture has no personality named {name!r}"
+    return P.budget_for(card, mi._pool_bytes()).as_dict()
+
+
+def b_worst(name: str) -> int:
+    v = priced(name)["worst_case_bytes"]
+    assert v is not None, f"{name} has no worst-case figure in this fixture"
+    return int(v)
+
+
+def b_budget(name: str) -> int:
+    v = priced(name)["budget_bytes"]
+    assert v is not None, f"{name} has no readable aperture in this fixture"
+    return int(v)
+
+
+def test_the_strip_states_the_reason_when_a_card_cannot_be_served(client, monkeypatch,
+                                                                  library):
+    """Three different reasons, three visible sentences - not one shared word.
+
+    The card is mutated after generation so the page renders a real template path for
+    each branch of Budget (over aperture / over RAM / unpriceable) instead of a stub.
+    """
+    real = P.budget_for
+
+    def mutate(personality, budget_bytes=None):
+        b = real(personality, budget_bytes)
+        name = personality.get("name")
+        if name == "safe":
+            # Measured and over the aperture by a stated amount. The overflow is derived from
+            # the card's own figures so the strip has a number to be checked against, and the
+            # arithmetic happens in one place (the test), not inside the template.
+            b.fits = P.FITS_NO
+            b.headroom_bytes = -GIB
+        elif name == "default":
+            # The second ceiling: the aperture is fine, the machine is not.
+            b.fits_ram = P.FITS_NO
+            b.host_cache_bytes = 200 * GIB
+            b.ram_total_bytes = 128 * GIB
+        return b
+
+    monkeypatch.setattr(P, "budget_for", mutate)
+    strips = {n: textOf(m) for n, m in _strips(client.get("/personalities").text).items()}
+
+    safe = strips["safe"]
+    assert "over" in safe and "aperture" in safe, (
+        f"the safe strip reads {safe!r}: a card measured over its aperture must say so on "
+        "the line the verdict is on")
+    want = abs(b_worst("safe") - b_budget("safe")) / GIB
+    assert f"{want:.1f} GiB" in safe, (
+        f"the safe strip reads {safe!r}; the overflow is {want:.1f} GiB. A reason printed as "
+        "a plausible GiB figure that is the wrong scale is not caught by a test that only "
+        "checks that a GiB appears")
+
+    default = strips["default"]
+    assert "RAM" in default, (
+        f"the default strip reads {default!r}: a card over the RAM ceiling must name RAM, "
+        "not the aperture - the two ceilings are independent and a reader has to know "
+        "which one failed")
+    want = abs(b_worst("default") + 200 * GIB - 128 * GIB) / GIB
+    assert f"{want:.1f} GiB" in default, f"the default strip reads {default!r}, over RAM by {want:.1f}"
+
+    # The reason is per-card, not a sentence the deck prints for everyone: a card whose
+    # defect is RAM must not carry the aperture wording, and vice versa.
+    assert "RAM" not in safe, f"the RAM reason leaked to the aperture card: {safe!r}"
+    assert "aperture" not in default, f"the aperture reason leaked to the RAM card: {default!r}"
+
+
+def test_the_strip_says_which_models_it_could_not_price(client, monkeypatch, library):
+    """`budget unknown` with no names is a verdict with no next step.
+
+    An unpriced model is the one reason the operator can act on without opening the card:
+    the names are in the payload (`unpriced`) and are the models to index or remove.
+    """
+    real = P.budget_for
+
+    def mutate(personality, budget_bytes=None):
+        b = real(personality, budget_bytes)
+        if personality.get("name") == "safe":
+            b.unpriced = ["Unpriceable-7B.gguf"]
+            b.fits = P.FITS_UNKNOWN
+            b.worst_case_bytes = None
+        return b
+
+    monkeypatch.setattr(P, "budget_for", mutate)
+    strips = {n: textOf(m) for n, m in _strips(client.get("/personalities").text).items()}
+    safe = strips["safe"]
+    assert "Unpriceable-7B.gguf" in safe, (
+        f"the safe strip reads {safe!r}: an unpriced model is named in the payload and must "
+        "appear on the strip, because it is the reason with an action attached")
+    assert "cannot price" in safe, (
+        f"the strip names the model without saying what is wrong with it: {safe!r}")

@@ -397,9 +397,14 @@ function checkText(entries, when) {
   const els = Array.from(win.document.querySelectorAll(t.selector));
   const seen = () => els.slice(0, 3)
     .map((el) => JSON.stringify((el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90)));
-  if (!els.length) { fail(`expected text region missing: ${t.selector}`); continue; }
+  // maxCount asserts an ABSENCE (a clause the page must not print for this state), so an
+  // empty result is the pass -- the missing-region rule below is for regions a page promises.
+  const absence = t.maxCount != null && t.minCount == null;
+  if (!els.length && !absence) { fail(`expected text region missing: ${t.selector}`); continue; }
   if (t.minCount != null && els.length < t.minCount)
     fail(`${t.selector}: ${els.length} element(s), expected at least ${t.minCount} (${when})`);
+  if (t.maxCount != null && els.length > t.maxCount)
+    fail(`${t.selector}: ${els.length} element(s), expected at most ${t.maxCount} (${when})`);
   if (t.contains != null && !els.some((el) => (el.textContent || "").includes(t.contains)))
     fail(`${t.selector}: nothing contains ${JSON.stringify(t.contains)} (${when}, saw ${seen().join(", ")})`);
   if (t.matches != null && !els.some((el) => new RegExp(t.matches).test(el.textContent || "")))

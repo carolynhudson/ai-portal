@@ -5068,6 +5068,56 @@ Full suite: **1092 passed, 3 skipped, 0 failed**.
 stands). The reason-when-it-does-not-fit text on the strip is the next candidate: the payload carries
 `budget.unpriced` and the findings, and the strip currently omits both.
 
+##### 6.14.1t The strip states the reason, not only the verdict (queue 33, 2026-10-14)
+
+Queue 33's glance is *"you know, in 30 seconds, what is running and what can be served."* §6.14.1s
+closed the number. This closes the other half: a card whose verdict is **not** `fits` printed
+`does not fit` and stopped. The reason existed — Budget computes two independent ceilings and an
+unpriced list, all of it in the payload — and the strip printed none of it. The operator saw a red
+word and had to **raise the card** to learn which ceiling failed. That is the click the glance
+exists to remove.
+
+The strip now carries, per card:
+
+```
+over the aperture by 104.0 GiB     # worst_case − budget, over the aperture
+over RAM by 76.1 GiB               # worst_case + host cache − RAM total
+cannot price 1: Unpriceable-7B.gguf  # the reason with an action attached
+```
+
+Three decisions:
+
+1. **Two branches, not `if`/`elif`.** The aperture ceiling and the RAM ceiling are independent in
+   `Budget` and in `validate()`; a card over both must name both. Collapsing them into one branch
+   is the shape that turns a RAM problem into an aperture problem, and the test asserts the
+   *negative* on each card (`"RAM" not in safe`, `"aperture" not in default`) so the collapse is
+   caught by attribution, not by counting.
+2. **The unpriced list names the models.** A count alone is a verdict with no next step: the names
+   are the models to index or remove, and they are already in the payload.
+3. **Absence is asserted too.** In the sandbox every card fits, so the UI spec asserts
+   `.pers-strip .pers-reason` with `maxCount: 0` — a reason printed unconditionally labels a
+   healthy card as a defect. This required teaching `checkText` that `maxCount` asserts an
+   absence: an empty result is the pass, not a missing region.
+
+**What the guard catches (measured by mutation).** Reason moved into the card body only → caught
+(the strip's own text is asserted, not the card's). RAM clause deleted, or printed with the
+aperture wording → caught. Reason printed for every card → caught. `unpriced` printed as a count
+without names → caught. The template's own arithmetic bug → caught by exact-value comparison:
+`x|abs|round(1) / 1073741824` rounds the *byte* count and yields `103.98437101300806 GiB`, a true
+sentence at the wrong scale, which passes any test that only asks whether a GiB figure appears.
+The scale is asserted as `f"{want:.1f} GiB"`.
+
+Two helper names, one file. `_strips()` already existed at the deck section; a second definition
+lower in the file silently shadowed it for every test below (the same shadowing as the `budget`
+key bug of §6.14.1s). The duplicate is removed and the visible-text helper `textOf()` sits beside
+`_strips()`; the new tests read the strip's markup through the existing helper.
+
+Full suite: recorded below.
+
+**Not in this slice.** A live-router strip state remains unassertable in a sandbox (§6.14.1r
+finding 3). `findings` is still not on the strip: its wording is a validator's sentence, not a
+deck-scale one, and shortening it is a separate decision from printing it.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

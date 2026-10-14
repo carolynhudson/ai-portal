@@ -238,8 +238,22 @@ correctly formatted numbers, on the wrong cards, invisible to the page's existin
 counted formatted spans. A second defect in the same area: `id="pers-now-stop"` sat on both branches of
 the Now strip, so a page with a running router had two elements with one id. Suite: 1092 passed.
 
-**Still open:** the *reason when it does not fit* on the strip. The payload carries `budget.unpriced`
-and the findings; the strip omits both.
+**Done — plan §6.14.1t.** The strip now states the reason on the line the verdict is on:
+`over the aperture by 104.0 GiB`, `over RAM by 76.1 GiB`, `cannot price 1: Unpriceable-7B.gguf`.
+The two ceilings are separate branches (a card over both names both — an `if`/`elif` collapses a RAM
+problem into an aperture problem, and the tests assert the negative per card so the collapse is
+caught by attribution, not by counting); the unpriced list names the models, because a count is a
+verdict with no next step. The sandbox's fitting cards assert **zero** reason clauses — a reason
+printed unconditionally labels a healthy card as a defect.
+
+Guard quality, by mutation: reason moved to the body only, RAM clause deleted, RAM clause printed
+with the aperture wording, reason printed for every card, and unpriced printed as a bare count are
+each caught. The template's own arithmetic bug was the instructive one: `x|abs|round(1) / 1073741824`
+rounds the *byte* count and prints `103.98437101300806 GiB` — a true sentence at the wrong scale,
+which passes any test that only asks whether a GiB figure appears, so the figure is compared exactly.
+
+**Still open:** the validator's `findings` sentences on the strip. Its wording is not deck-scale, and
+shortening it is a separate decision from printing it.
 
 **One instrument gap to keep honest.** `layout_measure.py` hard-fails a block taller than three
 viewports, so a repo-code run exits 1 when such a block exists — a gate today, and the hook the
