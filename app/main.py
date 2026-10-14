@@ -1039,6 +1039,13 @@ def create_app() -> FastAPI:
                                            # paints it — a page that invented it would be naming
                                            # sessions it cannot see.
                                            "used_by": projects.by_personality(projects.serve_facts()),
+                                           # Queue 33's Now strip (§6.14.1q, state 1): what is active,
+                                           # answered by the router itself — the model it serves and the
+                                           # port its own env file says it answers on. The file fact
+                                           # (`active`) is passed in from the deck loop above so the
+                                           # page states it once, not twice.
+                                           "now": personality.now_state(
+                                               [c["name"] for c in cards if c.get("active")]),
                                            "config_uses": {c["name"]: model_config
                                                            .assigned_personalities(c["name"])
                                                            for c in configs},
@@ -1080,6 +1087,11 @@ def create_app() -> FastAPI:
             "budget_bytes": budget,
             "personalities": [personality.describe(p, budget) for p in people],
             "personalities_on_disk": [p["name"] for p in personality.stored()],
+            # Queue 33's Now strip (§6.14.1q, state 1), same fact as the page's: which personality's
+            # file is on disk, plus the model and slot the router itself reports.
+            "now": personality.now_state(
+                [c["name"] for c in
+                 (personality.describe(p, budget) for p in people) if c.get("active")]),
             "configs": configs,
             # The same current-configuration view the editor seeds from, so a script driving the
             # API and a person reading the page answer "what does this personality set?" from one

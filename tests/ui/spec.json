@@ -1143,7 +1143,8 @@
         "#mp-rest",
         ".mp-card",
         ".mp-strip",
-        "#ed-used-by"
+        "#ed-used-by",
+        "#pers-now"
       ],
       "expectText": [
         {
@@ -1350,6 +1351,15 @@
           ],
           "selector": "#ed-used-by",
           "contains": "cannot confirm"
+        },
+        {
+          "_comment": [
+            "Queue 33 §6.14.1q state 1: the Now strip in the sandbox, where no router runs.",
+            "The strip's model and slot come from the router's own account, so the sandbox state is the",
+            "state where it must NOT claim a model or a port — it names the state and points at the deck."
+          ],
+          "selector": "#pers-now",
+          "contains": "nothing is active"
         }
       ],
       "expectNoInjectedMarkup": [

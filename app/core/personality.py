@@ -2154,3 +2154,59 @@ def context_for(personality: dict, targets: list[dict] | None = None,
                                   "(no weights or cache figure in the index)")
         out.append(entry)
     return out
+
+
+# ------------------------------------------------------------- what is active, right now
+#
+# Queue 33's brief: "you know just by looking how to make a personality active". The deck answers
+# *which* personality is running; the Now strip answers **what the router is doing** — the running
+# personality, the model it is serving, the slot it answers on, and the verb that stops it. When
+# nothing runs, it says so and points at the deck.
+#
+# Two facts, two sources, and the strip must not confuse them:
+#
+#   - *which personality the router is running* is a fact about presets.ini: a personality is active
+#     exactly when the file on disk is the file applying it would write (§6.14.1l). That is the deck's
+#     answer and the strip reuses it, passed in — the strip never re-derives it.
+#   - *what is loaded and where it answers* is the router's own account (GET /v1/models, the port in
+#     its env file). The portal cannot know this from the library: a model the library lists may not
+#     be loaded, and a port in a template is not a port the router bound.
+#
+# So the strip is built from both, and when the router is unreachable the answer says that. It
+# never prints a slot the router did not report.
+
+def now_state(active_names: list[str] | None = None) -> dict:
+    """The page's answer to "what is active right now", from the router's live state.
+
+    `active_names` is the deck's fact (personalities whose file is the file on disk) passed in by
+    the caller, so the page states the file fact once. The model and slot come from the router.
+    """
+    names = [n for n in (active_names or []) if n]
+    out: dict[str, Any] = {
+        "running": names[0] if names else None,
+        "active": names,
+        "routerOk": False,
+        "serving": None,
+        "loaded": 0,
+        "slot": None,
+        "reason": "",
+    }
+    try:
+        from ..providers import llamacpp
+        live = llamacpp.LlamaCpp().models_live()
+    except Exception as exc:  # noqa: BLE001 - a page read; the strip states the failure instead
+        out["reason"] = f"the router did not answer ({exc})"
+        return out
+    rows = [m for m in live if not str(m.get("id", "")).startswith("(router")]
+    out["routerOk"] = True
+    out["loaded"] = len(rows)
+    out["serving"] = rows[0].get("id") if len(rows) == 1 else None
+    out["models"] = [m.get("id") for m in rows]
+    try:
+        from . import serviceconf
+        out["slot"] = serviceconf.port_of("llamacpp", 8080)
+    except Exception:  # noqa: BLE001 - the slot is a fact the strip states, not one it invents
+        out["slot"] = None
+    if not names and not rows:
+        out["reason"] = "nothing is loaded and no personality's file is on disk"
+    return out

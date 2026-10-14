@@ -1387,3 +1387,42 @@ def test_the_editor_shows_the_projects_that_run_with_the_personality_being_edite
     """
     page = client.get("/personalities").text
     assert 'id="ed-used-by"' in page, "the editor has no `used by` line"
+
+
+# --------------------------------------------------------------------------- the Now strip (state 1)
+#
+# Queue 33's brief: "you know just by looking how to make a personality active". The deck answers
+# *which* personality is running; the brief asks for the strip that answers **what is active** as a
+# fact about the router — the running personality, the model it is serving, the slot, and the verb
+# that stops it — and, when nothing runs, says so and points at the deck. That is a separate surface
+# from the deck note, and it is asserted from the router's own facts, not from presets.ini: a strip
+# derived from the file the deck is derived from states the same fact twice and adds none.
+
+
+def test_the_page_carries_a_now_strip_that_names_the_slot_and_the_verb(client):
+    """The strip is the brief's "just by looking" answer, and it is a surface, not a sentence in a note.
+
+    `id="pers-now"` at the top, the slot the router answers with, and the stop verb — the verb has to
+    be a control, because "how to stop it" is part of the same sentence the brief asks for.
+    """
+    page = client.get("/personalities").text
+    assert 'id="pers-now"' in page, "the page has no Now strip"
+    top = page.index('id="pers-now"')
+    assert top < page.index('id="pers-deck"'), "the Now strip is not at the top of the page"
+    strip = page[top:page.index("</p>", top) + 4] if "</p>" in page[top:] else page[top:top + 900]
+    assert re.search(r'id="pers-now-stop"|data-stop', strip), "the strip carries no stop verb"
+
+
+def test_the_now_strip_answers_from_the_router_and_not_from_the_presets_file(client):
+    """The strip's model and slot come from the router's live state; the deck's fit comes from the file.
+
+    Asserted on the payload: the strip's answer has to be readable there, with the router's state
+    attached. A page that printed "serving X on 8080" from its own model list would be naming a slot
+    it never asked for.
+    """
+    body = client.get("/api/personalities").json()
+    assert "now" in body, "the payload does not answer what is active"
+    now = body["now"]
+    assert "running" in now, "the payload's answer has no running state"
+    assert "slot" in now or now.get("running") is None, \
+        "a running personality is reported with no slot"

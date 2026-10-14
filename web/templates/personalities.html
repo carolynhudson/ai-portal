@@ -114,6 +114,34 @@ h2{margin:18px 0 6px}
   <span class="mono">{{ presets_path }}</span>
 </p>
 
+{# Queue 33 §6.14.1q, state 1 — the Now strip: "you know just by looking what is active".
+     The deck answers *which* personality; this answers *what the router is doing*: the personality
+     whose file is on disk, the model the router says it is serving, the port its own env file says
+     it answers on, and the verb that stops it. When nothing runs it says so and points at the deck.
+     The model and slot come from `now` (personality.now_state — the router's own account), not from
+     the library: a model the library lists may not be loaded, and a port in a template is not a port
+     the router bound. #}
+<div class="pers-now" id="pers-now"
+     data-serving="{{ now.serving or '' }}"
+     data-slot="{{ now.slot if now.slot is not none else '' }}"
+     data-router-ok="{{ 'yes' if now.routerOk else 'no' }}">
+  {% if now.running %}
+    <b>Now:</b> <span class="mono">{{ now.running }}</span>
+    {% if now.serving %} serving <span class="mono">{{ now.serving }}</span>{% endif %}
+    {% if now.slot %} on <span class="mono">:{{ now.slot }}</span>{% endif %}
+    {% if now.loaded %} · {{ now.loaded }} model{{ 's' if now.loaded != 1 else '' }} loaded{% endif %}
+    <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp">stop the router</button>
+    <span class="mut">Stopping it takes the router down for every profile; Apply is what starts
+      another personality.</span>
+  {% else %}
+    <b>Now:</b> nothing is active.
+    {% if now.reason %}<span class="mut">{{ now.reason }}</span>{% endif %}
+    <span class="mut">Apply a personality below to make one active, or
+      <button type="button" class="btn sm" id="pers-now-stop" data-stop="llamacpp">stop the router</button>
+      to stop what is loaded.</span>
+  {% endif %}
+</div>
+
 <p class="mut" id="pers-deck-note">
   {% set live = (cards | selectattr('active') | list) %}
   {% if live %}Running: <b>{{ live[0].name }}</b>.{% else %}<b>Nothing is running</b> — the
@@ -1249,6 +1277,30 @@ h2{margin:18px 0 6px}
 
   $('ed-preview').addEventListener('click', preview);
   $('ed-apply').addEventListener('click', applyIt);
+  // Queue 33 (§6.14.1q, state 1): the Now strip's verb. "How to stop it" is part of the same
+  // sentence the brief asks for, so the strip carries the control — and it goes through the endpoint
+  // that requires confirm and refuses while an update is mid-swap (§6.14.1l), not a bare call. It
+  // is deliberately outside the personality-editor functions: stopping the router is a fact about
+  // the whole host, not about the personality being edited.
+  const nowStop = $('pers-now-stop');
+  if (nowStop) {
+    nowStop.addEventListener('click', async () => {
+      if (!confirm('Stop the router? Every profile stops answering.')) return;
+      nowStop.disabled = true;
+      const r = await fetch('/api/services/llamacpp/stop', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: true}),
+      });
+      const data = await r.json().catch(() => ({}));
+      nowStop.disabled = false;
+      if (!r.ok) {
+        $('pers-now').insertAdjacentText('beforeend', ` refused: ${data.detail || r.status}`);
+        return;
+      }
+      location.reload();
+    });
+  }
+
 
   loadPersona();
   loadIdentity();
