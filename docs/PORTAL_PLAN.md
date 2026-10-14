@@ -5118,6 +5118,90 @@ Full suite: recorded below.
 finding 3). `findings` is still not on the strip: its wording is a validator's sentence, not a
 deck-scale one, and shortening it is a separate decision from printing it.
 
+##### 6.14.1u The strip badge answers both ceilings, not only the aperture (queue 33, 2026-10-14)
+
+§6.14.1t put the reason on the strip. This slice is about the word beside it. `aperture ==
+pool` (§6.14.1s finding 3), and the pool tracked the aperture, so a card the validator puts
+over **physical RAM** was badged `fits`. The suite did not notice: the budget tests assert
+`findings` and `worst_case_bytes`, and no guard anywhere asserted the strip's badge **word**.
+Mutation check: force the strip badge to `fits` for every state — 3 guards failed and the deck
+stayed green.
+
+The badge is now one of five states, and the verdict answers the ceiling that failed:
+
+```
+fits              # inside both ceilings
+over RAM          # fits the aperture, over the machine
+does not fit      # over the aperture
+budget unknown    # no aperture to measure
+cannot be bounded # a model the library cannot price
+```
+
+Four things this slice had to get right, each found by mutating the template and watching the
+guard stay green:
+
+1. **The badge word is asserted against a table, not against the page.** A guard that reads the
+   verdict off the strip and compares it with the strip cannot notice the verdict *changing*.
+   The state table carries the expected badge word per state; the guard compares the page with
+   the table.
+2. **States are forced at the measurement layer.** The first draft hand-edited each card's
+   `findings` — that asserts the deck against a state the host can never be in, and the deck
+   goes green against a wording the validator never writes. The five states are forced by
+   replacing what the budget is *computed from* (`peak_bytes`, `host_cache_bytes`,
+   `ram_total_bytes`, `_pool_bytes`). Mutating the personality (`models`, `models_max`) is
+   rejected for a second reason: it changes **which card the page has**, so every assertion runs
+   against a personality the page does not show. The unpriced state needs the *pricing* step to
+   answer None (a GGUF whose header cannot be costed) — a missing model makes `describe()` raise
+   and the API answers 409, which is a different state with no card to read.
+3. **Span selectors must close at the quote.** `class="badge yes"` is not matched by a pattern
+   whose class attribute must END at `badge`; `class="mut pers-reason"` is not matched by one
+   that must END at `pers-reason`. Both guards silently measured **nothing**: the badge guard
+   compared empty strings, and the clause loop iterated zero times, so the doubled verdict it
+   was written to catch passed the suite.
+4. **A length guard on markup measures attribute bytes.** `_strips()` yields the button's inner
+   markup, which carries `data-worst-case="4311748793"`. A 120-character limit on the raw markup
+   was met by a strip that printed no verdict at all. `stripVerdict()` selects the badge and
+   reason spans; `textOf()` is kept for name-in-sentence assertions.
+
+**The reason clause: a cause, not the verdict restated.** A clause must state a figure, or the
+ceiling it could not measure. `_isVerdictClause()` decides by the figure, not by words:
+`over RAM by 3.0 GiB` shares every word with its badge and is the honest form; `cannot be
+bounded` beside `cannot price 1: X` is the question asked twice with no reason. The clause rule
+**licenses its ceiling words from the state table** — a hand-kept allow-list became a third
+thing the template had to agree with, and silently rejected the unmeasurable state's only honest
+wording (`no readable memory budget` names the ceiling, so it must be allowed by the state that
+produces it).
+
+**Attribution, again.** The strip's sentence must name the card it judges. A guard that reads
+only the badge and reason spans cannot see the name — it lives outside them — so the guard
+asserts the name among the strip's full text. The deck has already printed a neighbour's number
+once (§6.14.1s); the same class of bug applies to sentences.
+
+**UI contract.** One badge per strip; at most one verdict word per strip; the strip's sentence
+names the card (`#pers-safe` scoped, because deck-wide text always contains every card's name);
+the reason prints the figure. Page-level assertions can only see the state the sandbox happens
+to be in — the five states live in `tests/test_personality_routes.py`, and the spec says so.
+
+Mutation table (each is the defect, each confirmed caught, each reverted):
+
+| mutation | guard that caught it |
+|---|---|
+| unpriceable badge → `budget unknown` | badge == table word, per state |
+| RAM clause dropped | §6.14.1t clause guard, over-RAM state |
+| RAM badge collapsed to `does not fit` | badge == table word, per state |
+| strip omits the card name | name-in-strip text |
+| reason clause with no figure/ceiling word | clause rule (states neither) |
+| strip badge always `fits` | badge == table word, per state |
+| verdict clause with no figure | `_isVerdictClause` |
+| badge span selector matches nothing | `stripVerdict` selects spans, not markup bytes |
+
+Suite: **1080 passed, 3 skipped.** UI integration: **15 passed**, personalities green.
+
+**Not in this slice.** The strip still carries no `findings` text (§6.14.1t). A card in the
+`no aperture` state and a card in the unpriced state are asserted by forced measurements in
+pytest, not on the live page: the sandbox cannot be made unpriceable without reaching the
+operator's model library (§ portal-test-sandbox).
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

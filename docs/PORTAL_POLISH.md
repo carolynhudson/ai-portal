@@ -252,6 +252,24 @@ each caught. The template's own arithmetic bug was the instructive one: `x|abs|r
 rounds the *byte* count and prints `103.98437101300806 GiB` — a true sentence at the wrong scale,
 which passes any test that only asks whether a GiB figure appears, so the figure is compared exactly.
 
+**Done — `bed673e`, plan §6.14.1u.** The badge now answers the ceiling that failed. The strip
+badged `fits` for a card the validator puts over **physical RAM** (aperture == pool, and the
+pool tracked the aperture), and no guard asserted the badge's *word*: forcing the badge to
+`fits` in every state left the deck green. The five states (`fits`, `over RAM`, `does not fit`,
+`budget unknown`, `cannot be bounded`) are asserted against a state table, with each state
+forced at the measurement layer (`peak_bytes`, `host_cache_bytes`, `ram_total_bytes`,
+`_pool_bytes`) so every sentence the guard asserts is one the host can actually produce —
+hand-edited card dicts, and mutations of the personality's own model list, were both rejected
+for asserting the deck against a card the page does not have.
+
+Three guard defects, each found by mutating the template and watching the guard stay green:
+span selectors whose class attribute had to END at `badge` / `pers-reason` matched nothing
+(the real class lists are `badge yes` and `mut pers-reason`), and a length guard written
+against the strip's raw markup measured `data-worst-case="..."` — 120 characters met by a strip
+that printed no verdict. A reason clause must state a figure or the ceiling it could not
+measure; the clause rule licenses its words from the state table rather than a hand-kept list.
+Suite: 1080 passed, 3 skipped; UI integration 15 passed.
+
 **Still open:** the validator's `findings` sentences on the strip. Its wording is not deck-scale, and
 shortening it is a separate decision from printing it.
 
