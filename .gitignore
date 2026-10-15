@@ -29,3 +29,6 @@ tests/ui/package-lock.json
 # Design-playbook run trees (baseline evidence, drafts, shaping logs). They are hash-bound
 # to the source they measured and regenerate on demand, so they are not repo content.
 /.scratch/
+
+# slice scratch: suite logs, live-check cookies, staging copies
+tmp/
