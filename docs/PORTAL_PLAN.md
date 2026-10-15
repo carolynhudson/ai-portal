@@ -355,6 +355,17 @@ disk ≥90%) and the CPU chart out of the hero.
   hardware tuning applied to parts like PyTorch. This is the gate for publishing the repo, not a
   development item.
 
+- **(49) The opencode engine's own update status.** The operator's ask, verbatim: *"adding opencode
+  to the status page's 'tool repository update status' section with checks for the various opencode,
+  opencode extensions, and internal page service/extension available updates with some scripting to
+  apply those updated parts to the portal's opencode engine."* The active project session (queue 32)
+  is meant to replace the operator's desktop pi session for updating and deploying the portal, so
+  the engine that runs it has to be as inspectable as the portal's own repos are today: the version
+  and origin of the `opencode` binary the harness serves, its plugins/extensions (the `opencode-*`
+  packages the config names), what an update would change, and a verb that applies a chosen part.
+  Not scheduled: 32 must land and be used first, because the shape of this section is decided by
+  what the engine is observed to need in practice.
+
 Priority, per the operator: 30–32 stay first. 33 and 45 are briefs the operator reviews before code.
 40, 41, 42, 43, 44 are in-place fixes that can interleave with the harness slices.
 
@@ -5332,6 +5343,82 @@ views in place: banner, focus mode, 3 s poll, `Ctrl+Enter` sends, `Shift+Enter` 
 per project (the record holds one; the harness page lists the rest); closing or deleting a session
 from the Projects page (the harness page's verbs — measured: no `/api/harness/session/close` route
 exists, 404); a separate `/pi` route; queue 43's question-card semantics.
+
+##### 6.14.1x The projects page's active state is the server's state, and a spec key nobody implemented (queue 32, 2026-10-15)
+
+The operator's words, in full, are the requirement:
+
+> "I did not want a tiny panel with a field to submit a prompt at the bottom of the projects
+> page … What I want when the projects page is in the 'active' state is for the projects page to
+> take me to the launched full opencode session for that project that should be accessible by
+> anyone opening the portal and which should remain a durable active agentic task even if the
+> user closes their browser session or changes pages on the portal. The portal needs to identify
+> what project the active opencode session is for and provide a visually obvious but unintrusive
+> means for the user to close/end the active opencode session and return the project page to the
+> 'inactive' state … because an 'active' opencode project session must survive a ai-portal
+> restart the projects page must detect that running session and take you to it rather than
+> showing the 'inactive' launchpad … it was designed like many coding focused tools to have full
+> access to the screen's size, we need to be careful with how the portal visually frames and
+> interacts with the opencode harness."
+
+**The state is the server's, so the page is a reader of it.** The serve record lives in the
+registry (`/api/projects` rows carry `serve`), which is on disk and survives a portal restart,
+and it is re-checked against the host (`live_sessions(directory)`) on every read. That is why
+*anyone* opening the portal sees the same active session: there is no browser-side state that
+could be the only copy. So the page reads the payload on load and **switches itself** — the
+auto-switch runs inside `refresh()`, on the load-time fetch, not only on a poll. `opChrome()`
+toggles two elements, `#proj-launchpad` and `#proj-op`, because a mode the page produces by
+walking its siblings is a mode no test can name.
+
+**The meter's denominator is read from the personality.** Queue 32's budget line
+(`context: 61k of 262k tokens`) needs the context the session's models are actually served at, so
+`serving_context_limit()` reads the personality that serves the project — a context number
+invented in the page is a bar that lies. A session with a known context and no readable
+personality says `context limit unknown, so this bar has no ceiling to be measured against`, and
+an unreported session says `the host has not reported this session's tokens`.
+
+**Closing the session.** `End session` sits at the head of the session view — where a reader
+looking for it looks — styled quiet, because closing the session is not what the view is for. It
+confirms, posts `/api/projects/quit` (confirm-gated server-side, like every verb here), the
+record clears, and the page falls back to the launchpad by itself.
+
+**The harness fix, which is bigger than this page.** `tests/ui/run.mjs` read its assertions
+through bare property access, so **a spec key the runner never implemented was silently
+ignored**: the projects scenarios I had just written carried `expectRequestsOnLoad` and
+per-fixture `expectVisible`, and both passed vacuously. The runner now fails on any `expect*`
+or `then*` key that no scenario implements, with the reason (`no scenario implements this key —
+the assertion is vacuous`). The guard caught two keys already in the spec: `expectTitle`,
+unimplemented while ten pages asserted it (a page with a wrong title would have passed), and
+`expectNoInjectedMarkup`, implemented all along — the guard itself was lying about it.
+Implemented here: `expectRequestsOnLoad` (a page that shows a state only after a click passes
+every interaction assertion in the world and still fails this one), per-fixture `expectVisible`
+(a fixture that answers an error payload, and the page that shows the launchpad on it, were
+previously invisible to the spec), and `expectTitle`. The implementation list is **derived from
+the runner's own source**, so it cannot drift from it.
+
+Scenarios: a page with two modes needs two entries on one path. `projects-active` carries the
+served registry answer with **no browser state of its own** — the same situation as opening the
+portal an hour later, from another machine, or after the portal service restarted. Both
+directions are asserted: active shows the session and hides the launchpad, inactive shows the
+launchpad and hides the session.
+
+**Measured, not asserted.** The first red of `projects-active` was the honest kind: the page
+loaded into the launchpad with the registry saying a session was running. The cause was a shape
+bug — the row's serving state is `serve.served` and the page looked for `served`; read as
+`undefined` that means *not served*, so the page would never have shown a running session to
+anyone. The second red was mine: the spec asserted `#proj-sess-quit`, `#proj-ctx-num` and
+`#proj-view` — selectors the page never had. Vacuity in the other direction: it passes because
+nothing matches.
+
+`tools/layout_measure.py` on both modes: launchpad 4 columns, 0 overflow, 0 short rows, 0
+overlapping; session view 1 column, 0/0/0. Suite: 1126 non-UI (+31) and 16 UI (+1 scenario).
+
+**Still open, in the operator's own list:** the live event stream (3 s poll today — prompt,
+answer and quit are live, a tool call mid-step is not); more than one active session per project
+is not offered, and when more than one project is served the page takes the first; closing a
+session from the harness page (measured: no `/api/harness/session/close` route — 404); the
+update-status section for the opencode engine itself (queue 42); and the thing the active state
+exists to become — this session, replaced.
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

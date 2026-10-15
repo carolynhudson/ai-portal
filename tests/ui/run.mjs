@@ -316,10 +316,52 @@ if (spec.expectTitle && !win.document.title.includes(spec.expectTitle))
 
 // Every data fetch the page is supposed to make must really happen: a page
 // that renders but never calls its endpoint just shows placeholders forever.
+// Requests the page made on its own, before any interaction. The distinction is
+// the whole point of this check: a session that is only reachable after a click
+// is not "open the page and you are in it", and a portal restart makes that
+// difference visible to the operator.
+const loadRequestCount = trace.requests.length;
+
+for (const want of spec.expectRequestsOnLoad || []) {
+  const hit = trace.requests.slice(0, loadRequestCount)
+    .some((r) => r.path === want || r.path.startsWith(want.replace(/\/$/, "") + "/"));
+  if (!hit) {
+    fail(`expectRequestsOnLoad: the page never fetched ${want} during its own load — ` +
+      `only the harness's interactions reach it, so the state is not shown to whoever opens the page`);
+  }
+}
+
 for (const want of spec.expectRequests || []) {
   const hit = trace.requests.some((r) => r.path === want || r.path.startsWith(want.replace(/\/$/, "") + "/"));
   if (!hit) fail(`expected request never made: ${want}`);
 }
+// An assertion key with no checker here is a test that passes by doing nothing.
+// A spec writer who invents a key, or names one the runner dropped, gets a green
+// run and a false belief — the same class of defect as a control counted as
+// exercised when its request was swallowed. Refuse the unknown key.
+{
+  // Self-maintaining: a key counts as implemented when this file's own source reads
+  // `spec.<key>`. Add a checker and the key is allowed; delete one and every spec
+  // that still asserts it starts failing. No list to keep in sync, no way to
+  // forget a newly added key.
+  const src = readFileSync(new URL(import.meta.url), "utf8");
+  for (const k of Object.keys(spec)) {
+    if (!/^expect[A-Z]/.test(k)) continue;
+    if (!new RegExp(`spec\\.${k}\\b`).test(src)) {
+      fail(`spec asserts "${k}" and nothing in run.mjs reads spec.${k} — ` +
+        `the assertion passes without checking anything`);
+    }
+  }
+}
+
+// The page's own title is the cheapest statement of what the user landed on, and
+// ten pages asserted it while nothing read it.
+for (const want of spec.expectTitle || []) {
+  if (!win.document.title.includes(want)) {
+    fail(`expectTitle: the page title is ${JSON.stringify(win.document.title)}, which does not contain ${JSON.stringify(want)}`);
+  }
+}
+
 for (const want of spec.expectNoRequests || []) {
   const hit = trace.requests.find((r) => r.path === want);
   if (hit) fail(`page made a request it should not: ${want}`);

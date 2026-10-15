@@ -360,6 +360,53 @@ quit → markers cleared.
 closing a session from this page (the harness page's verbs); the queue-43 question-card semantics;
 the transcript's pagination when a session grows past the bound.
 
+## 10. Projects page, active state — canonical queue 32
+
+**The two states are one fact about the server, so the page is allowed only to read it.** The
+operator's ask was a page that *takes you to* the session — not a panel bolted under the list —
+and that anyone opening the portal finds the same session. The serve record is in the registry,
+checked against the host on every read: there is no browser state that could be the only copy.
+Design consequence: a mode that lives in server state is testable as a page load, and a mode that
+lives in a click is not. The active state, and a session ending while you were not looking, are
+both just loads.
+
+**A page with two states must show one of them, and say which.** `#proj-launchpad` and
+`#proj-op` are the two containers, toggled as a pair. Both scenarios assert both directions, so a
+page that showed the launchpad and the session at once would be caught — the failure a page gets
+by hiding a mode with a sibling walk, where nothing is named.
+
+**Where the way out goes.** `End session` is at the head of the session view, quiet (borderless,
+75 % opacity, 0.9 em, right-aligned). The operator asked for "visually obvious but unintrusive":
+obvious because it is where a reader who wants to leave looks, unintrusive because a control that
+shouts next to Send makes the session card about leaving the session.
+
+**Frame the harness, do not decorate it.** The session view is one column at full width, the
+transcript first, the prompt at the bottom, and 3 s polling. The operator's warning is the design
+constraint: opencode is built to own the whole screen, so the portal's job is to frame it, which
+in practice means *fewer* things around it. Measured with `tools/layout_measure.py`: launchpad 4
+columns, session view 1, no overflow, no short rows, no overlap in either.
+
+**The instrument, not the animation.** The context meter's denominator is read from the
+personality that serves the project, because the number the operator asked for (queue 32's
+budget line) is the context their models are actually served at. Where the denominator is not
+readable, the bar is refused in words (`no ceiling to be measured against`) — the design doc's
+rule for a bar with no ceiling, applied here.
+
+**The debt this slice paid that is not the page's.** Assertion keys the UI runner never
+implemented were **silently ignored** — the projects scenarios I had just written passed
+vacuously. A spec that can be written in a key nobody reads is a green bar that teaches everyone
+to trust green bars. The runner now fails on unimplemented keys (its implemented list derived
+from its own source, so the guard cannot rot), and the guard's first act was to catch
+`expectTitle` asserted on ten pages with nothing implementing it. Related, same class: the
+fixture describes an *inactive* project, so an active-state assertion placed there measures
+nothing; the harness has no per-scenario mechanism, which is why the active state is a second
+entry on the same path.
+
+**What is not polished here, deliberately.** The 3 s poll is not a stream; a tool call mid-step
+appears only when the step ends. Multi-session projects are not offered. The harness page's verbs
+have no way to close a session (measured 404), so `End session` is the portal's only way out, and
+it is confirm-gated because it stops live agent work.
+
 ## Order, and what blocks what
 
 | Queue | Item | Blocks / blocked by |

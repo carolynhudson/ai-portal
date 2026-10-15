@@ -48,6 +48,9 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 /* The operational state (queue 32, §6.14.1v): the session and nothing else. The list is not
    dimmed behind it — it is *hidden*, because a page that shows both answers two questions at
    once and the operator has to find which one they are typing into. */
+.proj-op-end{margin-left:auto}
+#proj-quit{background:none;border:1px solid var(--line,#444);color:inherit;opacity:.75;font-size:.9em}
+#proj-quit:hover{opacity:1}
 .proj-op-head{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin:0 0 8px}
 .proj-op-head b{font-size:1.15em}
 .proj-ctx{margin:10px 0 4px}
@@ -78,6 +81,9 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
   projects in. Change it on <a href="/settings">Settings</a>. Forgetting a project here removes it
   from the registry and never deletes the folder on disk.</p>
 
+<!-- The inactive mode: create, adopt, launch. One container, because the page has
+     two states and a reader should be able to tell which one it is from one element. -->
+<div id="proj-launchpad">
 <div id="proj-summary" class="proj-line"></div>
 
 <p class="proj-mut" id="proj-host">host: reading…</p>
@@ -147,6 +153,7 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
     <div id="proj-unadopted"></div>
   </div>
 </div>
+</div>
 
 <div id="proj-op" hidden>
   <div class="card">
@@ -154,6 +161,10 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       <b id="proj-op-name"></b>
       <span class="proj-mut" id="proj-op-meta"></span>
       <span class="proj-badge" id="proj-op-state"></span>
+      <!-- The way out of the active state, where a reader looking for it will look: at the top of
+           the session, not beside the box they type into. Quiet on purpose — the session is the
+           point of this view; closing it is not what the view is for. -->
+      <span class="proj-op-end"><button id="proj-quit">End session</button></span>
     </div>
     <div class="proj-ctx">
       <div class="proj-ctx-bar"><div class="proj-ctx-fill" id="proj-ctx-fill"></div></div>
@@ -169,7 +180,6 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       <textarea id="proj-prompt" aria-label="Prompt to the agent"
                 placeholder="Ask the agent. Enter sends, Shift+Enter is a new line."></textarea>
       <button id="proj-send" class="primary">Send</button>
-      <button id="proj-quit">Quit</button>
     </div>
     <p class="proj-result" id="proj-op-out"></p>
   </div>
@@ -457,6 +467,26 @@ async function refresh() {
   renderSummary(d.summary);
   renderRows(d.projects);
   renderUnadopted(d.scan);
+
+  // An active session IS the page. Anyone who opens it — a second browser, a browser
+  // opened after a portal restart, anyone the operator is not sitting behind — lands in
+  // the session, not in front of a button that leads to it. The harness's load check
+  // (`expectRequestsOnLoad`) is what proves the page does this by itself, with no click
+  // and no memory of who launched it.
+  // The row's serving state lives in `serve`, the same record the row's own status
+  // text is built from. A page that looked for `served` on the row would never find
+  // a running session and would silently keep showing the launchpad — which is
+  // precisely the failure this scenario exists to catch.
+  const serving = (d.projects || []).find((p) => p.serve && p.serve.served) || null;
+  if (serving && serving.serve.session) {
+    if (SERVING !== serving.name) showSession(serving.name, serving.serve.session);
+  } else if (SERVING) {
+    // The session ended somewhere else (the harness page, the host itself): the project
+    // is back to the inactive state for everyone looking at it, not only for the browser
+    // that was open when it ended.
+    hideSession(`${serving ? serving.name : SERVING} is not served any more.`);
+  }
+
   // The seed is read, not assumed: the host can be started from a shell, and a page
   // that spelled "seeded" from its own config file would be lying about it.
   const h = await req('GET', '/api/harness/status');
@@ -558,13 +588,11 @@ let opOrder = '';                   // the session the painted transcript belong
 let opLastNote = '';                  // the last sentence the page wrote for *this* session
 
 function opChrome(show) {
-  const op = $('#proj-op');
-  const parent = op.parentNode;
-  for (const node of parent.children) {
-    if (node === op) break;         // everything above the operational view is the list page
-    if (node.nodeType === 1) node.hidden = show;
-  }
-  op.hidden = !show;
+  // The page is in exactly one of two states, and the state is a fact about two elements:
+  // the launchpad container and the session view. Anything that hides a whole mode behind
+  // a walk over sibling nodes is a state no test can name.
+  $('#proj-launchpad').hidden = show;
+  $('#proj-op').hidden = !show;
 }
 
 function stopOpPoll() {
