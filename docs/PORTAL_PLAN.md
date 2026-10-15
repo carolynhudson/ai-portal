@@ -5231,6 +5231,42 @@ the flat loop each failed the guard, and both were reverted.
 inline section panel), and search as a collapsed affordance — the rest of §6.14.2's sequence. The
 41 dead in-page document links §9 names are not touched here.
 
+##### 6.14.1v A card over both ceilings states both clauses, in the order the operator acts (queue 33, 2026-10-14)
+
+Queue 33's glance, the last collapse the strip kept. `Budget` measures two ceilings — the
+router's aperture and the machine's physical RAM — and `validate()` reports them as separate
+findings. The strip printed the reasons as two independent `{% if %}` blocks, but the *badge*
+picked its word with an `if`/`else`: whenever the aperture also failed, the verdict read
+`does not fit` and the reader learned only the aperture story. A card the kernel kills for RAM
+on a box that is *also* over the aperture — the exact shape of the recorded OOM events on this
+box — lost the clause the operator can act on (add RAM) at the moment the card had two defects.
+
+The collapse was invisible to every guard written so far, and that is the finding worth keeping:
+**each earlier state forced ONE ceiling at a time**, so the aperture-first `elif` variant of the
+same markup was green under all of them. The guard that catches it forces **both** ceilings on
+one card and asserts the printed *clause list*: two clauses, each carrying its own figure
+derived from the card's own measured numbers, RAM stated first (the memory the operator can add
+has a next step the aperture does not offer).
+
+Mutation checks (each caught, each reverted):
+
+| Mutation | Guard that caught it |
+|---|---|
+| badge forced to `fits` in every state | state table (§6.14.1u) |
+| aperture-only `elif` clause chain | new two-clause guard |
+| RAM clause deleted | new two-clause guard |
+| clauses swapped back to aperture-first | new two-clause guard's order assertion |
+
+The page-level assertion in `tests/ui/spec.json` stays the shape (a badge per strip, max 2 with
+the live badge): the fixture's cards fit both ceilings, so the page asserts the clause spans are
+ABSENT, and the two-clause card lives in the route guards, where the state can be forced at the
+measurement layer (`peak_bytes`, `host_cache_bytes`, `ram_total_bytes`, `_pool_bytes`) — the
+same rule §6.14.1u fixed: every sentence asserted must be one the host can produce.
+
+**Not in this slice.** `vitals.py`'s CPU chart keeps its own `if/elif` collapse (gpu → vram →
+gtt → cpu) and no guard forces two of those states at once; that is §8's instrument question,
+recorded below as a candidate.
+
 #### 6.14.2 The knowledgebase becomes a documentation site
 
 `/help` today is one column with panels — the shape of every other portal page. The

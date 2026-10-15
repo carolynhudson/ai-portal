@@ -1899,3 +1899,53 @@ def _isVerdictClause(clause: str, badge_word: str) -> bool:
     has_number = bool(re.search(r"\d", clause))
     verdictish = any(w in low for w in _VERDICT_WORDS) or badge_word.lower() in low
     return verdictish and not has_number
+
+
+def test_a_card_over_both_ceilings_is_not_read_as_an_aperture_problem(
+        client, monkeypatch, library):
+    """Two ceilings, two clauses, on a card that breaks both.
+
+    The badge's `if`/`else` picks the aperture wording whenever the aperture also fails, so
+    a card the kernel kills for RAM on a box that is *also* over the aperture reads as an
+    aperture problem — the clause the operator acts on (add RAM) disappears, exactly when the
+    card has two defects and the reader has to know both. A guard that forced only ONE
+    ceiling at a time could not see the collapse: the `elif` variant of the same markup is
+    green under every one-clause assertion. So this card fails both, and the assertion is
+    that BOTH clauses arrive, in the order the operator can act on.
+    """
+    real = P.budget_for
+
+    def mutate(personality, budget_bytes=None):
+        b = real(personality, budget_bytes)
+        if personality.get("name") == "safe":
+            # Both ceilings, from the card's own measured figures — not invented verdicts.
+            b.fits = P.FITS_NO
+            b.headroom_bytes = -GIB
+            b.fits_ram = P.FITS_NO
+            b.host_cache_bytes = 200 * GIB
+            b.ram_total_bytes = 128 * GIB
+        return b
+
+    monkeypatch.setattr(P, "budget_for", mutate)
+    strips = {n: textOf(m) for n, m in _strips(client.get("/personalities").text).items()}
+    safe = strips["safe"]
+
+    clauses = _reasonClauses(_strips(client.get("/personalities").text)["safe"])
+    ram = [c for c in clauses if "RAM" in c]
+    aperture = [c for c in clauses if "aperture" in c]
+    assert ram, f"a card over RAM whose strip reads {safe!r} does not name RAM"
+    assert aperture, f"a card over the aperture whose strip reads {safe!r} does not name the aperture"
+    assert len(clauses) == 2, (
+        f"the strip printed {len(clauses)} clause(s) for a card with two defects: {clauses!r}. "
+        "One clause for two ceilings is the collapse this guard exists to catch")
+
+    # Each clause carries ITS OWN figure, derived from the card's own numbers.
+    want_ram = abs(b_worst("safe") + 200 * GIB - 128 * GIB) / GIB
+    want_ap = abs(b_worst("safe") - b_budget("safe")) / GIB
+    assert f"{want_ram:.1f} GiB" in ram[0], f"the RAM clause reads {ram[0]!r}, over RAM by {want_ram:.1f}"
+    assert f"{want_ap:.1f} GiB" in aperture[0], f"the aperture clause reads {aperture[0]!r}"
+
+    # The order the operator acts in: RAM first (the memory they can add), aperture second.
+    assert clauses[0] is ram[0], (
+        f"the strip's clauses are in the order {clauses!r}; a card over both ceilings has to "
+        "state the ceiling the operator can act on first")

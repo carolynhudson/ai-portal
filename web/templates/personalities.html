@@ -236,11 +236,11 @@ h2{margin:18px 0 6px}
          Budget calls "could not measure", and Jinja evaluates a nested `{{ }}` before the
          enclosing `{% if %}` skips it -- so an unguarded arithmetic expression in the strip
          renders a 500 page for a card whose only sin is an unreadable budget. #}
-      {% if b.get('fits') is false and b.get('worst_case_bytes') is not none and b.get('budget_bytes') %}
-        <span class="mut pers-reason">over the aperture by {{ (((b.get('worst_case_bytes') or 0) - (b.get('budget_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
-      {% endif %}
       {% if b.get('fits_ram') is false and b.get('worst_case_bytes') is not none and b.get('ram_total_bytes') %}
         <span class="mut pers-reason">over RAM by {{ (((b.get('worst_case_bytes') or 0) + (b.get('host_cache_bytes') or 0) - (b.get('ram_total_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
+      {% endif %}
+      {% if b.get('fits') is false and b.get('worst_case_bytes') is not none and b.get('budget_bytes') %}
+        <span class="mut pers-reason">over the aperture by {{ (((b.get('worst_case_bytes') or 0) - (b.get('budget_bytes') or 0)) / 1073741824)|abs|round(1) }} GiB</span>
       {% endif %}
       {% if b.get('unpriced') %}
         <span class="mut pers-reason">cannot price {{ (b.get('unpriced') or [])|length }}: {{ (b.get('unpriced') or [])|join(', ') }}</span>
