@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core import db, personality, portalsettings, projects
+from app.core import db, harnessctl, personality, portalsettings, projects
 
 
 @pytest.fixture(autouse=True)
@@ -656,7 +656,7 @@ def test_a_project_being_served_is_a_fact_the_registry_records(sandbox, monkeypa
     target = sandbox / "served"
     projects.create("served", ["git", "readme"], root=str(sandbox))
 
-    def fake_live():
+    def fake_live(directories=None):
         return {"ok": True, "byDirectory": {str(sandbox / "served"): [{"id": "ses_1"}]}, "count": 1}
 
     monkeypatch.setattr(projects, "_live_sessions", fake_live)
@@ -678,7 +678,7 @@ def test_serving_facts_name_the_host_that_answered(sandbox, monkeypatch):
     """"No project is served" and "the host did not answer" are different answers, and only one of
     them is a fact about the projects."""
     monkeypatch.setattr(projects, "_live_sessions",
-                        lambda: {"ok": False, "error": "connection refused"})
+                        lambda directories=None: {"ok": False, "error": "connection refused"})
     snap = projects.serve_facts()
     assert snap["served"]["hostOk"] is False
     assert snap["served"]["unknown"] is True
@@ -707,7 +707,7 @@ def test_launching_records_the_project_the_session_serves(sandbox, monkeypatch):
     target = sandbox / "launched"
     projects.create("launched", ["git"], root=str(sandbox))
     monkeypatch.setattr(projects, "_live_sessions",
-                        lambda: {"ok": True, "byDirectory": {str(target): [{"id": "ses_new"}]}, "count": 1})
+                        lambda directories=None: {"ok": True, "byDirectory": {str(target): [{"id": "ses_new"}]}, "count": 1})
     projects.mark_served(str(target), "ses_new", personality="work")
     row = [r for r in projects.serve_facts()["projects"] if r["name"] == "launched"][0]
     assert row["serve"] == {"served": True, "session": "ses_new", "personality": "work", "sessions": 1}
@@ -729,7 +729,7 @@ def test_the_personalitys_projects_are_read_from_the_records_the_launches_wrote(
     for name, pers in (("alpha", "Agent-Swift"), ("beta", "Agent-Swift"), ("gamma", "Other")):
         projects.create(name, ["git"], root=str(sandbox))
     monkeypatch.setattr(projects, "_live_sessions",
-                        lambda: {"ok": True, "byDirectory": {
+                        lambda directories=None: {"ok": True, "byDirectory": {
                             str(sandbox / name): [{"id": f"ses_{i}"}] for i, name in
                             enumerate(("alpha", "beta", "gamma"))}, "count": 3})
     projects.mark_served("alpha", "ses_0", "Agent-Swift")
@@ -752,7 +752,7 @@ def test_the_inverse_view_says_when_the_host_could_not_confirm_any_of_it(sandbox
     projects.create("quiet", ["git"], root=str(sandbox))
     projects.mark_served("quiet", "ses_7", "Agent-Swift")
     monkeypatch.setattr(projects, "_live_sessions",
-                        lambda: {"ok": False, "error": "connection refused"})
+                        lambda directories=None: {"ok": False, "error": "connection refused"})
     snap = projects.serve_facts()
     by = projects.by_personality(snap)
     assert by["hostOk"] is False
@@ -854,3 +854,413 @@ def test_the_summary_says_when_a_launch_has_no_personality_to_be_recorded_with(t
     out = projects.summary()
     assert out["personalities"] == [], out
     assert out["personalities_named"] is False, "the payload hides that there is no personality"
+
+
+# ------- how the host is asked about serving (§6.14.1v) — the measured reason the unscoped read fails
+#
+# Measured on the live 1.19.0 host: `GET /session` with no directory answers the folder the host was
+# started in. The projects page launches into ~/ai-projects, which is not that folder, so the
+# unscoped read returns a list that does not contain the session the portal created a minute
+# earlier — and the page calls a live session "not on the host". The read has to name the folders.
+
+def test_the_serving_read_asks_the_host_about_each_registered_folder(sandbox, monkeypatch):
+    target = sandbox / "live"
+    projects.create("live", ["git"], root=str(sandbox))
+    projects.mark_served(str(target), "ses_in_project_folder")
+    asked: list = []
+
+    def fake_list(cwd=None, port=4096):
+        asked.append(cwd)
+        return [{"id": "ses_in_project_folder", "directory": str(target)}] if cwd == str(target) else []
+
+    monkeypatch.setattr(harnessctl, "list_sessions", fake_list)
+    snap = projects.serve_facts()
+    row = [r for r in snap["projects"] if r["name"] == "live"][0]
+    assert str(target) in asked, f"the host was asked about {asked!r}, not about {target}"
+    assert row["serve"]["served"] is True, \
+        f"a session the host reports for the project's own folder read as {row['serve']!r}"
+    assert None not in asked, \
+        "the host was asked its unscoped list, which is the answer that does not contain project sessions"
+
+
+def test_a_project_the_host_refuses_to_list_is_not_reported_as_running(sandbox, monkeypatch):
+    """A folder the host will not list is a folder whose sessions are unknown. Read as an empty
+    list it is 'not served', and the page would be naming a running session finished."""
+    target = sandbox / "refused"
+    projects.create("refused", ["git"], root=str(sandbox))
+    projects.mark_served(str(target), "ses_x")
+
+    def fake_list(cwd=None, port=4096):
+        if cwd == str(target):
+            raise harnessctl.HarnessError("the host refused to list this project")
+        return []
+
+    monkeypatch.setattr(harnessctl, "list_sessions", fake_list)
+    row = [r for r in projects.serve_facts()["projects"] if r["name"] == "refused"][0]
+    assert row["serve"]["served"] is not True, row["serve"]
+    assert row["serve"].get("unknown") is True, \
+        f"a folder the host refused to list has to read as unknown, not as finished: {row['serve']!r}"
+
+
+# ---------------------------- the session view and quitting a project (§6.14.1v)
+
+def test_the_session_view_reads_the_record_the_launch_wrote(sandbox, monkeypatch):
+    target = sandbox / "viewed"
+    projects.create("viewed", ["git"], root=str(sandbox))
+    projects.mark_served(str(target), "ses_view", personality="work")
+    seen: dict = {}
+
+    def fake_view(session_id, cwd, context_limit=None, port=4096):
+        seen.update(session=session_id, directory=cwd, context_limit=context_limit)
+        return {"ok": True, "found": True, "title": "Run", "busy": True, "turns": 3,
+                "context_used": 9305, "context_limit": context_limit, "transcript": []}
+
+    monkeypatch.setattr(harnessctl, "session_view", fake_view)
+    out = projects.session_view("viewed", context_limit=200000)
+    assert seen == {"session": "ses_view", "directory": str(target), "context_limit": 200000}, seen
+    assert out["project"] == "viewed" and out["personality"] == "work", out
+    assert out["session"] == "ses_view" and out["context_used"] == 9305, out
+    assert out["served"] is True, out
+
+
+def test_a_project_with_no_record_says_there_is_nothing_to_view_without_asking_the_host(sandbox,
+                                                                                         monkeypatch):
+    """The row's Launch button was just pressed and the launch failed, and the page asks to view: the
+    answer is 'this project has no session', stated by the registry. Asking the host about a session
+    id the portal does not have is a request that can only answer 404."""
+    calls: list = []
+    monkeypatch.setattr(harnessctl, "session_view", lambda *a, **k: calls.append(a))
+    projects.create("bare", ["git"], root=str(sandbox))
+    out = projects.session_view("bare")
+    assert calls == [], f"the host was asked {calls!r} about a session the portal never recorded"
+    assert out["served"] is False and out["session"] is None, out
+    assert out["reason"], "the page needs the reason it has nothing to show"
+
+
+def test_the_view_keeps_the_hosts_own_words_about_the_session_it_cannot_find(sandbox, monkeypatch):
+    """The portal's record and the host's answer can disagree: the session ended, the host was
+    restarted, the record is stale. The page has to print the host's answer, not the record's hope."""
+    projects.create("gone", ["git"], root=str(sandbox))
+    projects.mark_served(str(sandbox / "gone"), "ses_gone", personality="work")
+    monkeypatch.setattr(harnessctl, "session_view",
+                        lambda session_id, cwd, context_limit=None, port=4096: {
+                            "ok": True, "found": False, "session": session_id, "directory": cwd,
+                            "busy": None, "transcript": [],
+                            "reason": "the host has no session ses_gone"})
+    out = projects.session_view("gone")
+    assert out["found"] is False, out
+    assert out["served"] is False, \
+        "the host says the session is not there — the registry's record cannot override that"
+    assert "ses_gone" in out["reason"], out
+
+
+def test_quitting_a_project_drops_the_record_and_leaves_the_session_for_the_harness_page(sandbox,
+                                                                                           monkeypatch):
+    # The host answers an empty list here, so what is under test is the record, not the host's silence.
+    monkeypatch.setattr(projects, "_live_sessions",
+                        lambda directories=None: {"ok": True, "byDirectory": {}, "count": 0})
+    """Queue 32: 'quitting takes it back to the harness page, where the session can be resumed.'
+
+    So quitting deletes only the portal's claim. The session and its transcript stay on the host,
+    which is why the answer names the session it is leaving behind: the operator is about to look
+    for it on the other page."""
+    projects.create("quitme", ["git"], root=str(sandbox))
+    projects.mark_served(str(sandbox / "quitme"), "ses_q", personality="work")
+    out = projects.quit_project("quitme")
+    assert out["ok"] is True and out["session"] == "ses_q", out
+    assert "harness" in out["reason"], f"the answer has to say where the session went: {out!r}"
+    row = [r for r in projects.serve_facts()["projects"] if r["name"] == "quitme"][0]
+    assert row["serve"]["served"] is False and "no session" in row["serve"]["reason"], row["serve"]
+    with pytest.raises(projects.ProjectError):
+        projects.quit_project("no-such-project")
+
+
+def test_quitting_a_project_that_never_launched_says_there_is_no_record_to_drop(sandbox):
+    projects.create("never", ["git"], root=str(sandbox))
+    out = projects.quit_project("never")
+    assert out["ok"] is True and out["session"] is None, out
+    assert out["reason"], "the page asked to quit a project with no session; it needs that said back"
+
+
+# ------------------- the page's endpoints for the serving view (§6.14.1v)
+#
+# Queue 32's handoff: Launch is the point where the Projects page stops being a list of projects and
+# becomes the session it is serving. The page can only do that if the view is readable and the send
+# box has an endpoint to post to — and the answer to a send is the host's answer, which is a 400 for
+# a session that is compacting, not a portal failure.
+
+def test_the_serving_endpoint_answers_the_view_the_page_painting_needs(sandbox):
+    c = _client()
+    c.post("/api/projects", json={"name": "api-view", "steps": ["git"]})
+    r = c.get("/api/projects/session", params={"name": "api-view"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["served"] is False and d["session"] is None, \
+        f"a project that never launched has nothing to view; the endpoint said {d!r}"
+    assert d["reason"], "the endpoint answered with no reason to show"
+
+
+def test_the_serving_endpoint_names_the_project_it_cannot_answer(sandbox):
+    c = _client()
+    r = c.get("/api/projects/session", params={"name": "no-such-project"})
+    assert r.status_code == 404, r.text
+    assert "no-such-project" in r.json()["detail"], r.json()
+
+
+def test_quitting_through_the_endpoint_leaves_the_session_the_harness_page_has_to_find(sandbox):
+    c = _client()
+    c.post("/api/projects", json={"name": "api-quit", "steps": ["git"]})
+    projects.mark_served(str(sandbox / "api-quit"), "ses_api_quit", personality="work")
+    r = c.post("/api/projects/quit", json={"name": "api-quit"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["session"] == "ses_api_quit", d
+    assert "harness" in d["reason"], d
+    row = [p for p in c.get("/api/projects").json()["projects"] if p["name"] == "api-quit"][0]
+    # The host is not answering in this sandbox, so the payload's answer for every project is
+    # "unknown" — asserted against that fact, not against a host that is not present here. What the
+    # quit has to have changed is the portal's own record: no session id left on the row.
+    assert not (row["serve"].get("session")), \
+        f"the page quit the project and the payload still carries its session: {row['serve']!r}"
+
+
+def test_the_send_box_posts_through_an_endpoint_that_answers_with_the_hosts_words(sandbox):
+    """The send box's endpoint. `send_prompt` already answers instead of raising, so the endpoint
+    must not turn that answer back into a 500: a session that is compacting has to reach the page as
+    the host's sentence, with the status the page can print."""
+    c = _client()
+    c.post("/api/projects", json={"name": "api-send", "steps": ["git"]})
+    projects.mark_served(str(sandbox / "api-send"), "ses_api_send", personality="work")
+
+    from app import main as main_mod
+
+    seen: dict = {}
+
+    def fake_send(session_id, text, cwd):
+        seen.update(session=session_id, text=text, cwd=cwd)
+        return {"ok": False, "session": session_id, "accepted": None,
+                "reason": "the host refused the text (HTTP 400: session is compacting)"}
+
+    monkey = main_mod.harnessctl
+    old = monkey.send_prompt
+    monkey.send_prompt = fake_send
+    try:
+        r = c.post("/api/harness/session/prompt", json={"name": "api-send", "text": "continue"})
+    finally:
+        monkey.send_prompt = old
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is False and "compacting" in d["reason"], d
+    assert seen == {"session": "ses_api_send", "text": "continue",
+                    "cwd": str(sandbox / "api-send")}, seen
+
+
+def test_the_send_box_cannot_be_told_to_post_into_a_project_the_registry_does_not_know():
+    c = _client()
+    r = c.post("/api/harness/session/prompt", json={"name": "not-registered", "text": "x"})
+    assert r.status_code == 404, r.text
+    assert "not-registered" in r.json()["detail"], r.json()
+
+
+def test_the_serving_and_quit_endpoints_require_auth():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    c = TestClient(app)
+    assert c.get("/api/projects/session", params={"name": "x"},
+                 follow_redirects=False).status_code == 401
+    assert c.post("/api/projects/quit", json={"name": "x"},
+                  follow_redirects=False).status_code == 401
+    assert c.post("/api/harness/session/prompt", json={"name": "x", "text": "y"},
+                  follow_redirects=False).status_code == 401
+
+
+# ------------------- the meter's denominator (§6.14.1v)
+#
+# The design's context meter is `tokens used / model context limit`. The used half comes from the
+# host. The limit half is the portal's fact — the ctx the personality's models are served at — and a
+# meter with a made-up denominator is a gauge that lies, so it is read from the same rows the
+# personalities page prices the deck with.
+
+def test_the_meters_denominator_is_the_personalitys_own_context_ceiling(sandbox, monkeypatch):
+    from app.core import personality as pers
+
+    def fake_targets(p):
+        return [{"model": "A.gguf", "config": None}, {"model": "B.gguf", "config": None}]
+
+    def fake_rows():
+        return [{"id": "A.gguf", "ctx_trained": 262144}, {"id": "B.gguf", "ctx_trained": 32768}]
+
+    monkeypatch.setattr(pers, "find", lambda name: {"name": name, "models": ["A.gguf", "B.gguf"]})
+    monkeypatch.setattr(pers, "resolve_targets", fake_targets)
+    monkeypatch.setattr("app.core.modelindex.rows", fake_rows)
+    assert projects.serving_context_limit("any") == 32768, \
+        "the meter has to divide by the ceiling the session can actually be served at"
+
+
+def test_the_meter_says_unknown_when_no_ceiling_is_readable(sandbox, monkeypatch):
+    from app.core import personality as pers
+
+    monkeypatch.setattr(pers, "find", lambda name: {"name": name, "models": ["X.gguf"]})
+    monkeypatch.setattr(pers, "resolve_targets", lambda p: [{"model": "X.gguf", "config": None}])
+    monkeypatch.setattr("app.core.modelindex.rows", lambda: [{"id": "X.gguf", "ctx_trained": 0}])
+    assert projects.serving_context_limit("any") is None, \
+        "a ceiling of 0 is not a ceiling; the meter has to say it does not know"
+
+
+def test_the_meter_says_unknown_when_the_personality_cannot_be_resolved(sandbox, monkeypatch):
+    from app.core import personality as pers
+
+    def boom(p):
+        raise pers.PersonalityError("personality 'gone' names models with no library entry")
+
+    monkeypatch.setattr(pers, "find", lambda name: {"name": name, "models": ["gone"]})
+    monkeypatch.setattr(pers, "resolve_targets", boom)
+    assert projects.serving_context_limit("gone") is None, \
+        "the meter's denominator is a read; an unresolvable personality is unknown, not a crash"
+
+
+# ------------------- the record the send box and the meter read (§6.14.1v)
+
+def test_the_record_answers_the_session_and_folder_a_send_needs_together(sandbox):
+    (sandbox / "record-send").mkdir()
+    projects.register(str(sandbox / "record-send"), "record-send")
+    projects.mark_served(str(sandbox / "record-send"), "ses_record", personality="work")
+    assert projects.served_session("record-send") == ("ses_record", str(sandbox / "record-send")), \
+        "a send needs the session id and the folder in one read; read apart, they can disagree"
+
+
+def test_the_record_refuses_to_answer_for_a_project_it_does_not_know(sandbox):
+    try:
+        projects.served_session("not-a-project")
+    except projects.ProjectError as e:
+        assert "not-a-project" in str(e), e
+        return
+    raise AssertionError("the send box accepted a project the registry has never heard of")
+
+
+def test_the_record_says_nothing_is_serving_when_nothing_is_serving(sandbox):
+    (sandbox / "record-none").mkdir()
+    projects.register(str(sandbox / "record-none"), "record-none")
+    try:
+        projects.served_session("record-none")
+    except projects.ProjectError as e:
+        assert "record-none" in str(e) and ("session" in str(e).lower()), e
+        return
+    raise AssertionError("a project with no session answered with one")
+
+
+def test_the_meter_reads_the_personality_the_launch_recorded(sandbox):
+    (sandbox / "record-pers").mkdir()
+    projects.register(str(sandbox / "record-pers"), "record-pers")
+    projects.mark_served(str(sandbox / "record-pers"), "ses_pers", personality="Agentic-PI")
+    assert projects.served_personality_of("record-pers") == "Agentic-PI"
+
+
+def test_the_meter_answers_none_for_a_project_with_no_record(sandbox):
+    (sandbox / "record-nopers").mkdir()
+    projects.register(str(sandbox / "record-nopers"), "record-nopers")
+    assert projects.served_personality_of("record-nopers") is None, \
+        "no record means no personality to price a ceiling for, and 'none' is that answer"
+
+
+# --------------------------------------------------- the operational state's endpoints (§6.14.1v)
+#
+# Queue 32's two states live on this page: the list, and *the session and nothing else*. The page
+# reaches the host through the portal, so the endpoints it needs are the session read, the send
+# box, the question form, and Quit. The host is not running in these tests, and that is the useful
+# state: it fixes what each endpoint owes the page when the host does not answer — a shape with the
+# reason, never a bare 500 the page can only print as `Internal Server Error`.
+
+def test_the_session_endpoints_require_auth():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    c = TestClient(app)
+    assert c.get("/api/projects/session?name=x", follow_redirects=False).status_code == 401
+    for path, body in [("/api/projects/quit", {"name": "x"}),
+                       ("/api/harness/session/prompt", {"name": "x", "text": "hi"}),
+                       ("/api/harness/session/question/reply", {"name": "x", "answers": [["a"]]}),
+                       ("/api/harness/session/question/reject", {"name": "x"})]:
+        assert c.post(path, json=body, follow_redirects=False).status_code == 401, path
+
+
+def test_the_session_read_answers_the_page(sandbox):
+    target = sandbox / "viewapp"
+    target.mkdir()
+    projects.register(str(target))
+    projects.mark_served(str(target), "ses_view")
+    c = _client()
+    r = c.get("/api/projects/session", params={"name": "viewapp"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["session"] == "ses_view"
+    assert d["directory"] == str(target)
+    # The host is not running here: the page must be able to say *why* the transcript is empty.
+    assert d["ok"] is False and d["found"] is None and d["reason"]
+    assert isinstance(d["transcript"], list) and isinstance(d["turns"], int)
+    assert "context_used" in d and "context_limit" in d and "question" in d
+
+
+def test_the_session_read_names_the_project_it_does_not_know(sandbox):
+    c = _client()
+    assert c.get("/api/projects/session", params={"name": "nope"}).status_code == 404
+    assert c.get("/api/projects/session", params={"name": ""}).status_code == 400
+
+
+def test_quitting_drops_the_claim_and_leaves_the_session_for_resume(sandbox):
+    target = sandbox / "quitter"
+    target.mkdir()
+    projects.register(str(target))
+    projects.mark_served(str(target), "ses_quit")
+    c = _client()
+    r = c.post("/api/projects/quit", json={"name": "quitter"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    # Queue 32: quitting returns to the inactive state *with the session id visible for resume*.
+    assert d["session"] == "ses_quit" and d["reason"] and "harness" in d["reason"]
+    # The portal's claim is gone, so the page's operational state is the inactive one.
+    assert projects.session_view("quitter")["served"] is False
+    assert projects.session_view("quitter")["session"] is None
+    assert c.post("/api/projects/quit", json={"name": "never-registered"}).status_code == 404
+
+
+def test_the_send_box_reports_the_hosts_refusal_as_a_fact(sandbox):
+    target = sandbox / "sender"
+    target.mkdir()
+    projects.register(str(target))
+    projects.mark_served(str(target), "ses_send")
+    c = _client()
+    r = c.post("/api/harness/session/prompt", json={"name": "sender", "text": "  "})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["accepted"] is False and d["session"] == "ses_send" and d["reason"]
+    r = c.post("/api/harness/session/prompt", json={"name": "sender", "text": "run the tests"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    # No host in this test: the refusal is the host's own sentence, and the page prints it.
+    # `accepted: None` is the host's refusal and `False` is the box's own emptiness — the page
+    # needs the two apart, because "the host will not take text" and "you sent nothing" are
+    # different sentences to read.
+    assert d["accepted"] is None and d["ok"] is False and "refused" in d["reason"]
+    assert c.post("/api/harness/session/prompt",
+                  json={"name": "not-a-project", "text": "x"}).status_code == 404
+
+
+def test_the_question_form_answers_the_project_it_is_serving(sandbox):
+    c = _client()
+    # Nothing is serving: the form has no session to answer for, and says so at 404.
+    assert c.post("/api/harness/session/question/reply",
+                  json={"name": "nope", "answers": [["a"]]}).status_code == 404
+    assert c.post("/api/harness/session/question/reject",
+                  json={"name": "nope"}).status_code == 404
+    target = sandbox / "asker"
+    target.mkdir()
+    projects.register(str(target))
+    projects.mark_served(str(target), "ses_ask")
+    # The host is down: the answer cannot be delivered, and 503 with the reason is the honest answer.
+    r = c.post("/api/harness/session/question/reply", json={"name": "asker", "answers": [["a"]]})
+    assert r.status_code == 503, r.text
+    assert "host" in r.json()["detail"].lower()
+    assert c.post("/api/harness/session/question/reject",
+                  json={"name": "asker"}).status_code == 503

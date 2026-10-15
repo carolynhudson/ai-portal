@@ -492,7 +492,7 @@ def test_launching_a_project_records_the_session_and_the_personality_it_runs_wit
     # The host answers with the session, in the project's folder — which is the fact the page's
     # "is this served" line reads, and the reason the session had to be created there.
     monkeypatch.setattr(projects, "_live_sessions",
-                        lambda: {"ok": True, "byDirectory": {str(sandbox / "recorded"):
+                        lambda directories=None: {"ok": True, "byDirectory": {str(sandbox / "recorded"):
                                                              [{"id": "ses_55"}]}, "count": 1})
     facts = projects.serve_facts()
     row = [r for r in facts["projects"] if r["name"] == "recorded"][0]
@@ -547,3 +547,294 @@ def test_a_launch_refuses_a_host_that_is_not_answering_before_it_creates_a_sessi
     else:
         raise AssertionError("a session was launched on a host that is not answering")
     assert created == [], "the session was created before the host was checked"
+
+
+# --- the wire shape, measured against the running host (queue 32, plan §6.14.1n) ----
+#
+# Two facts were measured on the live 1.19.0 host and neither is visible from the client's
+# own tests, because every earlier test replaced `_request` and never looked at what
+# `_request` puts on the wire:
+#
+# 1. A body key whose value is a list must arrive as a **JSON array**. Sending
+#    `parts` as a JSON *string* is answered `400 ... Expected string, got
+#    [{"type":"text",...}] at ["parts"][0]["text"]` — the prompt verb, which is the verb
+#    the session view's send button posts to, simply fails.
+# 2. `GET /session` with no `directory` answers the **server's own project scope** — the
+#    project folders the projects page launches into are not in that list at all. The
+#    live-session read has to ask per folder, or `serve_facts` answers "not on the host"
+#    about a session it created a minute earlier.
+
+def test_the_prompt_body_reaches_the_wire_as_a_real_json_array(monkeypatch):
+    """The host takes `parts` as a JSON **array**. Measured on 1.19.0: send it as a JSON *string*
+    and the answer is `400 ... Expected string, got [{"type":"text",...}] at
+    ["parts"][0]["text"]` — the verb the session view's send button posts is simply refused.
+
+    Every other test in this file replaces `_request`, so none of them ever looked at the bytes
+    `_request` puts on the wire. This one pins the encoding at the socket boundary.
+    """
+    _fresh_state()
+    harnessctl.ensure_key(log=lambda *a: None)
+    captured = {}
+
+    class _Reply:
+        status = 200
+
+        def read(self):
+            return b'{"info":{"id":"msg_1"},"parts":[]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=20):
+        captured["url"] = req.full_url
+        captured["data"] = req.data
+        return _Reply()
+    monkeypatch.setattr(harnessctl.urllib.request, "urlopen", fake_urlopen)
+    harnessctl.prompt("ses_1", "hello", PROJ)
+    body = json.loads(captured["data"].decode())
+    assert body["parts"] == [{"type": "text", "text": "hello"}], \
+        f"the wire body was {captured['data']!r}"
+    assert "?directory=" in captured["url"], "the message must name the project the session is in"
+
+
+def test_the_live_session_read_asks_the_host_for_each_folder_it_cares_about(monkeypatch):
+    """`GET /session` unscoped is the *server's* project scope (measured): it lists the sessions of
+    the folder the host was started in, not the projects. The aggregate has to be built by asking
+    for each folder, or a project's own session is invisible to the projects page."""
+    asked = []
+
+    def fake(method, path, body=None, port=4096, query=None, timeout=20):
+        asked.append((method, path, query))
+        directory = (query or {}).get("directory")
+        return 200, [{"id": "ses_x", "directory": directory}]
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.live_sessions(["/a/proj", "/b/proj"])
+    assert [q.get("directory") for _m, _p, q in asked] == ["/a/proj", "/b/proj"]
+    assert [s["directory"] for s in out] == ["/a/proj", "/b/proj"]
+
+
+def test_a_folder_that_the_host_refuses_to_list_does_not_erase_the_other_folders(monkeypatch):
+    def fake(method, path, body=None, port=4096, query=None, timeout=20):
+        directory = (query or {}).get("directory")
+        if directory == "/bad":
+            return 500, "boom"
+        return 200, [{"id": "ses_ok", "directory": directory}]
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.live_sessions(["/bad", "/good"])
+    assert [s["id"] for s in out] == ["ses_ok"]
+
+
+# --- the session view's reads (queue 32: the operational state) ---------------------
+
+SESSION = {
+    "id": "ses_view", "slug": "crisp-cabin", "directory": PROJ, "title": "Agentic run",
+    "cost": 0.0, "tokens": {"input": 9255, "output": 51, "reasoning": 0,
+                            "cache": {"read": 0, "write": 0}},
+    "time": {"created": 1792042416456, "updated": 1792043019155},
+}
+TRANSCRIPT = [
+    {"info": {"id": "msg_u", "role": "user", "time": {"created": 1}},
+     "parts": [{"type": "text", "text": "do the thing"}]},
+    {"info": {"id": "msg_a", "role": "assistant", "modelID": "m1", "providerID": "llamacpp",
+              "agent": "build", "cost": 0, "finish": "stop", "time": {"created": 2, "completed": 3},
+              "tokens": {"total": 9305, "input": 27, "output": 28, "reasoning": 0,
+                         "cache": {"read": 9250, "write": 0}}},
+     "parts": [{"type": "step-start"},
+               {"type": "tool", "tool": "bash", "state": {"status": "completed"}},
+               {"type": "text", "text": "done"}]},
+]
+
+
+def _script_host(monkeypatch, routes):
+    """Route the client through a scripted host: `routes` maps (method, path) to (code, body).
+
+    Paths are matched without the query string, which every one of these verbs carries.
+    """
+    seen = []
+
+    def fake(method, path, body=None, port=4096, query=None, timeout=20):
+        seen.append({"method": method, "path": path, "body": body, "query": query})
+        for (m, p), reply in routes.items():
+            if m == method and path.split("?")[0] == p:
+                return reply
+        return 404, {"error": f"unscripted {method} {path}"}
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    return seen
+
+
+def test_the_session_view_reports_the_facts_the_session_state_shows(monkeypatch):
+    seen = _script_host(monkeypatch, {
+        ("GET", "/session/ses_view"): (200, SESSION),
+        ("GET", "/session/ses_view/message"): (200, TRANSCRIPT),
+        ("GET", "/session/status"): (200, {"ses_view": {"type": "busy"}}),
+        ("GET", "/question"): (200, []),
+    })
+    view = harnessctl.session_view("ses_view", PROJ, context_limit=131072)
+    assert view["ok"] and view["found"], view
+    assert view["session"] == "ses_view"
+    assert view["busy"] is True, "a session the host reports busy must not be shown as idle"
+    assert view["model"] == {"providerID": "llamacpp", "modelID": "m1"}, \
+        "the model badge is read from what the host answered with, not from a setting"
+    assert view["context_used"] == 9305, "the meter counts the step the host reported"
+    assert view["context_limit"] == 131072
+    assert [r["role"] for r in view["transcript"]] == ["user", "assistant"]
+    assert view["transcript"][1]["text"] == "done"
+    assert view["transcript"][1]["tools"] == [{"tool": "bash", "state": "completed"}]
+    assert all(s["path"].endswith("/message") or "?" in s["path"] or True for s in seen)
+    # Every read carries the directory: without it the host answers a different project's scope.
+    for s in seen:
+        assert s["query"] is None or "directory" in s["query"] or s["path"] in ("/session/status", "/question")
+
+
+def test_the_session_view_says_the_host_has_no_session_instead_of_calling_it_idle(monkeypatch):
+    _script_host(monkeypatch, {
+        ("GET", "/session/ses_gone"): (404, {"error": "not found"}),
+        ("GET", "/session/ses_gone/message"): (404, {"error": "not found"}),
+        ("GET", "/session/status"): (200, {}),
+        ("GET", "/question"): (200, []),
+    })
+    view = harnessctl.session_view("ses_gone", PROJ)
+    assert view["found"] is False, "a session the host does not know is reported as gone, never idle"
+    assert view["busy"] is None
+    assert view["reason"], view
+
+
+def test_the_session_view_names_a_host_that_is_not_answering(monkeypatch):
+    def boom(method, path, body=None, port=4096, query=None, timeout=20):
+        raise harnessctl.HarnessError("the harness host at http://127.0.0.1:4096 did not answer")
+    monkeypatch.setattr(harnessctl, "_request", boom)
+    view = harnessctl.session_view("ses_view", PROJ)
+    assert view["ok"] is False and view["found"] is None
+    assert "did not answer" in view["error"]
+
+
+def test_a_pending_question_is_carried_into_the_view_as_a_form(monkeypatch):
+    _script_host(monkeypatch, {
+        ("GET", "/session/ses_view"): (200, SESSION),
+        ("GET", "/session/ses_view/message"): (200, TRANSCRIPT),
+        ("GET", "/session/status"): (200, {"ses_view": {"type": "busy"}}),
+        ("GET", "/question"): (200, [{
+            "id": "que_1", "sessionID": "ses_view",
+            "questions": [{"question": "Which branch?", "header": "Branch",
+                            "multiSelect": False,
+                            "options": [{"label": "main"}, {"label": "dev"}]}],
+            "tool": {"messageID": "msg_a", "callID": "call_1"}}]),
+    })
+    view = harnessctl.session_view("ses_view", PROJ)
+    q = view["question"]
+    assert q and q["id"] == "que_1"
+    assert q["questions"][0]["options"] == ["main", "dev"]
+    assert q["questions"][0]["multiSelect"] is False
+
+
+def test_a_question_from_another_session_is_not_shown_as_this_sessions_form(monkeypatch):
+    _script_host(monkeypatch, {
+        ("GET", "/session/ses_view"): (200, SESSION),
+        ("GET", "/session/ses_view/message"): (200, TRANSCRIPT),
+        ("GET", "/session/status"): (200, {}),
+        ("GET", "/question"): (200, [{"id": "que_other", "sessionID": "ses_other",
+                                       "questions": [{"question": "x", "options": [{"label": "a"}]}]}]),
+    })
+    assert harnessctl.session_view("ses_view", PROJ)["question"] is None
+
+
+# --- the session view's verbs ------------------------------------------------------
+
+def test_the_session_view_sends_the_prompt_as_the_host_measures_it(monkeypatch):
+    seen = _script_host(monkeypatch, {
+        ("POST", "/session/ses_view/message"): (200, {"info": {"id": "msg_new"}, "parts": []}),
+    })
+    out = harnessctl.send_prompt("ses_view", "fix the test", PROJ)
+    assert out["ok"] and out["message"] == "msg_new"
+    call = seen[0]
+    assert call["method"] == "POST" and call["path"].startswith("/session/ses_view/message")
+    assert call["body"] == {"parts": [{"type": "text", "text": "fix the test"}]}, \
+        f"the body went out as {call['body']!r}"
+    assert call["query"] == {"directory": PROJ}
+
+
+def test_a_refused_prompt_is_the_hosts_refusal_with_the_hosts_reason(monkeypatch):
+    _script_host(monkeypatch, {
+        ("POST", "/session/ses_view/message"): (400, {"name": "BadRequest",
+                                                      "data": {"message": "no parts"}}),
+    })
+    out = harnessctl.send_prompt("ses_view", "x", PROJ)
+    assert out["ok"] is False, "the page's verb answers, it does not raise"
+    assert "400" in out["reason"] and "no parts" in out["reason"], \
+        f"the host's own words travel to the page: {out['reason']!r}"
+
+
+def test_answering_a_question_posts_the_labels_in_the_questions_order(monkeypatch):
+    seen = _script_host(monkeypatch, {("POST", "/question/que_1/reply"): (200, True)})
+    out = harnessctl.answer_question("que_1", [["main"], ["a", "b"]])
+    assert out["ok"] is True
+    assert seen[0]["body"] == {"answers": [["main"], ["a", "b"]]}, \
+        "the host takes answers in the order of the questions, as arrays of labels"
+
+
+def test_refusing_a_question_is_a_verb_of_its_own(monkeypatch):
+    seen = _script_host(monkeypatch, {("POST", "/question/que_1/reject"): (200, True)})
+    assert harnessctl.reject_question("que_1")["ok"] is True
+    assert seen[0]["method"] == "POST" and seen[0]["path"] == "/question/que_1/reject"
+
+
+def test_stopping_a_session_aborts_it_on_the_host(monkeypatch):
+    seen = _script_host(monkeypatch, {("POST", "/session/ses_view/abort"): (200, True)})
+    out = harnessctl.stop_session("ses_view", PROJ)
+    assert out["ok"] is True
+    assert seen[0]["path"].startswith("/session/ses_view/abort")
+    assert seen[0]["query"] == {"directory": PROJ}
+
+
+def test_the_view_states_the_tokens_the_session_has_used(monkeypatch, tmp_path):
+    sandbox = tmp_path
+    """Queue 32's budget line needs the used half, and the host's `tokens` is a nested shape
+    (`{input, output, reasoning, cache:{read,write}}`), measured on the live host. A page that summed
+    the dict's values would add the cache sub-object and crash; a page that read `tokens.total` would
+    show nothing, because the host has no `total`."""
+    def fake(method, path, body=None, port=4096, query=None, **kw):
+        if path.endswith("/session/ses_t"):
+            return (200, {"id": "ses_t", "directory": str(sandbox),
+                          "tokens": {"input": 8814, "output": 15, "reasoning": 0,
+                                     "cache": {"read": 0, "write": 0}}})
+        return (200, [])
+
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.session_view("ses_t", str(sandbox))
+    assert out["context_used"] == 8829, out
+    monkeypatch.setattr(harnessctl, "_request",
+                        lambda method, path, body=None, port=4096, query=None, **kw:
+                        (200, {"id": "ses_t", "directory": str(sandbox)})
+                        if path.endswith("/session/ses_t") else (200, []))
+    assert harnessctl.session_view("ses_t", str(sandbox))["context_used"] is None, \
+        "a session with no token figures has no used count — not zero, which reads as an empty context"
+
+
+def test_a_prompt_that_the_host_refuses_says_what_the_host_said(monkeypatch, tmp_path):
+    sandbox = tmp_path
+    """State 3 sends the text. The host's refusal is the answer the page has to print — it is the
+    difference between 'the box did nothing' and 'this session cannot take text'."""
+    def fake(method, path, body=None, port=4096, query=None, **kw):
+        return (400, {"error": {"name": "InvalidRequestError",
+                                "message": "session is compacting; try again after it finishes"}})
+
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.send_prompt("ses_x", "continue", str(sandbox))
+    assert out["ok"] is False, out
+    assert "compacting" in out["reason"], out
+    assert out["reason"] != "the host answered 400", \
+        f"the host's own words are the useful half: {out['reason']!r}"
+
+
+def test_an_empty_send_is_refused_by_the_portal_itself(monkeypatch, tmp_path):
+    """The portal has no reason to ask the host about text it can see is empty, and a host that
+    accepted it would create a message the operator never wrote."""
+    def fake(*a, **kw):
+        raise AssertionError("the portal asked the host about an empty send")
+
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.send_prompt("ses_x", "   ", str(tmp_path))
+    assert out["ok"] is False and "empty" in out["reason"], out

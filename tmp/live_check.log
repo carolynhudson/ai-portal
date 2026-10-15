@@ -1,0 +1,15 @@
+2026-10-15 03:25:23 INFO    aiportal: logging at INFO -> /home/cortana/ai/logs/portal.log
+2026-10-15 03:25:23 INFO    aiportal: AI Portal 0.1.0: home=/home/cortana ai_root=/home/cortana/ai state=/home/cortana/ai/state/portal
+INFO:     Started server process [957945]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:18090 (Press CTRL+C to quit)
+2026-10-15 03:25:25 INFO    aiportal.audit: portal model-index: scanned 16 model(s) — 0 from the library, 16 from the hub cache; 2 problem(s)
+2026-10-15 03:25:25 INFO    aiportal: model index: 16 model(s), 2 problem(s)
+2026-10-15 03:25:29 INFO    aiportal.audit: portal auth: api login ok
+2026-10-15 03:36:35 INFO    aiportal.audit: project launch: name=/home/cortana/ai-projects/ai-portal session=ses_ec0dd63e2ffetuBF2lTfLuoWZp personality=Agentic-PI recorded=True
+2026-10-15 03:38:46 INFO    aiportal.audit: project quit: name=/home/cortana/ai-projects/ai-portal session=ses_ec0dd63e2ffetuBF2lTfLuoWZp
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [957945]

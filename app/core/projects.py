@@ -721,33 +721,56 @@ def list_projects() -> list[dict[str, Any]]:
 # served when the host has a live session for its folder. The registry stores which session (and
 # which personality) the launch wrote down, and the host confirms it is still there.
 
-def _live_sessions() -> dict[str, Any]:
-    """Every session the host reports, grouped by the directory it names for each — **one host
-    call**, shared by every row of a read.
+def _live_sessions(directories: list[str] | None = None) -> dict[str, Any]:
+    """Every session the host reports for the folders named, grouped by folder.
 
-    Asking per project turns a page refresh into N requests to a host that is a single user unit,
-    and a host that dies mid-refresh would answer some rows and not others. Read from the module by
-    name so a test, a page, and the CLI can all supply the host's answer.
+    **Asked per folder, because the unscoped read is measurably the wrong answer.** On 1.19.0, `GET
+    /session` with no directory lists the sessions of the folder the host was started in — for the
+    portal's host, the folder its unit starts in, which is not `~/ai-projects`. The unscoped list
+    therefore does not contain the session the portal created for a project a minute earlier, and a
+    row built from it reads a live session as "not on the host". The folders named are the registry's
+    own paths, so a page refresh is one read per registered project and no more.
+
+    A folder the host refused to list is named in `refused`: read as an empty list it is "not
+    served", and that is the page naming a running session finished. When the host refused *every*
+    folder the whole read is `ok: False` — the host, not the projects, is what failed.
+
+    Read from the module by name so a test, a page, and the CLI can all supply the host's answer.
     """
     try:
         from app.core import harnessctl
     except ImportError:  # pragma: no cover - the package always carries it
         return {"ok": False, "error": "the harness component is not importable"}
-    try:
-        rows = harnessctl.list_sessions()
-    except Exception as exc:  # a host that will not answer is a fact, not a crash
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    asked = [os.path.realpath(str(d)) for d in (directories or []) if str(d or "")]
+    if not asked:
+        asked = [""]
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        key = os.path.realpath(str(row.get("directory") or row.get("path") or ""))
-        grouped.setdefault(key, []).append(row)
-    return {"ok": True, "byDirectory": grouped, "count": len(rows)}
+    refused: list[str] = []
+    reason: str | None = None
+    for folder in asked:
+        try:
+            rows = harnessctl.list_sessions(folder or None)
+        except Exception as exc:  # a host that will not answer is a fact, not a crash
+            refused.append(folder)
+            reason = f"{type(exc).__name__}: {exc}"
+            continue
+        for row in rows:
+            key = os.path.realpath(str(row.get("directory") or row.get("path") or folder))
+            grouped.setdefault(key, []).append(row)
+    if refused and len(refused) == len(asked):
+        return {"ok": False, "error": reason or "the host did not answer", "refused": refused}
+    out: dict[str, Any] = {"ok": True, "byDirectory": grouped,
+                           "count": sum(len(v) for v in grouped.values())}
+    if refused:
+        out["refused"] = refused
+        out["refusedReason"] = reason
+    return out
 
 
 def live_sessions(directory: str) -> dict[str, Any]:
     """The host's sessions for one project folder. `{"ok": False, "error": …}` when the host did
     not answer — the difference between "no sessions" and "no host" is a fact the page must keep."""
-    answer = _live_sessions()
+    answer = _live_sessions([directory])
     if not answer.get("ok"):
         return answer
     rows = answer["byDirectory"].get(os.path.realpath(directory), [])
@@ -803,6 +826,157 @@ def clear_served(path: str) -> dict[str, Any]:
     return {"ok": True, "path": real, "was_served": True}
 
 
+def _resolve(name_or_path: str) -> tuple[str, str]:
+    """A project named either way, as the pair every serving verb needs: its registry name and its
+    real folder. The launcher knows a path and the page knows a name (§6.14.1n); a verb that accepted
+    one of them would be used two ways by the two callers."""
+    if os.path.sep in name_or_path:
+        target = os.path.realpath(name_or_path)
+        row = db.query("SELECT name FROM projects WHERE path = ?", (target,))
+        if not row:
+            raise ProjectError(f"{target} is not in the registry, so it has no session record")
+        return row[0]["name"], target
+    safe = validate_name(name_or_path)
+    row = db.query("SELECT path FROM projects WHERE name = ?", (safe,))
+    if not row:
+        raise ProjectError(f"{safe} is not in the registry, so it has no session record")
+    return safe, os.path.realpath(row[0]["path"])
+
+
+def served_session(name_or_path: str) -> tuple[str, str]:
+    """The session id and folder a send needs, in one read (§6.14.1v).
+
+    Both facts travel together because a prompt is addressed to a *session working in a folder*:
+    reading the id here and the folder there lets them come from different records, and the send box
+    posting into a session of a project the operator named is a write the portal must be able to
+    vouch for. A project with no session is refused by name: the send box has nothing to send to,
+    and a silent empty target is how a page ends up posting into someone else's session.
+    """
+    safe, path = _resolve(name_or_path)
+    record = _notes(path).get("serve")
+    if not record or not record.get("session"):
+        raise ProjectError(
+            f"project {safe!r} has no session being served, so there is nothing to send to")
+    return str(record["session"]), path
+
+
+def served_personality_of(name_or_path: str) -> str | None:
+    """The personality the launch recorded for this project, or None.
+
+    This is the meter's denominator input (§6.14.1v): the context ceiling is a property of the
+    personality serving the session, and the launch is the only place that fact is written down.
+    None is a real answer — a project with no session has no personality pricing it — and the meter
+    prints 'context limit unknown' for it.
+    """
+    _safe, path = _resolve(name_or_path)
+    record = _notes(path).get("serve")
+    return (record or {}).get("personality")
+
+
+def serving_context_limit(personality_name: str | None) -> int | None:
+    """The context ceiling the session view's meter divides by (§6.14.1v).
+
+    The meter is *tokens used / the model's context limit*. The used half is the host's; this half is
+    the portal's, and it is read from the same rows the personalities page prices its deck with: a
+    model config's own `ctx` where the operator set one, otherwise the library's trained context. The
+    **smallest** readable ceiling is the answer, because a meter that divided by the biggest number
+    available would show a session as having room the model it is served by does not have.
+
+    An unresolvable personality, a model with no readable ctx, and a ctx of 0 are all the same
+    answer: `None`. The page prints "context limit unknown" — a gauge with no denominator is not a
+    gauge, and a made-up one is worse than none.
+    """
+    if not personality_name:
+        return None
+    from . import model_config, modelindex, personality  # projects owns no model facts
+
+    try:
+        found = personality.find(personality_name)
+        if not found:
+            return None
+        targets = personality.resolve_targets(found)
+    except (personality.PersonalityError, model_config.ConfigError):
+        return None
+    try:
+        rows = {r["id"]: r for r in modelindex.rows()}
+    except Exception:  # noqa: BLE001 - a library that cannot be read is an unknown ceiling
+        return None
+    limits: list[int] = []
+    for target in targets:
+        model, config = target.get("model"), target.get("config")
+        raw = None
+        if config:
+            try:
+                raw = (model_config.get(config).get("settings") or {}).get("ctx")
+            except (model_config.ConfigError, KeyError):
+                raw = None
+        if raw is None:
+            raw = (rows.get(model) or {}).get("ctx_trained")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            limits.append(value)
+    return min(limits) if limits else None
+
+
+def session_view(name_or_path: str, context_limit: int | None = None) -> dict[str, Any]:
+    """The project page's operational state: the host's own answer about the session this project's
+    launch recorded, plus the two facts only the registry has — which personality the launch named,
+    and which project the page asked about.
+
+    The registry's record is the *address*, not the state. When the host says it has no such session
+    (the operator ended it, the host was restarted, the record is stale), the host's answer is what
+    the page prints: a record that overrode it would show a transcript for a session that is gone.
+
+    A project with no record is answered without asking the host at all. There is no session id to
+    ask about, and a 404 read is a request that can only answer 'not found' about a question the
+    portal asked of its own accord.
+    """
+    safe, path = _resolve(name_or_path)
+    record = _notes(path).get("serve")
+    if not record or not record.get("session"):
+        return {"ok": True, "served": False, "found": None, "project": safe, "path": path,
+                "session": None, "personality": None, "busy": None, "model": None,
+                "context_used": None, "context_limit": context_limit, "turns": 0,
+                "question": None, "transcript": [],
+                "reason": "no session has been launched for this project"}
+    from app.core import harnessctl
+    view = harnessctl.session_view(str(record["session"]), path, context_limit=context_limit)
+    out = dict(view)
+    out["project"] = safe
+    out["path"] = path
+    out["personality"] = record.get("personality")
+    out["session"] = record["session"]
+    out["served"] = bool(out.get("found")) and out.get("ok") is not False
+    if not out["served"] and not out.get("reason"):
+        out["reason"] = f"the host has no session {record['session']}"
+    return out
+
+
+def quit_project(name_or_path: str) -> dict[str, Any]:
+    """Stop serving this project (queue 32: 'quitting takes it back to the harness page, where the
+    session can be resumed').
+
+    So this verb drops the portal's claim and nothing else. The session, its transcript, and its
+    context are the host's; deleting them here would destroy the thing the operator is going to the
+    other page to resume. The answer names the session it is leaving behind, because the operator is
+    about to look for it on the harness page and needs the id to look for.
+    """
+    safe, path = _resolve(name_or_path)
+    record = _notes(path).get("serve")
+    if not record or not record.get("session"):
+        return {"ok": True, "project": safe, "path": path, "session": None,
+                "reason": "no session has been launched for this project, "
+                          "so there is no record to drop"}
+    clear_served(path)
+    session = record["session"]
+    return {"ok": True, "project": safe, "path": path, "session": session,
+            "reason": f"the session {session} is left running on the host: the harness page lists "
+                      "it, and the transcript is there to resume"}
+
+
 def serve_facts() -> dict[str, Any]:
     """The registry plus the host's answer for each project, in one read.
 
@@ -811,10 +985,12 @@ def serve_facts() -> dict[str, Any]:
     launch wrote down. A host that did not answer is reported as unknown, never as "not served".
     """
     rows = list_projects()
-    # One host call for the whole read. Asked even when the registry is empty: "no project is
-    # served" and "the host did not answer" are different answers, and only the host tells them
-    # apart.
-    answer = _live_sessions()
+    # One read for the whole page, asked about the registry's own folders. Asked even when the
+    # registry is empty: "no project is served" and "the host did not answer" are different answers,
+    # and only the host tells them apart.
+    answer = _live_sessions([row["path"] for row in rows])
+    refused = {os.path.realpath(str(f)) for f in (answer.get("refused") or [])}
+    refused_reason = answer.get("refusedReason") or "the host refused to list this project's folder"
     served: list[str] = []
     # The host's own words, kept once. Every row carries its own copy of "the host did not answer",
     # and the payload needs one reason a caller can quote without walking the rows.
@@ -835,6 +1011,15 @@ def serve_facts() -> dict[str, Any]:
         if not record:
             row["serve"] = {"served": False,
                             "reason": "no session has been launched for this project"}
+            continue
+        if os.path.realpath(row["path"]) in refused:
+            # The host will not list this folder. The registry knows a session was launched with it;
+            # nothing says the session is finished, and "not served" is exactly the claim that would
+            # tell the operator to launch a second one.
+            row["serve"] = {"served": None, "unknown": True,
+                            "session": record.get("session"),
+                            "personality": record.get("personality"),
+                            "reason": f"{refused_reason} ({record.get('session')})"}
             continue
         live = answer["byDirectory"].get(os.path.realpath(row["path"]), [])
         ids = [str(s.get("id")) for s in live]
@@ -887,6 +1072,15 @@ def by_personality(facts: dict[str, Any]) -> dict[str, Any]:
     if not out["hostOk"]:
         out["reason"] = ((facts.get("served") or {}).get("reason")
                          or "the host did not answer, so no project's serving state is confirmed")
+    else:
+        # The host answered, and refused *this* folder. The list is the registry's record, which is
+        # what the portal knows; the host's inability to confirm it travels with it, so the
+        # personality page is not claiming a session it never saw.
+        unconfirmed = [row["name"] for row in facts.get("projects") or []
+                       if (row.get("serve") or {}).get("unknown")]
+        if unconfirmed:
+            out["unconfirmed"] = unconfirmed
+            out["reason"] = "the host could not confirm " + ", ".join(sorted(unconfirmed))
     return out
 
 

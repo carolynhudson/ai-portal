@@ -518,6 +518,265 @@ def messages(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict]:
     return body if isinstance(body, list) else []
 
 
+# --- the session view (queue 32: the page's operational state) ----------------------
+#
+# Every fact below is measured against the live 1.19.0 host. Two of them decide what the page is
+# allowed to claim:
+#
+# 1. `GET /session` with no `directory` answers the **server's own project scope**. The folders the
+#    projects page launches into are not in that list, so a per-folder read is the only way to
+#    learn that a project's own session is on the host.
+# 2. `GET /session/{id}/permissions` answers the **web app's HTML** — the SPA fallback page, not an
+#    API. There is no read that lists a session's pending permissions, so the session view does not
+#    show a permission row: a pending permission is a thing the host announces on the event stream,
+#    and the portal has no event stream.
+
+def live_sessions(directories: list[str], port: int = DEFAULT_PORT) -> list[dict]:
+    """Every session the host reports for the folders named, **asked per folder**.
+
+    Measured: an unscoped `GET /session` lists the sessions of the folder the host was started in,
+    so the projects page would be told, about a session it created a minute earlier, that it is not
+    on the host. A folder the host refuses to list is skipped — the caller reports that folder's own
+    reason; it must not arrive as "that project has no sessions".
+    """
+    out: list[dict] = []
+    for d in directories:
+        if not d:
+            continue
+        try:
+            out.extend(list_sessions(str(d), port=port))
+        except HarnessError:
+            continue
+    return out
+
+
+def _context_used(tokens: Any) -> int | None:
+    """What the last step occupied: the host's own total, or the parts of it when there is no total.
+
+    The host's numbers are counts, so `0` is a real answer and "no number" is not: a step the host
+    reported no tokens for is reported as unknown, never as an empty context.
+    """
+    if not isinstance(tokens, dict):
+        return None
+    cache = tokens.get("cache")
+    if not isinstance(cache, dict):
+        cache = {}
+    keys = [(tokens, "total"), (tokens, "input"), (tokens, "output"), (tokens, "reasoning"),
+            (cache, "read"), (cache, "write")]
+    for source, key in keys:
+        value = source.get(key)
+        if key != "total":
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return round(value)
+    parts = [source.get(key) for source, key in keys if key != "total"]
+    nums = [p for p in parts if isinstance(p, int) and not isinstance(p, bool)]
+    return sum(nums) if nums else None
+
+
+def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict]:
+    """The host's messages as rows the page can print: role, text, the tools a step ran, and what
+    the host said it answered with.
+
+    The host's own shape (`{info, parts}`) is a wire fact; normalizing it here is what keeps the
+    template from reading wire keys, which is how a host upgrade becomes a page outage.
+    """
+    rows: list[dict] = []
+    for item in messages(session_id, cwd, port=port):
+        if not isinstance(item, dict):
+            continue
+        info = item.get("info")
+        if not isinstance(info, dict):
+            info = {}
+        parts = item.get("parts")
+        if not isinstance(parts, list):
+            parts = []
+        texts = []
+        tools = []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            kind = p.get("type")
+            if kind == "text":
+                texts.append(str(p.get("text") or ""))
+            elif kind == "tool":
+                state = p.get("state")
+                if not isinstance(state, dict):
+                    state = {}
+                tools.append({"tool": str(p.get("tool") or ""), "state": str(state.get("status") or "")})
+        text = "\n".join(texts).strip()
+        model = None
+        if info.get("providerID") or info.get("modelID"):
+            model = {"providerID": info.get("providerID"), "modelID": info.get("modelID")}
+        rows.append({
+            "id": info.get("id"), "role": str(info.get("role") or ""), "text": text, "tools": tools,
+            "model": model, "agent": info.get("agent"), "cost": info.get("cost"),
+            "finish": info.get("finish"), "tokens": info.get("tokens") or {},
+            "time": info.get("time") if isinstance(info.get("time"), dict) else {},
+            "error": info.get("error"),
+        })
+    return rows
+
+
+def pending_questions(port: int = DEFAULT_PORT) -> list[dict]:
+    """The questions the host is holding. Measured: `GET /question` is a list, and a host with
+    nothing pending answers `[]` — the same answer as "the session never asked", which is why the
+    view only reports a question that names *this* session."""
+    code, body = _request("GET", "/question", port=port)
+    if code != 200:
+        raise HarnessError(f"question list refused (HTTP {code}): {str(body)[:160]}")
+    return body if isinstance(body, list) else []
+
+
+def _question_form(item: dict) -> dict:
+    raw_questions = item.get("questions")
+    if not isinstance(raw_questions, list):
+        raw_questions = []
+    questions = []
+    for q in raw_questions:
+        if not isinstance(q, dict):
+            continue
+        raw_options = q.get("options")
+        if not isinstance(raw_options, list):
+            raw_options = []
+        options = []
+        for o in raw_options:
+            if isinstance(o, dict):
+                options.append(str(o.get("label") or ""))
+        questions.append({
+            "question": str(q.get("question") or ""),
+            "header": str(q.get("header") or ""),
+            "multiSelect": bool(q.get("multiple") or q.get("multiSelect")),
+            "options": options,
+        })
+    return {"id": item.get("id"), "session": item.get("sessionID"),
+            "tool": item.get("tool"), "questions": questions}
+
+
+def session_view(session_id: str, cwd: str, context_limit: int | None = None,
+                 port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """What the page's operational state is made of: the host's session facts, the transcript, who
+    answered, the context the last step occupied, whether the host is busy, and any question it is
+    holding for this session.
+
+    The three answers are kept apart, because the page must say all three: `ok: False` is the host,
+    `found: False` is the host saying it has no such session, and `busy: False` is a session that is
+    sitting idle. A page that reads the second as the third tells the operator their session is
+    finished when the portal has simply lost its id.
+    """
+    out: dict[str, Any] = {
+        "ok": True, "found": True, "session": session_id, "directory": cwd,
+        "title": None, "busy": None, "model": None, "agent": None, "cost": None,
+        "context_used": None, "context_limit": context_limit, "turns": 0,
+        "question": None, "transcript": [], "reason": None,
+    }
+    try:
+        facts = session(session_id, cwd, port=port)
+    except HarnessError as exc:
+        msg = str(exc)
+        if "HTTP 404" in msg:
+            out["found"] = False
+            out["reason"] = f"the host has no session {session_id}"
+            return out
+        out["ok"] = False
+        out["found"] = None
+        out["error"] = msg
+        out["reason"] = "the host did not answer the session read"
+        return out
+    title = facts.get("title")
+    out["title"] = title if isinstance(title, str) and title else facts.get("slug")
+    out["cost"] = facts.get("cost")
+    try:
+        rows = transcript(session_id, cwd, port=port)
+    except HarnessError as exc:
+        rows = []
+        out["reason"] = f"the transcript was refused (HTTP part of: {str(exc)[:120]})"
+    out["transcript"] = rows
+    out["turns"] = len(rows)
+    # The session's own token figures are the budget's used half; the transcript's last step is the
+    # same number read closer to the work, so it wins when it carries one. A session that has never
+    # been prompted has an empty transcript and the session object's figures — the state the projects
+    # page opens in, right after a launch.
+    out["context_used"] = _context_used(facts.get("tokens"))
+    for row in reversed(rows):
+        if row["role"] == "assistant":
+            out["model"] = row["model"]
+            out["agent"] = row["agent"]
+            used = _context_used(row["tokens"])
+            if used is not None:
+                out["context_used"] = used
+            break
+    code, status = _request("GET", "/session/status", port=port)
+    if code != 200:
+        out["busy"] = None
+        out["reason"] = "the host refused the busy read"
+    else:
+        out["busy"] = bool(isinstance(status, dict) and session_id in status)
+    try:
+        held = pending_questions(port=port)
+    except HarnessError:
+        held = []
+    for item in held:
+        if isinstance(item, dict) and item.get("sessionID") == session_id:
+            out["question"] = _question_form(item)
+            break
+    return out
+
+
+def send_prompt(session_id: str, text: str, cwd: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """The session view's send button. `prompt` is the wire verb; this is the page's verb, and it
+    answers with the message id the host created so the page can say which message it posted.
+
+    The page's verb never raises. Its failure is a fact the operator has to read: the host's own
+    words for a session that will not take text ("compacting", "no such session") are the whole
+    difference between *the box did nothing* and *this session cannot take text*. A raised error
+    reaches the page as a 500 and the box goes quiet, which is the worse of the two.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return {"ok": False, "session": session_id, "accepted": False,
+                "reason": "there is nothing to send — the box is empty"}
+    try:
+        out = prompt(session_id, text, cwd, port=port)
+    except HarnessError as exc:
+        return {"ok": False, "session": session_id, "accepted": None,
+                "reason": f"the host refused the text ({str(exc)[:260]})"}
+    info = out.get("info")
+    if not isinstance(info, dict):
+        info = {}
+    return {"ok": True, "session": session_id, "accepted": True, "message": info.get("id")}
+
+
+def answer_question(request_id: str, answers: list, port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """The host takes the labels, one array per question, **in the order the questions were asked**.
+    An answer set that reorders them answers a different question than the operator answered."""
+    if not isinstance(answers, list) or not answers:
+        raise HarnessError("an answer names one array of labels per question, in the questions' order")
+    code, body = _request("POST", f"/question/{request_id}/reply", {"answers": answers}, port=port)
+    if code != 200:
+        raise HarnessError(f"answer refused (HTTP {code}): {str(body)[:200]}")
+    return {"ok": True, "request": request_id}
+
+
+def reject_question(request_id: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """Declining the question is a verb of its own — the host has a reply route and a reject route,
+    and an empty answer is not the same answer as a refusal."""
+    code, body = _request("POST", f"/question/{request_id}/reject", port=port)
+    if code != 200:
+        raise HarnessError(f"refusal refused (HTTP {code}): {str(body)[:200]}")
+    return {"ok": True, "request": request_id}
+
+
+def stop_session(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """Stop the session's work. The session stays where it is: the operator stops the run, they do
+    not delete the record of it."""
+    code, body = _request("POST", f"/session/{session_id}/abort", port=port,
+                          query={"directory": cwd})
+    if code != 200:
+        raise HarnessError(f"stop refused (HTTP {code}): {str(body)[:200]}")
+    return {"ok": True, "session": session_id}
+
+
 def preflight(port: int | None = None) -> int:
     """The unit's ExecStartPre exit code. 0 = we may bind, 1 = refuse."""
     p = _int(port or os.environ.get("HARNESS_PORT"), DEFAULT_PORT)

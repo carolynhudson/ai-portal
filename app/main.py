@@ -214,6 +214,34 @@ class ProjectLaunchBody(BaseModel):
     confirm: bool = False
 
 
+class ProjectQuitBody(BaseModel):
+    """Stop serving a project (queue 32: quitting hands the session back to the harness page)."""
+    name: str
+
+
+class HarnessPromptBody(BaseModel):
+    """The send box's payload (§6.14.1v): a project name and the text. The session id is the
+    portal's record, not the browser's memory — a page that sends to a session id it remembered
+    from an earlier poll sends to a session that may have ended."""
+    name: str
+    text: str
+
+
+class HarnessQuestionReplyBody(BaseModel):
+    """The question form's answer (§6.14.1v): a project name and one array of labels per question,
+    in the order the host asked them. The project is named, not the request id — the page answers
+    the question its own session is holding, and a request id the browser remembered from an
+    earlier poll is how an answer lands on someone else's session."""
+    name: str
+    answers: list
+
+
+class HarnessQuestionRejectBody(BaseModel):
+    """Declining the question. The host has a reply route and a reject route, and an empty answer is
+    not the same answer as a refusal."""
+    name: str
+
+
 class ProjectAdoptBody(BaseModel):
     """Adopt a folder that already exists inside the projects root."""
     path: str
@@ -1543,6 +1571,112 @@ def create_app() -> FastAPI:
         db.event("project", "launch",
                  f"name={out['path']} session={out['session']} "
                  f"personality={out.get('personality') or '-'} recorded={out['recorded']}")
+        return out
+
+    @app.get("/api/projects/session")
+    def api_projects_session(name: str, _=Depends(_require_auth)):
+        """The **operational state** of one project: the session the portal launched for it, as the
+        host is answering right now (§6.14.1v / queue 32).
+
+        Queue 32's shape is 'operational = the session and nothing else', so this is the payload the
+        Projects page polls while a session is serving: title, model, busy, turns, the context meter,
+        and the transcript. The context meter's denominator is the portal's own fact — the ctx the
+        personality's models are served at — read here so the page never invents one.
+
+        A project the registry does not know is a 404 that names it. A project the registry knows and
+        that has no session is a 200 that says so: the page's Launch button may have just failed, and
+        'this project has no session' is the answer the page has to print. An empty name is a 400 — a
+        read of the page's own polling loop with its state not set yet is a caller bug, and answering
+        it with one project's facts would let it be answered with *some* project's facts.
+        """
+        if not str(name).strip():
+            raise HTTPException(status_code=400, detail="the session read names a project")
+        try:
+            limit = projects.serving_context_limit(projects.served_personality_of(name))
+        except projects.ProjectError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        return projects.session_view(name, context_limit=limit)
+
+    @app.post("/api/projects/quit")
+    def api_projects_quit(body: ProjectQuitBody, _=Depends(_require_auth)):
+        """Quit serving a project: drop the portal's claim, leave the session on the host.
+
+        The session, its transcript and its context are the host's — queue 32 is explicit that
+        quitting takes the operator *back to the harness page, where the session can be resumed*.
+        Deleting the session here would destroy the thing the operator is going there to find. The
+        answer names the session id for exactly that reason.
+        """
+        try:
+            out = projects.quit_project(body.name)
+        except projects.ProjectError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        db.event("project", "quit", f"name={out['path']} session={out['session'] or '-'}")
+        return out
+
+    @app.post("/api/harness/session/prompt")
+    def api_harness_session_prompt(body: HarnessPromptBody, _=Depends(_require_auth)):
+        """Send the send box's text into the session that serves this project (§6.14.1v).
+
+        The answer is the **host's** answer, at 200, even when the host refused: opencode answers 400
+        while a session is compacting, and that sentence is what the operator needs to see in the
+        prompt box. Turning it into a 500 would tell the operator the portal broke when the host said
+        'not yet'. Only the portal's own refusals — a project it does not know — are statuses.
+        """
+        try:
+            session, path = projects.served_session(body.name)
+        except projects.ProjectError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        out = harnessctl.send_prompt(session, body.text, path)
+        db.event("project", "prompt",
+                 f"name={path} session={session} accepted={out['accepted']} "
+                 f"ok={out['ok']} {out['reason']}")
+        return out
+
+    def _served_question(name: str) -> str:
+        """The request id of the question this project's session is holding.
+
+        The page names the *project*; the host addresses a question by request id. Resolving one to
+        the other here keeps the addressing in the portal, which knows both halves, instead of in
+        the browser, which knows only what the last poll showed it.
+        """
+        try:
+            session, path = projects.served_session(name)
+        except projects.ProjectError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        try:
+            held = harnessctl.pending_questions()
+        except harnessctl.HarnessError as exc:
+            raise HTTPException(status_code=503,
+                                detail=f"the host did not answer the question read ({exc})") from None
+        for item in held:
+            if isinstance(item, dict) and item.get("sessionID") == session and item.get("id"):
+                return str(item["id"])
+        raise HTTPException(status_code=409,
+                            detail=f"session {session} is not holding a question to answer")
+
+    @app.post("/api/harness/session/question/reply")
+    def api_harness_question_reply(body: HarnessQuestionReplyBody, _=Depends(_require_auth)):
+        """Answer the question the project's session is holding (§6.14.1v: 'the question tool as a
+        form'). The labels travel in the order the host asked the questions — a reordered answer
+        answers a different question than the operator answered."""
+        request_id = _served_question(body.name)
+        try:
+            out = harnessctl.answer_question(request_id, body.answers)
+        except harnessctl.HarnessError as exc:
+            raise HTTPException(status_code=503, detail=f"the host refused the answer ({exc})") from None
+        db.event("project", "question-answered", f"name={body.name} request={request_id}")
+        return out
+
+    @app.post("/api/harness/session/question/reject")
+    def api_harness_question_reject(body: HarnessQuestionRejectBody, _=Depends(_require_auth)):
+        """Decline the question the project's session is holding — the form's *None of these*."""
+        request_id = _served_question(body.name)
+        try:
+            out = harnessctl.reject_question(request_id)
+        except harnessctl.HarnessError as exc:
+            raise HTTPException(status_code=503,
+                                detail=f"the host refused the refusal ({exc})") from None
+        db.event("project", "question-declined", f"name={body.name} request={request_id}")
         return out
 
     @app.post("/api/projects/plan")

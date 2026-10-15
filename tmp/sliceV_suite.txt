@@ -1,90 +1,23 @@
 ........................................................................ [  6%]
-........................................................................ [ 13%]
+........................................................................ [ 12%]
 ........................................................................ [ 19%]
-........................................................................ [ 26%]
-................................................s..s.................... [ 33%]
-........................................................................ [ 39%]
-............................................................s........... [ 46%]
-........................................................................ [ 52%]
-........................................................................ [ 59%]
-........................................................................ [ 66%]
-........................................................................ [ 72%]
-........................................................................ [ 79%]
-........................................................................ [ 85%]
-........................................................................ [ 92%]
-.......F................................................................ [ 99%]
-..........                                                               [100%]
-=================================== FAILURES ===================================
-__________ test_the_model_personality_cards_edit_one_object_at_a_time __________
-
-    def test_the_model_personality_cards_edit_one_object_at_a_time():
-        """Step 3 is a deck of shared objects, and the page keeps that a single fact (§6.14.1k).
-    
-        Four things are asserted here because each is a way a nested editor goes quietly wrong: two
-        copies of the per-model grid (so two cards can show two values for one key), a card that works out
-        `used by` for itself (the delete endpoint refuses on the strength of that answer), a strip that
-        reads the model select instead of moving it (the sweep then drives one model while the open card
-        names another), and a detach that fires a request (it is the personality's choice, and the
-        personality is written by step 1's Save).
-        """
-        tpl = (ROOT / "web/templates/personalities.html").read_text(encoding="utf-8")
-        script = _editor_script(tpl)
-        assert tpl.count('id="ed-model-fields"') == 1, \
-            "the per-model grid exists more than once, so two cards can disagree about one key"
-        assert "$('.mp-slot').appendChild" not in script and \
-            "c.querySelector('.mp-slot').appendChild($('ed-model-fields'))" in script, \
-            "the open card does not host the one grid"
-        assert "CONFIG_USES" in script and "dataset.configs" in script, \
-            "the shared objects are not read from the data the server authored"
-        assert "assigned_personalities" not in script
-    
-        # The two selectors are arrow consts, not `function` declarations, so they are sliced by their
-        # own terminator rather than by _fn's brace counting.
-        strip = script[script.index("const selectModel ="):script.index("};", script.index("const selectModel ="))]
-        assert "dispatchEvent(new Event('change'))" in strip, \
-            "clicking a card reads the model selector without moving it"
-        close = script[script.index("const closeCard ="):script.index("};", script.index("const closeCard ="))]
-        assert "showCard(null)" in close, "a second click on the open card does not answer"
-    
-        attach = _fn(script, "attachConfigToPersonality")
-        assert "attachBoxes()" in attach and "syncIdentity()" in attach, \
-            "the card's model personality is a second list, not the one step 1 saves"
-        def card_handler(token: str) -> str:
-            """One card button's listener, sliced from its own addEventListener to the next control."""
-            start = script.index(f"{token}.addEventListener")
-            ends = [script.index(nxt + ".addEventListener", start + 1) for nxt in CARD_BUTTONS
-                    if script.find(nxt + ".addEventListener", start + 1) > start]
-            ends.append(script.index("$('ed-preview').addEventListener"))
-            return script[start:min(ends)]
-    
-        detach = card_handler("'.mp-detach')")
->       assert "postConfig" not in detach and "fetch(" not in detach, \
-            "detach posts: detaching is the personality's choice, and Save writes it"
-E       AssertionError: detach posts: detaching is the personality's choice, and Save writes it
-E       assert ('postConfig' not in "'.mp-detach...;\n  }\n\n  "
-E         
-E         'postConfig' is contained here:
-E           });
-E             }
-E           
-E              and 'fetch(' not in "'.mp-detach...;\n  }\n\n  "
-E         
-E         'fetch(' is contained here:
-E           r = await fetch('/api/services/llamacpp/stop', {
-E         ?           ++++++
-E                   method: 'POST', headers: {'Content-Type': 'application/json'},
-E                   body: JSON.stringify({confirm: true}),
-E                 });...
-E         
-E         ...Full output truncated (11 lines hidden), use '-vv' to show)
-
-tests/test_ui_contract.py:987: AssertionError
+........................................................................ [ 25%]
+................................................................s..s.... [ 31%]
+........................................................................ [ 38%]
+........................................................................ [ 44%]
+....s................................................................... [ 51%]
+........................................................................ [ 57%]
+........................................................................ [ 63%]
+........................................................................ [ 70%]
+........................................................................ [ 76%]
+........................................................................ [ 82%]
+........................................................................ [ 89%]
+........................................................................ [ 95%]
+.................................................                        [100%]
 =============================== warnings summary ===============================
 .venv/lib/python3.14/site-packages/fastapi/testclient.py:1
   /home/cortana/ai-projects/ai-portal/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-=========================== short test summary info ============================
-FAILED tests/test_ui_contract.py::test_the_model_personality_cards_edit_one_object_at_a_time
-1 failed, 1086 passed, 3 skipped, 1 warning in 458.20s (0:07:38)
+1126 passed, 3 skipped, 1 warning in 52.21s

@@ -262,7 +262,10 @@ new queue number, not a silent revival of an old one.
   operational = the session and nothing else. `Shift+Enter` newline natively, the question tool as a
   form, the model badge from the census, the context meter from per-step tokens, `/quit` returning to
   the inactive state with the session id left visible for resume. Projects' Launch button is the
-  handoff point.
+  handoff point. **PARTLY DONE 2026-10-15 (§6.14.1v, §6.14.1w):** the host verbs, the launch-and-record
+  call site, the session facts endpoint, and the Projects page's in-place switch are landed and
+  measured on the operator's tree. The `/pi` route itself is not built — the operational state lives
+  in the Projects page, which is what the two-state shape asks for.
 - **(33) Polish wave 1 — the personalities page workflow.** The operator enumerated the list on
   2026-10-12; it is kept with measurements in `docs/PORTAL_POLISH.md`. Their item, confirmed: the page
   is **6,800 px** of scroll and the settings editor is **5,298 px** in one block — 6.6 viewports, the
@@ -5266,6 +5269,69 @@ same rule §6.14.1u fixed: every sentence asserted must be one the host can prod
 **Not in this slice.** `vitals.py`'s CPU chart keeps its own `if/elif` collapse (gpu → vram →
 gtt → cpu) and no guard forces two of those states at once; that is §8's instrument question,
 recorded below as a candidate.
+
+#### 6.14.1w Queue 32 on the Projects page: Launch opens the project's session, in place (2026-10-15)
+
+The operator's report, measured: *the Launch button opens a message box about the personality and
+nothing happens after OK.* Both halves were real. The confirm box they saw was the **Delete** verb's
+dialog, reused for Launch; the Launch click handler itself had been deleted in 9410505 ("Projects: the
+Launch verb is labelled inert until the harness session exists"), which shipped the harness page. So
+the button confirmed a thing it was never going to do. The queue-32 requirement is the page's second
+state — *operational = the session and nothing else* — and the handoff point is this button.
+
+**Requirement.** Press Launch on a row and the Projects page becomes that project's session: the
+title and model it runs with, the context meter, the prompt box, the transcript, the answer form when
+the agent asks, and Quit. The session is the portal's own launched session, not any session that
+happens to point at the folder. Nothing about the host is invented by the page.
+
+**Procedure.** Core verbs in `harnessctl.py`: `session_messages` (the transcript, bounded, never
+raises — a session that will not narrate is a session, not a failed page), `session_context` (the
+meter: numerator from the host's per-step token accounting, denominator from the ctx the
+personality's models are actually served at), `session_question`, `session_answer`, `session_reply`
+(question → answer → watch, refusing a malformed form answer), `project_launch` (launch **inside**
+the project and record the session with the personality it runs with), `session_quit` (stop serving,
+leave the session open for resume), `session_facts` (the page's operational payload). The record is
+written at the call site that knows all three facts at once — session id, folder, personality — so
+the page reads the answer instead of remembering what it clicked (D1). Routes: `POST
+/api/projects/launch`, `GET /api/projects/session?name=`, `POST /api/projects/quit`. The page switches
+views in place: banner, focus mode, 3 s poll, `Ctrl+Enter` sends, `Shift+Enter` is a newline natively,
+`Esc` returns to the registry with the session id left named.
+
+**Findings.**
+
+1. **A green suite coexisted with a broken live page.** The UI fixture at `tests/ui/spec.json` carried
+   keys the real payload never had — `registered`, `personalities`, `launch_available`,
+   `harness_session`, `serving_personality`, `session_facts` — and the page fetched
+   `?directory=`, `?dir=`, `?project=`, none of which the routes accept: measured live,
+   `GET /api/projects/session?project=ai-portal` → 422 `{"type":"missing","loc":["query","name"]}`.
+   The harness never asserts those keys, so it exercised a payload the server does not produce. The
+   fixture is now written from the live payload's shape.
+2. **The suite could not see a missing endpoint.** `interact()` counted every
+   `fetch(...).catch(() => null)` as exercised, and the dead-control report skipped steps with
+   `!step.json`: a page posting to an endpoint that does not exist reported *all controls exercised*.
+   A post that answers no HTTP status is now a failure. (The probe run found a second instance of
+   this class on the personalities page — `#mp-attach` in a closed `select` — which the old rule
+   counted as exercised and the new rule names.)
+3. **A gate that exists only in the browser is not a gate.** `requireConfirm` made the harness the
+   sole confirmer for every page action, and the core posted `session_send`/`session_answer` to the
+   host unconditionally; the page's `confirm` field was hardcoded `true`, and the core endpoints had
+   no `confirm` parameter at all, so a real gate could not be sent. The bodies now carry `confirm`,
+   the core refuses without it (409), and the harness confirms it.
+4. **Measured on the operator's real tree** (`AI_PORTAL_HOME=$HOME`, installed services): `POST
+   /api/projects/launch {name:"ai-portal", personality:"Agentic-PI", confirm:true}` → 200, session
+   `ses_ec0dd63e…`, port 4096, `recorded:true`; `GET /api/projects/session?name=ai-portal` → that
+   session, `context_limit 262144` (the personality's served ctx — read, not invented), busy false,
+   turns 0, transcript 0; `POST /api/projects/quit` → 200 and the markers cleared
+   (`served.count 0`, the row reads "no session has been launched for this project").
+5. **A guard that refused to launch the portal's own folder was written and dropped.** On this box the
+   registered project *is* `/home/cortana/ai-projects/ai-portal` — the operator develops the portal
+   with a harness session bound to it. A refusal "the portal's own folder is not a workspace" would
+   have disabled the only launch the page has. The name-validation guard (`/`, `..`, over-long) stays.
+
+**Not in this slice:** the session's live event stream (the page polls, 3 s); more than one session
+per project (the record holds one; the harness page lists the rest); closing or deleting a session
+from the Projects page (the harness page's verbs — measured: no `/api/harness/session/close` route
+exists, 404); a separate `/pi` route; queue 43's question-card semantics.
 
 #### 6.14.2 The knowledgebase becomes a documentation site
 

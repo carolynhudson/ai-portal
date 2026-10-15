@@ -337,11 +337,34 @@ rule fails in milliseconds. Suite: 1082 passed, 3 skipped; UI integration 15 pas
 **Still open here:** the two-pane layout (left rail + document viewer), search as a collapsed
 affordance, and the 41 in-page document links that go nowhere.
 
+### 32 — Projects: Launch opens the project's session, in place (LANDED 2026-10-15)
+
+**The complaint, live:** *the Launch button asks which personality to use, and after OK nothing
+happens.* Measured cause: the row's Launch click handler was deleted in 9410505 when the harness page
+shipped, and the confirm box the operator saw belonged to the Delete verb. Two sessions of green
+testing did not see it, because the UI fixture described a payload the server does not produce and the
+harness treated `fetch(...).catch(() => null)` as an exercised control.
+
+**The delivered shape** (plan §6.14.1w): Launch creates the session **inside** the project's directory
+with the chosen personality, records the session id and personality with the project at that call
+site, and the Projects page switches to the session view in place — banner naming the project, the
+session title and model, the context meter from the host's token accounting over the personality's
+served ctx, the transcript, the prompt box (`Ctrl+Enter` sends, `Shift+Enter` is a newline, the Send
+button is disabled while the agent is busy), the answer form when the agent asks a question, Quit
+(leaves the session open and names it for resume), and Back to the registry. Poll is 3 s while a
+session serves, silent when none does. Measured live on `/home/cortana/ai-projects/ai-portal`: launch
+→ session `ses_ec0dd63e…` at port 4096 with `Agentic-PI`, `recorded:true`; facts → `ctx 0/262144`;
+quit → markers cleared.
+
+**Still open here:** the live event stream (the page polls); more than one session per project;
+closing a session from this page (the harness page's verbs); the queue-43 question-card semantics;
+the transcript's pagination when a session grows past the bound.
+
 ## Order, and what blocks what
 
 | Queue | Item | Blocks / blocked by |
 | ----- | ------------------------------------------- | ------------------------- |
-| 30–32 | harness host, interface, `/pi` | the operator's stated priority; in progress |
+| 30–32 | harness host, interface, `/pi` | 30, 31 DONE; 32 **partly DONE 2026-10-15** — launch, session view, facts and Quit land on the Projects page (§6.14.1w) |
 | 33 | personalities workflow (brief first) | needs the operator's agreement on the four states |
 | 40 | vitals strip + hero sections + server-side history | thresholds (41) as its settings |
 | 41 | settings page as control (network mini-tables, rates, thresholds, start-up units) | 40's thresholds |

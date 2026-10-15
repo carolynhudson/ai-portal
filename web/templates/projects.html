@@ -45,6 +45,32 @@
 .proj-serve[data-tone="bad"]{color:var(--bad,#b33030)}
 .proj-verbs{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
+/* The operational state (queue 32, §6.14.1v): the session and nothing else. The list is not
+   dimmed behind it — it is *hidden*, because a page that shows both answers two questions at
+   once and the operator has to find which one they are typing into. */
+.proj-op-head{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin:0 0 8px}
+.proj-op-head b{font-size:1.15em}
+.proj-ctx{margin:10px 0 4px}
+.proj-ctx-bar{height:8px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--panel)}
+.proj-ctx-fill{height:100%;width:0;background:var(--ok,#2b8a3e);transition:width .25s ease}
+.proj-ctx-fill[data-tone="high"]{background:var(--warn,#b26a00)}
+.proj-ctx-fill[data-tone="over"]{background:var(--bad,#b33030)}
+.proj-log{display:flex;flex-direction:column;gap:8px;margin:12px 0;max-height:55vh;overflow-y:auto}
+.proj-bubble{max-width:80%;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+  white-space:pre-wrap;overflow-wrap:anywhere;font-size:.92em}
+.proj-bubble[data-who="you"]{align-self:flex-end;background:#243b55}
+.proj-bubble[data-who="agent"]{align-self:flex-start;background:#26262c}
+.proj-bubble[data-who="other"]{align-self:flex-start;color:var(--mut);font-size:.82em}
+.proj-send-row{display:flex;gap:8px;align-items:flex-start;margin-top:8px;flex-wrap:wrap}
+#proj-prompt{flex:1 1 22em;min-height:3.2em;font-family:inherit}
+.proj-question{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;
+  background:var(--panel)}
+.proj-question fieldset{border:0;margin:0 0 8px;padding:0}
+.proj-question legend{font-weight:600;padding:0}
+.proj-question label{display:block;margin:2px 0;font-size:.92em}
+.proj-badge{border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:.78rem}
+.proj-badge[data-tone="busy"]{color:var(--warn,#b26a00)}
+.proj-badge[data-tone="idle"]{color:var(--mut)}
 </style>
 
 <h2>Projects</h2>
@@ -119,6 +145,33 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       project the portal has not been told about. Adopting writes the registry only — it changes
       nothing on disk.</p>
     <div id="proj-unadopted"></div>
+  </div>
+</div>
+
+<div id="proj-op" hidden>
+  <div class="card">
+    <div class="proj-op-head">
+      <b id="proj-op-name"></b>
+      <span class="proj-mut" id="proj-op-meta"></span>
+      <span class="proj-badge" id="proj-op-state"></span>
+    </div>
+    <div class="proj-ctx">
+      <div class="proj-ctx-bar"><div class="proj-ctx-fill" id="proj-ctx-fill"></div></div>
+      <p class="proj-mut" id="proj-ctx-text">context: no session</p>
+    </div>
+    <div class="proj-question" id="proj-question" hidden>
+      <fieldset id="proj-question-fields"></fieldset>
+      <p><button id="proj-question-reply" class="primary">Answer</button>
+         <button id="proj-question-reject">None of these</button></p>
+    </div>
+    <div class="proj-log" id="proj-log"></div>
+    <div class="proj-send-row">
+      <textarea id="proj-prompt" aria-label="Prompt to the agent"
+                placeholder="Ask the agent. Enter sends, Shift+Enter is a new line."></textarea>
+      <button id="proj-send" class="primary">Send</button>
+      <button id="proj-quit">Quit</button>
+    </div>
+    <p class="proj-result" id="proj-op-out"></p>
   </div>
 </div>
 
@@ -350,6 +403,16 @@ function renderRows(rows) {
       serve.dataset.tone = 'muted';
     }
 
+    // The row that is served carries the verb that opens *this* session in the page — the
+    // handoff in reverse, for the project the operator returns to.
+    if (st.served === true && st.session) {
+      const open = el('button');
+      open.textContent = 'Session';
+      open.dataset.session = p.name;
+      open.title = `show session ${st.session} in this page: transcript, context, questions, and `
+        + 'the send box.';
+      verbs.append(open);
+    }
     row.append(name, verbs, path, facts, serve);
     verbs.append(launch, forget);
     box.append(row);
@@ -450,6 +513,14 @@ $('#proj-rows').addEventListener('click', async (e) => {
          ? `launched ${name} with ${d.personality}: session ${d.session}. The pair is recorded on `
            + 'the project, so the row below shows it as served.'
          : `launched session ${d.session}, but not recorded: ${d.reason}`);
+    if (!d.detail && d.session) {
+      // The handoff (queue 32): the projects page becomes that session. The sentence the launch
+      // answered with rides along, so the operator sees what the page switched for.
+      await showSession(name, d.recorded
+        ? `launched ${name} with ${d.personality}: session ${d.session}.`
+        : `launched session ${d.session}, not recorded: ${d.reason}.`);
+      return;
+    }
     await refresh();
     return;
   }
@@ -472,7 +543,290 @@ $('#proj-unadopted').addEventListener('click', async (e) => {
   await refresh();
 });
 
+// ------------------------------------------- the operational state (§6.14.1v / queue 32)
+//
+// The page has two states and shows one at a time: the list, and *the session and nothing else*.
+// Launching is the handoff — the project page switches to the session it just opened, which is
+// where the operator reads the transcript, answers the agent's questions, and sends the next
+// prompt. Quit returns to the list with the session id in the sentence, because the next place
+// the operator looks for that session is the harness page.
+const OP_POLL_MS = 2500;
+let SERVING = null;                 // the project whose session the page is showing
+let opTimer = null;
+let opShown = 0;                    // transcript messages already painted
+let opOrder = '';                   // the session the painted transcript belongs to
+let opLastNote = '';                  // the last sentence the page wrote for *this* session
+
+function opChrome(show) {
+  const op = $('#proj-op');
+  const parent = op.parentNode;
+  for (const node of parent.children) {
+    if (node === op) break;         // everything above the operational view is the list page
+    if (node.nodeType === 1) node.hidden = show;
+  }
+  op.hidden = !show;
+}
+
+function stopOpPoll() {
+  if (opTimer) clearInterval(opTimer);
+  opTimer = null;
+}
+
+// Entering the session is a *view switch*, not a scroll: the list disappears, the send box has
+// focus, and the page starts polling the host for the session the launch recorded.
+async function showSession(name, note) {
+  SERVING = name;
+  opShown = 0;
+  opOrder = '';
+  opChrome(true);
+  $('#proj-op-name').textContent = name;
+  opLastNote = note || '';
+  $('#proj-op-out').textContent = opLastNote;
+  $('#proj-log').textContent = '';
+  $('#proj-question').hidden = true;
+  $('#proj-send').disabled = false;
+  $('#proj-prompt').value = '';
+  stopOpPoll();
+  opTimer = setInterval(pollSession, OP_POLL_MS);
+  await pollSession();
+  $('#proj-prompt').focus();
+}
+
+function hideSession(note) {
+  const name = SERVING;
+  SERVING = null;
+  stopOpPoll();
+  opChrome(false);
+  opLastNote = '';
+  $('#proj-op-out').textContent = '';
+  return name;
+}
+
+const fmt = (n) => (n === null || n === undefined) ? '—'
+  : (n >= 10000 ? Math.round(n / 1000) + 'k' : String(n));
+
+function renderHead(d) {
+  $('#proj-op-name').textContent = d.project || SERVING;
+  const bits = [];
+  bits.push(d.personality ? `served by ${d.personality}` : 'served by the portal defaults');
+  bits.push(d.session ? `session ${d.session}` : 'no session');
+  if (d.model) bits.push(`model ${d.model}`);
+  if (d.agent) bits.push(`agent ${d.agent}`);
+  $('#proj-op-meta').textContent = bits.join(' · ');
+  const state = $('#proj-op-state');
+  state.textContent = d.busy === true ? 'working' : (d.busy === false ? 'idle' : 'state unknown');
+  state.dataset.tone = d.busy === true ? 'busy' : 'idle';
+}
+
+// Tokens used over the context ceiling the serving personality's models are served at. The
+// denominator is the portal's fact, not the host's — a meter with no ceiling says so.
+function renderMeter(d) {
+  const fill = $('#proj-ctx-fill');
+  const text = $('#proj-ctx-text');
+  const used = (typeof d.context_used === 'number') ? d.context_used : null;
+  const limit = (typeof d.context_limit === 'number' && d.context_limit > 0) ? d.context_limit : null;
+  if (used === null) {
+    fill.style.width = '0';
+    delete fill.dataset.tone;
+    text.textContent = d.session
+      ? 'context: the host has not reported this session’s tokens'
+      : 'context: no session';
+    return;
+  }
+  if (limit === null) {
+    fill.style.width = '100%';
+    fill.dataset.tone = 'high';
+    text.textContent = `context: ${fmt(used)} tokens — context limit unknown, so this bar has no `
+                     + 'ceiling to be measured against';
+    return;
+  }
+  const pct = Math.min(100, Math.round((100 * used) / limit));
+  fill.style.width = `${pct}%`;
+  fill.dataset.tone = pct > 100 ? 'over' : (pct >= 80 ? 'high' : 'ok');
+  text.textContent = `context: ${fmt(used)} of ${fmt(limit)} tokens (${pct}%)`;
+}
+
+function renderTranscript(d) {
+  const log = $('#proj-log');
+  const rows = Array.isArray(d.transcript) ? d.transcript : [];
+  const order = `${d.session}|${rows.length}`;
+  if (order === opOrder && rows.length === opShown) return;   // nothing new: do not repaint
+  if (rows.length < opShown || d.session !== opSessionId) { log.textContent = ''; opShown = 0; }
+  opSessionId = d.session;
+  opOrder = order;
+  for (const row of rows.slice(opShown)) {
+    const who = row.role === 'user' ? 'you' : (row.role === 'assistant' ? 'agent' : 'other');
+    const bubble = el('div', 'proj-bubble');
+    bubble.dataset.who = who;
+    bubble.textContent = row.text;
+    log.append(bubble);
+  }
+  opShown = rows.length;
+  log.scrollTop = log.scrollHeight;
+}
+let opSessionId = null;
+
+// The host's `question` tool as a form (§6.14.1v): one field per question, in the order the host
+// asked them, with the answer arrays going back in that same order.
+function renderQuestion(d) {
+  const box = $('#proj-question');
+  const fields = $('#proj-question-fields');
+  const q = d.question;
+  if (!q || !Array.isArray(q.questions) || !q.questions.length) { box.hidden = true; return; }
+  fields.textContent = '';
+  q.questions.forEach((item, qi) => {
+    const legend = el('legend');
+    legend.textContent = item.question || item.header || `Question ${qi + 1}`;
+    fields.append(legend);
+    const multi = item.multi === true;
+    (item.options || []).forEach((opt) => {
+      const label = el('label');
+      const input = el('input');
+      input.type = multi ? 'checkbox' : 'radio';
+      input.name = `proj-q-${qi}`;
+      input.value = opt.label;
+      const hint = opt.description ? ` — ${opt.description}` : '';
+      label.append(input, document.createTextNode(` ${opt.label}${hint}`));
+      fields.append(label);
+    });
+  });
+  box.hidden = false;
+}
+
+function collectAnswers() {
+  const answers = [];
+  const groups = {};
+  document.querySelectorAll('#proj-question-fields input').forEach((input) => {
+    (groups[input.name] = groups[input.name] || []).push(input);
+  });
+  Object.keys(groups).sort().forEach((name) => {
+    const picked = groups[name].filter((i) => i.checked).map((i) => i.value);
+    answers.push(picked);
+  });
+  return answers;
+}
+
+async function pollSession() {
+  if (!SERVING) return;
+  const d = await req('GET', `/api/projects/session?name=${encodeURIComponent(SERVING)}`);
+  if (!SERVING) return;
+  if (d.detail) {
+    renderHead({project: SERVING});
+    $('#proj-ctx-text').textContent = `the session read failed: ${d.detail}`;
+    $('#proj-op-out').dataset.tone = 'bad';
+    opLastNote = d.detail;
+    $('#proj-op-out').textContent = opLastNote;
+    return;
+  }
+  renderHead(d);
+  renderMeter(d);
+  renderTranscript(d);
+  renderQuestion(d);
+  if (d.reason && !d.found) {
+    $('#proj-op-out').dataset.tone = 'bad';
+    opLastNote = d.reason;
+    $('#proj-op-out').textContent = opLastNote;
+  } else if (d.ok) {
+    // The poll repaints the session; it does not erase the answer the page just gave the
+    // operator. A sentence that disappears on the next tick reads as a send that did nothing.
+    $('#proj-op-out').textContent = opLastNote;
+  }
+}
+
+async function sendPrompt() {
+  const box = $('#proj-prompt');
+  const text = box.value;
+  if (!SERVING) return;
+  if (!text.trim()) {
+    $('#proj-op-out').dataset.tone = 'bad';
+    opLastNote = 'there is nothing to send — the box is empty';
+    $('#proj-op-out').textContent = opLastNote;
+    return;
+  }
+  $('#proj-send').disabled = true;
+  $('#proj-op-out').dataset.tone = '';
+  opLastNote = 'sending…';
+  $('#proj-op-out').textContent = opLastNote;
+  const d = await req('POST', '/api/harness/session/prompt', {name: SERVING, text});
+  $('#proj-send').disabled = false;
+  if (d.detail) {
+    $('#proj-op-out').dataset.tone = 'bad';
+    opLastNote = `refused: ${d.detail}`;
+    $('#proj-op-out').textContent = opLastNote;
+    return;
+  }
+  if (d.accepted !== true) {
+    // The host's own words: 'compacting', 'no such session', 'the box was empty'. A send box
+    // that goes quiet after a refusal is the failure queue 32 is about.
+    $('#proj-op-out').dataset.tone = 'bad';
+    opLastNote = `not sent: ${d.reason}`;
+    $('#proj-op-out').textContent = opLastNote;
+    return;
+  }
+  box.value = '';
+  $('#proj-op-out').dataset.tone = 'good';
+  opLastNote = `sent. the host created message ${d.message}.`;
+  $('#proj-op-out').textContent = opLastNote;
+  await pollSession();
+}
+
+// Enter sends, Shift+Enter is a new line. A keyboard handler that does not guard the IME fires on
+// the Enter that *picks a candidate word*, and a composed prompt is sent half-typed.
+$('#proj-prompt').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  if (e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  await sendPrompt();
+});
+
+$('#proj-send').addEventListener('click', sendPrompt);
+
+$('#proj-question-reply').addEventListener('click', async () => {
+  if (!SERVING) return;
+  const answers = collectAnswers();
+  const d = await req('POST', '/api/harness/session/question/reply', {name: SERVING, answers});
+  $('#proj-op-out').dataset.tone = d.detail ? 'bad' : 'good';
+  opLastNote = d.detail ? `the answer did not land: ${d.detail}` : 'answered.';
+  $('#proj-op-out').textContent = opLastNote;
+  await pollSession();
+});
+
+$('#proj-question-reject').addEventListener('click', async () => {
+  if (!SERVING) return;
+  const d = await req('POST', '/api/harness/session/question/reject', {name: SERVING});
+  $('#proj-op-out').dataset.tone = d.detail ? 'bad' : 'good';
+  opLastNote = d.detail ? `the refusal did not land: ${d.detail}`
+                        : 'declined — the agent chooses.';
+  $('#proj-op-out').textContent = opLastNote;
+  await pollSession();
+});
+
+$('#proj-quit').addEventListener('click', async () => {
+  if (!SERVING) return;
+  const leaving = SERVING;
+  if (!window.confirm(`quit ${leaving}? The page goes back to the list. The session stays open `
+                      + 'on the host and the harness page lists it for resume.')) return;
+  const d = await req('POST', '/api/projects/quit', {name: leaving});
+  const name = hideSession();
+  $('#proj-summary').textContent = d.detail
+    ? `refused: ${d.detail}`
+    : `quit ${name}. Session ${d.session} is left on the host — the harness page resumes it.`;
+  await refresh();
+});
+
+// A row's verb for a project already being served: the page has the session, so the operator
+// opens it here rather than hunting for it on the harness page.
+$('#proj-rows').addEventListener('click', async (e) => {
+  if (!e.target.dataset.session) return;
+  await showSession(e.target.dataset.session);
+});
+
 renderSteps();
-refresh();
+(async () => {
+  await refresh();
+  // Queue 32's entrance: one project serving means the page *is* that session. More than one is
+  // a choice the operator makes from the list, so the list stays up and says which are served.
+  if (STATE && STATE.serve && STATE.serve.count === 1) await showSession(STATE.serve.names[0]);
+})();
 </script>
 {% endblock %}
