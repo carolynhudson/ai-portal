@@ -586,7 +586,11 @@ def prompt(session_id: str, text: str, cwd: str, port: int = DEFAULT_PORT) -> di
 
 
 def messages(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict]:
-    code, body = _request("GET", f"/api/session/{session_id}/message", port=port)
+    # Measured on 2.0.29: the list answers **newest first**; a page that appends what it
+    # reads paints the newest answer above everything older. `order=asc` answers
+    # chronologically, which is the order the transcript rows are built and printed in.
+    code, body = _request("GET", f"/api/session/{session_id}/message",
+                          port=port, query={"order": "asc"})
     if code != 200:
         raise HarnessError(f"messages refused (HTTP {code}): {str(body)[:160]}")
     data = body.get("data") if isinstance(body, dict) else None
@@ -818,8 +822,15 @@ def session_view(session_id: str, cwd: str, context_limit: int | None = None,
     # been prompted has an empty transcript and the session object's figures — the state the projects
     # page opens in, right after a launch.
     out["context_used"] = _context_used(facts.get("tokens"))
+    # A V2 session carries no model until its first turn: the model ref lands on the
+    # assistant messages, not on the session. The newest assistant row is the model the
+    # host last answered with — that is the fact the badge shows.
     for row in reversed(rows):
         if row["role"] == "assistant":
+            if out.get("model") is None and row["model"]:
+                out["model"] = row["model"]
+            if out.get("agent") is None and row["agent"]:
+                out["agent"] = row["agent"]
             used = _context_used(row["tokens"])
             if used is not None:
                 out["context_used"] = used
