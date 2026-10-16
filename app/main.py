@@ -207,9 +207,17 @@ class ProjectLaunchBody(BaseModel):
     """Launch a session for a project. `personality` is the operator's choice and is recorded with
     the session (§6.14.1n / queue 33): the launch is the only place the session id, the folder, and
     the personality exist together. `confirm` because this starts a session on the harness host that
-    outlives the portal."""
+    outlives the portal.
+
+    `model` names the model the session runs on, encoded `providerID::modelID` (the model ids
+    carry slashes, which is why the separator is not one); empty means the host's own default.
+    `agent` is the host's agent for the session (`build`, `plan`, …); empty is the host default.
+    V2 binds both at session creation, so a personality can run a model of its own without
+    anyone swapping the host's default (measured 2.0.29)."""
     name: str
     personality: str = ""
+    model: str = ""
+    agent: str = ""
     port: int | None = None
     confirm: bool = False
 
@@ -1450,6 +1458,33 @@ def create_app() -> FastAPI:
         """
         return harnessctl.status()
 
+    @app.get("/api/harness/models")
+    def api_harness_models(_=Depends(_require_auth)):
+        """The models the harness host can bind a session to, as `{providerID, id}` pairs —
+        the same encoding `create_session` takes. The launch form offers these; a session
+        bound here runs its own model without touching the host's default.
+
+        A listed model is not a loaded model (the host lists what its providers know; the
+        router loads what it has room for) — the host answers a session on an unloaded model
+        with its own refusal, which the page reports as the host's words."""
+        try:
+            rows = harnessctl.host_models()
+        except harnessctl.HarnessError as exc:
+            raise HTTPException(status_code=503,
+                                detail=f"the host did not answer the model read ({exc})") from None
+        out = []
+        for m in rows:
+            if not isinstance(m, dict):
+                continue
+            mid = str(m.get("id") or m.get("modelID") or "")
+            provider = str(m.get("providerID") or "")
+            if not mid or not provider:
+                continue
+            out.append({"providerID": provider, "id": mid,
+                        "name": str(m.get("name") or mid),
+                        "encoded": f"{provider}::{mid}"})
+        return {"models": out}
+
     @app.post("/api/harness/start")
     def api_harness_start(body: HarnessStartBody, request: Request,
                           _=Depends(_require_auth)):
@@ -1564,14 +1599,24 @@ def create_app() -> FastAPI:
         if not body.confirm:
             raise HTTPException(status_code=409,
                                 detail="launching a session starts work on the harness host; confirm first")
+        model_ref = None
+        if body.model.strip():
+            provider, _, mid = body.model.strip().partition("::")
+            if not provider or not mid:
+                raise HTTPException(status_code=400,
+                                    detail="the model is encoded providerID::modelID")
+            model_ref = {"providerID": provider, "id": mid}
         try:
-            out = harnessctl.launch_project(body.name, personality=body.personality or None)
+            out = harnessctl.launch_project(body.name, personality=body.personality or None,
+                                            port=body.port or harnessctl.DEFAULT_PORT,
+                                            model=model_ref, agent=body.agent.strip() or None)
         except (harnessctl.HarnessError, projects.ProjectError) as exc:
             db.event("project", "launch-refused", f"name={body.name} {exc}")
             raise HTTPException(status_code=409, detail=str(exc)) from None
         db.event("project", "launch",
                  f"name={out['path']} session={out['session']} "
-                 f"personality={out.get('personality') or '-'} recorded={out['recorded']}")
+                 f"personality={out.get('personality') or '-'} recorded={out['recorded']} "
+                 f"model={(out.get('model') or {}).get('id') or '-'} agent={out.get('agent') or '-'}")
         return out
 
     @app.get("/api/projects/session")

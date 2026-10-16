@@ -541,6 +541,30 @@ def test_launching_a_project_records_the_session_and_the_personality_it_runs_wit
     assert row["serve"]["personality"] == "Agent-Swift", row["serve"]
 
 
+def test_a_launch_binds_the_model_and_agent_the_operator_chose(tmp_path, monkeypatch):
+    """V2 binds model and agent at session creation (measured 2.0.29: the created
+    `Session.Info` echoes both), so a personality can run its own model without anyone
+    swapping the host's default. The launch is the call site that carries the choice to
+    the wire, and the echo of the binding travels back in the answer."""
+    from app.core import db, projects
+    sandbox = _registry(tmp_path, monkeypatch, projects, db)
+    projects.create("bound", ["git"], root=str(sandbox))
+    _host_up(monkeypatch)
+    seen = {}
+
+    def fake(method, path, body=None, port=4096, query=None, timeout=20):
+        seen["path"], seen["body"] = path, body
+        return 200, {"data": {"id": "ses_m", "location": {"directory": str(sandbox / "bound")},
+                              "model": {"providerID": "llamacpp", "id": "m1"}, "agent": "plan"}}
+    monkeypatch.setattr(harnessctl, "_request", fake)
+    out = harnessctl.launch_project("bound", model={"providerID": "llamacpp", "id": "m1"},
+                                    agent="plan", port=4099)
+    assert seen["body"]["model"] == {"providerID": "llamacpp", "id": "m1"}, seen["body"]
+    assert seen["body"]["agent"] == "plan", seen["body"]
+    assert out["model"] == {"providerID": "llamacpp", "id": "m1"}, out
+    assert out["agent"] == "plan", out
+
+
 def test_a_launch_that_cannot_record_the_pair_says_so_rather_than_launching_silently(tmp_path,
                                                                                         monkeypatch):
     """The project is not in the registry, so there is no row to record the pair on. The session is

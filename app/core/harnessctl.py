@@ -475,6 +475,22 @@ def _request(method: str, path: str, body: dict | None = None, port: int = DEFAU
         ) from e
 
 
+def host_models(port: int = DEFAULT_PORT,
+               directory: str | None = None) -> list[dict]:
+    """The models this host can run a session on. Measured on 2.0.29:
+    `GET /api/model` answers `{location, data}` with rows carrying
+    `{id, modelID, providerID, name?}` — the same `{providerID, id}` pair
+    `create_session` binds. A model the host lists is not a model the router
+    has loaded; a session bound to an unloaded model asks and the router
+    answers `model is not loaded`."""
+    code, body = _request("GET", "/api/model",
+                          port=port, query={"directory": directory} if directory else None)
+    data = body.get("data") if isinstance(body, dict) else None
+    if code != 200 or not isinstance(data, list):
+        raise HarnessError(f"model list refused (HTTP {code}): {str(body)[:160]}")
+    return data
+
+
 def list_sessions(cwd: str | None = None, port: int = DEFAULT_PORT) -> list[dict]:
     code, body = _request("GET", "/api/session", port=port,
                           query={"directory": cwd} if cwd else None)
@@ -484,12 +500,24 @@ def list_sessions(cwd: str | None = None, port: int = DEFAULT_PORT) -> list[dict
     return data
 
 
-def create_session(cwd: str, port: int = DEFAULT_PORT) -> dict:
+def create_session(cwd: str, port: int = DEFAULT_PORT,
+                   model: dict | None = None, agent: str | None = None) -> dict:
     """The directory travels as `location.directory` in the body. Measured on 2.0.29:
     V2 dropped the V1 `?directory=` query; `location` is the wire's word for it, and the
-    created `Session.Info` echoes the location back."""
-    code, body = _request("POST", "/api/session",
-                          {"location": {"directory": cwd}}, port=port)
+    created `Session.Info` echoes the location back.
+
+    V2 also binds the **model and agent at creation** (`model: {providerID, id}`,
+    `agent: "<name>"`) — measured: the created `Session.Info` echoes both, and the first
+    answer carries them. That is the "different model for build vs plan" capability: the
+    binding belongs to the session, not to the host's default, so one host runs sessions
+    on different models without anyone swapping the default.
+    """
+    body: dict[str, Any] = {"location": {"directory": cwd}}
+    if isinstance(model, dict) and model.get("id") and model.get("providerID"):
+        body["model"] = {"id": str(model["id"]), "providerID": str(model["providerID"])}
+    if isinstance(agent, str) and agent.strip():
+        body["agent"] = agent.strip()
+    code, body = _request("POST", "/api/session", body, port=port)
     data = body.get("data") if isinstance(body, dict) else None
     if code != 200 or not isinstance(data, dict) or "id" not in data:
         raise HarnessError(f"session create refused (HTTP {code}): {str(body)[:160]}")
@@ -497,7 +525,8 @@ def create_session(cwd: str, port: int = DEFAULT_PORT) -> dict:
 
 
 def launch_project(name_or_path: str, personality: str | None = None,
-                   port: int = DEFAULT_PORT) -> dict[str, Any]:
+                   port: int = DEFAULT_PORT, model: dict | None = None,
+                   agent: str | None = None) -> dict[str, Any]:
     """The portal's launch of a project: create the session **inside** the project folder, and
     record the session and the personality on the registry row, in one verb.
 
@@ -537,7 +566,7 @@ def launch_project(name_or_path: str, personality: str | None = None,
             + (f" ({health_out.get('error')})" if health_out.get("error") else "")
             + "; a session cannot be launched, and the pair cannot be recorded on a project the "
               "host has no session for")
-    created = create_session(target, port=port)
+    created = create_session(target, port=port, model=model, agent=agent)
     session_id = str(created.get("id"))
     recorded = False
     reason: str | None = None
@@ -550,6 +579,7 @@ def launch_project(name_or_path: str, personality: str | None = None,
         reason = str(exc)
     out: dict[str, Any] = {"ok": True, "session": session_id, "path": target,
                            "port": port, "personality": personality,
+                           "model": created.get("model"), "agent": created.get("agent"),
                            "recorded": recorded, "session_facts": created}
     if reason:
         out["reason"] = reason

@@ -90,9 +90,19 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 
 <p class="proj-mut">Launch a project with
   <select id="proj-personality" title="the personality the session runs with"></select>
+  on <select id="proj-model" title="the model the session runs on"><option value="">host default</option></select>
+  as <select id="proj-agent" title="the host agent the session runs as">
+    <option value="">host default</option>
+    <option value="build">build</option>
+    <option value="plan">plan</option>
+    <option value="explore">explore</option>
+    <option value="general">general</option>
+  </select>
   — the session is opened inside the project and recorded on it, so the row below shows it as
   served. Both halves of the personality-to-project link are recorded by the launch (§6.14.1n):
-  the row carries the personality, and the personality carries the project.</p>
+  the row carries the personality, and the personality carries the project. The model binds to
+  the session at creation, so a personality can run a model of its own without changing the
+  host's default.</p>
 
 <div class="proj-grid">
   <div class="card">
@@ -332,6 +342,31 @@ function personalityChoice() {
   return sel.value || PERSONALITIES[0] || '';
 }
 
+// The models the host can bind a session to (§ the launch binding): the host's own
+// `/api/model` read, offered as providerID::modelID. The default option is the host's
+// own default — the page does not invent one, because the default is the host's config.
+async function loadLaunchModels() {
+  const sel = $('#proj-model');
+  const keep = sel.value;
+  const d = await req('GET', '/api/harness/models');
+  const rows = Array.isArray(d.models) ? d.models : [];
+  sel.textContent = '';
+  const o = el('option');
+  o.value = '';
+  o.textContent = 'host default';
+  sel.append(o);
+  for (const m of rows) {
+    const opt = el('option');
+    opt.value = m.encoded;
+    opt.textContent = `${m.name} (${m.providerID})`;
+    sel.append(opt);
+  }
+  sel.value = rows.some(m => m.encoded === keep) ? keep : '';
+}
+
+function modelChoice() { return $('#proj-model').value; }
+function agentChoice() { return $('#proj-agent').value; }
+
 function renderPersonalities(names, named) {
   PERSONALITIES = Array.isArray(names) ? names.slice() : [];
   const sel = $('#proj-personality');
@@ -530,13 +565,17 @@ $('#proj-rows').addEventListener('click', async (e) => {
   if (e.target.dataset.launch) {
     const name = e.target.dataset.launch;
     const personality = personalityChoice();
+    const model = modelChoice();
+    const agent = agentChoice();
     // A session outlives the portal, so the dialog names both halves of the pair about to be
     // recorded: which project, and which personality runs it.
-    if (!window.confirm(`launch ${name} with ${personality}? Opens a session in ${row.dataset.path} `
-                        + 'and records the pair on the project.')) return;
+    if (!window.confirm(`launch ${name} with ${personality}`
+                        + (model ? ` on ${model.split('::')[1]}` : ' on the host default model')
+                        + (agent ? ` as ${agent}` : '') + '? Opens a session in ' + row.dataset.path
+                        + ' and records the pair on the project.')) return;
     $('#proj-summary').textContent = `launching ${name} with ${personality}…`;
     const d = await req('POST', '/api/projects/launch',
-                        {name, personality, confirm: true});
+                        {name, personality, model, agent, confirm: true});
     $('#proj-summary').textContent = d.detail
       ? `refused: ${d.detail}`
       : (d.recorded
@@ -879,7 +918,8 @@ $('#proj-rows').addEventListener('click', async (e) => {
 
 renderSteps();
 (async () => {
-  await refresh();
+  loadLaunchModels().catch(() => {});   // the model select is an offer, not a requirement:
+  await refresh();                       // a host that will not list models leaves "host default"
   // Queue 32's entrance: one project serving means the page *is* that session. More than one is
   // a choice the operator makes from the list, so the list stays up and says which are served.
   if (STATE && STATE.serve && STATE.serve.count === 1) await showSession(STATE.serve.names[0]);

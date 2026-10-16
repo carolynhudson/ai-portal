@@ -1641,6 +1641,25 @@
       }
     },
     {
+      "_comment": [
+        "The launchpad's model select reads the host's bindable models. The sandbox has no",
+        "harness host, so the fixture speaks for it: the encoded form (providerID::modelID,",
+        "model ids carry slashes) is what the launch wire takes."
+      ],
+      "path": "^/api/harness/models$",
+      "status": 200,
+      "body": {
+        "models": [
+          {
+            "providerID": "llamacpp",
+            "id": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS",
+            "name": "Swift Flash IQ3_XXS",
+            "encoded": "llamacpp::ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS"
+          }
+        ]
+      }
+    },
+    {
       "path": "^/api/harness/status$",
       "status": 200,
       "body": {
@@ -2227,6 +2246,25 @@
             "message": "msg_ui_1",
             "reason": null,
             "target": "ui-registered-app"
+          }
+        },
+        {
+          "_comment": [
+            "The launchpad's model select reads the host's bindable models. The sandbox has no",
+            "harness host, so the fixture speaks for it: the encoded form (providerID::modelID,",
+            "model ids carry slashes) is what the launch wire takes."
+          ],
+          "path": "^/api/harness/models$",
+          "status": 200,
+          "body": {
+            "models": [
+              {
+                "providerID": "llamacpp",
+                "id": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS",
+                "name": "Swift Flash IQ3_XXS",
+                "encoded": "llamacpp::ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS"
+              }
+            ]
           }
         },
         {
