@@ -726,13 +726,19 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
     return rows
 
 
-def pending_questions(port: int = DEFAULT_PORT) -> list[dict]:
+def pending_questions(session_id: str | None = None, port: int = DEFAULT_PORT) -> list[dict]:
     """The forms the host is holding. Measured on 2.0.29: V2 replaced V1's `/question`
-    queue with **forms** — `GET /api/form` answers `{location, data}`, and every
-    `Form.Info` names its `sessionID`. A host with nothing pending answers an empty
-    `data` — the same answer as "the session never asked", which is why the view only
-    reports a form that names *this* session."""
-    code, body = _request("GET", "/api/form", port=port)
+    queue with **forms**, and the form reads are **location-scoped** — `GET /api/form`
+    answers for the server's own location, which is the folder the host was started in,
+    never the project a session was created in. The session-scoped
+    `GET /api/session/{id}/form` answers that session's forms from any location, and the
+    portal always knows the session, so it is the read the portal uses. A host with
+    nothing pending answers an empty `data` — the same answer as "the session never
+    asked", which is why the view only reports a form that names *this* session."""
+    if session_id:
+        code, body = _request("GET", f"/api/session/{session_id}/form", port=port)
+    else:
+        code, body = _request("GET", "/api/form", port=port)
     data = body.get("data") if isinstance(body, dict) else None
     if code != 200 or not isinstance(data, list):
         raise HarnessError(f"question list refused (HTTP {code}): {str(body)[:160]}")
@@ -843,7 +849,7 @@ def session_view(session_id: str, cwd: str, context_limit: int | None = None,
     else:
         out["busy"] = session_id in data
     try:
-        held = pending_questions(port=port)
+        held = pending_questions(session_id, port=port)
     except HarnessError:
         held = []
     for item in held:

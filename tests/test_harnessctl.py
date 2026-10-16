@@ -716,7 +716,7 @@ def test_the_session_view_reports_the_facts_the_session_state_shows(monkeypatch)
         ("GET", "/api/session/ses_view"): (200, {"data": SESSION}),
         ("GET", "/api/session/ses_view/message"): (200, {"data": TRANSCRIPT}),
         ("GET", "/api/session/active"): (200, {"data": {"ses_view": {"type": "running"}}}),
-        ("GET", "/api/form"): (200, {"location": {"directory": PROJ}, "data": []}),
+        ("GET", "/api/session/ses_view/form"): (200, {"data": []}),
     })
     view = harnessctl.session_view("ses_view", PROJ, context_limit=131072)
     assert view["ok"] and view["found"], view
@@ -741,7 +741,7 @@ def test_the_session_view_says_the_host_has_no_session_instead_of_calling_it_idl
         ("GET", "/api/session/ses_gone"): (404, {"name": "SessionNotFoundError"}),
         ("GET", "/api/session/ses_gone/message"): (404, {"name": "SessionNotFoundError"}),
         ("GET", "/api/session/active"): (200, {"data": {}}),
-        ("GET", "/api/form"): (200, {"location": {"directory": PROJ}, "data": []}),
+        ("GET", "/api/session/ses_gone/form"): (404, {"name": "SessionNotFoundError"}),
     })
     view = harnessctl.session_view("ses_gone", PROJ)
     assert view["found"] is False, "a session the host does not know is reported as gone, never idle"
@@ -763,7 +763,7 @@ def test_a_pending_question_is_carried_into_the_view_as_a_form(monkeypatch):
         ("GET", "/api/session/ses_view"): (200, {"data": SESSION}),
         ("GET", "/api/session/ses_view/message"): (200, {"data": TRANSCRIPT}),
         ("GET", "/api/session/active"): (200, {"data": {"ses_view": {"type": "running"}}}),
-        ("GET", "/api/form"): (200, {"location": {"directory": PROJ}, "data": [{
+        ("GET", "/api/session/ses_view/form"): (200, {"data": [{
             "id": "frm_1", "sessionID": "ses_view", "title": "Which branch?",
             "fields": [{"key": "branch", "title": "Which branch?", "type": "string",
                         "options": [{"value": "main", "label": "main"},
@@ -784,11 +784,7 @@ def test_a_question_from_another_session_is_not_shown_as_this_sessions_form(monk
         ("GET", "/api/session/ses_view"): (200, {"data": SESSION}),
         ("GET", "/api/session/ses_view/message"): (200, {"data": TRANSCRIPT}),
         ("GET", "/api/session/active"): (200, {"data": {}}),
-        ("GET", "/api/form"): (200, {"location": {"directory": PROJ},
-                                      "data": [{"id": "frm_other", "sessionID": "ses_other",
-                                                "title": "x",
-                                                "fields": [{"key": "k", "title": "x",
-                                                            "type": "string"}]}]}),
+        ("GET", "/api/session/ses_view/form"): (200, {"data": []}),
     })
     assert harnessctl.session_view("ses_view", PROJ)["question"] is None
 

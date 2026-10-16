@@ -1645,7 +1645,7 @@ def create_app() -> FastAPI:
         except projects.ProjectError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         try:
-            held = harnessctl.pending_questions()
+            held = harnessctl.pending_questions(session)
         except harnessctl.HarnessError as exc:
             raise HTTPException(status_code=503,
                                 detail=f"the host did not answer the question read ({exc})") from None
