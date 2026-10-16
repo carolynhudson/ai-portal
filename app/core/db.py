@@ -126,6 +126,11 @@ def init() -> None:
     for col in ("pid INTEGER", "boot TEXT"):
         with contextlib.suppress(sqlite3.OperationalError):
             c.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
+    # Memory v2 (RAG): the embedding rides the row — JSON floats, the sidecar's 768
+    # dims. A column, not a side table: an embedding without its memory (or the
+    # reverse) is exactly the orphaned-index failure the vector stores are famous for.
+    with contextlib.suppress(sqlite3.OperationalError):
+        c.execute("ALTER TABLE memory ADD COLUMN embedding TEXT")
     c.commit()
 
 

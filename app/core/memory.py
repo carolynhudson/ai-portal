@@ -20,6 +20,7 @@ loaded — which is a router decision this module deliberately does not make.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 
@@ -115,3 +116,39 @@ def remove(mem_id: int) -> bool:
 def count() -> int:
     rows = db.query("SELECT COUNT(*) AS n FROM memory")
     return int(rows[0]["n"]) if rows else 0
+
+
+# ------------------------------------------------------------- embeddings (RAG v2)
+
+def set_embedding(mem_id: int, vector: list[float]) -> bool:
+    """Attach the sidecar's vector to a stored memory. The write is the memory
+    module's; the embedding is the caller's — this module never reaches the network."""
+    rows = db.query("SELECT id FROM memory WHERE id = ?", (int(mem_id),))
+    if not rows:
+        return False
+    db.execute("UPDATE memory SET embedding = ? WHERE id = ?",
+               (json.dumps([float(v) for v in vector]), int(mem_id)))
+    return True
+
+
+def embedded_rows() -> list[dict]:
+    """Every memory that carries a vector, decoded. The store is a memory system,
+    not a vector database: a full scan is the honest index at this size (thousands
+    of rows is microseconds); an ANN structure is a v3 decision, not a v2 default."""
+    out: list[dict] = []
+    for r in db.query("SELECT id, text, tags, source, created_at, embedding "
+                      "FROM memory WHERE embedding IS NOT NULL"):
+        d = dict(r)
+        try:
+            d["vector"] = json.loads(d.pop("embedding"))
+            out.append(d)
+        except (TypeError, ValueError):
+            continue  # a corrupted vector is skipped; its text is still searchable
+    return out
+
+
+def missing_embedding() -> list[dict]:
+    """Memories the sidecar has not vectorized yet — the reindex queue."""
+    rows = db.query("SELECT id, text, tags FROM memory WHERE embedding IS NULL "
+                    "ORDER BY created_at")
+    return [dict(r) for r in rows]

@@ -25,12 +25,34 @@ from app.core import db, kb_mcp, memory
 
 @pytest.fixture()
 def mem_db(monkeypatch, tmp_path):
-    """A private base for the module's db calls: same schema, real FTS5, no portal rows."""
+    """A private base for the module's db calls: same schema and migrations, real
+    FTS5, no portal rows. db.init() runs on the patched connection so the v2
+    embedding-column migration is on the path, exactly as production sees it."""
     conn = sqlite3.connect(str(tmp_path / "mem.db"))
     conn.row_factory = sqlite3.Row
-    conn.executescript(db.SCHEMA)
     monkeypatch.setattr(db._local, "conn", conn, raising=False)  # the attr is set on first use; not yet
+    db.init()
     yield conn
+
+
+@pytest.fixture()
+def embedder(monkeypatch):
+    """A deterministic stub of the sidecar: vectors by keyword, so ranking is
+    assertable without a model. The real client (app/core/embeddings.py) is a
+    transport; these tests are about the blend."""
+    def vec_for(text: str) -> list[float]:
+        if "quant" in str(text).lower():
+            return [1.0, 0.0]
+        if "color" in str(text).lower():
+            return [0.0, 1.0]
+        return [0.7, 0.7]
+    monkeypatch.setattr("app.core.embeddings.live", lambda timeout=3.0: True)
+    monkeypatch.setattr("app.core.embeddings.embed_documents",
+                        lambda texts, title="none": [vec_for(t) for t in texts])
+    monkeypatch.setattr("app.core.embeddings.embed_query",
+                        lambda q: vec_for("quant" if "quant" in str(q).lower()
+                                          else ("color" if "color" in str(q).lower() else "")))
+    return vec_for
 
 
 # ------------------------------------------------------------------ memory store
@@ -116,3 +138,66 @@ def test_an_unknown_tool_is_a_jsonrpc_error(mem_db):
     r = kb_mcp.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
                        "params": {"name": "make_coffee", "arguments": {}}})
     assert r["error"]["code"] == -32602
+
+
+# --------------------------------------------------------- hybrid recall (RAG v2)
+
+def test_hybrid_recall_finds_the_semantic_match_the_words_miss(embedder, mem_db):
+    """The claim of embeddings over FTS, asserted where it must show: a query whose
+    words appear nowhere, and whose meaning lives in one row. FTS alone answers
+    nothing; the blend ranks the semantic match first — the exact case the pi-era
+    context tools underdelivered on.
+
+    The writes go through the MCP door, not memory.add directly: embed-on-write is
+    the door's policy (the store stays embedder-agnostic), so this is the path an
+    agent's write actually travels.
+    """
+    import json
+
+    def add(text):
+        r = kb_mcp.handle({"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {
+            "name": "memory_add", "arguments": {"text": text}}})
+        return json.loads(r["result"]["content"][0]["text"])
+
+    add("the chosen quants are IQ3_S and IQ3_XXS for the big models")
+    add("the operator picked red as the accent color for the portal")
+    hits = kb_mcp._hybrid_search("quantization", 5)
+    assert hits, "hybrid search answered nothing to a query it can embed"
+    assert hits[0]["text"].startswith("the chosen quants"), hits[0]["text"]
+    r = kb_mcp.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+        "name": "memory_search", "arguments": {"query": "quantization"}}})
+    payload = json.loads(r["result"]["content"][0]["text"])
+    assert payload and "quants" in payload[0]["text"]
+
+
+def test_a_new_memory_is_vectorized_while_the_sidecar_is_live(embedder, mem_db):
+    import json
+    r = kb_mcp.handle({"jsonrpc": "2.0", "id": 21, "method": "tools/call", "params": {
+        "name": "memory_add",
+        "arguments": {"text": "the router preset top-k is 20 and min-p is 0.0"}}})
+    row = json.loads(r["result"]["content"][0]["text"])
+    assert kb_mcp._hybrid_search("top-k preset", 5)[0]["id"] == row["id"]
+    assert memory.missing_embedding() == [], "the embed-on-write pass skipped this row"
+
+
+def test_search_and_write_survive_the_sidecar_being_down(mem_db, monkeypatch):
+    """FTS-only is a state, not a failure: a memory store that refuses writes
+    because an optional accelerator is offline is an outage nobody asked for."""
+    monkeypatch.setattr("app.core.embeddings.live", lambda timeout=3.0: False)
+    row = memory.add("the harness answers on port 4096")
+    assert memory.missing_embedding(), "with the sidecar down the row must queue for reindex"
+    hits = kb_mcp._hybrid_search("4096", 5)
+    assert hits and hits[0]["id"] == row["id"]
+
+
+def test_reindex_backfills_after_the_sidecar_returns(embedder, mem_db, monkeypatch):
+    import json
+    monkeypatch.setattr("app.core.embeddings.live", lambda timeout=3.0: False)
+    row = memory.add("the aperture ceiling is 108 GiB, measured by the owner")
+    monkeypatch.setattr("app.core.embeddings.live", lambda timeout=3.0: True)
+    r = kb_mcp.handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                       "params": {"name": "memory_reindex", "arguments": {}}})
+    payload = json.loads(r["result"]["content"][0]["text"])
+    assert payload["embedded"] == 1, payload
+    assert memory.missing_embedding() == []
+    assert len(memory.embedded_rows()) == 1

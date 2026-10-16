@@ -34,7 +34,7 @@ from pathlib import Path
 # package must be importable from here.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core import db, kb, memory  # noqa: E402
+from app.core import db, embeddings, kb, memory  # noqa: E402
 
 PROTOCOL_FALLBACK = "2025-03-26"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -68,11 +68,18 @@ TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "Recall recorded memories by words (ranked). FTS syntax works; plain words work.",
+        "description": "Recall recorded memories by words (hybrid: FTS bm25 + embedding cosine when "
+                       "the embedding sidecar is live; FTS-only when it is not). FTS syntax works; plain words work.",
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string"},
             "limit": {"type": "integer", "description": "max memories (default 10)"}},
             "required": ["query"]},
+    },
+    {
+        "name": "memory_reindex",
+        "description": "Vectorize memories that have no embedding yet (queued when the embedding "
+                       "sidecar was down). Needs the sidecar; a no-op answering 0 when it is not live.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "memory_recent",
@@ -95,6 +102,48 @@ def _result(payload) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
 
 
+def _embed_row(row: dict) -> None:
+    """Attach a vector to a stored row. Failure is quiet on purpose: a sidecar that
+    died between the probe and the call must not fail the memory write — the row
+    simply stays in the memory_reindex queue."""
+    try:
+        vecs = embeddings.embed_documents([row["text"]])
+        memory.set_embedding(row["id"], vecs[0])
+    except Exception:  # noqa: BLE001 — recall degrades to FTS, writes never degrade
+        pass
+
+
+def _hybrid_search(query: str, limit: int) -> list[dict]:
+    """FTS bm25 and embedding cosine, one ranked list. Two signals, one honest blend:
+    0.6·cosine + 0.4·(text position score) — cosine is the stronger signal, the text
+    rank keeps exact tokens (ids, flags, hyphenated names) from falling out when the
+    vector likes a near-synonym better. The whole vector half is wrapped: an embedder
+    hiccup answers with the FTS list, never with an error."""
+    text_hits = memory.search(query, limit=limit * 2)
+    if not embeddings.live():
+        return text_hits[:limit]
+    try:
+        qv = embeddings.embed_query(query)
+        scored = sorted(((embeddings.cosine(qv, r["vector"]), r)
+                         for r in memory.embedded_rows()),
+                        key=lambda t: t[0], reverse=True)
+    except Exception:  # noqa: BLE001 — FTS-only is a state, not a failure
+        return text_hits[:limit]
+    v_scores = {r["id"]: cos for cos, r in scored[:limit * 2]}
+    t_scores = {r["id"]: 1.0 / (pos + 2) for pos, r in enumerate(text_hits)}
+    rows_by_id = {r["id"]: r for _, r in scored}
+    rows_by_id.update({r["id"]: r for r in text_hits})
+    merged = sorted(rows_by_id,
+                    key=lambda mid: 0.6 * v_scores.get(mid, 0.0) + 0.4 * t_scores.get(mid, 0.0),
+                    reverse=True)
+    out = []
+    for mid in merged[:limit]:
+        r = dict(rows_by_id[mid])
+        r.pop("vector", None)
+        out.append(r)
+    return out
+
+
 def call_tool(name: str, args: dict) -> dict:
     """One tool call, portal-side. Raises on unknown names; tool refusals return isError."""
     if name == "kb_search":
@@ -114,10 +163,23 @@ def call_tool(name: str, args: dict) -> dict:
                              source=str(args.get("source") or "mcp"))
         except memory.MemoryError as e:
             return _result({"error": str(e)})
+        if embeddings.live():
+            _embed_row(row)
         return _result(row)
     if name == "memory_search":
-        return _result(memory.search(str(args.get("query") or ""),
-                                     limit=int(args.get("limit") or 10)))
+        return _result(_hybrid_search(str(args.get("query") or ""),
+                                      int(args.get("limit") or 10)))
+    if name == "memory_reindex":
+        rows = memory.missing_embedding()
+        if not rows:
+            return _result({"embedded": 0, "pending": 0})
+        if not embeddings.live():
+            return _result({"embedded": 0, "pending": len(rows),
+                            "note": "the embedding sidecar is not live; start it and rerun"})
+        vecs = embeddings.embed_documents([r["text"] for r in rows])
+        for r, v in zip(rows, vecs):
+            memory.set_embedding(r["id"], v)
+        return _result({"embedded": len(rows), "pending": 0})
     if name == "memory_recent":
         return _result(memory.recent(int(args.get("limit") or 20)))
     if name == "memory_remove":
