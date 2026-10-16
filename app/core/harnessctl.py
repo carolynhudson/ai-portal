@@ -7,7 +7,7 @@ reboots, the Projects page still names the session id so they can resume it. Tha
 the host is **not** a child of the portal. So `opencode serve` runs as its own systemd user unit
 (`ai-harness`), and the portal is a client over its HTTP API.
 
-Two measurements shape this module.
+Three measurements shape this module.
 
 **A busy port is invisible.** Measured on this box: a second `opencode serve --port 4096` starts
 "successfully" and every request is answered by the **first** server, which holds the socket. A host
@@ -15,10 +15,17 @@ that silently shadows is worse than one that fails — the page talks to a stale
 model list. So the unit's `ExecStartPre` refuses to start on a busy port, and `status()` names the
 process that owns the port, so the dashboard can say who it is talking to.
 
-**Sessions live in the server, not the browser.** `~/.local/share/opencode/opencode.db` holds them;
-`POST /session` returns an id, and `GET /session?directory=<cwd>` lists a project's sessions. The
-directory is a **query parameter** (`?directory=`); a body key with the same name is ignored —
-measured: `POST /session {"directory": ...}` created a session in the server's own cwd.
+**Sessions live in the server, not the browser**, in its `opencode.db`. The host is V2 (measured
+2.0.29): `POST /api/session` with `location.directory` in the body creates the session, and
+`GET /api/session?directory=<cwd>` lists a project's sessions — V2 dropped the V1 `?directory=`
+query for *writes*: the session's location is bound at creation, and prompt/message/form reads
+carry no per-request directory.
+
+**opencode versions do not share a database politely.** Measured (ref=err_4c90c294): a V1 host and
+a V2 server on one `opencode.db` answer every directory-scoped route with `SQLiteError` once the
+newer one migrates the schema out from under the older. So the harness owns its data home
+(`XDG_DATA_HOME` in the env file, seeded by the portal): its sessions stay durable in it, and no
+other opencode rewrites its schema underneath it.
 
 The secret: `OPENCODE_SERVER_PASSWORD` is generated once into `~/ai/state/portal/harness.key`
 (0600) and reaches the unit through the env file. The portal reads the value only to sign requests;
@@ -48,9 +55,17 @@ HARNESS_UNIT = "ai-harness"
 HARNESS_SERVICE = "harness"          # env file / wrapper name: harness.env, ai-harness.sh
 DEFAULT_PORT = 4096
 DEFAULT_HOST = "127.0.0.1"
-HEALTH_PATH = "/global/health"       # measured: {"healthy": true, "version": "1.19.0"}
+HEALTH_PATH = "/api/info"            # measured (2.0.29): {"version": "2.0.29", "pid": …, "urls": […]}
 KEY_FILE_NAME = "harness.key"
 _TIMEOUT = 20
+
+# Plugins the harness host loads. Measured on 2.0.29: the V2 loader accepts `plugins`
+# entries with `Plugin.define` exports (`opencode-search@1.0.0` reports `active` through
+# `POST /api/plugin/check`), and the v2 compatibility layer normalizes the V1 `plugin`
+# key — writing both keys hands the V1 packages to a loader that refuses them. The host
+# is V2, so the seed writes the V2 key only. Pinned: the host starts with what is
+# written, and an unpinned entry resolves to whatever latest is on release day.
+HARNESS_V2_PLUGINS = ["opencode-search@1.0.0"]
 
 
 class HarnessError(Exception):
@@ -137,14 +152,21 @@ def cache_dir(port: int) -> Path:
 
 
 def seed_cache_home(port: int, log=print) -> dict:
-    """Copy the portal-generated agent config into the cache home the host reads.
+    """Copy the portal-generated agent config into the config home the host reads, with
+    the harness's plugin list written into the copy.
 
-    The gate this implements (plan §6.14.1o): a session created over the API reads
-    `opencode.json` and the `AGENTS.md` files out of that cache home, and a host
-    started with an empty one answers from defaults — no posture, no compaction,
-    none of the plugins. `agentconfig` is the component that generates those files
-    from the router census, so the copy is the portal's job, and it happens before
-    the unit starts: a host seeded after it read an empty directory stays unseeded.
+    The gate this implements (plan §6.14.1o): the host reads `opencode.json` and the
+    `AGENTS.md` files out of the directory it is started with, and a host started with an
+    empty one answers from defaults — no posture, no compaction, none of the plugins.
+    `agentconfig` is the component that generates those files from the router census, so
+    the copy is the portal's job, and it happens before the unit starts: a host seeded
+    after it read an empty directory stays unseeded.
+
+    The copy is where the host/plugin split is honored. Measured on 2.0.29: the V2 loader
+    reads the `plugins` key with `Plugin.define` packages; its compatibility layer also
+    normalizes the V1 `plugin` key, so a copy carrying both keys hands V1-exporting
+    packages to a loader that refuses them. The seed writes `plugins` = the pinned V2
+    packages and drops the V1 `plugin` key from the copy.
     """
     cache = cache_dir(port)
     src = Path(os.environ.get("OPENCODE_CONFIG_DIR")
@@ -154,8 +176,12 @@ def seed_cache_home(port: int, log=print) -> dict:
                 "error": f"the host has no agent config to run with: {src / 'opencode.json'} "
                        "does not exist; sync the harness configs first"}
     cache.mkdir(parents=True, exist_ok=True)
+    (cache / "data").mkdir(parents=True, exist_ok=True)   # the host's own session store home
     files = []
-    shutil.copy2(src / "opencode.json", cache / "opencode.json")
+    cfg = json.loads((src / "opencode.json").read_text())
+    cfg["plugins"] = [{"package": p} for p in HARNESS_V2_PLUGINS]
+    cfg.pop("plugin", None)
+    (cache / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
     files.append("opencode.json")
     if (src / "AGENTS.md").exists():
         shutil.copy2(src / "AGENTS.md", cache / "AGENTS.md")
@@ -176,14 +202,22 @@ def env_mapping(port: int, password: str) -> dict[str, str]:
         "HARNESS_HOST": DEFAULT_HOST,
         "HARNESS_PORT": str(port),
         "OPENCODE_SERVER_PASSWORD": password,
-        # opencode reads its model/provider config from here; the portal's generator
-        # (agentconfig.py) writes that file from the router census.
-        "OPENCODE_CONFIG_DIR": str(paths.HOME / ".config" / "opencode"),
-        # Measured (plan §6.14.1o): an API-created session reads `opencode.json` and
-        # `AGENTS.md` out of `$XDG_CACHE_HOME/opencode`, not out of OPENCODE_CONFIG_DIR.
-        # Pointing it at the directory `seed_cache_home` fills is what makes a session
-        # in a project see the agent config.
-        "XDG_CACHE_HOME": str(cache_dir(port)),
+        # The wrapper honors `HARNESS_BIN` (measured: `BIN="${HARNESS_BIN:-…}"`). Pointing it
+        # at the V2 binary is the harness upgrade: the plugin ecosystem is migrating to the
+        # V2 `Plugin.define` spec, and a V2 host loads the same packages the CLI loads.
+        "HARNESS_BIN": str(paths.HOME / ".opencode" / "bin" / "opencode"),
+        # Measured on the live 1.19.0 host: the server reads its whole agent config
+        # (providers, model list, default model, plugins, AGENTS.md) from
+        # `OPENCODE_CONFIG_DIR` at startup. Pointing it at the seeded directory is what
+        # gives the harness its own file — the harness V1 plugin list can differ from the
+        # interactive CLI's V2 list, which lives in ~/.config/opencode.
+        "OPENCODE_CONFIG_DIR": str(cache_dir(port)),
+        # Measured (ref=err_4c90c294): the v1 host and the v2 CLI shared one
+        # `~/.local/share/opencode/opencode.db`, and the v2 server's schema migration
+        # removed `project_id` — the v1 host then answered every directory-scoped route
+        # with SQLiteError on instance boot. The harness owns a data home; sessions stay
+        # durable in it and no other opencode version rewrites its schema under it.
+        "XDG_DATA_HOME": str(cache_dir(port) / "data"),
         # The port pre-flight is a portal module, and systemd starts us from $HOME.
         "HARNESS_PYTHON": sys.executable,
         "PYTHONPATH": str(REPO_ROOT),
@@ -267,8 +301,11 @@ def _local_request(url: str, data: bytes | None = None, method: str = "GET") -> 
 
 def health(port: int, host: str = DEFAULT_HOST, password: str | None = None,
            timeout: float = 6.0) -> dict[str, Any]:
-    """`GET /global/health`. Auth is Basic with the generated password; without it the
-    server answers 401, which is reported as `auth_failed`, not as down."""
+    """`GET /api/info`. Auth is Basic with the generated password; without it the server
+    answers 401, which is reported as `auth_failed`, not as down.
+
+    Measured on 2.0.29: the V2 health verb carries no `healthy` flag — answering 200 with
+    `{version, pid, urls}` **is** the healthy answer, so presence is the flag."""
     url = base(port, host) + HEALTH_PATH
     req = _local_request(url)                      # scheme-pinned: http on 127.0.0.1
     if password:
@@ -277,7 +314,8 @@ def health(port: int, host: str = DEFAULT_HOST, password: str | None = None,
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - local host, pinned scheme
             body = json.loads(r.read().decode() or "{}")
-        return {"ok": bool(body.get("healthy")), "version": body.get("version"),
+        return {"ok": isinstance(body, dict) and "version" in body,
+                "version": body.get("version") if isinstance(body, dict) else None,
                 "auth": "yes", "url": url}
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -383,6 +421,27 @@ def start(port: int = DEFAULT_PORT, log=print) -> dict[str, Any]:
     return status(port)
 
 
+def sync(port: int = DEFAULT_PORT, log=print) -> dict[str, Any]:
+    """Re-seed the host's config home, rewrite its env file, and restart the host.
+
+    Sessions live in `opencode.db`, not in the host process — restarting is what the unit
+    being a service is for (§this module's header): the operator's sessions survive it.
+    The host reads its config at startup only (measured: the live host kept answering
+    with the config it read at its last start, edits since invisible), so a config edit
+    reaches the harness through this verb, not through the file alone.
+    """
+    port = _int(port, DEFAULT_PORT)
+    seed = seed_cache_home(port, log)
+    if not seed.get("ok"):
+        raise HarnessError(seed.get("error") or "the harness host cannot be seeded")
+    units.write_env(HARNESS_SERVICE, env_mapping(port, ensure_key(log)), log=log)
+    r = subprocess.run(["systemctl", "--user", "restart", HARNESS_UNIT],
+                       capture_output=True, text=True, timeout=120, check=False)
+    if r.returncode != 0:
+        raise HarnessError(f"{HARNESS_UNIT} did not restart: {(r.stderr or r.stdout).strip()[:240]}")
+    return status(port)
+
+
 # --- the client (queue 31: the three flows, measured against the live host) ----------
 
 def _request(method: str, path: str, body: dict | None = None, port: int = DEFAULT_PORT,
@@ -417,20 +476,24 @@ def _request(method: str, path: str, body: dict | None = None, port: int = DEFAU
 
 
 def list_sessions(cwd: str | None = None, port: int = DEFAULT_PORT) -> list[dict]:
-    code, body = _request("GET", "/session", port=port,
+    code, body = _request("GET", "/api/session", port=port,
                           query={"directory": cwd} if cwd else None)
-    if code != 200 or not isinstance(body, list):
+    data = body.get("data") if isinstance(body, dict) else None
+    if code != 200 or not isinstance(data, list):
         raise HarnessError(f"session list refused (HTTP {code}): {str(body)[:160]}")
-    return body
+    return data
 
 
 def create_session(cwd: str, port: int = DEFAULT_PORT) -> dict:
-    """The directory is a query parameter. Measured: a body key named `directory` is ignored
-    and the session lands in the server's own working directory."""
-    code, body = _request("POST", "/session", {}, port=port, query={"directory": cwd})
-    if code != 200 or not isinstance(body, dict) or "id" not in body:
+    """The directory travels as `location.directory` in the body. Measured on 2.0.29:
+    V2 dropped the V1 `?directory=` query; `location` is the wire's word for it, and the
+    created `Session.Info` echoes the location back."""
+    code, body = _request("POST", "/api/session",
+                          {"location": {"directory": cwd}}, port=port)
+    data = body.get("data") if isinstance(body, dict) else None
+    if code != 200 or not isinstance(data, dict) or "id" not in data:
         raise HarnessError(f"session create refused (HTTP {code}): {str(body)[:160]}")
-    return body
+    return data
 
 
 def launch_project(name_or_path: str, personality: str | None = None,
@@ -494,28 +557,40 @@ def launch_project(name_or_path: str, personality: str | None = None,
 
 
 def session(session_id: str, cwd: str | None = None, port: int = DEFAULT_PORT) -> dict:
-    code, body = _request("GET", f"/session/{session_id}", port=port,
-                          query={"directory": cwd} if cwd else None)
-    if code != 200 or not isinstance(body, dict):
+    code, body = _request("GET", f"/api/session/{session_id}", port=port)
+    data = body.get("data") if isinstance(body, dict) else None
+    if code != 200 or not isinstance(data, dict):
         raise HarnessError(f"session {session_id} not readable (HTTP {code}): {str(body)[:160]}")
-    return body
+    return data
 
 
 def prompt(session_id: str, text: str, cwd: str, port: int = DEFAULT_PORT) -> dict:
-    code, body = _request("POST", f"/session/{session_id}/message",
-                          {"parts": [{"type": "text", "text": text}]},
-                          port=port, query={"directory": cwd}, timeout=180)
-    if code != 200:
+    """Queue the text on the host without waiting for the agent's turn.
+
+    Measured on 2.0.29: V2's `POST /api/session/{id}/prompt` answers `200` with the
+    **inbox entry** it created (a `delivery: steer|queue` queue) in well under a second —
+    the turn runs in the server and the page's poll loop carries the transcript. The body
+    is `{text}`; the V1 `parts` array is gone.
+
+    `cwd` is kept in the signature: the session's location is bound at creation, so V2
+    needs no per-request directory — the parameter is the portal's calling convention,
+    not the wire's.
+    """
+    code, body = _request("POST", f"/api/session/{session_id}/prompt",
+                          {"text": text}, port=port)
+    if code not in (200, 204):
         raise HarnessError(f"prompt refused (HTTP {code}): {str(body)[:200]}")
-    return body if isinstance(body, dict) else {"raw": body}
+    out = body if isinstance(body, dict) else {"raw": body}
+    out.setdefault("queued", True)
+    return out
 
 
 def messages(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict]:
-    code, body = _request("GET", f"/session/{session_id}/message", port=port,
-                          query={"directory": cwd})
+    code, body = _request("GET", f"/api/session/{session_id}/message", port=port)
     if code != 200:
         raise HarnessError(f"messages refused (HTTP {code}): {str(body)[:160]}")
-    return body if isinstance(body, list) else []
+    data = body.get("data") if isinstance(body, dict) else None
+    return data if isinstance(data, list) else []
 
 
 # --- the session view (queue 32: the page's operational state) ----------------------
@@ -579,79 +654,119 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
     """The host's messages as rows the page can print: role, text, the tools a step ran, and what
     the host said it answered with.
 
-    The host's own shape (`{info, parts}`) is a wire fact; normalizing it here is what keeps the
-    template from reading wire keys, which is how a host upgrade becomes a page outage.
+    Measured on 2.0.29, the entries are a **union keyed by `type`** (no `{info, parts}` wrapper):
+    `user` carries `text` flat; `assistant` carries `content` — parts typed `text`, `reasoning`,
+    `tool` — plus `model`, `agent`, `finish`, `cost`, `tokens`; `idle` closes a turn with an
+    `outcome`, and `*-selected`/`*-switched` rows bookkeep switches. The union is normalized
+    to rows here, so a host upgrade lands in this function and not in the template.
     """
     rows: list[dict] = []
     for item in messages(session_id, cwd, port=port):
         if not isinstance(item, dict):
             continue
-        info = item.get("info")
-        if not isinstance(info, dict):
-            info = {}
-        parts = item.get("parts")
+        kind = item.get("type")
+        if kind == "user":
+            rows.append({"id": item.get("id"), "role": "user",
+                         "text": str(item.get("text") or ""), "tools": [],
+                         "model": None, "agent": None, "cost": None,
+                         "finish": None, "tokens": {},
+                         "time": item.get("time") if isinstance(item.get("time"), dict) else {},
+                         "error": None})
+            continue
+        if kind != "assistant":
+            continue          # idle rows and switch records are turn bookkeeping, not bubbles
+        parts = item.get("content")
         if not isinstance(parts, list):
             parts = []
         texts = []
+        reasoning = []
         tools = []
         for p in parts:
             if not isinstance(p, dict):
                 continue
-            kind = p.get("type")
-            if kind == "text":
+            ptype = p.get("type")
+            if ptype == "text":
                 texts.append(str(p.get("text") or ""))
-            elif kind == "tool":
+            elif ptype == "reasoning":
+                reasoning.append(str(p.get("text") or ""))
+            elif ptype == "tool":
                 state = p.get("state")
                 if not isinstance(state, dict):
                     state = {}
-                tools.append({"tool": str(p.get("tool") or ""), "state": str(state.get("status") or "")})
+                tools.append({"tool": str(p.get("name") or ""), "state": str(state.get("status") or "")})
         text = "\n".join(texts).strip()
+        # Measured on this box: its local models answer with `reasoning` + `tool` parts and
+        # often **no text part at all** — a row built from text parts alone printed as an
+        # empty bubble, and a turn in progress (parts not written yet) printed as one too.
+        # The page is allowed a bubble with content: the model's reasoning, then what it ran,
+        # then a working marker.
+        if not text:
+            vis = "\n".join(reasoning).strip()
+            if vis:
+                text = vis if len(vis) <= 600 else vis[:600] + "…"
+            elif tools:
+                text = " · ".join(f"{t['tool']} {t['state']}".strip() for t in tools)
+            elif not parts:
+                text = "…"
         model = None
-        if info.get("providerID") or info.get("modelID"):
-            model = {"providerID": info.get("providerID"), "modelID": info.get("modelID")}
+        ref = item.get("model")
+        if isinstance(ref, dict) and (ref.get("providerID") or ref.get("id")):
+            model = {"providerID": ref.get("providerID"), "modelID": ref.get("id")}
         rows.append({
-            "id": info.get("id"), "role": str(info.get("role") or ""), "text": text, "tools": tools,
-            "model": model, "agent": info.get("agent"), "cost": info.get("cost"),
-            "finish": info.get("finish"), "tokens": info.get("tokens") or {},
-            "time": info.get("time") if isinstance(info.get("time"), dict) else {},
-            "error": info.get("error"),
+            "id": item.get("id"), "role": "assistant", "text": text, "tools": tools,
+            "model": model, "agent": item.get("agent"), "cost": item.get("cost"),
+            "finish": item.get("finish"), "tokens": item.get("tokens") or {},
+            "time": item.get("time") if isinstance(item.get("time"), dict) else {},
+            "error": None,
         })
     return rows
 
 
 def pending_questions(port: int = DEFAULT_PORT) -> list[dict]:
-    """The questions the host is holding. Measured: `GET /question` is a list, and a host with
-    nothing pending answers `[]` — the same answer as "the session never asked", which is why the
-    view only reports a question that names *this* session."""
-    code, body = _request("GET", "/question", port=port)
-    if code != 200:
+    """The forms the host is holding. Measured on 2.0.29: V2 replaced V1's `/question`
+    queue with **forms** — `GET /api/form` answers `{location, data}`, and every
+    `Form.Info` names its `sessionID`. A host with nothing pending answers an empty
+    `data` — the same answer as "the session never asked", which is why the view only
+    reports a form that names *this* session."""
+    code, body = _request("GET", "/api/form", port=port)
+    data = body.get("data") if isinstance(body, dict) else None
+    if code != 200 or not isinstance(data, list):
         raise HarnessError(f"question list refused (HTTP {code}): {str(body)[:160]}")
-    return body if isinstance(body, list) else []
+    return data
 
 
 def _question_form(item: dict) -> dict:
-    raw_questions = item.get("questions")
-    if not isinstance(raw_questions, list):
-        raw_questions = []
+    """Form.Info → the page's question card: a titled form whose fields each carry the
+    key the host's `Form.Answer` object is keyed by, its title/description, its options
+    as `{value, label}` pairs, and whether it takes more than one answer."""
+    raw_fields = item.get("fields")
+    if not isinstance(raw_fields, list):
+        raw_fields = []
     questions = []
-    for q in raw_questions:
-        if not isinstance(q, dict):
+    for f in raw_fields:
+        if not isinstance(f, dict):
             continue
-        raw_options = q.get("options")
+        raw_options = f.get("options")
         if not isinstance(raw_options, list):
             raw_options = []
         options = []
         for o in raw_options:
             if isinstance(o, dict):
-                options.append(str(o.get("label") or ""))
+                options.append({"value": str(o.get("value") or o.get("label") or ""),
+                                "label": str(o.get("label") or o.get("value") or "")})
         questions.append({
-            "question": str(q.get("question") or ""),
-            "header": str(q.get("header") or ""),
-            "multiSelect": bool(q.get("multiple") or q.get("multiSelect")),
+            "key": str(f.get("key") or ""),
+            "question": str(f.get("title") or f.get("description") or ""),
+            "header": str(f.get("key") or ""),
+            "description": str(f.get("description") or ""),
+            "type": str(f.get("type") or "string"),
+            "multiSelect": f.get("type") == "multiselect",
+            "custom": bool(f.get("custom")),
             "options": options,
         })
     return {"id": item.get("id"), "session": item.get("sessionID"),
-            "tool": item.get("tool"), "questions": questions}
+            "title": str(item.get("title") or ""), "tool": item.get("tool"),
+            "questions": questions}
 
 
 def session_view(session_id: str, cwd: str, context_limit: int | None = None,
@@ -687,6 +802,10 @@ def session_view(session_id: str, cwd: str, context_limit: int | None = None,
     title = facts.get("title")
     out["title"] = title if isinstance(title, str) and title else facts.get("slug")
     out["cost"] = facts.get("cost")
+    ref = facts.get("model")
+    if isinstance(ref, dict) and (ref.get("providerID") or ref.get("id")):
+        out["model"] = {"providerID": ref.get("providerID"), "modelID": ref.get("id")}
+    out["agent"] = facts.get("agent")
     try:
         rows = transcript(session_id, cwd, port=port)
     except HarnessError as exc:
@@ -701,18 +820,17 @@ def session_view(session_id: str, cwd: str, context_limit: int | None = None,
     out["context_used"] = _context_used(facts.get("tokens"))
     for row in reversed(rows):
         if row["role"] == "assistant":
-            out["model"] = row["model"]
-            out["agent"] = row["agent"]
             used = _context_used(row["tokens"])
             if used is not None:
                 out["context_used"] = used
             break
-    code, status = _request("GET", "/session/status", port=port)
-    if code != 200:
+    code, active = _request("GET", "/api/session/active", port=port)
+    data = active.get("data") if isinstance(active, dict) else None
+    if code != 200 or not isinstance(data, dict):
         out["busy"] = None
         out["reason"] = "the host refused the busy read"
     else:
-        out["busy"] = bool(isinstance(status, dict) and session_id in status)
+        out["busy"] = session_id in data
     try:
         held = pending_questions(port=port)
     except HarnessError:
@@ -732,6 +850,11 @@ def send_prompt(session_id: str, text: str, cwd: str, port: int = DEFAULT_PORT) 
     words for a session that will not take text ("compacting", "no such session") are the whole
     difference between *the box did nothing* and *this session cannot take text*. A raised error
     reaches the page as a 500 and the box goes quiet, which is the worse of the two.
+
+    The success dict carries `reason` as a key with `None`: the API route logs `out['reason']`
+    on every send, and a success shape without the key answered that log line as a KeyError.
+    `message` is the host's message id when the verb returns one; the async verb answers 204
+    with no body, and the page then names the queue, not a message id it cannot have.
     """
     if not isinstance(text, str) or not text.strip():
         return {"ok": False, "session": session_id, "accepted": False,
@@ -741,38 +864,42 @@ def send_prompt(session_id: str, text: str, cwd: str, port: int = DEFAULT_PORT) 
     except HarnessError as exc:
         return {"ok": False, "session": session_id, "accepted": None,
                 "reason": f"the host refused the text ({str(exc)[:260]})"}
-    info = out.get("info")
-    if not isinstance(info, dict):
-        info = {}
-    return {"ok": True, "session": session_id, "accepted": True, "message": info.get("id")}
+    data = out.get("data")
+    if not isinstance(data, dict):
+        data = {}
+    return {"ok": True, "session": session_id, "accepted": True, "queued": bool(out.get("queued")),
+            "message": data.get("id"), "reason": None}
 
 
-def answer_question(request_id: str, answers: list, port: int = DEFAULT_PORT) -> dict[str, Any]:
-    """The host takes the labels, one array per question, **in the order the questions were asked**.
-    An answer set that reorders them answers a different question than the operator answered."""
-    if not isinstance(answers, list) or not answers:
-        raise HarnessError("an answer names one array of labels per question, in the questions' order")
-    code, body = _request("POST", f"/question/{request_id}/reply", {"answers": answers}, port=port)
-    if code != 200:
+def answer_question(session_id: str, form_id: str, answers: dict,
+                    port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """The host takes a `Form.Answer` object — **keyed by each field's `key`** (measured
+    on 2.0.29) — posted to `/api/session/{id}/form/{formID}/reply` as `{answer: {...}}`.
+    An answer keyed by anything the form never asked is the V2 equivalent of answering a
+    different question than the operator answered."""
+    if not isinstance(answers, dict) or not answers:
+        raise HarnessError("an answer is an object keyed by the form's field keys")
+    code, body = _request("POST", f"/api/session/{session_id}/form/{form_id}/reply",
+                          {"answer": answers}, port=port)
+    if code not in (200, 204):
         raise HarnessError(f"answer refused (HTTP {code}): {str(body)[:200]}")
-    return {"ok": True, "request": request_id}
+    return {"ok": True, "request": form_id, "session": session_id}
 
 
-def reject_question(request_id: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
-    """Declining the question is a verb of its own — the host has a reply route and a reject route,
-    and an empty answer is not the same answer as a refusal."""
-    code, body = _request("POST", f"/question/{request_id}/reject", port=port)
-    if code != 200:
+def reject_question(session_id: str, form_id: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """Declining the form is its own verb — the host has a reply route and the form's own
+    `DELETE`; an empty answer is not the same answer as a refusal."""
+    code, body = _request("DELETE", f"/api/session/{session_id}/form/{form_id}", port=port)
+    if code not in (200, 204):
         raise HarnessError(f"refusal refused (HTTP {code}): {str(body)[:200]}")
-    return {"ok": True, "request": request_id}
+    return {"ok": True, "request": form_id, "session": session_id}
 
 
 def stop_session(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> dict[str, Any]:
     """Stop the session's work. The session stays where it is: the operator stops the run, they do
     not delete the record of it."""
-    code, body = _request("POST", f"/session/{session_id}/abort", port=port,
-                          query={"directory": cwd})
-    if code != 200:
+    code, body = _request("POST", f"/api/session/{session_id}/interrupt", port=port)
+    if code not in (200, 204):
         raise HarnessError(f"stop refused (HTTP {code}): {str(body)[:200]}")
     return {"ok": True, "session": session_id}
 

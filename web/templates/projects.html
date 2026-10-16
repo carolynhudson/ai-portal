@@ -677,12 +677,19 @@ function renderMeter(d) {
 function renderTranscript(d) {
   const log = $('#proj-log');
   const rows = Array.isArray(d.transcript) ? d.transcript : [];
-  const order = `${d.session}|${rows.length}`;
-  if (order === opOrder && rows.length === opShown) return;   // nothing new: do not repaint
-  if (rows.length < opShown || d.session !== opSessionId) { log.textContent = ''; opShown = 0; }
-  opSessionId = d.session;
+  // Parts land while the host works: a mid-turn row appears with no content and fills in
+  // later, and reasoning-only answers arrive with no text part at all (the server fills the
+  // bubble text from them). The signature counts content, not just row count — a filling
+  // row changes the content, and a transcript that only appends bubbles paints a session
+  // that looks frozen mid-turn.
+  let sig = 0;
+  for (const row of rows) sig = (sig + (row.text || '').length + (row.tools || []).length) >>> 0;
+  const order = `${d.session}|${rows.length}|${sig}`;
+  if (order === opOrder) return;   // nothing new: do not repaint
   opOrder = order;
-  for (const row of rows.slice(opShown)) {
+  opSessionId = d.session;
+  log.textContent = '';
+  for (const row of rows) {
     const who = row.role === 'user' ? 'you' : (row.role === 'assistant' ? 'agent' : 'other');
     const bubble = el('div', 'proj-bubble');
     bubble.dataset.who = who;
@@ -694,42 +701,59 @@ function renderTranscript(d) {
 }
 let opSessionId = null;
 
-// The host's `question` tool as a form (§6.14.1v): one field per question, in the order the host
-// asked them, with the answer arrays going back in that same order.
+// The host's `question` tool as a form (§6.14.1v, re-measured on V2): the form's fields carry
+// a `key`, the options are `{value, label}` pairs, and the answer goes back keyed by those keys.
 function renderQuestion(d) {
   const box = $('#proj-question');
   const fields = $('#proj-question-fields');
   const q = d.question;
   if (!q || !Array.isArray(q.questions) || !q.questions.length) { box.hidden = true; return; }
   fields.textContent = '';
-  q.questions.forEach((item, qi) => {
+  q.questions.forEach((item) => {
     const legend = el('legend');
-    legend.textContent = item.question || item.header || `Question ${qi + 1}`;
+    legend.textContent = item.question || item.header || item.key;
     fields.append(legend);
-    const multi = item.multi === true;
+    const multi = item.multiSelect === true;
     (item.options || []).forEach((opt) => {
       const label = el('label');
       const input = el('input');
       input.type = multi ? 'checkbox' : 'radio';
-      input.name = `proj-q-${qi}`;
-      input.value = opt.label;
+      input.name = `proj-q-${item.key}`;
+      input.value = opt.value;
+      input.dataset.key = item.key;
       const hint = opt.description ? ` — ${opt.description}` : '';
       label.append(input, document.createTextNode(` ${opt.label}${hint}`));
       fields.append(label);
     });
+    if (item.custom) {
+      // A custom field takes the operator's own words, not just a listed option.
+      const label = el('label');
+      const input = el('input');
+      input.type = 'text';
+      input.name = `proj-q-${item.key}-custom`;
+      input.dataset.key = item.key;
+      input.placeholder = 'or write your own answer';
+      label.append(document.createTextNode('your own: '), input);
+      fields.append(label);
+    }
   });
   box.hidden = false;
 }
 
 function collectAnswers() {
-  const answers = [];
-  const groups = {};
+  // `Form.Answer` is keyed by the field keys (measured on 2.0.29): a multiselect answers as an
+  // array, a single field as one value, and a custom text box answers with its words.
+  const answers = {};
   document.querySelectorAll('#proj-question-fields input').forEach((input) => {
-    (groups[input.name] = groups[input.name] || []).push(input);
-  });
-  Object.keys(groups).sort().forEach((name) => {
-    const picked = groups[name].filter((i) => i.checked).map((i) => i.value);
-    answers.push(picked);
+    const key = input.dataset.key;
+    if (!key) return;
+    if (input.type === 'checkbox') {
+      if (input.checked) { (answers[key] = answers[key] || []).push(input.value); }
+    } else if (input.type === 'radio') {
+      if (input.checked) answers[key] = input.value;
+    } else if (input.value.trim()) {
+      answers[key] = input.value.trim();
+    }
   });
   return answers;
 }
@@ -793,7 +817,11 @@ async function sendPrompt() {
   }
   box.value = '';
   $('#proj-op-out').dataset.tone = 'good';
-  opLastNote = `sent. the host created message ${d.message}.`;
+  // The async verb answers 204 with no body: the send is queued, the host is working, and
+  // the transcript fills on the next poll. A note that promises a message id the verb
+  // cannot give is a sentence the next poll contradicts.
+  opLastNote = d.message ? `sent. the host created message ${d.message}.`
+                         : 'sent. the host queued the text — the log below fills as it works.';
   $('#proj-op-out').textContent = opLastNote;
   await pollSession();
 }

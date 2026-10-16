@@ -1251,7 +1251,7 @@ def test_the_question_form_answers_the_project_it_is_serving(sandbox):
     c = _client()
     # Nothing is serving: the form has no session to answer for, and says so at 404.
     assert c.post("/api/harness/session/question/reply",
-                  json={"name": "nope", "answers": [["a"]]}).status_code == 404
+                  json={"name": "nope", "answers": {"branch": "a"}}).status_code == 404
     assert c.post("/api/harness/session/question/reject",
                   json={"name": "nope"}).status_code == 404
     target = sandbox / "asker"
@@ -1259,7 +1259,8 @@ def test_the_question_form_answers_the_project_it_is_serving(sandbox):
     projects.register(str(target))
     projects.mark_served(str(target), "ses_ask")
     # The host is down: the answer cannot be delivered, and 503 with the reason is the honest answer.
-    r = c.post("/api/harness/session/question/reply", json={"name": "asker", "answers": [["a"]]})
+    r = c.post("/api/harness/session/question/reply",
+               json={"name": "asker", "answers": {"branch": "a"}})
     assert r.status_code == 503, r.text
     assert "host" in r.json()["detail"].lower()
     assert c.post("/api/harness/session/question/reject",
