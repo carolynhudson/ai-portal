@@ -80,6 +80,27 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS projects (
   path TEXT PRIMARY KEY, name TEXT, created REAL, last_opened REAL, notes TEXT
 );
+-- Agent memory (RAG-for-opencode): what harness sessions record for the sessions that follow
+-- them. The store is the portal's — the same sqlite base, the same audit trail — and the harness
+-- reaches it only through the MCP server (app/core/kb_mcp.py), never through the browser.
+-- FTS5 is the recall: measured available on this box's python 3.14 sqlite.
+CREATE TABLE IF NOT EXISTS memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '', created_at REAL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+  text, tags, content='memory', content_rowid='id'
+);
+CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory BEGIN
+  INSERT INTO memory_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text, tags) VALUES ('delete', old.id, old.text, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text, tags) VALUES ('delete', old.id, old.text, old.tags);
+  INSERT INTO memory_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
+END;
 """
 
 

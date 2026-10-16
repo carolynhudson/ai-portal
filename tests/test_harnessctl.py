@@ -414,6 +414,27 @@ def test_the_seed_writes_the_harness_plugin_list_the_host_can_load(monkeypatch):
     assert seeded["model"] == "llamacpp/x", "the copy keeps the rest of the generated config"
 
 
+def test_the_seed_hands_the_host_its_memory_server(monkeypatch):
+    """RAG-for-opencode (queue 34): the memory MCP server must be in the config the
+    host reads, written by the seed with the deployed portal's own interpreter and
+    file — a memory server the harness was never told about is a memory system that
+    exists only in the source tree."""
+    _fresh_state()
+    home = _cache(4101)
+    if home.exists():
+        shutil.rmtree(home)
+    oc = paths.HOME / ".config" / "opencode"
+    oc.mkdir(parents=True, exist_ok=True)
+    (oc / "opencode.json").write_text(json.dumps({"model": "llamacpp/x"}))
+    out = harnessctl.seed_cache_home(4101)
+    assert out["ok"] is True
+    seeded = json.loads((home / "opencode.json").read_text())
+    entry = seeded["mcp"]["portal-memory"]
+    assert entry["type"] == "local"
+    assert entry["command"][-1].endswith("kb_mcp.py"), entry
+    assert Path(entry["command"][-1]).exists(), "the seed named a server file that is not there"
+
+
 def test_the_host_is_told_to_read_the_seeded_directory(monkeypatch):
     """Measured: the host reads its whole config from `OPENCODE_CONFIG_DIR` at startup.
     The env must point it at the seeded directory, not at the CLI's global config.

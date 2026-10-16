@@ -181,6 +181,17 @@ def seed_cache_home(port: int, log=print) -> dict:
     cfg = json.loads((src / "opencode.json").read_text())
     cfg["plugins"] = [{"package": p} for p in HARNESS_V2_PLUGINS]
     cfg.pop("plugin", None)
+    # The portal's memory server rides the same copy discipline as the plugins: the
+    # harness sees exactly what the seed writes. `sys.executable` and `__file__` are
+    # the deployed portal's own — the seed runs inside the portal unit, so the command
+    # names the deployed venv python and the deployed kb_mcp.py, and a portal update
+    # is picked up by the next seed without touching any hand-written config.
+    mcps = cfg.setdefault("mcp", {})
+    if isinstance(mcps, dict):
+        mcps["portal-memory"] = {
+            "type": "local",
+            "command": [sys.executable, str(Path(__file__).resolve().with_name("kb_mcp.py"))],
+        }
     (cache / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
     files.append("opencode.json")
     if (src / "AGENTS.md").exists():
