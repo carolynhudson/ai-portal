@@ -1675,8 +1675,10 @@ def test_the_editor_opens_as_steps_and_says_which_one_is_open(client):
 def test_the_editor_collapses_to_the_deck_behind_its_own_collapse_verb(client):
     """The verb that opens the editor is matched by a verb that closes it, with words.
 
-    Collapsed is the page's default reading state (the operator complained about 6,800 px of scroll),
-    and a collapsed editor with no way back is how a page becomes unreadable in a new way.
+    Open is the page's default reading state — the owner's 2026-10-15 instruction: the collapsed
+    default measured as "the editor is missing", because the opening verb sat below the fold of a
+    10,295 px page. Closing the editor is still a verb with words, and a collapsed editor with no
+    way back is how a page becomes unreadable in a new way.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
     assert 'id="ed-open"' in tpl, "the editor has no verb that opens it"
