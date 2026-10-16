@@ -106,7 +106,20 @@ def router_models(port: int, fetch: Callable[[str], str] | None = None) -> dict[
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"the router's model list is unreadable: {e}", "ids": [], "loaded": []}
     ids = [m.get("id") for m in rows if m.get("id")]
-    return {"ok": True, "ids": ids, "loaded": list(report.get("loaded_ids") or [])}
+    # The caps ride the same answer: `context_length` and per-model `architecture` are
+    # the router's own account of every catalog entry (b11669), which is what
+    # opencode's model entry wants. Measured: b11669 omits supported_parameters, so
+    # the per-model entry cannot ask "does this model honor reasoning_effort" of the
+    # router — see _model_entry.
+    caps: dict[str, dict[str, Any]] = {}
+    for m in rows:
+        mid = m.get("id")
+        if not mid:
+            continue
+        caps[mid] = {"context_length": m.get("context_length"),
+                     "architecture": m.get("architecture"),
+                     "loaded": (m.get("status") or {}).get("value") == "loaded"}
+    return {"ok": True, "ids": ids, "loaded": list(report.get("loaded_ids") or []), "caps": caps}
 
 
 def _router_url(port: int, path: str) -> str:
@@ -174,8 +187,60 @@ def pi_models_config(port: int, ids: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def _model_entry(mid: str, cap: dict[str, Any] | None) -> dict[str, Any]:
+    """One model's opencode entry, stated from the router's own account.
+
+    The router answers `/v1/models` with `context_length` and per-model
+    `architecture.input_modalities`/`output_modalities` for every catalog entry — measured
+    on b11669 — and those are the numbers opencode's model entry wants
+    (`limit.context`, `modalities`). b11669 omits `supported_parameters`, the field a
+    tool would read to learn what a chat model honors, so the two facts that are NOT
+    in the router's answer are stated as what llama.cpp's OpenAI-compatible surface
+    is, measured on this box's own models:
+
+      * interleaved thinking arrives on `reasoning_content` (IQ3_XXS and IQ3_S both
+        answer with it), which is opencode's `interleaved` field — the declaration that
+        makes opencode show the reasoning instead of losing it;
+      * reasoning-effort levels (`minimal`/`low`/`medium`/`high`) send `reasoning_effort`,
+        which llama.cpp does not read. Declaring them disabled is the honest answer to
+        "which levels are allowed": on this server thinking is the template's, not the
+        caller's dial.
+
+    A model the router lists but has never loaded is still stated with the same surface:
+    it is the server's behavior, not the model's, and the template decides per reply
+    whether there is any thinking in it.
+    """
+    entry: dict[str, Any] = {
+        "name": mid.split("/")[-1],
+        "reasoning": True,
+        "interleaved": "reasoning_content",
+        "tool_call": True,
+        "temperature": True,
+        "variants": {v: {"disabled": True}
+                     for v in ("none", "minimal", "low", "medium", "high", "xhigh")},
+    }
+    cap = cap or {}
+    ctx = cap.get("context_length")
+    if isinstance(ctx, (int, float)) and ctx > 0:
+        # `limit` demands both halves; llama.cpp's server default for n_predict is -1
+        # (generate to the end of the prompt's budget), and 16k is a headroom that
+        # every model here has demonstrated. It is a request cap, not a promise.
+        entry["limit"] = {"context": int(ctx), "output": 16384}
+    arch = cap.get("architecture")
+    if isinstance(arch, dict):
+        modalities: dict[str, Any] = {}
+        if isinstance(arch.get("input_modalities"), list):
+            modalities["input"] = [m for m in arch["input_modalities"] if isinstance(m, str)]
+        if isinstance(arch.get("output_modalities"), list):
+            modalities["output"] = [m for m in arch["output_modalities"] if isinstance(m, str)]
+        if modalities:
+            entry["modalities"] = modalities
+    return entry
+
+
 def opencode_config(port: int, ids: Sequence[str], posture: str = "project",
-                    mcp: dict[str, Any] | None = None) -> dict[str, Any]:
+                    mcp: dict[str, Any] | None = None,
+                    caps: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "$schema": "https://opencode.ai/config.json",
         "provider": {
@@ -183,7 +248,7 @@ def opencode_config(port: int, ids: Sequence[str], posture: str = "project",
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "llama.cpp router",
                 "options": {"baseURL": f"http://127.0.0.1:{port}/v1", "apiKey": STANDIN_KEY},
-                "models": {i: {"name": i.split("/")[-1]} for i in ids},
+                "models": {i: _model_entry(i, (caps or {}).get(i)) for i in ids},
             }
         },
         "permission": POSTURES[posture],
@@ -314,7 +379,9 @@ def sync(pi_dir: Path | None = None, oc_dir: Path | None = None,
         return {"ok": False, "error": oc_err}
 
     pi_changed = _store(pi_path, merge(pi_existing or {}, pi_models_config(port, found["ids"]), PI_PROVIDER))
-    oc_changed = _store(oc_path, _merge_top(oc_existing or {}, opencode_config(port, found["ids"], posture, mcp)))
+    oc_changed = _store(oc_path, _merge_top(oc_existing or {},
+                                            opencode_config(port, found["ids"], posture, mcp,
+                                                            caps=found.get("caps"))))
     return {
         "ok": True,
         "port": port,

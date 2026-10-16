@@ -76,6 +76,42 @@ def test_the_opencode_config_is_the_shape_opencode_connected_with():
     assert cfg["compaction"]["prune"] is True, "old tool outputs are what overflow a small local context"
 
 
+def test_model_entries_state_what_the_router_and_llama_cpp_actually_honor():
+    """The operator's measurement: opencode misidentified the reasoning levels these
+    models honor, while the llama.cpp router itself never gets this wrong — because
+    the router is the source. So the entry is stated from the router's own account
+    (context_length, architecture on every /v1/models row, b11669) plus the two
+    facts of llama.cpp's OpenAI-compatible surface, measured on this box:
+
+      * thinking arrives on `reasoning_content` — the declaration that stops opencode
+        discarding reasoning it receives;
+      * effort levels send `reasoning_effort`, which llama.cpp does not read — so the
+        variants that would send it are declared disabled. The template owns thinking;
+        the caller has no dial.
+    """
+    caps = {IDS[0]: {"context_length": 262144,
+                     "architecture": {"input_modalities": ["text", "image"],
+                                      "output_modalities": ["text"]}}}
+    cfg = agentconfig.opencode_config(8080, IDS, "project", caps=caps)
+    entry = cfg["provider"][agentconfig.OC_PROVIDER]["models"][IDS[0]]
+    assert entry["interleaved"] == "reasoning_content"
+    assert entry["reasoning"] is True
+    assert entry["tool_call"] is True
+    assert entry["limit"]["context"] == 262144, "the router's own context_length, not a guess"
+    assert entry["modalities"]["input"] == ["text", "image"], "the router's own architecture"
+    assert all(v["disabled"] is True for v in entry["variants"].values())
+
+
+def test_a_router_row_without_caps_still_yields_a_usable_entry():
+    """b11669 answers `context_length: None` for some entries (measured: the MTP row).
+    A row with nothing to say must not write a `limit` opencode would read as truth —
+    the entry degrades to the surface facts alone."""
+    entry = agentconfig._model_entry("ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF:MTP",
+                                     {"context_length": None, "architecture": None})
+    assert "limit" not in entry and "modalities" not in entry
+    assert entry["interleaved"] == "reasoning_content"
+
+
 def test_the_postures_differ_exactly_where_the_operator_said_they_must():
     """Project-scoped by default; full-auto inside the project; everything, with the secrets kept."""
     scoped = agentconfig.POSTURES["project"]
