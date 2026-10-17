@@ -156,36 +156,47 @@ CNN for `AMD_AIE2P_4x8_CMC_Overlay` (398 ops on NPU, `Compile done`).
 Health page shows the four-layer ladder (driver→node→XRT→engine) live.
 
 ### State: blocked (SDK 1.8 Python userspace ONLY — kernel/XRT exonerated)
-1. **quicktest JIT**: compiles, then aborts
-   `runner_requests_queue.cpp:178 Failed to create runner: xclbin: m_length does
-   not match buffer size`. Identical on in-tree AND DKMS 2.27 drivers → not the kernel.
-2. **AMD precompiled EG-300M** (`amd/embeddinggemma-300m_npu_rai_1.8.0_npu_4K`,
-   in `~/ai/models/npu/embeddinggemma-300m-rai18`): graph load fails
-   `com.ryzenai:CastAvx(-1) is not a registered function/op`.
-   `register_custom_ops_library(voe/lib/libonnxruntime_vitis_ai_custom_ops.so)`
-   (exports RegisterCustomOps) does not fix; `import ryzenai_dynamic_dispatch`
-   does not fix; **CPUExecutionProvider reproduces it identically** → the schema
-   wall lives entirely in the SDK Python userspace.
+**Update Oct 17 afternoon (Path A ran): wall 1 is RESOLVED, wall 2 is structural.**
+1. ~~quicktest JIT m_length~~ — **RESOLVED by Path A**: with AMD's validated
+   pairing (xrt-base 2.25.37 + plugin 2.25.260102, DKMS+MOK, self-built 2.27
+   purged), `quicktest.py` prints `Test Finished`. The m_length abort was XRT
+   version drift, exactly as diagnosed. The box now runs AMD's validated stack.
+   (The Linux driver debs are the PUBLIC opendownload zip
+   `RAI_1.8_Linux_NPU_XRT.zip` — no EULA; only the SDK tgz is gated, and we
+   already have it.)
+2. **CastAvx (-1) "not a registered function/op" — PERSISTS** (Path B tested:
+   fresh venv from AMD's bundled wheelhouse: their own onnxruntime_vitisai
+   linux wheel + voe + dynamic_dispatch, execstack-fixed, numpy==1.26.4 pin).
+   Diagnosis is now structural: quicktest's model has NO com.ryzenai ops
+   (loads clean; the EP self-registers CastAvx AFTER init, for its compile
+   output — visible in log); AMD's compiled embeddinggemma model.onnx has
+   CastAvx BAKED IN → the core loader demands the schema BEFORE EP init —
+   chicken-and-egg inside the runtime. `register_custom_ops_library`
+   (RegisterCustomOps export) does not satisfy loader-time schema;
+   `import onnxruntime_genai` (0.14.0-dev) does not register it; the model
+   card is OGA "Full Fusion 4K" pointing at hybrid_oga — and the repo lacks
+   the `genai_config.json` that `og.Model()` requires (config.json is 2 bytes).
 
-Primary suspect: the SDK install is the **manual** recipe (the installer's
-ensurepip step fails on 26.04); manual skips AMD's pinned wheel set. The venv
-has PyPI `onnxruntime-vitisai 1.27.0` + `voe 1.8.0` — version-plausible,
-pin-unvalidated. AMD's validated pairing is SDK 1.8 ↔ **XRT 2.25.37** (the
-EULA-gated debs); we run self-built 2.27. AMD 1.8 release notes confirm
-embeddinggemma-300m as the supported 1.8 embedding model and state
-"model generation is not supported on Linux in this release" (LLM-class — the
-JIT path failing is consistent with a Linux gap).
+The wheel-pin suspicion is **exonerated** (Path B: AMD's own wheels reproduce
+it). AMD's release notes confirm embeddinggemma-300m as the supported 1.8
+embedding model and state "model generation is not supported on Linux in this
+release" (LLM-class — consistent with a Linux gap in this flow).
+
+**Next: Path D — file the upstream repro.** Minimal, public, self-contained:
+AMD's own model repo + probe (`~/ai/tools/probe300.py`) on AMD's own wheels +
+XRT, with the quicktest-passes contrast. The genai_config.json absence in the
+model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
 
 ### Paths to a working NPU (none of them is "wait for AMD")
-- **A. Validated stack** *(recommended, owner-only step)*: download the four
-  EULA-gated 1.8 debs (browser EULA: `xrt_202620.2.25.37_24.04`
-  base/base-dev/npu + `xrt_plugin.2.25…amdxdna`), `sudo apt install`, then
-  quicktest → expect `Test Finished`, then the 300M probe. This replaces the
-  self-built 2.27 pairing with AMD's validated one. It is the ONLY path we have
-  never tested, and the only one with AMD's stamp.
-- **B. Fix the installer route**: re-run AMD's installer on 26.04 and patch its
-  ensurepip failure by hand (python3.12 venv + AMD's pinned wheels). Separates
-  "wheel pins" from "XRT 2.25" as causes — test A and B independently.
+- **A. Validated stack** — **RUN Oct 17: SUCCESS.** Driver debs turned out
+  PUBLIC (`RAI_1.8_Linux_NPU_XRT.zip`, opendownload — no browser EULA).
+  Installed via `tools/npu_path_a_install.sh` + reboot: quicktest
+  `Test Finished`. The box now runs AMD's validated pairing (2.25.37);
+  self-built 2.27 retired.
+- **B. AMD's pinned wheels** — **RUN Oct 17: CastAvx reproduces** on a fresh
+  venv built from AMD's bundled wheelhouse (execstack-fixed, numpy<2 pin) →
+  wheel provenance exonerated. B+A together exonerate the whole install; the
+  wall is the runtime's loader/EP ordering, not our setup.
 - **C. FastFlowLM / Lemonade** (pip/appimage, self-contained XRT, Strix Halo
   supported, NPU embedding models exist): Ubuntu channel is a PPA whose deps
   apt-pull XRT 2.25 → owner-policy call (AMD components via AMD channels only).
