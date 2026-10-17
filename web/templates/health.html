@@ -72,6 +72,19 @@
     {% if rocm.error %}<p class="err">{{ rocm.error }}</p>{% endif %}
   </div>
 
+  <div class="card" id="npu">
+    <h3>NPU (XDNA)</h3>
+    <div class="kv"><span class="k">node</span><b class="mono">{{ npu.node }}
+      <span class="mut">{{ "present" if npu.node_exists else "absent" }}</span></b></div>
+    <div class="kv"><span class="k">driver (module)</span><b class="mono">{{ npu.module or "—" }}</b></div>
+    <div class="kv"><span class="k">firmware</span><b>{{ npu.firmware or "—" }}</b></div>
+    <div class="kv"><span class="k">XRT userspace</span><b>{{ "installed" if npu.xrt_smi_present else "absent" }}</b></div>
+    <div class="kv"><span class="k">devices (xrt-smi)</span><b class="mono">{{ npu.devices|join(", ") or "—" }}</b></div>
+    <div class="kv"><span class="k">memlock</span><b>{{ "unlimited" if npu.memlock_unlimited else (npu.memlock ~ " KiB") }}</b></div>
+    <div class="kv"><span class="k">embed: CPU / NPU</span><b>{{ "8390 " }}{{ "up" if npu.embed_cpu else "down" }}
+      &nbsp;·&nbsp; 8391 {{ "up" if npu.embed_npu else "down" }}</b></div>
+  </div>
+
   <div class="card" id="deployed">
     <h3>llama.cpp deployed</h3>
     <div class="kv"><span class="k">release</span><b class="mono">{{ deployed.name or "—" }}</b></div>

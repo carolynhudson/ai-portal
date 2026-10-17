@@ -82,6 +82,13 @@ def tree(tmp_path, monkeypatch):
     (rocm / "core").mkdir(parents=True)
     monkeypatch.setenv("AI_PORTAL_ROCM_ROOT", str(rocm))
     monkeypatch.setenv("AI_PORTAL_APT_STAMP", str(tmp_path / "apt-stamp"))
+    # the NPU probe runs on every bundle; hermetic means "no NPU" by default —
+    # a real /dev/accel/accel0 + real xrt-smi on the test box would make the
+    # fixture report the box, not the fixture (the disk_usage comment above is
+    # the same lesson, learned once already)
+    monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(tmp_path / "accel0"))
+    monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(tmp_path / "xrt-smi"))
+    monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
     # Pin the disk probe. `health.disk()` calls `shutil.disk_usage(paths.AI_ROOT)`, and AI_ROOT
     # lives under /tmp — a tmpfs whose free space depends on how many multi-gigabyte fake models
     # earlier test runs left behind, so "a quiet machine has nothing to report" was reading this
@@ -469,3 +476,84 @@ def test_refresh_query_bypasses_the_cache(client, tmp_path):
     assert calls.read_text().count("run") == 1, "cached by default"
     client.get("/health?refresh=1")
     assert calls.read_text().count("run") == 2, "?refresh=1 must re-probe"
+
+
+# ---------------------------------------------------------------- NPU (XDNA)
+
+XRT_SMI_EXAMINE = """
+amdxdna Version      : 2.27.0_20261017, 0140477
+  NPU Firmware Version : 1.1.2.65
+
+Device(s) Present
+|BDF             |Name            |Architecture  |Topology  |
+|----------------|----------------|--------------|----------|
+|[0000:c4:00.1]  |NPU Strix Halo  |aie2p         |6x8       |
+"""
+
+
+def _fake_smi(tmp_path, body=XRT_SMI_EXAMINE, mark=None):
+    smi = tmp_path / "xrt-smi"
+    script = "#!/bin/sh\n"
+    if mark:
+        script += f'touch "{mark}"\n'
+    script += f'cat <<\'EOX\'\n{body}\nEOX\n'
+    smi.write_text(script)
+    smi.chmod(0o755)
+    return smi
+
+
+def test_npu_probe_reads_node_driver_firmware_and_devices(tmp_path, monkeypatch):
+    node = tmp_path / "accel0"
+    node.write_text("")  # a plain file is enough: the probe asks exists(), not ioctl
+    (tmp_path / "modver").write_text("2.27.0_20261017\n")
+    monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(node))
+    monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
+    monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(_fake_smi(tmp_path)))
+
+    n = health.npu(refresh=True)
+    assert n["node_exists"]
+    assert n["devices"] == ["NPU Strix Halo [0000:c4:00.1]"]
+    assert n["firmware"] == "1.1.2.65"
+    assert n["module"] == "2.27.0_20261017"
+    assert n["xrt_smi"] and n["xrt_smi_present"]
+
+
+def test_xrt_smi_is_not_called_when_the_node_is_absent(tmp_path, monkeypatch):
+    """A box with no kernel driver must not spend 2s of every page load on a
+    subprocess that can only print '0 devices'."""
+    ran = tmp_path / "ran"
+    monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(tmp_path / "nope"))
+    monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
+    monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(_fake_smi(tmp_path, mark=ran)))
+
+    n = health.npu(refresh=True)
+    assert not n["node_exists"]
+    assert n["devices"] == []
+    assert not ran.exists(), "xrt-smi ran while the kernel door was closed"
+
+
+def test_npu_without_xrt_userspace_is_reported_as_userspace_absent(tmp_path, monkeypatch):
+    node = tmp_path / "accel0"
+    node.write_text("")
+    monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(node))
+    monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
+    monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(tmp_path / "no-xrt-smi"))
+
+    n = health.npu(refresh=True)
+    assert n["node_exists"] and not n["xrt_smi_present"] and not n["xrt_smi"]
+
+
+def test_health_page_renders_the_npu_card(client, tmp_path, monkeypatch):
+    node = tmp_path / "accel0"
+    node.write_text("")
+    (tmp_path / "modver").write_text("2.27.0_20261017\n")
+    monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(node))
+    monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
+    monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(_fake_smi(tmp_path)))
+
+    r = client.get("/health?refresh=1")
+    assert r.status_code == 200
+    page = r.text
+    assert 'id="npu"' in page
+    assert "NPU Strix Halo [0000:c4:00.1]" in page
+    assert "1.1.2.65" in page

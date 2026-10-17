@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import resource
 import shutil
 import subprocess
 import time
@@ -259,6 +260,63 @@ def torch(refresh: bool = False) -> dict:
                 "age_h": round((_age(dists[-1]) or 0) / 3600, 1)}
 
     return _cached("torch", probe, _TTL, refresh)
+
+
+def _embed_live(port: str, timeout: float = 2.0) -> bool:
+    """Is an embedding endpoint answering on 127.0.0.1:<port>? /health only —
+    the probes on this page never load a model, only ask who already has."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001 — "who is up" is a question with a no answer
+        return False
+
+
+def npu(refresh: bool = False) -> dict:
+    """The NPU (XDNA) as the kernel sees it, as XRT sees it, as the engines see it.
+
+    The validation trial (Oct 2026) proved these layers are distinct on this box:
+    a bound driver is not a node, a node is not XRT, and XRT enumerating is not
+    an engine answering — the health page has to say which layer you are on.
+    The xrt-smi call is skipped when the node is absent: a tool that spends ~2s
+    to announce '0 devices' on a box whose kernel has no NPU is noise, and
+    'xrt-smi missing' is reported as userspace-absent, not as a dead NPU.
+    """
+    def probe() -> dict:
+        node = Path(os.environ.get("AI_PORTAL_ACCEL_NODE", "/dev/accel/accel0"))
+        out: dict = {"node": str(node), "node_exists": node.exists(),
+                     "module": None, "driver": None, "firmware": None,
+                     "devices": [], "xrt_smi": False, "xrt_smi_present": False,
+                     "embed_cpu": _embed_live("8390"), "embed_npu": _embed_live("8391"),
+                     "memlock": None, "memlock_unlimited": False}
+        soft = resource.getrlimit(resource.RLIMIT_MEMLOCK)[0]
+        if soft == resource.RLIM_INFINITY:
+            out["memlock_unlimited"] = True
+        else:
+            out["memlock"] = soft // 1024  # KiB, the unit ulimit -l prints
+        ver = Path(os.environ.get("AI_PORTAL_MODVER", "/sys/module/amdxdna/version"))
+        if ver.is_file():
+            out["module"] = ver.read_text().strip() or None
+        smi = Path(os.environ.get("AI_PORTAL_XRT_SMI", "/opt/xilinx/xrt/bin/xrt-smi"))
+        out["xrt_smi_present"] = smi.is_file()
+        if out["node_exists"] and smi.is_file():
+            txt = _run([str(smi), "examine"], timeout=30)
+            out["xrt_smi"] = bool(txt)
+            for line in txt.splitlines():
+                m = re.search(r"\|\s*\[([0-9a-fA-F:.]+)\]\s*\|\s*([^|]+)\|", line)
+                if m:
+                    out["devices"].append(f"{m.group(2).strip()} [{m.group(1)}]")
+                m = re.search(r"NPU Firmware Version\s*:\s*(\S+)", line)
+                if m:
+                    out["firmware"] = m.group(1)
+                m = re.search(r"amdxdna Version\s*:\s*(.+)", line)
+                if m:
+                    out["driver"] = m.group(1).strip()
+                    out["module"] = out["module"] or out["driver"]
+        return out
+
+    return _cached("npu", probe, _TTL, refresh)
 
 
 def comfy_install(refresh: bool = False) -> dict:
@@ -572,6 +630,30 @@ def advisories(release: dict | None = None, service: dict | None = None,
                    "start until it is repointed.",
             where="/settings", label="Settings")
 
+    n = npu()
+    if n["xrt_smi_present"]:
+        # Only boxes that installed XRT userspace get NPU advisories: on a box
+        # with no NPU plan, "no /dev/accel node" is the quiet state, not news.
+        if not n["node_exists"]:
+            add("info", "NPU: XRT userspace is installed but no /dev/accel node — "
+                        "the kernel driver is not bound; the NPU is idle silicon. "
+                        "(Validated ladder: driver → node → XRT → engine.)")
+        elif n["xrt_smi"] and not n["devices"]:
+            add("warn", "NPU: node present but xrt-smi enumerates no devices — "
+                        "suspect a driver/firmware pairing drift; check "
+                        "'journalctl -k | grep amdxdna'.")
+        if n["memlock"] is not None and n["memlock"] < 65536:
+            add("info", f"memlock is {n['memlock']} KiB in the portal's environment; XRT "
+                        "maps the NPU BAR and fails with a misleading EAGAIN under "
+                        "64 MiB. Login shells need '@render - memlock unlimited' + re-login.")
+        if n["node_exists"] and not (n["embed_cpu"] or n["embed_npu"]):
+            add("info", "Memory recall is FTS-only: no embedding endpoint answers on 8390 "
+                        "(CPU sidecar) or 8391 (NPU shim). Start one, then "
+                        "tools/npu_validate.sh --parity.")
+    elif n["node_exists"]:
+        add("info", "NPU: kernel door is open, XRT userspace is absent — the NPU "
+                    "cannot be used from userspace yet.")
+
     t = torch()
     if t.get("installed") and t.get("series") and r.get("installed"):
         if t["series"] != _series(r["installed"]):
@@ -732,6 +814,7 @@ def summary(release: dict | None = None, service: dict | None = None,
         "generated_at": time.time(),
         "apt": apt(refresh),
         "rocm": rocm(refresh),
+        "npu": npu(refresh),
         "torch": torch(refresh),
         "comfyui": comfy_install(refresh),
         "vulkan": vulkan(refresh),
