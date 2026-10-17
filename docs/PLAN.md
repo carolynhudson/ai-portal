@@ -200,6 +200,18 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
 - **C. FastFlowLM / Lemonade** (pip/appimage, self-contained XRT, Strix Halo
   supported, NPU embedding models exist): Ubuntu channel is a PPA whose deps
   apt-pull XRT 2.25 → owner-policy call (AMD components via AMD channels only).
+- **F. EG2-on-NPU via the Linux `model_generate`** — **NEW Oct 17: the tool
+  ships as a Linux wheel** in the 1.8 tgz (installed + working CLI on this box:
+  `--oga_only | --hybrid | --npu | --vit | --sd`, fusion modes incl.
+  `--prefill_fusion`; recipes include gemma-3). "Model generation not supported
+  on Linux" ≈ undocumented, not absent. Chain: EG2 HF weights (public) →
+  OGA export → `model_generate --npu` compile → .pb.bin → shim :8391 →
+  parity arms vs 111 docs/s → **EG2 quality gate** (must show EG2 quality —
+  no 300M smuggling). Known unknown: the OGA builder is causal-LM-shaped and
+  embeddinggemma ships no lm_head → builder coaxing (synthesized
+  genai_config.json, head stripping) is the day-scale risk. Wine for the
+  Windows flow = Plan G, last resort (native tool exists; MLIR stack + DML
+  calibration assumptions; no known working reports).
 - **D. Upstream the repro**: CastAvx registration + `m_length` are minimal,
   public-file repros for the RyzenAI-SW issues tracker.
 - **E. Stay CPU-only**: the `ai-embed` sidecar unit is durable and EG2 on CPU is
