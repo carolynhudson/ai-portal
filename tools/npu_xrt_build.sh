@@ -75,12 +75,21 @@ case "$cmd" in
     "$0" install
     ;;
   install)
-    base=$(ls -1 "$SRC/xrt/build/Release/"xrt_*-base.deb 2>/dev/null | head -1)
-    plugin=$(ls -1 "$SRC/build/Release/"xrt_plugin*amdxdna*.tar.gz 2>/dev/null | head -1)
-    [ -n "$base" ] && [ -n "$plugin" ] || { echo "build artifacts not found — run '$0 build' first"; exit 2; }
+    # '|| true' on each: pipefail + set -e make a non-matching ls glob kill the
+    # script mid-list (a Ubuntu box has no .tar.gz — the pipefail trap, fourth
+    # self-caught instance; encode it once more so the next reader laughs once).
+    base=$(ls -1 "$SRC/xrt/build/Release/"xrt_*-base.deb 2>/dev/null | head -1 || true)
+    npu=$(ls -1 "$SRC/xrt/build/Release/"xrt_*-npu.deb 2>/dev/null | head -1 || true)
+    pdeb=$(ls -1 "$SRC/build/Release/"xrt_plugin*amdxdna*.deb 2>/dev/null | head -1 || true)
+    ptar=$(ls -1 "$SRC/build/Release/"xrt_plugin*amdxdna*.tar.gz 2>/dev/null | head -1 || true)
+    [ -n "$base" ] && [ -n "$pdeb$ptar" ] || { echo "build artifacts not found — run '$0 build' first"; exit 2; }
     echo "# the owner runs these (root):"
-    echo "sudo apt install -y '$base'   # xrt base (+ base-dev, npu debs in the same dir as you need them)"
-    echo "sudo tar xzf '$plugin' -C /  # SHIM into /opt/xilinx/xrt (the tarball carries the opt/ prefix)"
+    echo "sudo apt install -y '$base' '$npu'   # xrt base + npu runtime (isolated /opt/xilinx)"
+    if [ -n "$pdeb" ]; then
+      echo "sudo apt install -y '$pdeb'  # the -nokmod SHIM plugin (deb, as built for Ubuntu)"
+    else
+      echo "sudo tar xzf '$ptar' -C /  # SHIM into /opt/xilinx/xrt (the tarball carries the opt/ prefix)"
+    fi
     echo "printf '@render - memlock unlimited\\n' | sudo tee /etc/security/limits.d/99-xrt.conf"
     echo "# then RE-L (new login session for the memlock), and prove it:"
     echo "source /opt/xilinx/xrt/setup.sh && xrt-smi examine   # -> [0000:c4:00.1] NPU row"
