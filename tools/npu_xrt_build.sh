@@ -28,6 +28,8 @@ deps_list() {
   for p in libboost-dev libboost-filesystem-dev libboost-program-options-dev \
            libboost-iostreams-dev \
            ocl-icd-opencl-dev opencl-headers \
+           rapidjson-dev pybind11-dev libelfio-dev libprotobuf-dev protobuf-compiler \
+           libzstd-dev libffi-dev libcxxopts-dev \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
     dpkg -l "$p" 2>/dev/null | grep -q '^ii' || missing+=("$p")
   done
