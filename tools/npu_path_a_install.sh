@@ -14,8 +14,10 @@
 # and MOK-signed at install with the key this box already enrolled.
 set -euo pipefail
 
-D="$HOME/ai/src/npu-path-a/RAI_1.8_Linux_NPU_XRT"
-LOG="$HOME/ai/logs/npu-path-a-$(date +%Y%m%d-%H%M%S).log"
+# $HOME under sudo is /root — resolve the invoking user's real home.
+USERHOME="$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)"
+D="$USERHOME/ai/src/npu-path-a/RAI_1.8_Linux_NPU_XRT"
+LOG="$USERHOME/ai/logs/npu-path-a-$(date +%Y%m%d-%H%M%S).log"
 
 [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo bash $0"; exit 1; }
 
