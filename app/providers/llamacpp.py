@@ -505,11 +505,15 @@ class LlamaCpp(Provider):
         build_dir = paths.BUILD_ROOT / f"llama.cpp-{commit[:12]}"
         build_dir.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "VULKAN_SDK": str(paths.VULKAN_SDK)}
-        _hipcc_shim_env(env, log)
-        if not (build_dir / "CMakeCache.txt").exists():
+        shim_args = _hipcc_shim(env, log)
+        cache = build_dir / "CMakeCache.txt"
+        if shim_args and cache.exists() and str(paths.HIP_OCML_SHIM) not in cache.read_text():
+            log("hipcc shim: the existing cache predates the shim — reconfiguring")
+            cache.unlink()
+        if not cache.exists():
             log(f"configuring in {build_dir} (SDK {paths.VULKAN_SDK.name})")
             _run(log, ["cmake", "-S", str(repo), "-B", str(build_dir),
-                       "-G", "Ninja", *paths.LLAMA_CMAKE_ARGS], env=env)
+                       "-G", "Ninja", *paths.LLAMA_CMAKE_ARGS, *shim_args], env=env)
         log(f"building (this is the slow step, ~10-20 min, "
             f"{os.cpu_count()} jobs)")
         _run(log, ["cmake", "--build", str(build_dir),
@@ -1367,19 +1371,25 @@ def releases() -> dict:
         return {"current": None, "releases": []}
 
 
-def _hipcc_shim_env(env: dict, log) -> dict:
+def _hipcc_shim(env: dict, log) -> list[str]:
     """hipcc shim: ROCm 10.1's clang headers omit four scalar f32 ocml prototypes
     that hip_bf16.h calls — every ggml-cuda TU dies on gfx1151 (6-line repro).
     The shim file restores the declarations; the file gates the shim — absent,
-    the build env is unmodified. Proven sound: compiles, links, runs log2(8)=3.0.
+    nothing is touched. Proven sound: compiles, links, runs log2(8)=3.0.
+
+    CMake's HIP language drives clang++ directly (CMAKE_HIP_COMPILER), so the
+    hipcc wrapper's HIPCC_COMPILE_FLAGS_APPEND is NOT read by the build — the
+    flag must ride in CMAKE_HIP_FLAGS. The env entry is kept for builds that
+    do call hipcc directly. Returns extra configure args for the caller.
     """
     shim = paths.HIP_OCML_SHIM
-    if shim.is_file():
-        prev = env.get("HIPCC_COMPILE_FLAGS_APPEND", "")
-        env["HIPCC_COMPILE_FLAGS_APPEND"] = \
-            f"-include {shim}" + (f" {prev}" if prev else "")
-        log(f"hipcc shim active: {shim}")
-    return env
+    if not shim.is_file():
+        return []
+    prev = env.get("HIPCC_COMPILE_FLAGS_APPEND", "")
+    env["HIPCC_COMPILE_FLAGS_APPEND"] = \
+        f"-include {shim}" + (f" {prev}" if prev else "")
+    log(f"hipcc shim active: {shim}")
+    return [f"-DCMAKE_HIP_FLAGS=-include {shim}"]
 
 
 def _run(log, cmd: list, timeout: int = 1800, **kw) -> str:
