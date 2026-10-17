@@ -27,7 +27,7 @@ deps_list() {
   # below are the real ones on this release.
   for p in libboost-dev libboost-filesystem-dev libboost-program-options-dev \
            libboost-iostreams-dev \
-           ocl-icd-opencl-dev opencl-headers \
+           ocl-icd-opencl-dev opencl-headers ocl-icd-dev \
            rapidjson-dev pybind11-dev libprotobuf-dev protobuf-compiler \
            libzstd-dev libffi-dev libcxxopts-dev uuid-dev \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
