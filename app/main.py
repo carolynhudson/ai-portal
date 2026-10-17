@@ -959,6 +959,19 @@ def create_app() -> FastAPI:
         g = health.gpu_aperture()
         gpu_mem = (f"{_human(g.get('pool_used'))} / {_human(g.get('pool_total'))}"
                    if g and g.get("pool_total") else "—")
+        n = health.npu()
+        if not n.get("node_exists"):
+            npu_line = "—"
+        elif n.get("devices"):
+            npu_line = n["devices"][0]
+        elif n.get("xrt_smi"):
+            npu_line = "node up, xrt-smi enumerates 0 devices"
+        elif n.get("xrt_smi_present"):
+            npu_line = "node up, XRT idle"
+        else:
+            npu_line = "node up, no XRT userspace"
+        embed = "+".join(p for p, up in (("8390", n.get("embed_cpu")),
+                                         ("8391", n.get("embed_npu"))) if up) or "none"
         bundle = {
             "reboot_required": rp.get("reboot_required", False),
             "vulkan_sdk": str(paths.VULKAN_SDK).replace(str(paths.HOME), "~"),
@@ -968,6 +981,8 @@ def create_app() -> FastAPI:
             "ai_disk": f"{_human(disk.get('ai', {}).get('used'))} / {_human(disk.get('ai', {}).get('total'))}" if disk.get("ai") else "—",
             "root_disk": f"{_human(disk.get('root', {}).get('used'))} / {_human(disk.get('root', {}).get('total'))}" if disk.get("root") else "—",
             "gpu_mem": gpu_mem,
+            "npu": npu_line,
+            "embed_endpoints": embed,
         }
         return bundle
 

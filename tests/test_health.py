@@ -455,7 +455,7 @@ def test_the_pane_tells_you_what_it_will_not_do(client):
 
 def test_detail_json_is_the_same_bundle_as_the_page(client):
     j = client.get("/api/health/detail").json()
-    for section in ("apt", "rocm", "torch", "comfyui", "vulkan", "disk",
+    for section in ("apt", "rocm", "npu", "torch", "comfyui", "vulkan", "disk",
                     "model_store", "advisories", "deployed", "host"):
         assert section in j, section
     assert j["apt"]["gpu_pending"] == ["amdrocm-base9.9"]
@@ -557,3 +557,10 @@ def test_health_page_renders_the_npu_card(client, tmp_path, monkeypatch):
     assert 'id="npu"' in page
     assert "NPU Strix Halo [0000:c4:00.1]" in page
     assert "1.1.2.65" in page
+
+
+def test_flat_status_reports_the_npu_line_and_embed_endpoints(client):
+    """The compact bundle is what scripts read; a fixture box has no NPU."""
+    j = client.get("/api/health").json()
+    assert j["npu"] == "—"
+    assert j["embed_endpoints"] == "none"
