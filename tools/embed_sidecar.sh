@@ -30,11 +30,34 @@ ram_ok() {
   [ "$avail_kb" -ge $((4 * 1024 * 1024)) ]
 }
 
+# The unit is the durable owner (installed Oct 2026): this script defers to it
+# so there is exactly one way the port gets a server, no double-launch races.
+UNIT=ai-embed.service
+unit_installed() { [ -f "$HOME/.config/systemd/user/$UNIT" ]; }
+unit_active() { systemctl --user is-active --quiet "$UNIT" 2>/dev/null; }
+health_wait() {
+  for _ in $(seq 1 40); do
+    sleep 1
+    # -f matters: llama-server answers /health with 503 "loading" while the
+    # model warms; curl without -f reports success for that body, and every
+    # caller then races a warming server (measured: FTS-only searches that
+    # looked correct because FTS carried them, not the vectors).
+    curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
 cmd="${1:-status}"
 case "$cmd" in
   start)
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-      echo "sidecar already running (pid $(cat "$PIDFILE"), port $PORT)"; exit 0
+    if unit_installed && unit_active; then
+      echo "sidecar up: systemd unit $UNIT, port $PORT (systemctl --user to manage)"; exit 0
+    fi
+    if unit_installed; then
+      systemctl --user start "$UNIT" &
+      health_wait && { echo "sidecar up: systemd unit $UNIT, port $PORT"; exit 0; }
+      echo "the unit did not answer /health within 40s; journalctl --user -u $UNIT"
+      exit 4
     fi
     [ -x "$BIN_DIR/llama-server" ] || { echo "no llama-server at $BIN_DIR (EMBED_BIN_DIR)"; exit 2; }
     [ -f "$MODEL" ] || { echo "no model at $MODEL (EMBED_MODEL)"; exit 2; }
@@ -48,19 +71,16 @@ case "$cmd" in
       --host 127.0.0.1 --port "$PORT" --log-disable \
       >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
-    for _ in $(seq 1 40); do
-      sleep 1
-      # -f matters: llama-server answers /health with 503 "loading" while the
-      # model warms; curl without -f reports success for that body, and every
-      # caller then races a warming server (measured: FTS-only searches that
-      # looked correct because FTS carried them, not the vectors).
-      curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && {
-        echo "sidecar up: port $PORT (pid $(cat "$PIDFILE"), $(du -h "$MODEL" | cut -f1), CPU)"; exit 0; }
-    done
+    health_wait && {
+      echo "sidecar up: port $PORT (pid $(cat "$PIDFILE"), $(du -h "$MODEL" | cut -f1), CPU)"; exit 0; }
     echo "the sidecar did not answer /health within 40s; see $LOG"
     exit 4
     ;;
   stop)
+    if unit_installed && unit_active; then
+      systemctl --user stop "$UNIT" && echo "sidecar stopped (unit $UNIT)"
+      exit 0
+    fi
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
       kill "$(cat "$PIDFILE")" && rm -f "$PIDFILE"
       echo "sidecar stopped"
@@ -69,6 +89,11 @@ case "$cmd" in
     fi
     ;;
   status)
+    if unit_active; then
+      echo "running: systemd unit $UNIT, port $PORT"
+      curl -s -m 3 "http://127.0.0.1:$PORT/health" && echo
+      exit 0
+    fi
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
       echo "running: pid $(cat "$PIDFILE"), port $PORT"
       curl -s -m 3 "http://127.0.0.1:$PORT/health" && echo
