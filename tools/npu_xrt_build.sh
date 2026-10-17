@@ -21,8 +21,12 @@ RAM_FLOOR_KB=$((20 * 1024 * 1024))
 
 deps_list() {
   local missing=() p
+  # Ubuntu 26.04 (Boost 1.90): libboost-system-dev is a virtual redirect into
+  # libboost-dev and libboost-property-tree-dev no longer exists (both are
+  # header-only now — apt refused the old list, 2026-10-16). The four packages
+  # below are the real ones on this release.
   for p in libboost-dev libboost-filesystem-dev libboost-program-options-dev \
-           libboost-iostreams-dev libboost-property-tree-dev libboost-system-dev \
+           libboost-iostreams-dev \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
     dpkg -l "$p" 2>/dev/null | grep -q '^ii' || missing+=("$p")
   done
