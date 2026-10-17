@@ -29,7 +29,7 @@ deps_list() {
            libboost-iostreams-dev \
            ocl-icd-opencl-dev opencl-headers \
            rapidjson-dev pybind11-dev libprotobuf-dev protobuf-compiler \
-           libzstd-dev libffi-dev libcxxopts-dev \
+           libzstd-dev libffi-dev libcxxopts-dev uuid-dev \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
     # libelfio deliberately NOT listed: XRT vendors elfio (its own
     # core/common/elf project emits the elfioConfig.cmake find_package
