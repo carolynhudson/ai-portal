@@ -56,6 +56,12 @@
     <h3>GPU stack</h3>
     <div class="kv"><span class="k">ROCm installed (apt)</span><b>{{ rocm.installed or "—" }}</b></div>
     <div class="kv"><span class="k">HIP (hipcc)</span><b>{{ rocm.hip or "—" }}</b></div>
+    <div class="kv"><span class="k">HIP compile probe ({{ hip_probe.arch }})</span><b>
+      {%- if not hip_probe.clang_present %} no compiler
+      {%- elif hip_probe.raw_ok %} headers ok
+      {%- elif hip_probe.shim_ok %} <span class="err">headers FAIL · shim bridges</span>
+      {%- elif hip_probe.shim_ok is none %} <span class="err">headers FAIL</span>
+      {%- else %} <span class="err">FAIL even with shim</span>{% endif %}</b></div>
     <div class="kv"><span class="k">torch</span><b class="mono">{{ torch.version or "—" }}</b></div>
     {% if torch.rocm_built %}
     <div class="kv"><span class="k">torch built for ROCm</span><b>{{ torch.rocm_built }}</b></div>

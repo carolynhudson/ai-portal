@@ -319,6 +319,62 @@ def npu(refresh: bool = False) -> dict:
     return _cached("npu", probe, _TTL, refresh)
 
 
+# The gap this probe catches (ROCm 31.60, Oct 2026): hip_bf16.h calls four scalar
+# f32 ocml prototypes (__ocml_{exp10,log,log10,log2}_f32) that clang's libdevice
+# header does not declare. Nothing at runtime notices — binaries run on prebuilt
+# sonames — but every HIP COMPILE dies, i.e. every llama.cpp update dies. Six
+# lines reproduce the whole failure; keep it tiny, it needs no runtime.
+HIP_PROBE_SRC = """#include <hip/hip_bf16.h>
+__global__ void k(__hip_bfloat16* x) { x[0] = hlog2(hlog(hlog10(hexp10(x[0])))); }
+"""
+
+
+def hip_probe(refresh: bool = False) -> dict:
+    """Can this machine compile HIP for its own GPU right now?
+
+    Two arms, mirroring how the llama.cpp provider builds: raw system headers
+    (the AMD stack's own health — this is the arm that spots a bad update) and
+    with the declaration shim (the build surface as it actually gets used).
+    A compile failure is DATA, not an exception: _run's raise-on-failure is
+    wrong here, so this calls subprocess directly.
+    """
+    def probe() -> dict:
+        clang = Path(os.environ.get("AI_PORTAL_CLANG_HIP",
+                                    str(rocm_root() / "core/lib/llvm/bin/clang++")))
+        arch = os.environ.get("AI_PORTAL_HIP_PROBE_ARCH", "gfx1151")
+        shim = paths.HIP_OCML_SHIM
+        out = {"clang": str(clang), "arch": arch, "clang_present": clang.is_file(),
+               "shim_present": shim.is_file(),
+               "raw_ok": None, "raw_tail": None, "shim_ok": None, "shim_tail": None}
+        if not out["clang_present"]:
+            return out
+        import subprocess as sp
+        import tempfile
+        work = Path(tempfile.mkdtemp(prefix="aipp-hip-"))
+        src = work / "probe.cu"
+        src.write_text(HIP_PROBE_SRC)
+
+        def compile(extra: list[str]) -> tuple[bool, str | None]:
+            # -c matters: without it clang++ runs a full device-link after
+            # compiling, and the probe (a kernel with no main) dies on
+            # 'undefined symbol: main' — a probe bug masquerading as a
+            # stack failure. The provider's compiles are -c; mirror that.
+            p = sp.run([str(clang), f"--offload-arch={arch}", "-O1", "-c", "-x", "hip",
+                        f"-I{rocm_root() / 'core/include'}", *extra,
+                        str(src), "-o", str(work / "probe.o")],
+                       capture_output=True, text=True, timeout=240)
+            txt = (p.stdout or "") + (p.stderr or "")
+            errs = [l.strip() for l in txt.splitlines() if "error:" in l]
+            return (p.returncode == 0 and not errs), (" | ".join(errs)[:400] or None)
+
+        out["raw_ok"], out["raw_tail"] = compile([])
+        if out["shim_present"]:
+            out["shim_ok"], out["shim_tail"] = compile(["-include", str(shim)])
+        return out
+
+    return _cached("hip_probe", probe, _TTL, refresh)
+
+
 def comfy_install(refresh: bool = False) -> dict:
     """ComfyUI's repo commit — the other half of "the venv moved or the repo
     did?" when a workflow stops working. Local ``git`` read, never a fetch."""
@@ -654,6 +710,23 @@ def advisories(release: dict | None = None, service: dict | None = None,
         add("info", "NPU: kernel door is open, XRT userspace is absent — the NPU "
                     "cannot be used from userspace yet.")
 
+    hp = hip_probe()
+    if hp["clang_present"]:
+        if hp["shim_ok"] is False:
+            add("bad", f"HIP compilation fails even with the shim — llama.cpp updates "
+                       f"will fail. First error: {hp['shim_tail']}",
+                where="/health", label="hip probe")
+        elif hp["raw_ok"] is False:
+            if hp["shim_ok"]:
+                add("info", "The ROCm headers fail their own bf16 probe (the 31.60 "
+                            "ocml gap); the declaration shim covers it for builds. "
+                            "Delete ~/ai/config/shims/hip_bf16_log2.h when AMD ships "
+                            "fixed headers.")
+            elif not hp["shim_present"]:
+                add("warn", f"HIP compilation on {hp['arch']} fails with the system "
+                            f"headers — llama.cpp updates will fail. "
+                            f"First error: {hp['raw_tail']}")
+
     t = torch()
     if t.get("installed") and t.get("series") and r.get("installed"):
         if t["series"] != _series(r["installed"]):
@@ -814,6 +887,7 @@ def summary(release: dict | None = None, service: dict | None = None,
         "generated_at": time.time(),
         "apt": apt(refresh),
         "rocm": rocm(refresh),
+        "hip_probe": hip_probe(refresh),
         "npu": npu(refresh),
         "torch": torch(refresh),
         "comfyui": comfy_install(refresh),

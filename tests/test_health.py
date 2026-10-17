@@ -89,6 +89,12 @@ def tree(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_PORTAL_ACCEL_NODE", str(tmp_path / "accel0"))
     monkeypatch.setenv("AI_PORTAL_XRT_SMI", str(tmp_path / "xrt-smi"))
     monkeypatch.setenv("AI_PORTAL_MODVER", str(tmp_path / "modver"))
+    # the hip compile probe is hermetic too: a missing clang means the probe
+    # is inert, so the fixture box never shells out to the real ROCm
+    monkeypatch.setenv("AI_PORTAL_CLANG_HIP", str(tmp_path / "clang++"))
+    # and the embed-endpoint probes must report the fixture, not the box:
+    # a live ai-embed sidecar on 8390 is exactly the /dev/accel lesson again
+    monkeypatch.setattr(health, "_embed_live", lambda *a, **k: False)
     # Pin the disk probe. `health.disk()` calls `shutil.disk_usage(paths.AI_ROOT)`, and AI_ROOT
     # lives under /tmp — a tmpfs whose free space depends on how many multi-gigabyte fake models
     # earlier test runs left behind, so "a quiet machine has nothing to report" was reading this
@@ -564,3 +570,59 @@ def test_flat_status_reports_the_npu_line_and_embed_endpoints(client):
     j = client.get("/api/health").json()
     assert j["npu"] == "—"
     assert j["embed_endpoints"] == "none"
+
+
+# ------------------------------------------------------- HIP compile probe
+
+def _fake_clang(tmp_path):
+    """A clang++ that reproduces the 31.60 gap: dies on the bf16 ocml calls,
+    compiles when -include (the shim) is on the command line."""
+    c = tmp_path / "clang++"
+    c.write_text("""#!/bin/sh
+case "$*" in
+  *-include*) exit 0 ;;
+  *) echo "probe.cu:2:27: error: use of undeclared identifier '__ocml_log2_f32'" >&2
+     exit 1 ;;
+esac
+""")
+    c.chmod(0o755)
+    return c
+
+
+def test_hip_probe_spots_the_header_gap_and_the_shim_bridge(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_PORTAL_CLANG_HIP", str(_fake_clang(tmp_path)))
+    shim = tmp_path / "hip_bf16_log2.h"
+    monkeypatch.setattr(paths, "HIP_OCML_SHIM", shim)
+
+    h = health.hip_probe(refresh=True)
+    assert h["raw_ok"] is False
+    assert "__ocml_log2_f32" in (h["raw_tail"] or "")
+    assert h["shim_ok"] is None, "no shim file = shim arm must not run"
+
+    shim.write_text("// declarations\n")
+    h = health.hip_probe(refresh=True)
+    assert h["shim_ok"] is True
+    notes = [a for a in health.advisories() if "shim" in a["text"]]
+    assert notes and notes[0]["level"] == "info", "gap covered by shim = info, not alarm"
+
+
+def test_hip_probe_failing_even_with_the_shim_is_bad(tmp_path, monkeypatch):
+    c = tmp_path / "clang++"
+    c.write_text("#!/bin/sh\necho 'error: total breakage' >&2\nexit 1\n")
+    c.chmod(0o755)
+    monkeypatch.setenv("AI_PORTAL_CLANG_HIP", str(c))
+    shim = tmp_path / "s.h"
+    shim.write_text("//")
+    monkeypatch.setattr(paths, "HIP_OCML_SHIM", shim)
+
+    h = health.hip_probe(refresh=True)
+    assert h["shim_ok"] is False
+    notes = [a for a in health.advisories() if "llama.cpp updates" in a["text"]]
+    assert notes and notes[0]["level"] == "bad"
+
+
+def test_no_clang_means_the_probe_is_inert(client, tmp_path):
+    j = client.get("/api/health/detail").json()
+    assert j["hip_probe"]["clang_present"] is False
+    assert not [a for a in j["advisories"] if "HIP" in a["text"]
+                and "llama.cpp updates" in a["text"]]
