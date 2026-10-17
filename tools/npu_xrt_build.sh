@@ -27,6 +27,7 @@ deps_list() {
   # below are the real ones on this release.
   for p in libboost-dev libboost-filesystem-dev libboost-program-options-dev \
            libboost-iostreams-dev \
+           ocl-icd-opencl-dev opencl-headers \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
     dpkg -l "$p" 2>/dev/null | grep -q '^ii' || missing+=("$p")
   done
@@ -49,6 +50,11 @@ case "$cmd" in
       git clone --recurse-submodules --shallow-submodules --depth 1 \
         https://github.com/amd/xdna-driver.git "$SRC"
     fi
+    # CMake caches NEGATIVE include/library checks: install the missing dep and
+    # re-run, and the stale miss kills the configure in ~0.1s looking like the
+    # install did nothing (Fedora-44 Strix Halo guide's hard-won tip). Wipe the
+    # cache between phases, and phase order is LAW: base before plugin (pinning).
+    rm -rf "$SRC/xrt/build/Release" "$SRC/build/Release"
     # XRT base first — the plugin pins xrt-base 2.26.x (measured on Fedora 44:
     # order matters; the plugin hard-fails against the wrong base).
     ( cd "$SRC/xrt/build" && nice -n 19 ./build.sh -npu -opt -j "$JOBS" )
