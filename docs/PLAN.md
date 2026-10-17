@@ -123,6 +123,113 @@ originals) awaits user confirmation to delete; see PORTAL_PLAN.md D5.
    **default: pin to the commit you approve; the script supports both.**
 5. Keep the boot/UEFI scripts in `~/` (rEFInd etc.)? **default: leave untouched.**
 
+## 4a. NPU (XDNA) sidecar compute — PINNED WATCH, ongoing (added Oct 17 2026)
+
+**Grep this section for: CastAvx, m_length, embeddinggemma, "model generation", relnotes.**
+This is a standing task: every future session that touches the NPU, AMD drivers,
+or sidecar services re-runs the watch list (§4d) before starting new work.
+
+### Why we want the NPU at all
+The router runs `--models-max 1` on purpose (owner's OOM history: a model in the
+router is an agent's eviction). The services we want to grow are small, streaming,
+and latency-tolerant — exactly the shape the NPU is for:
+
+- **RAG embeddings** (live on the CPU sidecar today: EmbeddingGemma-2, 111 docs/s,
+  durable `ai-embed` unit). The endpoint is plain `/v1/embeddings`; the NPU is a
+  drop-in engine behind it, not a redesign.
+- **Autocomplete / fill-in-the-middle** small models, **speech-to-text decode**
+  (whisper is a first-class Ryzen AI target), rerankers.
+
+The NPU's real claim on this box is **zero contention**: GPU and CPU stay with
+the router and the agents while embeddings/ASR run on idle silicon. Adoption is
+**benchmark-gated**: NPU+GPU vs GPU-only on the same benchmark, measured, before
+committing (owner rule). The CPU arm (111 docs/s) is the number to beat;
+`tools/npu_parity.py` runs the arms.
+
+### State: proven (Oct 17, survives the ROCm 31.60 update + reboot)
+Kernel/driver: DKMS `xrt-amdxdna 2.27.0` MOK-signed, fw `npu.dev.sbin`,
+node `/dev/accel/accel0` (open() proven), memlock unlimited, power=performance.
+XRT userspace (self-built 2.27): `xrt-smi examine` sees
+`[0000:c4:00.1] NPU Strix Halo aie2p 6x8`; `xrt-smi validate` passes **with
+visible NPU utilization**. SDK 1.8 compiles FOR the NPU: quicktest compiles the
+CNN for `AMD_AIE2P_4x8_CMC_Overlay` (398 ops on NPU, `Compile done`).
+Health page shows the four-layer ladder (driver→node→XRT→engine) live.
+
+### State: blocked (SDK 1.8 Python userspace ONLY — kernel/XRT exonerated)
+1. **quicktest JIT**: compiles, then aborts
+   `runner_requests_queue.cpp:178 Failed to create runner: xclbin: m_length does
+   not match buffer size`. Identical on in-tree AND DKMS 2.27 drivers → not the kernel.
+2. **AMD precompiled EG-300M** (`amd/embeddinggemma-300m_npu_rai_1.8.0_npu_4K`,
+   in `~/ai/models/npu/embeddinggemma-300m-rai18`): graph load fails
+   `com.ryzenai:CastAvx(-1) is not a registered function/op`.
+   `register_custom_ops_library(voe/lib/libonnxruntime_vitis_ai_custom_ops.so)`
+   (exports RegisterCustomOps) does not fix; `import ryzenai_dynamic_dispatch`
+   does not fix; **CPUExecutionProvider reproduces it identically** → the schema
+   wall lives entirely in the SDK Python userspace.
+
+Primary suspect: the SDK install is the **manual** recipe (the installer's
+ensurepip step fails on 26.04); manual skips AMD's pinned wheel set. The venv
+has PyPI `onnxruntime-vitisai 1.27.0` + `voe 1.8.0` — version-plausible,
+pin-unvalidated. AMD's validated pairing is SDK 1.8 ↔ **XRT 2.25.37** (the
+EULA-gated debs); we run self-built 2.27. AMD 1.8 release notes confirm
+embeddinggemma-300m as the supported 1.8 embedding model and state
+"model generation is not supported on Linux in this release" (LLM-class — the
+JIT path failing is consistent with a Linux gap).
+
+### Paths to a working NPU (none of them is "wait for AMD")
+- **A. Validated stack** *(recommended, owner-only step)*: download the four
+  EULA-gated 1.8 debs (browser EULA: `xrt_202620.2.25.37_24.04`
+  base/base-dev/npu + `xrt_plugin.2.25…amdxdna`), `sudo apt install`, then
+  quicktest → expect `Test Finished`, then the 300M probe. This replaces the
+  self-built 2.27 pairing with AMD's validated one. It is the ONLY path we have
+  never tested, and the only one with AMD's stamp.
+- **B. Fix the installer route**: re-run AMD's installer on 26.04 and patch its
+  ensurepip failure by hand (python3.12 venv + AMD's pinned wheels). Separates
+  "wheel pins" from "XRT 2.25" as causes — test A and B independently.
+- **C. FastFlowLM / Lemonade** (pip/appimage, self-contained XRT, Strix Halo
+  supported, NPU embedding models exist): Ubuntu channel is a PPA whose deps
+  apt-pull XRT 2.25 → owner-policy call (AMD components via AMD channels only).
+- **D. Upstream the repro**: CastAvx registration + `m_length` are minimal,
+  public-file repros for the RyzenAI-SW issues tracker.
+- **E. Stay CPU-only**: the `ai-embed` sidecar unit is durable and EG2 on CPU is
+  genuinely good; NPU remains validated, monitored, unadopted. Zero risk.
+- Naming guard: the AMD "EmbeddingGemma-300M" compiled repo is the FIRST-GEN
+  model (768d, same prefixes). Our RAG baseline is **EmbeddingGemma-2** (EG2,
+  78.68 MTEB-code). 300M-on-NPU is a *speed* reference arm; never let a speed
+  test smuggle in a quality change.
+
+### The watch list (per session — what to look for and why)
+1. `https://ryzenai.docs.amd.com/en/latest/relnotes.html` — new SDK (1.9+)?
+   Look for: "model generation supported on Linux", the **XRT version pairing**
+   named for the new SDK (A/B choice depends on it), new embedding models
+   (EG2?), and known-issues entries matching `CastAvx` / `m_length` /
+   registration. Why: A vs B is decided by the pairing line.
+2. `github.com/amd/RyzenAI-SW` — does the embeddinggemma **Linux example**
+   return (the Oct-2026 layout has no `example/` tree and no embeddinggemma
+   example on main/v1.8.0)? Its provider-options block is the canonical
+   CastAvx-registration answer (custom-op library + pins).
+3. `onnxruntime-vitisai` PyPI releases — AMD's own pin notes; if a release
+   declares its voe/XRT pairing, B becomes mechanical.
+4. ROCm hip headers: when `amdrocm-core-dev` > 10.1.0-3 ships declaring the
+   four scalar f32 ocml prototypes (`__ocml_{exp10,log,log10,log2}_f32`),
+   **delete `~/ai/config/shims/hip_bf16_log2.h`** (hip builds go plain; the
+   health page's HIP probe turns green on its own).
+5. AMD XRT releases (github.com/Xilinx/XRT, amd/xdna-driver): `m_length` /
+   runner-queue fixes relevant to VAIML DD-xclbins.
+
+### Re-test ladder (run when any watch item fires)
+`tools/npu_validate.sh` (layers) → `quicktest.py` (expect `Test Finished`) →
+300M probe (`/tmp/probe300.py` pattern: custom-ops + meta_format bin) →
+`tools/npu_embed_server.py --backend amd-onnx` on :8391 →
+`tools/npu_parity.py` arms vs **111 docs/s** → agent-under-load arms
+(closed-session) → record in memory + update this section.
+
+Artifacts: full forensics `~/ai/logs/NPU-morning-brief.md`; memory ids
+8, 10–14 (trail), 16–17 (ROCm 10.1 hip gap + shim), 18 (b11715).
+Tools in repo: `tools/npu_validate.sh`, `tools/npu_parity.py`,
+`tools/npu_embed_server.py` (engine-agnostic shim; amd-onnx backend written,
+awaiting engine), `tools/npu_xrt_build.sh`, `tools/embed_sidecar.sh` (+ `ai-embed` unit).
+
 ## 5. What this means for the portal (inputs for the next design step)
 
 - **Tool providers**: `llamacpp`, `comfyui`, `huggingface` — each exposes
