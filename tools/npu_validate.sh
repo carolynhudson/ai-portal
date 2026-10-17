@@ -44,17 +44,39 @@ fw=$(journalctl -k -b 0 --no-pager 2>/dev/null | grep -i 'amdnpu.*firmware\|npu_
 [ -n "$fw" ] && ok "firmware line: ${fw:0:110}" || note "firmware journal line not found (journalctl -k may need root)"
 
 say "=== layer 2: device node (the userspace door) ==="
+# The in-tree DRM amdxdna exposes the node under the ACCEL subsystem:
+# /dev/accel/accel0. /dev/xdna0 is the out-of-tree DKMS convention. A first
+# version of this script checked only the legacy paths and reported the door
+# "missing" while /dev/accel/accel0 existed and worked — checked right beats
+# remembered right.
 node=""
-for c in /dev/xdna0 /dev/dri/renderD129 /dev/dri/renderD130; do
+for c in /dev/accel/accel0 /dev/xdna0; do
   [ -e "$c" ] && node="$c" && break
 done
 if [ -n "$node" ]; then
   ok "node present: $node ($(stat -c '%A %U:%G' "$node"))"
+  groups=" $(id -nG) "  # no pipe: grep -q + pipefail SIGPIPEs the writer (bit thrice)
+  case "$groups" in *" render "*) ok "user is in the render group";;
+    *) bad "user NOT in render group: sudo usermod -aG render \$USER (effective next login)";;
+  esac
+  if python3 -c "import os,sys; fd=os.open('$node', os.O_RDWR); os.close(fd)" 2>/dev/null; then
+    ok "open() from this user succeeds — XRT will get through the door"
+  else
+    bad "open() denied for this user (ACL/group/memlock — see layer 2b)"
+  fi
 else
-  bad "no NPU node: nothing under /dev speaks to it (udev has no xdna rule on this box)"
-  say "            -> the xrt deb ships the udev rule; after installing it:"
-  say "               sudo udevadm control --reload && sudo udevadm trigger"
-  say "               verify: ls -l /dev/xdna0 (or /dev/dri/renderD129)"
+  bad "no NPU node under /dev/accel — driver did not register the accel minor"
+  say "            -> on 7.0 in-tree this means the module didn't bind; check journalctl -k"
+fi
+
+say "=== layer 2b: memlock (XRT maps the NPU BAR; 8 MiB default = silent EAGAIN) ==="
+ml=$(ulimit -l)
+if [ "$ml" = "unlimited" ]; then
+  ok "memlock unlimited"
+else
+  bad "memlock is $ml KB — XRT needs >= 64 MiB (the deb installs limits.d; then RE-LOGIN: PAM reads it per session)"
+  say "            -> printf '@render - memlock unlimited\\n' | sudo tee /etc/security/limits.d/99-xrt.conf"
+  say "               verify in a NEW login session: ulimit -l  -> unlimited"
 fi
 
 say "=== layer 3: AMD userspace (XRT + AIE runtime) ==="
@@ -81,24 +103,42 @@ fi
 
 say "=== verdict + the owner's next commands (NOT run by this script) ==="
 if [ -z "$node" ] && [ "$found" = 0 ]; then
-  say "  Kernel is ready; userspace is absent. Bring-up, in the order that isolates failures:"
-  say "    1. AMD Ryzen AI Software for Ubuntu 24.04 (ryzenai.docs.amd.com): the xrt deb"
-  say "       + aie-rt from the GA tarball; on 26.04 expect dependency friction — install"
-  say "       into a 24.04 chroot/podman if apt refuses, and copy the udev rule out."
-  say "    2. reload udev, confirm the node (layer 2 above must go [ok])."
-  say "    3. xrt-smi examine must list the NPU — that is the 'driver works' proof."
-  say "    4. embeddings ONNX int8 (AMD publishes gte/bge-family; EmbeddingGemma ONNX is"
-  say "       convertible) behind /v1/embeddings on port 8391 — a thin python server, the"
-  say "       same interface kb_mcp already speaks."
-  say "    5. RERUN THIS SCRIPT with --parity, closed-session, to run the arms:"
+  say "  Kernel ready, node open, userspace absent. THIS BOX'S RULE: AMD components are"
+  say "  installed by AMD's own scripts (ROCm v10 here) — no third-party PPAs. The"
+  say "  AMD-native channel for XRT is the Ryzen AI driver debs (ryzenai.docs.amd.com"
+  say "  1.8 Linux: xrt_202620.2.25.37_24.04-amd64-{base,base-dev,npu}.deb +"
+  say "  xrt_plugin.2.25.*-amd64-amdxdna.deb). They install under /opt/xilinx/xrt —"
+  say "  isolated from /opt/rocm, touching nothing that runs the agent today."
+  say "    1. Download the four Ryzen AI 1.8 Linux driver debs from the AMD site."
+  say "    2. sudo apt install --fix-broken -y ./xrt_*.deb ./xrt_plugin*.deb"
+  say "       (AMD's documented command; 24.04 debs on 26.04 may fight boost deps —"
+  say "       fallback is the source SHIM: git clone amd/xdna-driver; build xrt with"
+  say "       ./build.sh -npu -opt, plugin with ./build.sh -release -nokmod — the"
+  say "       -nokmod is LAW: this box's in-tree 7.0 driver works; never build/install"
+  say "       a kernel module over it.)"
+  say "    3. source /opt/xilinx/xrt/setup.sh && xrt-smi examine"
+  say "       -> must list [0000:c4:00.1] NPU (aie2p). That is the 'driver works' proof."
+  say "    4. Fix memlock (layer 2b) and re-login; xrt-smi validate --device 0000:c4:00.1."
+  say "    5. SDK via AMD's own script: ryzen_ai-1.8.0.tgz -> ./install_ryzen_ai.sh -a yes"
+  say "       -p <path>/venv (its own venv, AMD channel, matches this box's policy);"
+  say "       quicktest.py compiles a CNN onto the NPU = end-to-end proof."
+  say "    6. NPU embeddings: AMD publishes a COMPILED EmbeddingGemma-300M-int8-onnx"
+  say "       (HF, keyless; 768 dims like EmbeddingGemma 2 — the same /v1/embeddings"
+  say "       interface, so kb_mcp does not change; note the quality delta: the 300M is"
+  say "       ~10 MTEB-code points under EG2, so quality parity wants a re-rank test,"
+  say "       speed parity is apples-to-apples). Run it under the VitisAI EP behind a"
+  say "       thin /v1/embeddings shim on 8391, then:"
   say "         tools/embed_sidecar.sh start                     # CPU arm endpoint"
-  say "         <the NPU /v1/embeddings server on 8391>          # NPU arm endpoint"
-  say "         .venv/bin/python tools/npu_parity.py --skip-agent \\"
-  say "             --embed-endpoint cpu=http://127.0.0.1:8390/v1 \\"
-  say "             --embed-endpoint npu=${PORT_NPU_EMBED}"
-  say "       then the closed-session full arms (agent idle vs under load) per the header."
+  say "         <the NPU /v1/embeddings server on 8391>"
+  say "         ./npu_validate.sh --parity   # embedding arms; then closed-session"
+  say "                                      # agent-under-load arms per npu_parity.py"
+  say "       CPU baseline to beat: 111 docs/s (measured 2026-10-16). Numbers first."
+elif [ -z "$node" ]; then
+  say "  Userspace present, node missing: reload udev (the xrt deb ships the accel rule),"
+  say "  confirm /dev/accel/accel0, check journalctl -k for amdxdna bind errors."
 else
-  say "  Layers present. Run the parity harness (header); numbers decide."
+  say "  Node open. With XRT present (layer 3): xrt-smi examine, then run the parity"
+  say "  arms (header). Numbers decide; the router is untouched throughout."
 fi
 
 if [ "${1:-}" = "--parity" ]; then
