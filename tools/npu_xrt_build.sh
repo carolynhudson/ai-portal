@@ -28,9 +28,12 @@ deps_list() {
   for p in libboost-dev libboost-filesystem-dev libboost-program-options-dev \
            libboost-iostreams-dev \
            ocl-icd-opencl-dev opencl-headers \
-           rapidjson-dev pybind11-dev libelfio-dev libprotobuf-dev protobuf-compiler \
+           rapidjson-dev pybind11-dev libprotobuf-dev protobuf-compiler \
            libzstd-dev libffi-dev libcxxopts-dev \
            systemtap-sdt-dev libelf-dev libudev-dev libsystemd-dev; do
+    # libelfio deliberately NOT listed: XRT vendors elfio (its own
+    # core/common/elf project emits the elfioConfig.cmake find_package
+    # consumes); Ubuntu 26.04 has no such package — apt's refusal was right.
     dpkg -l "$p" 2>/dev/null | grep -q '^ii' || missing+=("$p")
   done
   printf '%s' "${missing[*]+"${missing[*]}"}"
