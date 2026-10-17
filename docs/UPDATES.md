@@ -15,6 +15,8 @@ Which pieces of the AI stack update themselves, and which need the portal
 | **llama.cpp** | `~/ai/llama.cpp` (source), `~/ai/releases/llama.cpp-b<ver>` (deploy) | git + local CMake build | **no** | **Portal** — `tools/phase3_rebuild_llama_cpp.py` flow: fetch pinned commit → build in `~/ai/build/` → stage self-contained release → swap `~/ai/bin/` symlinks → restart `ai-llama-router` |
 | **ComfyUI** | `~/ai/comfyui` (source) + `venv/` | git + venv pip | **no** | **Portal** — `git fetch/checkout <tag>` + `pip install -r requirements.txt` (torch wheel is pinned, so no 5 GB re-download on normal updates) |
 | **huggingface** tools | system pip + `~/ai-projects/gguf-indexer/venv` | pip/uv | **no** (minor) | Portal |
+| **NPU stack** (XRT userspace `/opt/xilinx/xrt` + `xrt-amdxdna` DKMS) | `/opt/xilinx/xrt`, dkms | **self-built** debs from `amd/xdna-driver` source (`tools/npu_xrt_build.sh`), DKMS MOK-signed | **no** — no apt stream; upstream ships EULA-gated debs (1.8 pairs with XRT 2.25.37) | **User.** Rebuild via the script, or switch to AMD's EULA debs (see `~/ai/logs/NPU-morning-brief.md`) |
+| **Ryzen AI SDK** (ORT VitisAI EP) | `~/ai/venvs/ryzenai` (py3.12) | SDK 1.8 tgz **manual** recipe (installer's ensurepip step fails on 26.04) + PyPI `onnxruntime-vitisai` | **no** | **User.** The manual wheel set is unvalidated against AMD's pins — top suspect in the current engine block |
 | **Models** (GGUF, checkpoints, LoRAs) | `~/ai/models/llama`, `~/ai/comfyui/models`, `~/.cache/huggingface` | `hf` CLI / ComfyUI manager | **no** | **Portal** — see "Model downloads" below |
 
 ## Version-coupling watch items (the important part)
@@ -39,12 +41,26 @@ Similarly, the **Vulkan SDK version used at build time** is recorded per
 release; a newer SDK in `~/ai/sdk/vulkan/` doesn't require a rebuild, but
 the health pane can offer one (new glslc can improve Vulkan shader codegen).
 
+The NPU has the same three-way coupling, learned the hard way (Oct 17):
+**XRT userspace version ↔ DKMS kernel driver ↔ the Ryzen AI SDK's validated
+partner**. The SDK validates against exactly one XRT release per version
+(1.8 → 2.25.37); our self-built 2.27 SHIM runs the driver and `xrt-smi
+validate` fine, but the SDK's compiled-model flow (VAIML DD-xclbin runner,
+`com.ryzenai` custom-op registration) sits on that drift and is currently
+blocked (forensics: `~/ai/logs/NPU-morning-brief.md`, memory ids 13–14).
+Rule: when rebuilding XRT, pin to the SDK's stated partner, not to HEAD;
+and the DKMS driver version must match the SHIM (same build).
+
 ## What the portal health pane should surface
 
 - apt: pending updates touching `amdrocm*|amdgpu*|mesa-amdgpu*` + kernel
   (reboot-pending flag)
 - ROCm version vs llama.cpp build version vs ComfyUI torch ROCm (mismatch ⇒
   rebuild/reinstall offer)
+- NPU (XDNA) tile, added Oct 17: `/dev/accel/accel0` presence, `amdxdna`
+  module version, firmware, `xrt-smi examine` device list, memlock, and the
+  embedding endpoints on 8390 (CPU sidecar) / 8391 (NPU shim) — the four
+  layers (driver → node → XRT → engine) each reported separately
 - Vulkan SDK installed versions under `~/ai/sdk/vulkan/` + latest known
 - llama.cpp: local commit vs `origin` (git ls-remote), deployed release,
   router uptime (`systemctl --user status ai-llama-router`)
