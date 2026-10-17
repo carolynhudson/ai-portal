@@ -82,6 +82,13 @@ LLAMA_CMAKE_ARGS = [
     f"-DVulkan_INCLUDE_DIR={VULKAN_SDK}/x86_64/include",
 ]
 
+# ROCm 10.1 (the 31.60 stack) ships clang headers that omit four scalar f32 ocml
+# prototypes (__ocml_{exp10,log,log10,log2}_f32) which hip_bf16.h calls — every
+# ggml-cuda translation unit dies on gfx1151. The shim restores the declarations
+# only; the symbols exist in libdevice. Delete the file to disable the shim, and
+# delete it once AMD ships headers that declare these.
+HIP_OCML_SHIM = AI_ROOT / "config/shims/hip_bf16_log2.h"
+
 
 # --- Shared service environment --------------------------------------------
 # Single env file referenced by all three user units (router, comfyui, portal).

@@ -505,6 +505,7 @@ class LlamaCpp(Provider):
         build_dir = paths.BUILD_ROOT / f"llama.cpp-{commit[:12]}"
         build_dir.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "VULKAN_SDK": str(paths.VULKAN_SDK)}
+        _hipcc_shim_env(env, log)
         if not (build_dir / "CMakeCache.txt").exists():
             log(f"configuring in {build_dir} (SDK {paths.VULKAN_SDK.name})")
             _run(log, ["cmake", "-S", str(repo), "-B", str(build_dir),
@@ -512,7 +513,7 @@ class LlamaCpp(Provider):
         log(f"building (this is the slow step, ~10-20 min, "
             f"{os.cpu_count()} jobs)")
         _run(log, ["cmake", "--build", str(build_dir),
-                   "-j", str(os.cpu_count() or 4)])
+                   "-j", str(os.cpu_count() or 4)], env=env)
         server = build_dir / "bin" / "llama-server"
         if not server.exists():
             raise RuntimeError(f"build finished but {server} is missing")
@@ -1364,6 +1365,21 @@ def releases() -> dict:
         return json.loads(paths.RELEASES_JSON.read_text())
     except (OSError, ValueError):
         return {"current": None, "releases": []}
+
+
+def _hipcc_shim_env(env: dict, log) -> dict:
+    """hipcc shim: ROCm 10.1's clang headers omit four scalar f32 ocml prototypes
+    that hip_bf16.h calls — every ggml-cuda TU dies on gfx1151 (6-line repro).
+    The shim file restores the declarations; the file gates the shim — absent,
+    the build env is unmodified. Proven sound: compiles, links, runs log2(8)=3.0.
+    """
+    shim = paths.HIP_OCML_SHIM
+    if shim.is_file():
+        prev = env.get("HIPCC_COMPILE_FLAGS_APPEND", "")
+        env["HIPCC_COMPILE_FLAGS_APPEND"] = \
+            f"-include {shim}" + (f" {prev}" if prev else "")
+        log(f"hipcc shim active: {shim}")
+    return env
 
 
 def _run(log, cmd: list, timeout: int = 1800, **kw) -> str:
