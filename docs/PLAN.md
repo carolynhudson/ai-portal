@@ -143,7 +143,7 @@ and latency-tolerant — exactly the shape the NPU is for:
 The NPU's real claim on this box is **zero contention**: GPU and CPU stay with
 the router and the agents while embeddings/ASR run on idle silicon. Adoption is
 **benchmark-gated**: NPU+GPU vs GPU-only on the same benchmark, measured, before
-committing (owner rule). The CPU arm (111 docs/s) is the number to beat;
+committing (owner rule). The CPU arm is the number to beat: **224 docs/s** measured on b11715 (the master build doubled the b11669-era 111);
 `tools/npu_parity.py` runs the arms.
 
 ### State: proven (Oct 17, survives the ROCm 31.60 update + reboot)
