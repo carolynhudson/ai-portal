@@ -740,9 +740,11 @@ def test_the_form_controls_wear_the_page_theme():
     base = (ROOT / "web" / "templates" / "base.html").read_text()
     assert "input:not([type=button]):not([type=submit]):not([type=image]),select,textarea{" in base, \
         "text fields, selects and textareas are not styled as a set"
-    assert "background:var(--panel);color:var(--fg);border:1px solid var(--line)" in base, \
-        "controls are painted with values from outside the page's own palette"
-    assert "select>option{background:var(--panel);color:var(--fg)}" in base, \
+    assert "background:var(--field);color:var(--fg);border:1.5px solid var(--field-line)" in base, \
+        "controls are painted with values from outside the page's own palette (Oct-18: the " \
+        "--panel-on--panel 1px rule is what made fields invisible; --field/--field-line are " \
+        "the same palette's control layer)"
+    assert "select>option{background:var(--field);color:var(--fg)}" in base, \
         "the field is themed and its dropdown is not"
     assert "color-scheme:dark" in base, "native popups (dropdown, picker) keep the light palette"
     assert "input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}" in base, \
@@ -1690,6 +1692,46 @@ def test_the_editor_is_a_card_surface_not_a_stepper(client):
     assert "dataset.open" in surf, "the card open state is not what the script writes"
     assert "onSurface" in surf, "surface membership is not painted from the tick list"
     assert re.search(r"textContent", surf), "the state is not stated in text an operator reads"
+
+
+def test_form_controls_read_as_controls(client):
+    """Owner Oct-18 (the whole portal): fields were --panel on --panel with 1px --line edges --
+    "the background looks identical to the rest of the panel ... borders hardly noticeable,"
+    and a checkbox disabled by design (a built-in's list) looked exactly like a live one, so
+    the refused click was silent. The contract is the tokens and the rules that answer it:
+    a recessed --field fill, a 1.5px --field-line edge, a disabled rule that recedes, the
+    not-allowed cursor at the label wrapping the disabled input, a pointer cue on clickable
+    disclosures, and disabled buttons that read disabled.
+    """
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert "--field:#0b0e13" in base and "--field-line:#3d4a5c" in base, "no field vocabulary"
+    assert "background:var(--field)" in base, "fields do not recede from the panel"
+    assert "1.5px solid var(--field-line)" in base, "control edges are the panel hairline again"
+    assert "input:disabled,select:disabled,textarea:disabled" in base, "disabled fields are not stated"
+    assert "label:has(>input:disabled){cursor:not-allowed" in base, "the refused click has no cursor"
+    assert "details>summary{cursor:pointer}" in base, "clickable sections offer no pointer cue"
+    assert "button:disabled" in base, "disabled buttons must read disabled too"
+
+
+def test_the_model_tree_is_cards_that_show_their_state(client):
+    """Owner Oct-18: "embrace the card metaphor ... rather than showing a checkbox give each
+    its own card border and change the border, background, and text color to indicate that
+    model is selected." The checkbox stays in the DOM -- it is the store the personality
+    saves and the control the harness clicks -- drawn invisibly inside the card. Selected =
+    accent edge/tint/name via :has(:checked); disabled (built-in) = dashed and muted AT THE
+    CARD, with the refusal sentence beside the cards (`ed-attach-cards-note`); and a card
+    arriving on the surface flashes and scrolls into view, because the tick is clicked at
+    the bottom of a long page and the card arrives at the top, out of view."""
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    for needle in (".ed-attach-item:has(input:checked)", ".ed-attach-item:has(input:disabled)",
+                   ".ed-attach-item:focus-within", ".mp-card.ed-flash",
+                   'id="ed-attach-cards-note"'):
+        assert needle in tpl, f"tree card contract missing: {needle}"
+    assert "position:absolute;opacity:0" in tpl, "the checkbox is not the card itself"
+    script = _script_of(tpl, "personalities")
+    assert "ed-attach-cards-note" in script, "the click-site sentence is not painted"
+    assert "ed-flash" in script and "scrollIntoView" in script, "an arriving card gives no signal"
+    assert "paintSurface.quiet" in script, "boot must not flash or scroll (every card arrives at once)"
 
 
 def test_the_editor_collapses_behind_one_labeled_toggle(client):

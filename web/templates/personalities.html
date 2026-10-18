@@ -112,7 +112,25 @@ h2{margin:18px 0 6px}
   gap:2px 18px;padding:6px 0}
 .ed-attach-item[hidden]{display:none}
 .ed-attach-group[hidden]{display:none}
-.ed-attach-item .tag{font-size:.72rem;padding:1px 6px;border:1px solid var(--line);border-radius:4px}
+.ed-attach-item .tag{font-size:.72rem;padding:1px 6px;border:1px solid var(--field-line);
+  border-radius:4px;color:var(--mut)}
+/* The card metaphor (owner Oct-18): each model in the tree is a card with its own edge; the
+   card is the click, and the card SHOWS the coverage state. The checkbox stays in the DOM --
+   it is the store the personality saves and the control the harness clicks -- drawn invisibly
+   inside the card, with the focus ring landing on the card. Selected: accent edge, accent
+   tint, accent name. Disabled (built-in personality): dashed edge, muted, not-allowed --
+   the refusal is visible where the click is made, not only in a note at the top of the page. */
+.ed-attach-item{display:flex;align-items:baseline;gap:8px;cursor:pointer;
+  border:1.5px solid var(--field-line);border-radius:8px;padding:6px 10px;margin:3px 0;
+  background:var(--field);transition:border-color .12s,background .12s}
+.ed-attach-item:hover{border-color:var(--acc)}
+.ed-attach-item:focus-within{outline:2px solid var(--acc);outline-offset:1px}
+.ed-attach-item input[type=checkbox]{position:absolute;opacity:0;pointer-events:none}
+.ed-attach-item:has(input:checked){border-color:var(--acc);background:rgba(90,169,255,.13)}
+.ed-attach-item:has(input:checked) .mono{color:var(--acc)}
+.ed-attach-item:has(input:disabled){border-style:dashed;border-color:var(--line);
+  color:var(--mut);cursor:not-allowed}
+.ed-attach-item:has(input:disabled):hover{border-color:var(--line)}
 .ed-surface{display:grid;gap:6px;margin:10px 0}
 /* A model card is on the surface exactly when the personality covers that model -- the tick list
    is the one store, and `data-on-surface` is painted from it. Removing a card removes it from
@@ -121,12 +139,20 @@ h2{margin:18px 0 6px}
 /* A model personality is a named object with settings, so it gets a card: a strip to read, a body to
    edit. One per model, which is what the file can hold. */
 .mp-cards{display:grid;gap:6px;margin:8px 0 10px}
-.mp-card{border:1px solid var(--line);border-radius:6px;padding:0}
+.mp-card{border:1.5px solid var(--field-line);border-radius:8px;padding:0;background:var(--panel)}
 .mp-card[data-open=1]{border-color:var(--acc)}
+/* A strip is the whole clickable header of the card: it answers the pointer with a fill
+   (owner Oct-18: clickable areas gave no cue that they were clickable). */
 .mp-strip{display:flex;flex-wrap:wrap;gap:10px;width:100%;text-align:left;background:none;border:0;
-  padding:8px 10px;font:inherit;cursor:pointer;color:inherit}
+  padding:8px 10px;font:inherit;cursor:pointer;color:inherit;border-radius:7px}
+.mp-strip:hover{background:var(--field)}
 .mp-strip .mp-name{font-weight:600}
 .mp-strip .mp-meta{flex:1 1 auto;text-align:right}
+/* A card that just joined the surface flashes once (see paintSurface): the tick is clicked at
+   the bottom of a long page and the card arrives at the top, out of view. */
+@keyframes edflash{0%{border-color:var(--acc);box-shadow:0 0 0 3px rgba(90,169,255,.35)}
+  100%{box-shadow:none}}
+.mp-card.ed-flash{animation:edflash 1.4s ease-out}
 .mp-body{padding:4px 10px 10px;border-top:1px solid var(--line)}
 .mp-share{margin:6px 0}
 .mp-slot>.ed-grid{padding:0}
@@ -697,6 +723,11 @@ h2{margin:18px 0 6px}
      that match nothing. The checkbox values stay whole ids: the tree is presentation, the
      store is untouched. #}
   <h4>Models this personality covers — tick adds a card, untick removes it</h4>
+  {# The click-site sentence: built-in personalities are disabled card-by-card, and the reason
+     must be visible where the click is made, not only in the identity note at the top of the
+     editor (owner Oct-18: "tried selecting one of the ai models ... nothing happened"). The
+     count summary below the tree (`ed-attach-note`) is the other half: what the list says now. #}
+  <p class="mut" id="ed-attach-cards-note"></p>
   <div class="ed-row">
     <label for="ed-attach-filter">filter</label>
     <input id="ed-attach-filter" type="search" autocomplete="off"
@@ -1106,6 +1137,8 @@ h2{margin:18px 0 6px}
     const b = baseFor(shown);
     const want = Array.isArray(b.attach) ? b.attach : null;
     const checked = checkedAttach();
+    const wasOn = new Set();
+    for (const [m, c] of cards) if (c.dataset.onSurface === 'yes') wasOn.add(m);
     let onCount = 0;
     for (const [mid, c] of cards) {
       let on = want === null;
@@ -1125,7 +1158,21 @@ h2{margin:18px 0 6px}
     }
     $('ed-surface-count').textContent = `${onCount} of ${cards.size} model cards on the surface`
       + (want === null ? `: ${shown === NEW ? 'a new personality' : shown} covers the whole library, so every card is on it` : '');
+    // A card arriving at the top of a long page while the tick is clicked at the bottom reads
+    // as "nothing happened" (owner Oct-18). The arrived card flashes once and is brought into
+    // view. Boot is quiet: at boot every card arrives at once, and a page that scrolls itself
+    // on open is a page that ignored where the operator put the scroll.
+    if (!paintSurface.quiet) {
+      for (const [m, c] of cards) {
+        if (c.dataset.onSurface === 'yes' && !wasOn.has(m)) {
+          c.classList.remove('ed-flash'); void c.offsetWidth; c.classList.add('ed-flash');
+          if (c.scrollIntoView) c.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+          break;
+        }
+      }
+    }
   }
+  paintSurface.quiet = true;   // cleared by the boot sequence, after the first paint
   // SURFACE END: the layer's state is `data-ed-view` on the editor and `data-open` /
   // `data-on-surface` on cards. It reads no field and writes no value, which is why the grid ids
   // stay singletons and the fields stay exactly where the editor's tests read them.
@@ -1152,6 +1199,14 @@ h2{margin:18px 0 6px}
       // are derived from the library and are refused by name at the write endpoints.
       box.disabled = !b.editable;
     }
+    // The refusal sentence sits beside the cards, not only at the top of the editor: a built-in
+    // list is disabled card by card, and the reason must be visible where the click is made
+    // (owner Oct-18: "tried selecting one of the ai models in the editor and nothing happened").
+    $('ed-attach-cards-note').textContent = b.editable
+      ? 'Click a card to put that model on the surface above; click it again to remove it. '
+        + 'A selected card carries the accent edge, tint and name.'
+      : `${shown} is built-in: its model list is derived from the library, so these cards are `
+        + 'dashed and disabled. Create a new personality to choose its list.';
     syncIdentity();
   }
 
@@ -1723,6 +1778,7 @@ h2{margin:18px 0 6px}
 
   loadPersona();
   loadIdentity();
+  paintSurface.quiet = false;   // from here, a card arriving on the surface flashes (see paintSurface)
   paintCollapse();
   const n = $('ed-model').options.length;
   $('ed-model-count').textContent = `${n} model${n === 1 ? '' : 's'} in the library`;

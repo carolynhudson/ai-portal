@@ -1033,6 +1033,10 @@
             {
               "selector": "#ed-attach-note",
               "contains": "whole library"
+            },
+            {
+              "selector": "#ed-attach-cards-note",
+              "contains": "built-in"
             }
           ]
         },
@@ -1234,7 +1238,8 @@
         "#ed-review",
         "#ed-frame-who",
         "#ed-surface-who",
-        "#ed-attach-filter"
+        "#ed-attach-filter",
+        "#ed-attach-cards-note"
       ],
       "expectText": [
         {
