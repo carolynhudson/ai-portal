@@ -298,6 +298,22 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
 5. AMD XRT releases (github.com/Xilinx/XRT, amd/xdna-driver): `m_length` /
    runner-queue fixes relevant to VAIML DD-xclbins.
 
+**Sweep Oct 18 00:30 (unattended):** (1) No 1.9 — 1.8.0 (Jul 23) is latest;
+no CastAvx/m_length known-issue entries. (2) No embeddinggemma Linux example
+on main. **Issue cluster found — our walls are AMD's known walls:** #384
+(= F4 shadowing wall, assigned AMD Aug 18, zero replies), **#386 = AMD
+Linux install doesn't export libflexmlrt path (our exact discovery), #387 =
+CastAvx + genai_config missing (our second repro), #385 = quark install
+conflicts on Linux (quark-on-Linux gap).** Owner: add our evidence (compile
+success, shadowing fix, CastAvx 1-node repro) to #384/#386/#387 — needs
+your GitHub. (3) onnxruntime-vitisai: no new pins. (4) amdrocm-core-dev
+candidate still 10.1.0-3 → shim stays.
+**Parity harness production run (Oct 18, tools/npu_parity.py --skip-agent,
+report ~/ai/logs/npu-parity-20261018-042214/): cpu 168.45 docs/s vs
+npu 2.53 docs/s at production lengths — 66x CPU.** F4 NO-GO confirmed by
+the harness, not just probes. Sidecar prod switched to b11715 (216–230
+docs/s measured post-switch).
+
 ### Re-test ladder (run when any watch item fires)
 `tools/npu_validate.sh` (layers) → `quicktest.py` (expect `Test Finished`) →
 300M probe (`/tmp/probe300.py` pattern: custom-ops + meta_format bin) →

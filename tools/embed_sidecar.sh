@@ -15,7 +15,7 @@
 # this design exists to avoid.
 set -euo pipefail
 
-BIN_DIR="${EMBED_BIN_DIR:-/home/cortana/ai/releases/llama.cpp-b11669}"
+BIN_DIR="${EMBED_BIN_DIR:-/home/cortana/ai/releases/llama.cpp-b11715}"
 MODEL="${EMBED_MODEL:-/home/cortana/ai/models/sidecar/embeddinggemma-2-Q8_0.gguf}"
 PORT="${EMBED_PORT:-8390}"
 PIDFILE="/tmp/embed-sidecar-${PORT}.pid"
