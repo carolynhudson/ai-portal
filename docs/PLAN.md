@@ -200,6 +200,14 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
 - **C. FastFlowLM / Lemonade** (pip/appimage, self-contained XRT, Strix Halo
   supported, NPU embedding models exist): Ubuntu channel is a PPA whose deps
   apt-pull XRT 2.25 → owner-policy call (AMD components via AMD channels only).
+- **F1. EG2 structure (Oct 17, decoded)**: EG2 = Gemma-3 multimodal shell
+  (strip audio/vision towers, 961 tensors); text trunk = **Gemma 3n-style
+  24L/512h with PLE** (per-layer embeddings), no lm_head, embedding 768.
+  Full-fusion OGA builder: OUT (gemma-3 recipes only, no PLE). Target =
+  **NLP-BF16 compiler** (Linux-supported; embedding = single forward pass,
+  no KV cache = encoder-shaped). Risk = PLE depthwise-conv ops in the BF16
+  compiler — probe with a PLE micro-ONNX BEFORE the full export. Source
+  weights staged: `~/ai/models/npu/embeddinggemma-2-src` (1.49 GB, public).
 - **F. EG2-on-NPU via the Linux `model_generate`** — **NEW Oct 17: the tool
   ships as a Linux wheel** in the 1.8 tgz (installed + working CLI on this box:
   `--oga_only | --hybrid | --npu | --vit | --sd`, fusion modes incl.
