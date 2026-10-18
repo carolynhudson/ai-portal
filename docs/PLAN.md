@@ -208,6 +208,23 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
   no KV cache = encoder-shaped). Risk = PLE depthwise-conv ops in the BF16
   compiler — probe with a PLE micro-ONNX BEFORE the full export. Source
   weights staged: `~/ai/models/npu/embeddinggemma-2-src` (1.49 GB, public).
+- **F2. PLE probe (Oct 17, RUN — risk dissolved, toolchain alive)**:
+  safetensors shows the EG2 PLE block has **no conv weights** (per layer:
+  gate 512², projection 512², post-norm, layer_scalar) — the depthwise-conv
+  compiler risk does not exist at 300M. `tools/ple_micro_onnx.py` builds that
+  exact shape (GEMM+Tanh gate+Mul+RMSNorm+residual); it passes the DD flow
+  end-to-end **natively on Linux** (`onnx_utils preprocess/partition/report`,
+  strategy `hybrid_llm_npu_embedding.yaml`, LD_LIBRARY_PATH=voe/lib:/opt/
+  xilinx/xrt/lib). Verdict: PLE standalone offloads **0%** — DD offloads
+  block-level transformer patterns, PLE fuses only inside them; unfused PLE
+  runs on CPU (≈8% of EG2 FLOPs — acceptable hybrid). Next gate: full EG2
+  text-trunk export through the same flow (attention/MLP offload share +
+  JIT compile on AIE). Pipeline lessons: `auto` subcommand is broken upstream
+  (missing --fixed-shapes in its parser → run stages individually); preprocess
+  needs `--keep-dynamic` on fixed-shape models (old SymbolicShapeInfer dies
+  on opset-18); onnx 1.23 writes IR 14 → pin `ir_version=10`; the pip wheel
+  lacks `passes/llm/sln` so full-LLM strategies (`hybrid_llm_npu.yaml`) need
+  the tgz SDK, embedding strategy is wheel-complete.
 - **F. EG2-on-NPU via the Linux `model_generate`** — **NEW Oct 17: the tool
   ships as a Linux wheel** in the 1.8 tgz (installed + working CLI on this box:
   `--oga_only | --hybrid | --npu | --vit | --sd`, fusion modes incl.
