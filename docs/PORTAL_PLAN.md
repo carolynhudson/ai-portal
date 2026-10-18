@@ -5782,3 +5782,46 @@ card-surface test requires `ed-frame`/`ed-frame-who`/`ed-surface-who`; routes as
 group kinds (`User-Defined (model personalities)`, `Local files` for repository-less ids);
 spec `expectVisible` swaps `#ed-open` for `#ed-toggle` and adds the three new ids. UI suite 91
 passed (pre-commit gate ran it inline on the commit).
+
+##### 6.14.1aa Control affordance, tree cards, and the tick that said nothing (2026-10-18)
+
+Owner Oct-18, two observations on the same page: **"Input fields, clickable sections,
+dropdowns ... the background looks identical to the rest of the panel ... the borders look so
+thin they are hardly noticeable"** (portal-wide), and **"i tried selecting one of the ai
+models from the default 'safe' personality in the editor and nothing happened that i could
+see."** The CSS diagnosis was exact: base.html painted fields `--panel` on `--panel` with a
+1px `--line` edge, and the disabled state (`background:var(--line)`) was indistinguishable.
+
+**Site-wide (base.html).** A control layer of the same palette: `--field:#0b0e13` (the canvas-
+dark fill — fields visibly RECEDE into the panel) and `--field-line:#3d4a5c` at 1.5px on
+inputs/selects/textareas (and the native option menu). Disabled fields recede further, disabled
+buttons read disabled, labels wrapping disabled inputs get `not-allowed`, and `details>summary`
+gets a pointer cue. The contract test that pinned the old rule
+(`test_the_form_controls_wear_the_page_theme`) was updated to the new layer, and a new test
+(`test_form_controls_read_as_controls`) pins the tokens, the thickness, and the cursors.
+
+**"Nothing happened" had two real causes.** (1) `safe` is built-in: its list is derived from
+the library and write endpoints refuse it by name, so the tick checkboxes are *disabled by
+design* — and a disabled checkbox looked exactly like a live one. The refusal now speaks at
+the click site (`#ed-attach-cards-note`, painted by `loadIdentity` beside the cards), not only
+in the identity note a page-top away, and the disabled cards are dashed + muted. (2) For
+EDITABLE personalities the general bug was real: `paintSurface` computed a card's on-surface
+state from the **saved** attach list, so ticking a bare library model lit no card until save —
+the tick looked dead. The rule is now the live store: `checked.includes(mid)` (+ the config/
+alias clauses). A jsdom fixture drives it (select UI-Test-Work, click the `ui-tiny-coder` box,
+the count sentence must read `2 of 3`), and the contract pins `checked.includes(mid)`.
+
+**The tree is cards (owner's metaphor).** Each model is a card with its own 1.5px edge; the
+checkbox stays in the DOM as the store the personality saves (drawn `position:absolute;
+opacity:0` inside the card; the harness clicks it, keyboards reach it via `:focus-within`).
+Selected = accent edge, accent tint, accent name (`:has(input:checked)`). A card arriving on
+the surface **flashes once and scrolls into view** — the tick is clicked at the bottom of a
+2900 px page and the card arrives at the top, out of view; boot is quiet (`paintSurface.quiet`)
+so the page never scrolls itself on open.
+
+**Alias management already existed** (`mp-new`/`mp-create` to save a global alias, `mp-save`,
+`mp-delete` with a confirm) — the owner could not see it because the affordance bug made every
+button and field read as decoration. That is the lesson: an invisible feature is a missing
+feature, and the fix for "we need a means to create model personalities" was mostly CSS.
+Measured: 1897 px tallest block / 2924 page, no flag. UI suite 93 passed (pre-commit inline,
+twice). Commits `50e9cca` + `6f411cf`.
