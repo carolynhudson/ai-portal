@@ -1224,14 +1224,17 @@
         ".mp-strip",
         "#ed-used-by",
         "#pers-now",
-        "#ed-open",
+        "#ed-toggle",
         "#ed-identity",
         "#ed-surface",
         "#ed-surface-note",
         "#ed-surface-count",
         "#ed-card-global",
         "#ed-global-meta",
-        "#ed-review"
+        "#ed-review",
+        "#ed-frame-who",
+        "#ed-surface-who",
+        "#ed-attach-filter"
       ],
       "expectText": [
         {

@@ -92,6 +92,27 @@ h2{margin:18px 0 6px}
    editor opens open, and closing it hides exactly one wrapper, `#ed-workbench`. */
 .pers-editor[data-ed-view="collapsed"] #ed-workbench{display:none}
 .pers-editor[data-ed-view="collapsed"] .ed-open-row{margin:2px 0}
+/* The editor as a frame (owner Oct-18: "frame the personality editor in some way"). A frame
+   gives the editor a body — a header band that NAMES the personality being edited (it repaints
+   with the select, so every card under it is visibly someone's), one labeled collapse toggle
+   in place of the open/close verb pair, and one wrapper the toggle hides. */
+.ed-frame{border:1px solid var(--line);border-radius:10px;margin:12px 0;background:var(--panel)}
+.ed-frame-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;padding:10px 14px;
+  background:var(--panel2);border-bottom:1px solid var(--line);border-radius:10px 10px 0 0}
+.pers-editor[data-ed-view="collapsed"] .ed-frame-head{border-bottom:0;border-radius:10px}
+.ed-frame-body{padding:4px 14px 14px}
+/* The tick list as a tree (owner Oct-18: ids are long, repetitive, unorganized). The group is
+   the quantizer -- the repository namespace of the id, which for this library is exactly who
+   quantized it -- and user-authored model personalities group under User-Defined. An item is
+   the short name plus the quant tag, not the wall-long id. */
+.ed-attach-group{border:1px solid var(--line);border-radius:8px;margin:6px 0;padding:0 10px}
+.ed-attach-group>summary{cursor:pointer;padding:7px 0;font-size:.85rem}
+.ed-attach-group[open]>summary{border-bottom:1px solid var(--line)}
+.ed-attach-group .ed-attach{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:2px 18px;padding:6px 0}
+.ed-attach-item[hidden]{display:none}
+.ed-attach-group[hidden]{display:none}
+.ed-attach-item .tag{font-size:.72rem;padding:1px 6px;border:1px solid var(--line);border-radius:4px}
 .ed-surface{display:grid;gap:6px;margin:10px 0}
 /* A model card is on the surface exactly when the personality covers that model -- the tick list
    is the one store, and `data-on-surface` is painted from it. Removing a card removes it from
@@ -432,13 +453,13 @@ h2{margin:18px 0 6px}
      data-configs='{{ {"configs": configs, "uses": config_uses,
                        "used_by": used_by} | tojson }}'>
 
-  <div class="ed-row ed-open-row">
-    <button type="button" id="ed-open" class="cta">Open the settings editor</button>
+  <div class="ed-frame">
+  <div class="ed-frame-head ed-open-row">
+    <b>Settings editor · <span class="mono" id="ed-frame-who">—</span></b>
     <span class="mut" id="ed-collapsed-note"></span>
-    <button type="button" id="ed-collapse" hidden>Close the editor</button>
+    <button type="button" id="ed-toggle" class="cta" aria-expanded="true">Collapse the settings editor</button>
   </div>
-
-  <div id="ed-workbench">
+  <div id="ed-workbench" class="ed-frame-body">
 
   <section id="ed-identity">
   <div class="ed-row">
@@ -503,6 +524,11 @@ h2{margin:18px 0 6px}
   </section>
 
   <section class="ed-surface" id="ed-surface">
+  {# The surface names its personality (owner Oct-18: nothing said these cards belonged to the
+     personality being edited). The frame header carries the same name; this heading repeats it
+     where the cards begin, and `syncIdentity` repaints both from the personality select. #}
+  <h4>Surface of <span class="mono" id="ed-surface-who">—</span> — the Global card is pinned,
+    model cards follow the tick list below</h4>
 
   {# The Global card: pinned to the surface by the owner's Oct-18 rule. The strip carries the live
      figure (the [*] count and what is proposed), so the verdict is readable without opening
@@ -664,15 +690,30 @@ h2{margin:18px 0 6px}
   {# The tick list: the one store of which models the personality covers, and therefore the
      add/remove verb of the surface above (owner Oct-18). It lives under the cards so the control
      and the cards it moves are adjacent; the cards' "remove from surface" button is the same
-     untick, and `syncIdentity` keeps the two views from ever disagreeing. #}
+     untick, and `syncIdentity` keeps the two views from ever disagreeing.
+     Tree view (owner Oct-18): groups are the quantizer namespaces of the ids (and one
+     User-Defined group for model personalities); an item shows the short name + quant tag,
+     the group summary carries the count, and the filter box hides items (and then groups)
+     that match nothing. The checkbox values stay whole ids: the tree is presentation, the
+     store is untouched. #}
   <h4>Models this personality covers — tick adds a card, untick removes it</h4>
-  <div class="ed-attach" id="ed-attach">
-    {# The two kinds a personality's `models` list accepts: a library model id, which is that file
-       under its own name with no settings of its own, and a stored model config, which is the same
-       file addressed by a name the router routes to. The base model is printed for a config because
-       the name is what a client types and the base is what loads. #}
-    {% for o in attach_options %}
-    <label class="ed-attach-item"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.name }}</span>{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
+  <div class="ed-row">
+    <label for="ed-attach-filter">filter</label>
+    <input id="ed-attach-filter" type="search" autocomplete="off"
+           placeholder="name, quant, quantizer — filters the list below">
+  </div>
+  <div id="ed-attach">
+    {% for g in attach_groups %}
+    <details class="ed-attach-group" open data-group="{{ g.kind }}">
+      <summary><b>{{ g.label }}</b>
+        <span class="mut">{{ g['items']|length }} {{ 'alias(es)' if g.kind == 'config' else 'file(s) · GGUF' }}</span></summary>
+      <div class="ed-attach">
+      {% for o in g['items'] %}
+        <label class="ed-attach-item"
+               data-search="{{ (o.repo ~ ' ' ~ o.model ~ ' ' ~ (o.quant or '') ~ ' ' ~ o.name ~ ' ' ~ (o.base or ''))|lower }}"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.model }}</span>{% if o.quant %} <span class="tag mono">{{ o.quant }}</span>{% endif %}{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
+      {% endfor %}
+      </div>
+    </details>
     {% endfor %}
   </div>
   <p class="mut" id="ed-attach-note"></p>
@@ -699,7 +740,8 @@ h2{margin:18px 0 6px}
   </p>
   </section>
 
-  </div><!-- #ed-workbench: the collapse verb shows and hides exactly this wrapper -->
+  </div><!-- #ed-workbench: the collapse toggle hides exactly this wrapper -->
+  </div><!-- .ed-frame: the editor's body -->
 </div>
 
 <script>
@@ -1016,23 +1058,26 @@ h2{margin:18px 0 6px}
   const editorEl = () => $('pers-editor');
   const viewState = () => editorEl().getAttribute('data-ed-view');  // 'collapsed' | 'open'
 
-  // The collapse verbs, stated in words and shown one at a time: a page that offers both is a
-  // page offering a verb that does nothing. The note says what the surface holds while open, and
-  // what closing it hides.
+  // The collapse verb is ONE labeled toggle (owner Oct-18: not a "Close the editor" button
+  // beside an "Open" one). The button never hides; its label and aria-expanded state which way
+  // it acts, so the page never offers a verb that does nothing and never asks the operator to
+  // find a button that is only present in one state.
   const paintCollapse = () => {
     const open = viewState() === 'open';
-    $('ed-collapse').hidden = !open;
-    $('ed-open').hidden = open;
+    const t = $('ed-toggle');
+    t.textContent = open ? 'Collapse the settings editor' : 'Open the settings editor';
+    t.setAttribute('aria-expanded', open ? 'true' : 'false');
     $('ed-collapsed-note').textContent = open
       ? 'Open: the identity, every card, and the review bar are on the page together. Nothing is'
         + ' hidden behind a step, so there is no step to come back from.'
-      : 'The settings editor is closed. The deck above is the reading surface; opening the editor'
-        + ' is what lets you change a personality.';
+      : 'The settings editor is collapsed. The deck above is the reading surface; opening the'
+        + ' frame is what lets you change a personality.';
   };
-  function openEditor() { editorEl().setAttribute('data-ed-view', 'open'); paintCollapse(); }
-  function collapseEditor() { editorEl().setAttribute('data-ed-view', 'collapsed'); paintCollapse(); }
-  $('ed-open').addEventListener('click', openEditor);
-  $('ed-collapse').addEventListener('click', collapseEditor);
+  function toggleEditor() {
+    editorEl().setAttribute('data-ed-view', viewState() === 'open' ? 'collapsed' : 'open');
+    paintCollapse();
+  }
+  $('ed-toggle').addEventListener('click', toggleEditor);
 
   // The Global card opens and closes exactly like a model card: the strip answers its second
   // click, and the strip carries the live figure so the verdict reads without opening anything.
@@ -1113,6 +1158,12 @@ h2{margin:18px 0 6px}
   function syncIdentity() {
     const b = baseFor(shown);
     const isNew = (shown === NEW);
+    // The frame header and the surface heading name the personality being edited (owner
+    // Oct-18: the cards gave no clue whose surface they were). One paint point, the same
+    // rule every other identity fact follows: the name is read from `shown`, never a copy.
+    const who = shown === NEW ? "new (not created yet)" : shown;
+    $('ed-frame-who').textContent = who;
+    $('ed-surface-who').textContent = who;
     const checked = checkedAttach();
     $('ed-create').disabled = !(isNew && $('ed-new-name').value.trim());
     $('ed-save').disabled = isNew || !b.editable;
@@ -1129,6 +1180,11 @@ h2{margin:18px 0 6px}
     // Owner Oct-18: the tick list is the surface's add/remove verb, so every move repaints which
     // cards are on the surface and what the surface says about itself.
     paintSurface();
+    // Rest groups with no card on this personality's surface (see restEmptyGroups): the tree
+    // re-opens per personality, because coverage is a personality fact. A tick opens its group
+    // (the box is checked when this runs); un-ticking the last card closes the group, which is
+    // the visible consequence of the un-tick.
+    restEmptyGroups();
     // Queue 33 (§6.14.1q): the `used by` line belongs to the personality, so it moves with every
     // other step-1 fact. A line computed once at load describes whoever was selected then.
     paintUsedBy(shown);
@@ -1400,6 +1456,33 @@ h2{margin:18px 0 6px}
   $('ed-new-name').addEventListener('input', syncIdentity);
   $('ed-identity-note').dataset.hint = 'identity';
   for (const box of attachBoxes()) box.addEventListener('change', syncIdentity);
+  // The tick list's filter (owner Oct-18: long repetitive ids made the flat wall unusable).
+  // Typing hides items that match nothing and the groups that lose all their items; clearing
+  // shows everything. The store is untouched -- a hidden checkbox keeps its tick -- which is
+  // why a filtered list is a view of the personality, not an edit of it.
+  $('ed-attach-filter').addEventListener('input', () => {
+    const q = $('ed-attach-filter').value.trim().toLowerCase();
+    for (const grp of $('ed-attach').querySelectorAll('.ed-attach-group')) {
+      let hits = 0;
+      for (const it of grp.querySelectorAll('.ed-attach-item')) {
+        const hit = !q || (it.dataset.search || '').includes(q);
+        it.hidden = !hit;
+        if (hit) hits++;
+      }
+      grp.hidden = hits === 0;
+      if (q && hits) grp.open = true;
+    }
+  });
+  // A group opens when this personality has a card from it, and rests closed when it has
+  // none — the summary carries the count, and the filter opens any group whose items match.
+  // (Oct-18 height: the production library is 37 files + aliases; 37 rows at one column
+  // measured as three viewports. The tree organizes the wall; it must not become the page.)
+  // Runs after `loadIdentity()` has ticked the personality's boxes — before that, no box is
+  // checked and every group would collapse.
+  function restEmptyGroups() {
+    for (const grp of $('ed-attach').querySelectorAll('.ed-attach-group'))
+      if (!grp.querySelector('input:checked')) grp.open = false;
+  }
   $('ed-create').addEventListener('click', () => {
     const body = identityBody();
     if (!body.name) return;

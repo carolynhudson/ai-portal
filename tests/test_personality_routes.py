@@ -1242,6 +1242,12 @@ def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, libra
     for opt in list(library) + [tuned["config"]]:
         assert f'value="{opt}"' in body, f"the model list has no entry for {opt}"
     assert f"renames {library[0]}" in body, "a config is listed without the model it renames"
+    # The tick list is a tree (owner Oct-18: long repetitive ids, no organization). Groups
+    # are the repository namespaces of the ids -- the quantizers for this library -- plus one
+    # User-Defined group for the aliases; the sandbox ids carry no repository, so their group
+    # is the local one. The checkbox values above stay whole ids: the tree is a view.
+    assert "User-Defined (model personalities)" in body, "no User-Defined group for aliases"
+    assert "Local files" in body, "no quantizer group for repository-less ids"
 
     created = "Page-Created"
     r = client.post("/api/personalities/save", json={

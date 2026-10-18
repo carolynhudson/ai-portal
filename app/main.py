@@ -1085,6 +1085,33 @@ def create_app() -> FastAPI:
         # interchangeable -- `resolve_targets()` accepts both and refuses a name that is neither.
         attach_options = ([{"name": r["id"], "base": None} for r in index_rows]
                           + [{"name": c["name"], "base": c["base_model"]} for c in configs])
+        # The tick list as a tree (owner Oct-18: model ids are long, repetitive, and the flat
+        # wall is unusable). The id's repository namespace IS the quantizer for this library
+        # (unsloth, ggml-org, ISTA-DASLab ...), so the tree groups by it and the item line
+        # carries the short name plus the quant tag; user-authored model personalities get
+        # their own group naming the file each alias renames. No GGUF-header sniffing here:
+        # the facts come out of the id, the one store the page already reads.
+        def _attach_parts(a_id: str) -> dict:
+            repo, _, rest = a_id.rpartition("/")
+            stem, _, quant = rest.rpartition(":")
+            return {"repo": repo or "Local files", "model": stem or rest,
+                    "quant": quant or None}
+        by_repo: dict[str, list] = {}
+        users: list = []
+        for opt in attach_options:
+            if opt["base"] is None:
+                opt.update(_attach_parts(opt["name"]))
+                by_repo.setdefault(opt["repo"], []).append(opt)
+            else:
+                opt.update({"repo": "User-Defined", "model": opt["name"], "quant": None})
+                users.append(opt)
+        attach_groups = [{"label": repo, "kind": "model",
+                          "items": sorted(by_repo[repo], key=lambda o: (o["model"].casefold(),
+                                                                        o["quant"] or ""))}
+                         for repo in sorted(by_repo, key=str.casefold)]
+        if users:
+            attach_groups.append({"label": "User-Defined (model personalities)", "kind": "config",
+                                  "items": sorted(users, key=lambda o: o["name"].casefold())})
         return templates.TemplateResponse(request, "personalities.html",
                                           {"cards": cards, "generated": generated,
                                            "configs": configs,
@@ -1117,6 +1144,7 @@ def create_app() -> FastAPI:
                                            # normalize_proposed() refuses any name that does not.
                                            "model_ids": [r["id"] for r in index_rows],
                                            "attach_options": attach_options,
+                                           "attach_groups": attach_groups,
                                            # The editor grids render rows, not SETTINGS lookups: control
                                            # shape, default, unit, rule, help link and visibility facts
                                            # all arrive on the row (app/core/settingrows.py, §6.14.1).

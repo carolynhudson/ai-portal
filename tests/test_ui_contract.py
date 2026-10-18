@@ -1666,6 +1666,11 @@ def test_the_editor_is_a_card_surface_not_a_stepper(client):
     for sec in ('id="ed-identity"', 'id="ed-surface"', 'id="ed-review"'):
         assert sec in tpl, f"the surface is missing {sec}"
     assert 'id="ed-workbench"' in tpl, "the collapse verb has no single wrapper to hide"
+    # The frame names its personality in two places that repaint with the select (owner
+    # Oct-18: nothing said the cards belonged to the personality being edited).
+    assert 'class="ed-frame"' in tpl, "the editor has no frame"
+    for who in ('id="ed-frame-who"', 'id="ed-surface-who"'):
+        assert who in tpl, f"the frame does not name its personality ({who} missing)"
     # The Global card: pinned, saying so, and hosting the one [*] grid. No control on its strip:
     # the strip reads and opens; the pin sentence is text, not a locked button.
     assert 'id="ed-card-global"' in tpl and 'data-pinned="yes"' in tpl, "the Global card is not pinned"
@@ -1687,25 +1692,27 @@ def test_the_editor_is_a_card_surface_not_a_stepper(client):
     assert re.search(r"textContent", surf), "the state is not stated in text an operator reads"
 
 
-def test_the_editor_collapses_to_the_deck_behind_its_own_collapse_verb(client):
-    """The verb that opens the editor is matched by a verb that closes it, with words.
+def test_the_editor_collapses_behind_one_labeled_toggle(client):
+    """Owner Oct-18: not a "close the editor" button — the frame carries ONE collapse toggle.
 
-    Open is the page's default reading state — the owner's 2026-10-15 instruction: the collapsed
-    default measured as "the editor is missing", because the opening verb sat below the fold of a
-    10,295 px page. Closing the editor is still a verb with words, and a collapsed editor with no
-    way back is how a page becomes unreadable in a new way. Since Oct-18 there is exactly one
-    thing to hide: `#ed-workbench`, the whole surface at once.
+    One button, never hidden, whose label and aria-expanded state which way it acts. The
+    open/close verb pair asks the operator to find a control that exists in only one state —
+    and this page's own history (the Now strip, §6.14.1q) records what a control carried by
+    one state only does to a script: it is found in half the states the page can be in. The
+    frame is the collapsible thing; `#ed-workbench` is the one wrapper the toggle hides, and
+    the Oct-15 rule stands: the editor opens open.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
-    assert 'id="ed-open"' in tpl, "the editor has no verb that opens it"
-    assert 'id="ed-collapse"' in tpl, "the editor has no verb that closes it"
+    assert 'id="ed-toggle"' in tpl, "the frame has no collapse toggle"
+    assert 'id="ed-open"' not in tpl and 'id="ed-collapse"' not in tpl, "the verb pair is back"
     assert 'id="ed-workbench"' in tpl, "collapse has exactly one wrapper to hide"
     css = tpl[tpl.index('.pers-editor[data-ed-view="collapsed"]'):]
     assert "#ed-workbench{display:none}" in css[:160], "collapse does not hide exactly the workbench"
     script = _script_of(tpl, "personalities")
     surf = _surface_section(script)
-    assert "ed-open" in surf and "ed-collapse" in surf, "the collapse verbs are not wired"
-    assert "hidden" in surf, "the collapse verbs are not shown and hidden by the state"
+    assert "ed-toggle" in surf, "the toggle is not wired by the frame layer"
+    assert "aria-expanded" in surf, "the toggle does not state its state"
+    assert re.search(r"textContent", surf), "the toggle's label states the state in words"
     assert "collapsed" in tpl, "the collapsed state is not named on the page"
 
 
