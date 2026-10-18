@@ -1713,6 +1713,24 @@ def test_form_controls_read_as_controls(client):
     assert "button:disabled" in base, "disabled buttons must read disabled too"
 
 
+def test_the_editor_only_offers_what_can_be_edited(client):
+    """Owner Oct-18: "if a personality cannot be edited like safe and default they should not
+    appear as options in the editor to be edited." The deck is the reading surface -- built-in
+    cards say "built-in, not editable in place" there; the editor's select carries only the
+    editable personalities and the new mode. A select that offers a locked record is a select
+    whose first act is a refusal.
+    """
+    tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
+    assert "{% for c in cards if c.editable %}" in tpl, "the select offers built-ins to edit"
+    # The identity row: the name shows for every personality (read-only for stored records --
+    # the name IS the record), and the count field labels itself in words (owner Oct-18:
+    # the bare "max resident" read as part of "name").
+    assert 'id="ed-new-name" type="text" autocomplete="off" spellcheck="false"\n' in tpl, \
+        "the name field hides from existing personalities"
+    assert ".readOnly = !isNew" in tpl, "the stored name is editable text, not a stated record name"
+    assert "max resident models" in tpl, "max resident is still labeled like a name"
+
+
 def test_the_model_tree_is_cards_that_show_their_state(client):
     """Owner Oct-18: "embrace the card metaphor ... rather than showing a checkbox give each
     its own card border and change the border, background, and text color to indicate that
@@ -1727,6 +1745,10 @@ def test_the_model_tree_is_cards_that_show_their_state(client):
                    ".ed-attach-item:focus-within", ".mp-card.ed-flash",
                    'id="ed-attach-cards-note"'):
         assert needle in tpl, f"tree card contract missing: {needle}"
+    # Alias rows stack inside one card: alias carries the row, `↳ base` sits below it
+    # (owner Oct-18: two long names side by side wrapped to mush).
+    for needle in (".ed-alias-item{flex-direction:column", "ed-alias-main", "↳ {{ o.base }}"):
+        assert needle in tpl, f"alias row contract missing: {needle}"
     assert "position:absolute;opacity:0" in tpl, "the checkbox is not the card itself"
     script = _script_of(tpl, "personalities")
     assert "ed-attach-cards-note" in script, "the click-site sentence is not painted"

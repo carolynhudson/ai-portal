@@ -1098,7 +1098,9 @@ def test_the_editor_shows_the_settings_the_personality_already_carries(client, l
     layer, and the page would be blank in exactly the way the operator reported.
     """
     views = _views(client.get("/personalities").text)
-    names = [str(p["name"]) for p in P.all_personalities() if p.get("name")]
+    # Oct-18: built-ins are not editor options, so the page seeds the editable set only.
+    names = [str(p["name"]) for p in P.all_personalities()
+             if p.get("name") and str(p["name"]).lower() not in P.RESERVED_NAMES]
     assert sorted(views) == sorted(names), "a personality the editor has no current settings for"
 
     work = views[tuned["personality"]]
@@ -1159,7 +1161,9 @@ def test_the_shown_config_is_the_same_layering_the_file_is_written_from(client, 
     If the editor showed a second derivation, the preview's diff and the fields a person edited
     could describe two different files -- and the fit verdict a third.
     """
-    views = _views(client.get("/personalities").text)
+    # Oct-18: the page seeds editable personalities only; /api/personalities carries the
+    # same view for every personality, and it is the one statement of the layering.
+    views = client.get("/api/personalities").json()["config_views"]
     cfgs = {c["name"]: c for c in mc.rows()}
     for p in P.all_personalities():
         view = views[str(p["name"])]
@@ -1171,11 +1175,11 @@ def test_the_shown_config_is_the_same_layering_the_file_is_written_from(client, 
 def test_the_builtins_show_an_empty_config_because_they_carry_no_settings(client, library):
     """`safe` and `default` are derived from the library, so they carry no settings to show.
 
-    Asserted as an empty config rather than as nothing, because the difference is what the page
-    claims: these personalities set no keys, and a view that filled their fields from the portal's
-    own defaults would make them look editable in place.
+    Asserted as an empty config rather than as nothing, because the difference is what the
+    endpoint claims: these personalities set no keys. Oct-18 moved the read to the API payload
+    (the editor no longer offers built-ins at all), and the claim itself is unchanged.
     """
-    views = _views(client.get("/personalities").text)
+    views = client.get("/api/personalities").json()["config_views"]
     for name in ("safe", "default"):
         v = views[name]
         assert v["global"] == {} and v["configs"] == {}, name
@@ -1217,7 +1221,11 @@ def test_the_api_carries_the_same_current_config_the_page_seeds_from(client, lib
     """D1: the read endpoint answers the same question the form asks (§4.7)."""
     page = _views(client.get("/personalities").text)
     api = client.get("/api/personalities").json()["config_views"]
-    assert api == page, "the endpoint and the page describe the personalities differently"
+    # Oct-18: the page seeds the editable personalities; the endpoint answers for every
+    # personality, built-ins included. The overlap must be the same statement, key for key.
+    assert {k: v for k, v in api.items() if k in page} == page, \
+        "the endpoint and the page describe the personalities differently"
+    assert set(page) < set(api), "the endpoint lost the personalities the page does not seed"
 
 
 def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, library, tuned):
@@ -1241,7 +1249,16 @@ def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, libra
     # page: a library model id, and a stored config with the file it renames.
     for opt in list(library) + [tuned["config"]]:
         assert f'value="{opt}"' in body, f"the model list has no entry for {opt}"
-    assert f"renames {library[0]}" in body, "a config is listed without the model it renames"
+    # The alias row stacks (owner Oct-18): alias on top, `↳ base` below in lesser text.
+    assert f"\u21b3 {library[0]}" in body, "a config is listed without the model it renames"
+    # Built-ins are not editor options (owner Oct-18): the deck is where they are read.
+    # Scoped to the persona select's own marker (`data-config` rides its options only; the
+    # grid's tri-state selects legitimately carry option value="default").
+    for bi in ("safe", "default"):
+        assert f'<option value="{bi}" data-config' not in body, f"{bi} is offered to the editor select"
+    # The name field shows for every personality; the max label says what it counts.
+    assert 'id="ed-new-name" type="text"' in body, "the name field is hidden from existing personalities"
+    assert "max resident models" in body, "max resident is still labeled as a name"
     # The tick list is a tree (owner Oct-18: long repetitive ids, no organization). Groups
     # are the repository namespaces of the ids -- the quantizers for this library -- plus one
     # User-Defined group for the aliases; the sandbox ids carry no repository, so their group
@@ -1296,19 +1313,25 @@ def test_the_built_in_pair_is_locked_at_step_one_with_the_reason(client, library
     as it is) but to refuse them in a way the operator can read, and to point at the verb that does
     work: create a new personality.
     """
+    body = client.get("/personalities").text
+    api = client.get("/api/personalities").json()["config_views"]
     for name in ("safe", "default"):
         r = client.post("/api/personalities/save", json={"name": name, "models_max": 1})
         assert r.status_code == 400, (name, r.text)
         d = client.post("/api/personalities/delete", json={"name": name, "confirm": True})
         assert d.status_code == 400 and name in d.text, (name, d.text)
-        view = _views(client.get("/personalities").text)[name]
-        assert view["editable"] is False, view
+        assert api[name]["editable"] is False, api[name]
+        # Oct-18 (owner): not editor options at all -- the deck is where they are read, and
+        # their cards state the status in words.
+        assert f'<option value="{name}" data-config' not in body, f"{name} is offered to the editor"
+    assert "built-in, not editable in place" in body, "the deck does not state the built-ins' status"
+    assert 'data-card="safe"' in body and 'data-card="default"' in body, "the deck lost the built-ins"
 
     # `default` covers the whole library, which the view carries as None and not as an empty list:
     # the form has to be able to tell "everything" from "nothing chosen".
-    assert _views(client.get("/personalities").text)["default"]["attach"] is None
-    assert _views(client.get("/personalities").text)["safe"]["attach"] == [library[1]], \
-        "safe's single model is not in the data the form pre-fills from"
+    assert api["default"]["attach"] is None
+    assert api["safe"]["attach"] == [library[1]], \
+        "safe's single model is not in the data the endpoint reports"
 
 
 def test_the_page_says_what_an_empty_field_means(client):

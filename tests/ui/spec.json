@@ -961,19 +961,26 @@
       ],
       "selectCases": [
         {
-          "select": "#ed-g-jinja-sel",
+          "_comment": [
+            "default covers the whole library, which is what an empty model list means. The attach list is",
+            "left with nothing checked at this point, so the sentence has to name the state rather than let",
+            "an unchecked list read as covers nothing."
+          ],
+          "select": "#ed-persona",
           "choose": {
-            "value": "on"
+            "value": "__new__"
           },
-          "note": "switch offers the words llama.cpp's is_truthy reads",
-          "comment": "The boolean control offered 1/0 hardcoded in the template while the portal's validator refused text for boolean keys, so the value the page sent was never accepted. The options come from the row's accepted list now; picking `on` must not throw."
-        },
-        {
-          "select": "#ed-m-jinja-sel",
-          "choose": {
-            "value": "off"
-          },
-          "note": "per-model switch offers the same words"
+          "note": "new mode: the empty list is the whole-library state, stated in words",
+          "expectText": [
+            {
+              "selector": "#ed-attach-note",
+              "contains": "whole library"
+            },
+            {
+              "selector": "#ed-attach-cards-note",
+              "contains": "Click a card"
+            }
+          ]
         },
         {
           "_comment": [
@@ -994,51 +1001,6 @@
             "value": "ui-tiny-coder"
           },
           "note": "the model the seeded config renames: its section arrives in the fields"
-        },
-        {
-          "_comment": [
-            "plan sec 6.14.1f step 1: a built-in personality is shown as what it is. safe is derived from",
-            "the library and the write endpoints refuse it by name, so Save and Delete are locked here and",
-            "the page says why -- a disabled control that explains itself is a decision, and one that does",
-            "not is a dead button."
-          ],
-          "select": "#ed-persona",
-          "choose": {
-            "value": "safe"
-          },
-          "note": "built-in: locked with the reason stated",
-          "expectDisabled": [
-            "#ed-save",
-            "#ed-delete"
-          ],
-          "expectText": [
-            {
-              "selector": "#ed-identity-note",
-              "contains": "built-in"
-            }
-          ]
-        },
-        {
-          "_comment": [
-            "default covers the whole library, which is what an empty model list means. The attach list is",
-            "left with nothing checked at this point, so the sentence has to name the state rather than let",
-            "an unchecked list read as covers nothing."
-          ],
-          "select": "#ed-persona",
-          "choose": {
-            "value": "default"
-          },
-          "note": "the whole library is a state, not an empty choice",
-          "expectText": [
-            {
-              "selector": "#ed-attach-note",
-              "contains": "whole library"
-            },
-            {
-              "selector": "#ed-attach-cards-note",
-              "contains": "built-in"
-            }
-          ]
         },
         {
           "_comment": [
@@ -1132,7 +1094,13 @@
           "choose": {
             "value": "UI-Test-Work"
           },
-          "note": "the seeded personality, after create mode: its list and its settings arrive"
+          "note": "the seeded personality, after create mode: its list and its settings arrive",
+          "expectText": [
+            {
+              "selector": "#ed-summary",
+              "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
+            }
+          ]
         },
         {
           "_comment": [
@@ -1152,6 +1120,52 @@
               "selector": "#ed-surface-count",
               "contains": "2 of 3"
             }
+          ]
+        },
+        {
+          "select": "#ed-g-jinja-sel",
+          "choose": {
+            "value": "on"
+          },
+          "note": "switch offers the words llama.cpp's is_truthy reads",
+          "comment": "The boolean control offered 1/0 hardcoded in the template while the portal's validator refused text for boolean keys, so the value the page sent was never accepted. The options come from the row's accepted list now; picking `on` must not throw."
+        },
+        {
+          "select": "#ed-m-jinja-sel",
+          "choose": {
+            "value": "off"
+          },
+          "note": "per-model switch offers the same words"
+        },
+        {
+          "_comment": [
+            "back to the seeded personality with the name typed, the list must show its attach state",
+            "prefilled from the stored personality, and the fields must still arrive from step 1's data."
+          ],
+          "select": "#ed-persona",
+          "choose": {
+            "value": "UI-Test-Work"
+          },
+          "note": "the seeded personality, after create mode: its list and its settings arrive",
+          "expectText": [
+            {
+              "selector": "#ed-summary",
+              "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
+            }
+          ]
+        },
+        {
+          "_comment": [
+            "Oct-18: a persona switch re-seeds the fields without auto-opening the model's ~2,000 px",
+            "grid. Opening is the operator's verb: the model select (and a strip click) open the card."
+          ],
+          "select": "#ed-model",
+          "choose": {
+            "value": "ui-tiny-coder"
+          },
+          "note": "the model select opens that model's card (the fields move into it)",
+          "expectVisible": [
+            ".mp-card[data-model=\"ui-tiny-coder\"] .mp-attach"
           ]
         }
       ],
@@ -1259,7 +1273,8 @@
         "#ed-frame-who",
         "#ed-surface-who",
         "#ed-attach-filter",
-        "#ed-attach-cards-note"
+        "#ed-attach-cards-note",
+        "#ed-new-name"
       ],
       "expectText": [
         {
@@ -1415,16 +1430,11 @@
         },
         {
           "_comment": [
-            "plan sec 6.14.1i: at load the selected personality is the first card (safe), which carries no",
-            "settings. The sentence has to say that, not merely that the region is non-empty."
+            "Oct-18: built-ins are not editor options, so the boot persona is the first",
+            "EDITABLE card (UI-Test-Work), and its own sentence must arrive at load."
           ],
           "selector": "#ed-summary",
-          "contains": "no changes — these are safe's current settings: 0 value(s) in [*], 0 model section(s) set"
-        },
-        {
-          "after_select": true,
-          "selector": "#ed-summary",
-          "contains": "UI-Test-Work's current settings: 2 value(s) in [*], 1 model section(s) set"
+          "contains": "no changes — these are UI-Test-Work's current settings: 2 value(s) in [*], 0 model section(s) set"
         },
         {
           "_comment": [
@@ -1437,11 +1447,12 @@
         },
         {
           "_comment": [
-            "Every personality's current configuration rides on its option, computed server-side by",
-            "personality.settings_view(): 3 cards in this sandbox (safe, default, the seeded one)."
+            "Every EDITABLE personality's current configuration rides on its option (Oct-18:",
+            "safe/default are not editor options at all). The sandbox seeds one custom",
+            "personality, so the select carries one seeded option plus the new mode."
           ],
           "selector": "#ed-persona option[data-config]",
-          "minCount": 3
+          "minCount": 1
         },
         {
           "_comment": [

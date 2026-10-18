@@ -131,6 +131,12 @@ h2{margin:18px 0 6px}
 .ed-attach-item:has(input:disabled){border-style:dashed;border-color:var(--line);
   color:var(--mut);cursor:not-allowed}
 .ed-attach-item:has(input:disabled):hover{border-color:var(--line)}
+/* The alias row: alias on top (it is the name a client types), the file it renames below in
+   lesser text with the arrow (owner Oct-18: two long names side by side wrapped to mush). */
+.ed-alias-item{flex-direction:column;align-items:flex-start;gap:1px}
+.ed-alias-main{font-weight:600}
+.ed-alias-base{font-size:.76rem;word-break:break-all}
+.ed-attach-item:has(input:checked) .ed-alias-base{color:var(--mut)}
 .ed-surface{display:grid;gap:6px;margin:10px 0}
 /* A model card is on the surface exactly when the personality covers that model -- the tick list
    is the one store, and `data-on-surface` is painted from it. Removing a card removes it from
@@ -496,7 +502,11 @@ h2{margin:18px 0 6px}
        per-model override. The form is seeded from the page's own data, so the values a person
        reads cannot be a second, weaker statement about the file. #}
     <select id="ed-persona">
-      {% for c in cards %}<option value="{{ c.name }}" data-config='{{ config_views.get(c.name, {}) | tojson }}'>{{ c.name }}</option>{% endfor %}
+      {# Built-in personalities are not editor options (owner Oct-18: "if a personality cannot
+         be edited like safe and default they should not appear as options in the editor"):
+         the deck is where `safe` and `default` are read, and their cards say "built-in, not
+         editable in place". The editor offers what can be edited, plus the new mode. #}
+      {% for c in cards if c.editable %}<option value="{{ c.name }}" data-config='{{ config_views.get(c.name, {}) | tojson }}'>{{ c.name }}</option>{% endfor %}
       {# `__new__` is a mode switch, not a name: personality's own name rule starts a name with a
          letter or digit, so no stored personality can collide with it. #}
       <option value="__new__">new personality…</option>
@@ -525,10 +535,16 @@ h2{margin:18px 0 6px}
   </p>
 
   <div class="ed-row">
+    {# The name is shown for every personality (owner Oct-18: "i think you rushed or accidentally
+       removed the personality name field"). For a stored personality it is read-only -- the name
+       is the record, and the page cannot rename a record; for new mode it is the field you type.
+       A read-only field the page paints is honest: it shows who the editor is working on, at the
+       field where names live. #}
     <label for="ed-new-name" class="mono">name</label>
-    <input id="ed-new-name" type="text" autocomplete="off" spellcheck="false" hidden
+    <input id="ed-new-name" type="text" autocomplete="off" spellcheck="false"
            placeholder="new -- letters, digits, dot, dash, underscore">
-    <label for="ed-models-max">max resident</label>
+    {# "max resident" read as part of the name (owner Oct-18) -- the label now says what it counts. #}
+    <label for="ed-models-max" title="How many models the router keeps loaded at once for this personality">max resident models</label>
     <input id="ed-models-max" type="number" min="1" step="1">
     <label for="ed-note">note</label>
     <input id="ed-note" type="text" autocomplete="off" spellcheck="false" placeholder="what this personality is for">
@@ -740,8 +756,18 @@ h2{margin:18px 0 6px}
         <span class="mut">{{ g['items']|length }} {{ 'alias(es)' if g.kind == 'config' else 'file(s) · GGUF' }}</span></summary>
       <div class="ed-attach">
       {% for o in g['items'] %}
+        {% if o.base %}
+        {# The alias row (owner Oct-18: two long names side by side wrapped into mush): the
+           alias carries the row, and the file it renames sits below it in lesser text, prefaced
+           with the arrow. One card, the click is the tick, the link is stated where it lives. #}
+        <label class="ed-attach-item ed-alias-item"
+               data-search="{{ (o.repo ~ ' ' ~ o.model ~ ' ' ~ o.name ~ ' ' ~ o.base)|lower }}"><input type="checkbox" value="{{ o.name }}">
+          <span class="mono ed-alias-main">{{ o.name }}</span>
+          <span class="mut mono ed-alias-base">↳ {{ o.base }}</span></label>
+        {% else %}
         <label class="ed-attach-item"
-               data-search="{{ (o.repo ~ ' ' ~ o.model ~ ' ' ~ (o.quant or '') ~ ' ' ~ o.name ~ ' ' ~ (o.base or ''))|lower }}"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.model }}</span>{% if o.quant %} <span class="tag mono">{{ o.quant }}</span>{% endif %}{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
+               data-search="{{ (o.repo ~ ' ' ~ o.model ~ ' ' ~ (o.quant or '') ~ ' ' ~ o.name)|lower }}"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.model }}</span>{% if o.quant %} <span class="tag mono">{{ o.quant }}</span>{% endif %}</label>
+        {% endif %}
       {% endfor %}
       </div>
     </details>
@@ -940,7 +966,7 @@ h2{margin:18px 0 6px}
     }
   }
 
-  function loadModel(name) {
+  function loadModel(name, openCard = true) {
     captureCurrent();          // the fields belong to the model being left, not the one arriving
     captured = name;
     applyVisibility(name);
@@ -952,7 +978,12 @@ h2{margin:18px 0 6px}
       // value in a row this file cannot use must never reach the payload.
       control.value = f.hidden ? '' : (saved[f.dataset.key] || '');
     }
-    showCard(name);
+    // Opening is the operator's verb, not the seeding's: a persona switch (and boot) re-seeds
+    // the fields for the selected model WITHOUT opening its ~2,000 px grid unasked (Oct-18: the
+    // built-ins left the editor select, the boot persona became a real one, and its auto-opened
+    // card measured as three viewports). Strips, ticks and the model select open cards.
+    if (openCard) showCard(name);
+    else showCard(openModel || null);   // persona switch/boot: park the grid in the hidden rest
     summarize();
   }
 
@@ -1075,7 +1106,7 @@ h2{margin:18px 0 6px}
       if (control) control.value = st.global[f.dataset.key] || '';
     }
     const mid = $('ed-model').value;
-    if (mid) loadModel(mid);
+    if (mid) loadModel(mid, false);   // re-seed, do not auto-open (see loadModel)
     else summarize();
   }
 
@@ -1152,7 +1183,13 @@ h2{margin:18px 0 6px}
           || checked.some(n => (configByName[n] || {}).base_model === mid);
       }
       c.dataset.onSurface = on ? 'yes' : 'no';
-      if (on) onCount++;
+      if (on) {
+        onCount++;
+        // The strip's figure line is filled for every card on the surface, not only the open
+        // one: the card no longer auto-opens on persona load (Oct-18 height), and a strip with
+        // no meta is a strip that says nothing about the card it is.
+        fillCard(mid);
+      }
       if (!on && openModel === mid) showCard(null);
       const rm = c.querySelector('.mp-remove');
       rm.disabled = !b.editable;
@@ -1193,7 +1230,13 @@ h2{margin:18px 0 6px}
   function loadIdentity() {
     const b = baseFor(shown);
     const isNew = (shown === NEW);
-    $('ed-new-name').hidden = !isNew;
+    // The name field shows for every personality (owner Oct-18): for a stored one it is
+    // read-only -- the name IS the record, and the page never rewrites a record's name --
+    // and in new mode it becomes the field you type.
+    $('ed-new-name').value = isNew ? '' : shown;
+    $('ed-new-name').readOnly = !isNew;
+    $('ed-new-name').title = isNew ? ''
+      : 'The record name. Renaming means creating a new personality with the wanted name; the page never rewrites a record\'s name.';
     $('ed-models-max').value = isNew ? '1' : String(b.models_max == null ? 1 : b.models_max);
     $('ed-note').value = isNew ? '' : b.note;
     const want = isNew ? [] : (Array.isArray(b.attach) ? b.attach : null);
