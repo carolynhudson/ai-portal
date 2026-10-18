@@ -70,6 +70,23 @@ and the DKMS driver version must match the SHIM (same build).
 - Model store: INDEX.json freshness (gguf-indexer), orphaned/unknown files
   in the router tree, broken hardlinks
 
+## GPU-stack update gate (polkit, added Oct 17)
+
+The health page shows GPU-stack pending (apt probe, read-only). Applying them
+is a Status-page action, gated the way the GUI App Center gates it:
+
+- `deploy/gpu_update/gpu-update-apply` — root-owned enforcer: refuses non-root,
+  refuses options, plain package names only, whitelist **identical** to
+  `health.GPU_PKG_RE` (sync-pinned by test), candidate must exist.
+- `deploy/gpu_update/com.aiportal.gpuupdate.policy` — polkit action scoped to
+  that exact path, `auth_admin_keep` for active sessions, never for inactive.
+- `tools/gpu_update_gate_install.sh` — one-time `sudo` install + self-tests
+  (pkaction registration; refused: non-root / off-whitelist / options).
+- Route `POST /api/updates/gpu` accepts only names currently in `gpu_pending`;
+  job kind `gpuupdate` is DISRUPTIVE (apt owns the machine). The password goes
+  to the desktop polkit agent — the portal never sees or stores it. After a
+  successful apply, health caches reset (HIP probe / reboot / rebuild offer).
+
 ## Model downloads (the HF-command idea)
 
 The user copies a command like

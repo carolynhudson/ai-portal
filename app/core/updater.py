@@ -51,7 +51,8 @@ KIND_LABEL = {
 # entry an update job could swap the llama.cpp release out from under a presets apply that is
 # mid-restart, or an apply could restart a router whose binary a build is currently replacing.
 # The write itself is cheap; the restart is what makes it machine-wide.
-DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python", "presets-apply"}
+DISRUPTIVE = {"llamacpp", "comfyui", "huggingface", "hf", "python",
+              "presets-apply", "gpuupdate"}
 
 _TAIL = 300                # log lines kept in the DB for the API
 _STALE_AFTER = 6 * 3600    # backstop for rows whose writer cannot be identified

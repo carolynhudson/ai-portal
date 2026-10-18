@@ -526,6 +526,21 @@
 
 <div id="update-gpu" class="update-tab-content">
   {# ---- GPU Drivers / SDKs --------------------------------------------- #}
+  <div class="card" id="gpu-apply">
+    <h3>GPU-stack updates (apt)</h3>
+    <div class="kv"><span class="k">lists age</span><span class="mono" id="gpu-lists-age">—</span></div>
+    <div class="kv"><span class="k">GPU-stack pending</span><span class="mono" id="gpu-pending">—</span></div>
+    <div class="kv"><span class="k">kernel pending</span><span class="mono" id="gpu-kernel-pending">—</span></div>
+    <p class="mut">Applying runs <code class="mono">pkexec gpu-update-apply</code>: your desktop
+      asks for your admin password — the OS is the gate, the portal never sees or stores it.
+      After applying, the health page re-probes: HIP compile probe, reboot-pending,
+      and the llama.cpp rebuild offer.</p>
+    <div class="row">
+      <button id="gpu-apply-btn" class="btn" onclick="applyGpu()" disabled>Apply GPU-stack updates</button>
+      <span class="pill mut" id="gpu-pill">—</span>
+    </div>
+    <div id="gpu-job"></div>
+  </div>
   <div class="card">
     <h3>GPU Drivers & SDKs</h3>
     <div class="kv"><span class="k">ROCm version</span><span class="mono" id="gpu-rocm-version">—</span></div>
@@ -1413,7 +1428,7 @@ function loadPanelOnce(tab){
   if (tab === 'comfyui') loadComfyUpd();
   if (tab === 'huggingface') loadHfUpd();
   if (tab === 'python') loadPythonInfo();
-  if (tab === 'gpu') loadGpuInfo();
+  if (tab === 'gpu') { loadGpuInfo(); loadGpuApply(); }
 }
 // The llama.cpp tab is the one displayed at page load, so it earns its fetch now.
 loadPanelOnce('llamacpp');
@@ -1657,6 +1672,77 @@ async function loadGpuInfo(){
     setText('gpu-vulkan-sdk', d.vulkan_sdk || '—');
     setText('gpu-hip-sdk', d.rocm_version ? ('HIP bundled with ROCm ' + d.rocm_version) : '—');
   }catch(e){ /* keep last good state */ }
+}
+
+// GPU-stack apt updates, polkit-gated. The portal only lists what the health
+// probe sees; applying shells out to pkexec, so the desktop polkit agent asks
+// for the admin password — the portal never sees or stores it. The root-side
+// enforcer (/usr/local/lib/aiportal/gpu-update-apply) re-validates every
+// package name against the GPU whitelist before apt ever runs.
+const GPU_UPD = {job: null, timer: null, pending: []};
+async function loadGpuApply(){
+  try{
+    const r = await fetch('/api/updates/gpu', {credentials:'same-origin'});
+    if (!r.ok) return;
+    const d = await r.json();
+    GPU_UPD.pending = d.gpu_pending || [];
+    setText('gpu-lists-age', d.lists_age_h == null ? 'unknown' : d.lists_age_h + ' h');
+    setText('gpu-pending', GPU_UPD.pending.length ? GPU_UPD.pending.join(', ') : 'none');
+    setText('gpu-kernel-pending', (d.kernel_pending && d.kernel_pending.length) ? d.kernel_pending.join(', ') : 'none');
+    const running = d.job && d.job.status === 'running';
+    const pill = document.getElementById('gpu-pill');
+    if (pill) {
+      pill.className = 'pill ' + (running ? 'mut' : (d.job && d.job.status === 'success' ? 'ok' : 'mut'));
+      pill.textContent = running ? 'applying…' : (d.job ? d.job.status : (d.gate_installed ? 'ready' : 'gate not installed'));
+    }
+    const btn = document.getElementById('gpu-apply-btn');
+    if (btn) {
+      btn.disabled = !(d.gate_installed && GPU_UPD.pending.length && !running);
+      btn.textContent = running ? 'applying…' : 'Apply GPU-stack updates';
+    }
+    renderGpuJob(d.job);
+    if (running && !GPU_UPD.timer) { GPU_UPD.job = d.job.id; GPU_UPD.timer = setInterval(pollGpu, 3000); }
+    else if (!running && GPU_UPD.timer) { clearInterval(GPU_UPD.timer); GPU_UPD.timer = null; }
+  }catch(e){ /* keep last good state on a transient error */ }
+}
+function renderGpuJob(j){
+  const el = document.getElementById('gpu-job');
+  if (!el) return;
+  if (!j) { safeSet(el, ''); return; }
+  safeSet(el, '<div class="kv"><span class="k">job ' + j.id + ' · ' + j.status +
+    '</span><span class="mono">' + esc(j.target || '') + '</span></div>' +
+    '<div class="scrollable-logs"><pre>' + esc(j.log || '') + '</pre></div>');
+  const pre = el.querySelector('.scrollable-logs pre');
+  if (pre) pre.scrollTop = pre.scrollHeight;
+}
+async function pollGpu(){
+  if (!GPU_UPD.job) return;
+  try{
+    const r = await fetch('/api/jobs/' + GPU_UPD.job, {credentials:'same-origin'});
+    if (!r.ok) return;
+    const j = await r.json();
+    renderGpuJob(j);
+    if (j.status !== 'running') {
+      clearInterval(GPU_UPD.timer); GPU_UPD.timer = null;
+      loadGpuApply();
+    }
+  }catch(e){ /* transient */ }
+}
+async function applyGpu(){
+  if (!GPU_UPD.pending.length) { alert('nothing GPU-stack pending'); return; }
+  if (!confirm('apt-get install ' + GPU_UPD.pending.join(' ') +
+               '\n\nThe desktop will ask for your admin password (polkit). ' +
+               'Services restart per package; kernel/DKMS changes need a reboot. Continue?')) return;
+  const r = await fetch('/api/updates/gpu', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({packages: GPU_UPD.pending})});
+  if (r.status === 401) { gotoInternal('/login'); return; }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert('update refused: ' + (d.detail || r.status)); return; }
+  GPU_UPD.job = d.job;
+  if (!GPU_UPD.timer) GPU_UPD.timer = setInterval(pollGpu, 3000);
+  loadGpuApply();
 }
 
 // Arriving from the global job bar's "open" link: show the panel for the job the

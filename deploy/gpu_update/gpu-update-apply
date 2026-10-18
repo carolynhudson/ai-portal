@@ -1,0 +1,55 @@
+#!/bin/sh
+# gpu-update-apply — root-side enforcer for the portal's GPU-stack updates.
+#
+# Invoked ONLY via pkexec (the polkit policy scopes auth_admin to this exact
+# path; the password goes to the OS agent, never to the portal, nothing is
+# stored). Every argument is validated before apt sees it: no options,
+# plain package names only, GPU-stack whitelist only, known package with a
+# candidate only. Output is appended to /var/log/aiportal-gpu-update.log.
+#
+# Install: tools/gpu_update_gate_install.sh (one-time, root).
+set -eu
+
+LOG=/var/log/aiportal-gpu-update.log
+# Exact mirror of health.GPU_PKG_RE (app/core/health.py): what the portal
+# shows as GPU-stack is exactly what this may install. Search semantics,
+# same branches — keep the two lines identical.
+WHITELIST='amdgpu|amdrocm|mesa-amdgpu|^rocm|[-_]rocm[-_]|hipcc|hip-runtime|^hip-|hsa-runtime|rocblas|hipblas'
+
+if [ "$(id -u)" != 0 ]; then
+  echo "gpu-update-apply: must run as root via pkexec (polkit)" >&2
+  exit 2
+fi
+if [ "$#" -lt 1 ]; then
+  echo "usage: gpu-update-apply <package> [package...]" >&2
+  exit 2
+fi
+
+for p in "$@"; do
+  case "$p" in
+    -*) echo "refused: options not allowed ('$p')" >&2; exit 3 ;;
+  esac
+  if ! echo "$p" | grep -Eq '^[a-z0-9][a-z0-9._+-]*$'; then
+    echo "refused: bad package name ('$p')" >&2; exit 3
+  fi
+  if ! echo "$p" | grep -Eq "$WHITELIST"; then
+    echo "refused: not GPU-stack ('$p')" >&2; exit 3
+  fi
+  if ! apt-cache policy "$p" 2>/dev/null | grep -qE 'Candidate:\s*[^n(]'; then
+    echo "refused: no install candidate for ('$p')" >&2; exit 3
+  fi
+done
+
+echo "=== $(date -Is) apply: $* (pkexec uid=${PKEXEC_UID:-root})" >> "$LOG"
+export DEBIAN_FRONTEND=noninteractive
+if apt-get install -y -- "$@" >> "$LOG" 2>&1; then
+  echo "=== $(date -Is) done ok" >> "$LOG"
+  echo "applied: $* (log: $LOG)"
+  exit 0
+else
+  rc=$?
+  echo "=== $(date -Is) FAILED rc=$rc" >> "$LOG"
+  echo "apt failed (rc=$rc); tail:" >&2
+  tail -20 "$LOG" >&2
+  exit "$rc"
+fi

@@ -108,6 +108,10 @@ class RollbackBody(BaseModel):
     confirm: bool = False
 
 
+class GpuUpdateBody(BaseModel):
+    packages: list[str]     # subset of health apt gpu_pending; route enforces
+
+
 class PersonalityApplyBody(BaseModel):
     """Which personality to write, optional edits on top of it, and explicit consent to write it.
 
@@ -2147,6 +2151,59 @@ def create_app() -> FastAPI:
                  f"({res.get('freed_bytes', 0) / 1048576:.1f} MiB, "
                  f"{res.get('files')} files; record: {res.get('note_dir')})")
         return res
+
+    # ------------------------------------- updates (GPU stack, polkit gate)
+    # The GUI App Center model: applying apt runs `pkexec <helper>` and the
+    # desktop's polkit agent asks for the admin password. The portal never
+    # sees, transports, or stores it. Two validation layers: the route only
+    # accepts names the health probe currently reports as GPU-stack pending;
+    # deploy/gpu_update/gpu-update-apply (root-owned, installed by
+    # tools/gpu_update_gate_install.sh) re-validates the whitelist itself.
+    def _gpu_apply_bin() -> str:
+        return os.environ.get(
+            "AI_PORTAL_GPU_APPLY_BIN", "/usr/local/lib/aiportal/gpu-update-apply")
+
+    @app.get("/api/updates/gpu")
+    def api_updates_gpu(_=Depends(_require_auth)):
+        a = health.apt()
+        return {"available": a.get("available"),
+                "gpu_pending": a.get("gpu_pending") or [],
+                "kernel_pending": a.get("kernel_pending") or [],
+                "lists_age_h": a.get("lists_age_h"),
+                "gate_installed": Path(_gpu_apply_bin()).is_file(),
+                "job": updater.latest_job("gpuupdate")}
+
+    @app.post("/api/updates/gpu")
+    def api_update_gpu(body: GpuUpdateBody, _=Depends(_require_auth)):
+        pkgs = body.packages
+        allowed = set(health.apt().get("gpu_pending") or [])
+        bad = [p for p in pkgs if p not in allowed]
+        if not pkgs or bad:
+            raise HTTPException(status_code=400,
+                                detail=f"not GPU-stack pending: {bad or '(empty)'}")
+        if not Path(_gpu_apply_bin()).is_file():
+            raise HTTPException(
+                status_code=409,
+                detail="gate not installed: sudo bash tools/gpu_update_gate_install.sh")
+        _refuse_if_busy()
+
+        def run(log):
+            log(f"$ pkexec {_gpu_apply_bin()} {' '.join(pkgs)}")
+            log("(admin password prompt on the desktop — polkit is the gate)")
+            p = subprocess.run(["pkexec", _gpu_apply_bin(), *pkgs],
+                               capture_output=True, text=True, timeout=3600)
+            for line in ((p.stdout or "") + (p.stderr or "")).splitlines():
+                log(line)
+            if p.returncode != 0:
+                raise RuntimeError(f"gpu-update-apply failed (rc={p.returncode})")
+            health.reset_cache()  # re-probe: HIP probe, reboot-pending, rebuild offer
+            return {"status": "applied", "packages": pkgs}
+
+        job_id = updater.start_job("gpuupdate", " ".join(pkgs), run)
+        if job_id is None:
+            raise _busy()
+        db.event("portal", "update", f"gpu-stack: apt apply via polkit gate: {', '.join(pkgs)}")
+        return {"job": job_id}
 
     # --------------------------------------------- updates (E: ComfyUI)
     @app.get("/api/updates/comfyui")

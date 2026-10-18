@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "https://specifications.freedesktop.org/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+
+  <!-- AI Portal: apply AMD GPU-stack updates.
+       The password goes to the desktop's polkit authentication agent
+       (the GUI App Center model): admin-authorized per run, session-cached
+       (auth_admin_keep), nothing passed through or stored by the portal.
+       Scope: this exact executable only (exec.path annotation). -->
+  <action id="com.aiportal.gpuupdate.apply">
+    <message>AI Portal wants to apply AMD GPU-stack updates (apt)</message>
+    <icon_name>system-software-update</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/aiportal/gpu-update-apply</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>
