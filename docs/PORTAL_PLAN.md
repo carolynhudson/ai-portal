@@ -5734,3 +5734,51 @@ The night's jsdom run caught the honest edge cases the redesign had to answer: a
 an off-surface card was a guarded no-op — dead by the gate's own definition — so the strip
 restores the card to the surface (built-ins open it for reading and say so); and the inert
 attach-select exemptions moved to their new nth paths with the load-state reason restated.
+
+##### 6.14.1z The frame, the name, and the tree (2026-10-18)
+
+Owner Oct-18, on the card surface that replaced the stepper: three connected framing defects —
+"frame the personality editor in some way and rather than a 'close the editor' make it so that
+the editor is collapseable"; "the personality's surface ... has no visual clues that all those
+parts are connected to the specific personality being edited"; "the model selection list ... has
+no organization to it and frankly ai model names are overly long and repeative." The tree ask
+named the metadata columns (`general.quantized_by / general.name / general.file_type`); what
+shipped reads the same facts from the id itself.
+
+**The frame.** The editor is one bordered object with a header band. The band carries the
+personality's name (`#ed-frame-who`) and **one labeled collapse toggle** (`#ed-toggle`): the
+button never hides — its label ("Collapse the settings editor" / "Open the settings editor")
+and `aria-expanded` state which way it acts. The open/close verb pair is forbidden by the
+contract test: a pair asks the operator to find a control that exists in only one state, and
+the Now-strip lesson (§6.14.1q) says a script finds such a control in half the states. The
+toggle hides exactly `#ed-workbench`, the Oct-15 single wrapper. The editor still opens open.
+
+**The name.** `syncIdentity` is the one paint point: the frame header and the surface heading
+(`#ed-surface-who`) both name the personality the cards belong to, repainting on every persona
+change. Two controls describing the personality were already one fact; now two headings are,
+too — both derived from `shown`, never a copy.
+
+**The tree.** The tick list groups by the id's repository namespace — for this library that IS
+`general.quantized_by` (bartowski, ggml-org, ISTA-DASLab, Jackrong, TheBloke, unsloth ...), and
+the `:QUANT` suffix is `general.file_type` — so the grouping is zero-cost: no GGUF-header
+sniffing at page render, the facts come out of the one store the page already reads. Items
+show the short name + a quant tag chip, not the wall-long id; user-authored model
+personalities group under **User-Defined (model personalities)** naming the file each alias
+renames. A filter box hides items that match nothing and the groups that lose all their items
+(a hidden checkbox keeps its tick — a filtered list is a view of the personality, not an edit
+of it). Groups rest closed when the personality covers none, re-opening per persona, because
+coverage is a personality fact; the pass runs after `loadIdentity` ticks boxes, else every
+group collapses at boot.
+
+**Measured.** First build: 2576 px editor — 23 files at one column = three viewports, the
+harness flagged it. Fix: two-column item grid + the closed-rest rule → **1832 px tallest
+block / 2924 px page, no flag** (the card-surface baseline was 1534/2629 with an unorganized
+wall). Live-verified on :8090: toggle label+aria swap with workbench 1699→0→1699, filter
+"iq3" → 5/23 items 3/11 groups, persona switch repaints both who-lines.
+
+**Contract.** The collapse test is now the single-toggle test (asserts `ed-toggle`,
+`aria-expanded`, label via textContent, **forbids** `id="ed-open"`/`id="ed-collapse"`); the
+card-surface test requires `ed-frame`/`ed-frame-who`/`ed-surface-who`; routes assert the two
+group kinds (`User-Defined (model personalities)`, `Local files` for repository-less ids);
+spec `expectVisible` swaps `#ed-open` for `#ed-toggle` and adds the three new ids. UI suite 91
+passed (pre-commit gate ran it inline on the commit).
