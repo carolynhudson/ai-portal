@@ -238,6 +238,26 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
   public RAI_1.8 XRT bucket, or Path D issue. Full dep path + forensics:
   `~/ai/logs/NPU-morning-brief.md` EVENING. DD embedding strategy offloads
   0% from dynamo graphs — the whole-graph vaiml lane is the working one.
+- **F4. NPU RUNS EG2 — PARITY VERDICT: NO-GO (Oct 17, night)**: the runtime
+  wall was a **library-shadowing bug**, not the XRT pair: AMD's `voe/lib`
+  bundles a 2.27-era `libxrt_coreutil.so.2` (zero `xrt_core::smi` exports)
+  and AMD's documented `LD_LIBRARY_PATH` lets it shadow the deb's 2.25.37
+  coreutil that the 2.25 `libxrt_core.so.2` resolves against → the #384
+  undefined-symbol dlopen failure. **Fix: put `/opt/xilinx/xrt/lib` FIRST in
+  LD_LIBRARY_PATH** (3-line dlopen repro: fail with AMD's order, OK with
+  system order; system coreutil exports the symbol, voe's exports 0).
+  With that, EG2 runs on NPU silicon: 8 probes, **min cos 0.99935 vs the
+  Q8_0 sidecar** (EG2 quality confirmed on-NPU).
+  **Parity arms, same benchmark (S=512, single stream, warm)**:
+  NPU **2.5 docs/s** vs CPU sidecar **31.2 docs/s** → CPU 12.5× faster;
+  at production doc lengths CPU is 224 docs/s. **No NPU adoption for
+  embeddings.** The gate did its job. Why the NPU lags: fp32 weights
+  (no quark-bf16 quantizer on Linux) streamed per-inference through the
+  DPU pipeline + dynamo-decomposed 512² attention; AMD's own 300M artifact
+  uses quantized weights + DD, which Linux 1.8 cannot run (CastAvx). All
+  remaining NPU levers (quark-on-Linux, DD dynamo shapes, #384, model-gen
+  on Linux) are AMD 1.9 watch items. CPU sidecar remains the engine; NPU
+  stays validated-silicon + health-tiled.
 - **F. EG2-on-NPU via the Linux `model_generate`** — **NEW Oct 17: the tool
   ships as a Linux wheel** in the 1.8 tgz (installed + working CLI on this box:
   `--oga_only | --hybrid | --npu | --vit | --sd`, fusion modes incl.
