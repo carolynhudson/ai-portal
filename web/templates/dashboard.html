@@ -813,6 +813,15 @@ function renderRouter(d){
 }
 function setLight(id, on){ const el = document.getElementById(id); if (el) el.className = 'light ' + (on ? 'on' : 'off'); }
 function setText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
+function setTextTip(id, txt, tip){ const el = document.getElementById(id); if (!el) return;
+  el.textContent = txt; if (tip) { el.title = tip; el.style.cursor = 'help'; } }
+function setPendingList(id, list){
+  // A 34-package pending list must not render as one giant joined string:
+  // show a readable head, put the full list in the tooltip.
+  if (!list.length) { setText(id, 'none'); return; }
+  const head = list.slice(0, 6).join(', ');
+  setTextTip(id, head + (list.length > 6 ? ' … +' + (list.length - 6) + ' more (' + list.length + ' total)' : ''), list.join('\n'));
+}
 function fmtDur(ms){ const s = ms / 1000; return s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'; }
 function fmtNum(n){ return (n == null) ? '0' : Number(n).toLocaleString(); }
 function fmtAge(s){
@@ -1687,8 +1696,8 @@ async function loadGpuApply(){
     const d = await r.json();
     GPU_UPD.pending = d.gpu_pending || [];
     setText('gpu-lists-age', d.lists_age_h == null ? 'unknown' : d.lists_age_h + ' h');
-    setText('gpu-pending', GPU_UPD.pending.length ? GPU_UPD.pending.join(', ') : 'none');
-    setText('gpu-kernel-pending', (d.kernel_pending && d.kernel_pending.length) ? d.kernel_pending.join(', ') : 'none');
+    setPendingList('gpu-pending', GPU_UPD.pending);
+    setPendingList('gpu-kernel-pending', d.kernel_pending || []);
     const running = d.job && d.job.status === 'running';
     const pill = document.getElementById('gpu-pill');
     if (pill) {
@@ -1730,7 +1739,9 @@ async function pollGpu(){
 }
 async function applyGpu(){
   if (!GPU_UPD.pending.length) { alert('nothing GPU-stack pending'); return; }
-  if (!confirm('apt-get install ' + GPU_UPD.pending.join(' ') +
+  const head = GPU_UPD.pending.slice(0, 8).join(' ');
+  const more = GPU_UPD.pending.length > 8 ? ' … (+' + (GPU_UPD.pending.length - 8) + ' more)' : '';
+  if (!confirm('apt-get install ' + GPU_UPD.pending.length + ' GPU-stack packages:\n' + head + more +
                '\n\nThe desktop will ask for your admin password (polkit). ' +
                'Services restart per package; kernel/DKMS changes need a reboot. Continue?')) return;
   const r = await fetch('/api/updates/gpu', {

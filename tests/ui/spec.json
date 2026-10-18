@@ -243,6 +243,54 @@
             "stale": false,
             "update_available": true
           }
+        },
+        {
+          "_comment": "live Oct-18 shape: 34 GPU-stack pending, no kernel, gate installed, idle. The card must render a readable head (+28 more (34 total)), not 34 joined names.",
+          "path": "^/api/updates/gpu$",
+          "status": 200,
+          "body": {
+            "available": true,
+            "gate_installed": true,
+            "gpu_pending": [
+              "amdgpu-core",
+              "libdrm-amdgpu-common",
+              "libdrm-amdgpu-amdgpu1:i386",
+              "libdrm-amdgpu-amdgpu1",
+              "libdrm2-amdgpu:i386",
+              "libdrm2-amdgpu",
+              "libllvm22.1-amdgpu:i386",
+              "libllvm22.1-amdgpu",
+              "libegl1-amdgpu-mesa-drivers:i386",
+              "libegl1-amdgpu-mesa-drivers",
+              "libegl1-amdgpu-mesa",
+              "libgl1-amdgpu",
+              "libgl2-amdgpu",
+              "libgl3-amdgpu",
+              "libgl4-amdgpu",
+              "libgl5-amdgpu",
+              "libgl6-amdgpu",
+              "libgl7-amdgpu",
+              "libgl8-amdgpu",
+              "libgl9-amdgpu",
+              "libgl10-amdgpu",
+              "libgl11-amdgpu",
+              "libgl12-amdgpu",
+              "libgl13-amdgpu",
+              "libgl14-amdgpu",
+              "libgl15-amdgpu",
+              "libgl16-amdgpu",
+              "libgl17-amdgpu",
+              "libgl18-amdgpu",
+              "libgl19-amdgpu",
+              "libgl20-amdgpu",
+              "libgl21-amdgpu",
+              "libgl22-amdgpu",
+              "libgl23-amdgpu"
+            ],
+            "kernel_pending": [],
+            "lists_age_h": 10.4,
+            "job": null
+          }
         }
       ],
       "expectStylesheets": [
@@ -264,7 +312,8 @@
         "^/api/updates/llamacpp/delete$",
         "^/api/updates/comfyui$",
         "^/api/updates/hf$",
-        "^/api/services/llamacpp/start$"
+        "^/api/services/llamacpp/start$",
+        "^/api/updates/gpu$"
       ],
       "expectText": [
         {
@@ -327,6 +376,22 @@
         {
           "selector": "#census-presets",
           "contains": "no router process"
+        },
+        {
+          "_comment": "GPU card (fixture: 34 real-shape pending): the pane fills when the tab opens, so these assert after the tab pass. Truncation is painted text (head-6 + '+28 more (34 total)'), full list in the tooltip; the pill names the state.",
+          "selector": "#gpu-pending",
+          "contains": "+28 more (34 total)",
+          "after_select": true
+        },
+        {
+          "selector": "#gpu-pending",
+          "matches": "^amdgpu-core, ",
+          "after_select": true
+        },
+        {
+          "selector": "#gpu-pill",
+          "contains": "ready",
+          "after_select": true
         }
       ],
       "expectHidden": [
@@ -1502,232 +1567,232 @@
       ],
       "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
     },
-{
-  "name": "projects-active",
-  "path": "/projects",
-  "_comment": [
-    "Queue 32 \u00a76.14.1x \u2014 the ACTIVE scenario, in the operator's own words:",
-    "'the projects page must detect that running session and take you to it rather than showing the",
-    "inactive launchpad', and the session 'should remain a durable active agentic task even if the",
-    "user closes their browser session or changes pages on the portal'.",
-    "",
-    "Fixture sets are the scenarios, so a second entry on the same path is the only way to assert the",
-    "mode the other entry cannot describe: here the registry says the project IS served, with nothing",
-    "in the browser remembering that anyone launched it. That is the same situation as opening the",
-    "portal an hour later, from another machine, or after the portal service restarted.",
-    "",
-    "expectRequestsOnLoad is the load-bearing check: a session reachable only after a click passes",
-    "every interaction assertion in the world and still fails this one."
-  ],
-  "fixtures": [
     {
-      "path": "^/api/projects$",
-      "status": 200,
-      "_comment": "The registry's answer after a launch: the row carries the serve record.",
-      "body": {
-        "projects": [
-          {
-            "path": "/home/tester/ai-projects/ui-registered-app",
-            "name": "ui-registered-app",
-            "exists": true,
-            "dirty_worktree": "clean",
-            "facts": {
+      "name": "projects-active",
+      "path": "/projects",
+      "_comment": [
+        "Queue 32 §6.14.1x — the ACTIVE scenario, in the operator's own words:",
+        "'the projects page must detect that running session and take you to it rather than showing the",
+        "inactive launchpad', and the session 'should remain a durable active agentic task even if the",
+        "user closes their browser session or changes pages on the portal'.",
+        "",
+        "Fixture sets are the scenarios, so a second entry on the same path is the only way to assert the",
+        "mode the other entry cannot describe: here the registry says the project IS served, with nothing",
+        "in the browser remembering that anyone launched it. That is the same situation as opening the",
+        "portal an hour later, from another machine, or after the portal service restarted.",
+        "",
+        "expectRequestsOnLoad is the load-bearing check: a session reachable only after a click passes",
+        "every interaction assertion in the world and still fails this one."
+      ],
+      "fixtures": [
+        {
+          "path": "^/api/projects$",
+          "status": 200,
+          "_comment": "The registry's answer after a launch: the row carries the serve record.",
+          "body": {
+            "projects": [
+              {
+                "path": "/home/tester/ai-projects/ui-registered-app",
+                "name": "ui-registered-app",
+                "exists": true,
+                "dirty_worktree": "clean",
+                "facts": {
+                  "git": true,
+                  "readme": true,
+                  "agents": true,
+                  "venv": true,
+                  "node_modules": false,
+                  "cmake": false,
+                  "pyproject": false,
+                  "package_json": false
+                },
+                "notes": {
+                  "init": [
+                    "git",
+                    "readme"
+                  ],
+                  "refused": [],
+                  "remote": null
+                },
+                "serve": {
+                  "served": true,
+                  "session": "ses_ui_1",
+                  "personality": "Agentic-PI",
+                  "reason": "the harness is serving this folder",
+                  "at": "2026-10-15T10:00:00+00:00"
+                }
+              }
+            ],
+            "served": [
+              {
+                "name": "ui-registered-app",
+                "session": "ses_ui_1",
+                "personality": "Agentic-PI"
+              }
+            ],
+            "scan": [],
+            "toolchains": {
               "git": true,
-              "readme": true,
-              "agents": true,
-              "venv": true,
-              "node_modules": false,
-              "cmake": false,
-              "pyproject": false,
-              "package_json": false
+              "python3": true,
+              "node": true,
+              "cmake": false
             },
-            "notes": {
-              "init": [
-                "git",
-                "readme"
-              ],
-              "refused": [],
-              "remote": null
-            },
-            "serve": {
-              "served": true,
-              "session": "ses_ui_1",
+            "steps": [
+              "init",
+              "pull",
+              "deps"
+            ],
+            "order": [
+              "git",
+              "venv"
+            ],
+            "launch": {
+              "default": "Agentic-PI",
               "personality": "Agentic-PI",
-              "reason": "the harness is serving this folder",
-              "at": "2026-10-15T10:00:00+00:00"
+              "personality_from": "the last session launched from it"
+            },
+            "summary": {
+              "root": "/home/tester/ai-projects",
+              "root_ok": true,
+              "root_error": null,
+              "registered": 1,
+              "unadopted": 0,
+              "home": "/home/tester",
+              "portal_home": "/home/tester/ai",
+              "model_library": "/home/tester/ai/models",
+              "personalities": [
+                "Agentic-PI"
+              ],
+              "personalities_named": {
+                "Agentic-PI": "Agentic-PI"
+              }
             }
           }
-        ],
-        "served": [
-          {
-            "name": "ui-registered-app",
-            "session": "ses_ui_1",
-            "personality": "Agentic-PI"
-          }
-        ],
-        "scan": [],
-        "toolchains": {
-          "git": true,
-          "python3": true,
-          "node": true,
-          "cmake": false
         },
-        "steps": [
-          "init",
-          "pull",
-          "deps"
-        ],
-        "order": [
-          "git",
-          "venv"
-        ],
-        "launch": {
-          "default": "Agentic-PI",
-          "personality": "Agentic-PI",
-          "personality_from": "the last session launched from it"
-        },
-        "summary": {
-          "root": "/home/tester/ai-projects",
-          "root_ok": true,
-          "root_error": null,
-          "registered": 1,
-          "unadopted": 0,
-          "home": "/home/tester",
-          "portal_home": "/home/tester/ai",
-          "model_library": "/home/tester/ai/models",
-          "personalities": [
-            "Agentic-PI"
+        {
+          "path": "^/api/projects/session$",
+          "status": 200,
+          "_comment": [
+            "What the page is shown about the session: identity, the meter's denominator read from the",
+            "personality, a bounded transcript, and the host's answer to 'is it busy'."
           ],
-          "personalities_named": {
-            "Agentic-PI": "Agentic-PI"
+          "body": {
+            "ok": true,
+            "found": true,
+            "project": "ui-registered-app",
+            "session": "ses_ui_1",
+            "personality": "Agentic-PI",
+            "model": "Agentic-PI/qwen3-coder-32b",
+            "agent": "build",
+            "state": "running",
+            "busy": false,
+            "turns": 12,
+            "context_used": 61000,
+            "context_limit": 262144,
+            "transcript": [
+              {
+                "id": "msg_ui_1",
+                "role": "user",
+                "text": "land the slice"
+              },
+              {
+                "id": "msg_ui_2",
+                "role": "assistant",
+                "text": "running the suite"
+              }
+            ],
+            "question": null,
+            "error": null
+          }
+        },
+        {
+          "_comment": [
+            "The launchpad's model select reads the host's bindable models. The sandbox has no",
+            "harness host, so the fixture speaks for it: the encoded form (providerID::modelID,",
+            "model ids carry slashes) is what the launch wire takes."
+          ],
+          "path": "^/api/harness/models$",
+          "status": 200,
+          "body": {
+            "models": [
+              {
+                "providerID": "llamacpp",
+                "id": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS",
+                "name": "Swift Flash IQ3_XXS",
+                "encoded": "llamacpp::ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS"
+              }
+            ]
+          }
+        },
+        {
+          "path": "^/api/harness/status$",
+          "status": 200,
+          "body": {
+            "ok": true,
+            "up": true,
+            "url": "http://127.0.0.1:4096",
+            "seeded": true,
+            "sessions": 1
           }
         }
-      }
-    },
-    {
-      "path": "^/api/projects/session$",
-      "status": 200,
-      "_comment": [
-        "What the page is shown about the session: identity, the meter's denominator read from the",
-        "personality, a bounded transcript, and the host's answer to 'is it busy'."
       ],
-      "body": {
-        "ok": true,
-        "found": true,
-        "project": "ui-registered-app",
-        "session": "ses_ui_1",
-        "personality": "Agentic-PI",
-        "model": "Agentic-PI/qwen3-coder-32b",
-        "agent": "build",
-        "state": "running",
-        "busy": false,
-        "turns": 12,
-        "context_used": 61000,
-        "context_limit": 262144,
-        "transcript": [
-          {
-            "id": "msg_ui_1",
-            "role": "user",
-            "text": "land the slice"
-          },
-          {
-            "id": "msg_ui_2",
-            "role": "assistant",
-            "text": "running the suite"
-          }
-        ],
-        "question": null,
-        "error": null
-      }
-    },
-    {
-      "_comment": [
-        "The launchpad's model select reads the host's bindable models. The sandbox has no",
-        "harness host, so the fixture speaks for it: the encoded form (providerID::modelID,",
-        "model ids carry slashes) is what the launch wire takes."
+      "expectRequestsOnLoad": [
+        "/api/projects/session"
       ],
-      "path": "^/api/harness/models$",
-      "status": 200,
-      "body": {
-        "models": [
-          {
-            "providerID": "llamacpp",
-            "id": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS",
-            "name": "Swift Flash IQ3_XXS",
-            "encoded": "llamacpp::ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS"
-          }
-        ]
-      }
+      "_markers_comment": [
+        "These are the page's real ids and the runner's real visibility keys. An assertion on a",
+        "selector the page never had is vacuous in the opposite direction from an unimplemented",
+        "key: it passes because nothing matches, and teaches everyone to trust a green bar.",
+        "expectShown is the half expectVisible lacks — 'in the document' is true of a panel",
+        "nobody can see, which is exactly the launchpad-versus-session distinction being asserted."
+      ],
+      "expectShown": [
+        "#proj-op",
+        "#proj-quit",
+        "#proj-send",
+        "#proj-prompt"
+      ],
+      "expectVisible": [
+        "#proj-op-name",
+        "#proj-op-meta",
+        "#proj-ctx-text"
+      ],
+      "expectHidden": [
+        "#proj-launchpad"
+      ],
+      "expectText": [
+        {
+          "_comment": "The banner names the project: the page must say WHICH project this session is.",
+          "selector": "#proj-op-name",
+          "contains": "ui-registered-app"
+        },
+        {
+          "_comment": "Identity: who serves it and which session.",
+          "selector": "#proj-op-meta",
+          "contains": "Agentic-PI"
+        },
+        {
+          "_comment": "The session's own id, so two people reading the page can tell they are reading the same session.",
+          "selector": "#proj-op-meta",
+          "contains": "ses_ui_1"
+        },
+        {
+          "_comment": "The meter's denominator is the context the personality is served at, read from the personality — the number the operator asked for, and the reason a bar with no ceiling is refused.",
+          "selector": "#proj-ctx-text",
+          "contains": "262k"
+        }
+      ],
+      "expectInert": [
+        {
+          "_comment": "Closing the session ends live work, so it must confirm before it posts.",
+          "selector": "#proj-quit",
+          "endpoint": "/api/projects/quit"
+        }
+      ],
+      "requireConfirmFor": [
+        "/api/projects/quit"
+      ]
     },
-    {
-      "path": "^/api/harness/status$",
-      "status": 200,
-      "body": {
-        "ok": true,
-        "up": true,
-        "url": "http://127.0.0.1:4096",
-        "seeded": true,
-        "sessions": 1
-      }
-    }
-  ],
-  "expectRequestsOnLoad": [
-    "/api/projects/session"
-  ],
-  "_markers_comment": [
-    "These are the page's real ids and the runner's real visibility keys. An assertion on a",
-    "selector the page never had is vacuous in the opposite direction from an unimplemented",
-    "key: it passes because nothing matches, and teaches everyone to trust a green bar.",
-    "expectShown is the half expectVisible lacks — 'in the document' is true of a panel",
-    "nobody can see, which is exactly the launchpad-versus-session distinction being asserted."
-  ],
-  "expectShown": [
-    "#proj-op",
-    "#proj-quit",
-    "#proj-send",
-    "#proj-prompt"
-  ],
-  "expectVisible": [
-    "#proj-op-name",
-    "#proj-op-meta",
-    "#proj-ctx-text"
-  ],
-  "expectHidden": [
-    "#proj-launchpad"
-  ],
-  "expectText": [
-    {
-      "_comment": "The banner names the project: the page must say WHICH project this session is.",
-      "selector": "#proj-op-name",
-      "contains": "ui-registered-app"
-    },
-    {
-      "_comment": "Identity: who serves it and which session.",
-      "selector": "#proj-op-meta",
-      "contains": "Agentic-PI"
-    },
-    {
-      "_comment": "The session's own id, so two people reading the page can tell they are reading the same session.",
-      "selector": "#proj-op-meta",
-      "contains": "ses_ui_1"
-    },
-    {
-      "_comment": "The meter's denominator is the context the personality is served at, read from the personality — the number the operator asked for, and the reason a bar with no ceiling is refused.",
-      "selector": "#proj-ctx-text",
-      "contains": "262k"
-    }
-  ],
-  "expectInert": [
-    {
-      "_comment": "Closing the session ends live work, so it must confirm before it posts.",
-      "selector": "#proj-quit",
-      "endpoint": "/api/projects/quit"
-    }
-  ],
-  "requireConfirmFor": [
-    "/api/projects/quit"
-  ]
-},
     {
       "selectCases": [
         {
@@ -1832,8 +1897,12 @@
         "session view is not showing. Asserted in both scenarios so neither mode can be the",
         "accident of a load order, and so a page that showed both at once is caught."
       ],
-      "expectShown": ["#proj-launchpad"],
-      "expectHidden": ["#proj-op"],
+      "expectShown": [
+        "#proj-launchpad"
+      ],
+      "expectHidden": [
+        "#proj-op"
+      ],
       "expectNoRequests": [
         "/api/projects/plan",
         "/api/projects/adopt",

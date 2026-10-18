@@ -1266,10 +1266,19 @@ h2{margin:18px 0 6px}
 
   async function preview() {
     setApply(false);
-    const r = await fetch('/api/personalities/preview', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload()),
-    });
+    let r;
+    try {
+      r = await fetch('/api/personalities/preview', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload()),
+      });
+    } catch (e) {
+      // A dead fetch must say so and leave Apply disabled: a silent rejection leaves
+      // the button dead with no sentence, which reads as "the portal is ignoring me".
+      renderRefuse([`preview request failed: ${e.message || e}`]);
+      renderBudget(null); renderDiff([]);
+      return;
+    }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       renderRefuse([String(data.detail || `preview failed (${r.status})`)]);
@@ -1282,28 +1291,42 @@ h2{margin:18px 0 6px}
     setApply(Boolean((data.would_refuse || []).length === 0));
   }
 
+  let applying = false;
   async function applyIt() {
+    // One apply per click, one apply at a time: the confirm is synchronous, so a
+    // second click can answer a second confirm while the first POST is in flight —
+    // and two applies are two router restarts.
+    if (applying) return;
     if (!confirm('Write presets.ini and restart the router? The current file is snapshotted first.')) return;
-    const body = Object.assign(payload(), {confirm: true});
-    const r = await fetch('/api/personalities/apply', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      renderRefuse([String(data.detail || `apply failed (${r.status})`)]);
-      return;
-    }
+    applying = true;
     setApply(false);
-    const job = data.job;
-    $('ed-apply-note').textContent = `apply started as job ${job}; watching…`;
-    const timer = setInterval(async () => {
-      const jr = await fetch(`/api/jobs/${job}`).then((x) => x.json()).catch(() => ({}));
-      const row = jr.job || jr;
-      if (row.status === 'running') return;
-      clearInterval(timer);
-      $('ed-apply-note').textContent = `${row.status}: ${row.log || ''}`;
-    }, 1500);
+    $('ed-apply-note').textContent = 'applying…';
+    try {
+      const body = Object.assign(payload(), {confirm: true});
+      const r = await fetch('/api/personalities/apply', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        renderRefuse([String(data.detail || `apply failed (${r.status})`)]);
+        applying = false;
+        return;
+      }
+      const job = data.job;
+      $('ed-apply-note').textContent = `apply started as job ${job}; watching…`;
+      const timer = setInterval(async () => {
+        const jr = await fetch(`/api/jobs/${job}`).then((x) => x.json()).catch(() => ({}));
+        const row = jr.job || jr;
+        if (row.status === 'running') return;
+        clearInterval(timer);
+        applying = false;
+        $('ed-apply-note').textContent = `${row.status}: ${row.log || ''}`;
+      }, 1500);
+    } catch (e) {
+      renderRefuse([`apply request failed: ${e.message || e}`]);
+      applying = false;
+    }
   }
 
   $('ed-model').addEventListener('change', () => loadModel($('ed-model').value));

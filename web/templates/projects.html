@@ -573,6 +573,11 @@ $('#proj-rows').addEventListener('click', async (e) => {
                         + (model ? ` on ${model.split('::')[1]}` : ' on the host default model')
                         + (agent ? ` as ${agent}` : '') + '? Opens a session in ' + row.dataset.path
                         + ' and records the pair on the project.')) return;
+    // Busy state: the confirm is synchronous, so the same Launch button can be
+    // answered twice while the first POST is in flight. Two POSTs are two sessions
+    // and two recorded pairs. The clicked button disables itself for the request.
+    const launchBtn = e.target;
+    launchBtn.disabled = true;
     $('#proj-summary').textContent = `launching ${name} with ${personality}…`;
     const d = await req('POST', '/api/projects/launch',
                         {name, personality, model, agent, confirm: true});

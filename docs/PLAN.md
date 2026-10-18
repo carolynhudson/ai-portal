@@ -323,9 +323,14 @@ docs/s measured post-switch).
 
 Artifacts: full forensics `~/ai/logs/NPU-morning-brief.md`; memory ids
 8, 10–14 (trail), 16–17 (ROCm 10.1 hip gap + shim), 18 (b11715).
+Paste-ready upstream bodies: `~/ai/logs/issues/issue-{384,386,387}-comment.md`
+(owner's GitHub; carved from `~/ai/logs/npu-upstream-repro-draft.md`).
 Tools in repo: `tools/npu_validate.sh`, `tools/npu_parity.py`,
 `tools/npu_embed_server.py` (engine-agnostic shim; amd-onnx backend written,
-awaiting engine), `tools/npu_xrt_build.sh`, `tools/embed_sidecar.sh` (+ `ai-embed` unit).
+awaiting engine), `tools/npu_eg2_server.py` (the EG2 vaiml endpoint that ran
+the Oct-18 parity arms on silicon — the re-test ladder's NPU arm, needs the
+xrt-lib-first env recipe from the brief's NIGHT section), `tools/npu_xrt_build.sh`,
+`tools/embed_sidecar.sh` (+ `ai-embed` unit).
 
 ## 5. What this means for the portal (inputs for the next design step)
 
