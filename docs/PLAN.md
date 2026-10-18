@@ -134,7 +134,7 @@ The router runs `--models-max 1` on purpose (owner's OOM history: a model in the
 router is an agent's eviction). The services we want to grow are small, streaming,
 and latency-tolerant — exactly the shape the NPU is for:
 
-- **RAG embeddings** (live on the CPU sidecar today: EmbeddingGemma-2, 111 docs/s,
+- **RAG embeddings** (live on the CPU sidecar today: EmbeddingGemma-2, 224 docs/s on b11715,
   durable `ai-embed` unit). The endpoint is plain `/v1/embeddings`; the NPU is a
   drop-in engine behind it, not a redesign.
 - **Autocomplete / fill-in-the-middle** small models, **speech-to-text decode**
@@ -214,7 +214,7 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
   `--prefill_fusion`; recipes include gemma-3). "Model generation not supported
   on Linux" ≈ undocumented, not absent. Chain: EG2 HF weights (public) →
   OGA export → `model_generate --npu` compile → .pb.bin → shim :8391 →
-  parity arms vs 111 docs/s → **EG2 quality gate** (must show EG2 quality —
+  parity arms vs 224 docs/s → **EG2 quality gate** (must show EG2 quality —
   no 300M smuggling). Known unknown: the OGA builder is causal-LM-shaped and
   embeddinggemma ships no lm_head → builder coaxing (synthesized
   genai_config.json, head stripping) is the day-scale risk. Wine for the
@@ -252,7 +252,7 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
 `tools/npu_validate.sh` (layers) → `quicktest.py` (expect `Test Finished`) →
 300M probe (`/tmp/probe300.py` pattern: custom-ops + meta_format bin) →
 `tools/npu_embed_server.py --backend amd-onnx` on :8391 →
-`tools/npu_parity.py` arms vs **111 docs/s** → agent-under-load arms
+`tools/npu_parity.py` arms vs **224 docs/s** → agent-under-load arms
 (closed-session) → record in memory + update this section.
 
 Artifacts: full forensics `~/ai/logs/NPU-morning-brief.md`; memory ids
