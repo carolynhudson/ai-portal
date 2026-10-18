@@ -225,6 +225,19 @@ model repo is part of the report. Watch §4d item 1 (1.9 relnotes) alongside.
   on opset-18); onnx 1.23 writes IR 14 → pin `ir_version=10`; the pip wheel
   lacks `passes/llm/sln` so full-LLM strategies (`hybrid_llm_npu.yaml`) need
   the tgz SDK, embedding strategy is wheel-complete.
+- **F3. EG2 → AIE COMPILE SUCCESS (Oct 17, evening)**: full EG2 text path
+  (`tools/eg2_export_onnx.py`, venv `ryzenai-e`, [1,512]→[1,768] + pool +
+  normalize) hits the quality gate (min cos **0.9995** vs live Q8_0 sidecar)
+  and the **AIE compiler compiled the whole graph** (vaiml/aie-mlir flow per
+  the tgz DistilBERT example, no quark on Linux): `Compilation Complete
+  (W75/E0)`, 4×8 array, 2.19 MB control ELF. **Runtime wall = XRT pairing
+  gap**: flexmlrt dlopens `libxrt_driver_xdna.so.2` → undefined
+  `xrt_core::smi::get_option_options` — AMD's 2.25.260102 plugin needs
+  `libxrt_core` symbols that xrt-base 2.25.37 lacks; AMD's 1.8 userspace
+  expects ~2.27-era XRT. Owner-gated fix paths: AMD relnotes pairing,
+  public RAI_1.8 XRT bucket, or Path D issue. Full dep path + forensics:
+  `~/ai/logs/NPU-morning-brief.md` EVENING. DD embedding strategy offloads
+  0% from dynamo graphs — the whole-graph vaiml lane is the working one.
 - **F. EG2-on-NPU via the Linux `model_generate`** — **NEW Oct 17: the tool
   ships as a Linux wheel** in the 1.8 tgz (installed + working CLI on this box:
   `--oga_only | --hybrid | --npu | --vit | --sd`, fusion modes incl.
