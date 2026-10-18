@@ -1730,6 +1730,7 @@ def test_the_model_tree_is_cards_that_show_their_state(client):
     assert "position:absolute;opacity:0" in tpl, "the checkbox is not the card itself"
     script = _script_of(tpl, "personalities")
     assert "ed-attach-cards-note" in script, "the click-site sentence is not painted"
+    assert "checked.includes(mid)" in script, "the surface reads the saved list, so a fresh tick is invisible"
     assert "ed-flash" in script and "scrollIntoView" in script, "an arriving card gives no signal"
     assert "paintSurface.quiet" in script, "boot must not flash or scroll (every card arrives at once)"
 

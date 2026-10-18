@@ -1133,6 +1133,26 @@
             "value": "UI-Test-Work"
           },
           "note": "the seeded personality, after create mode: its list and its settings arrive"
+        },
+        {
+          "_comment": [
+            "Oct-18 owner: ticking a model at the tree had to put its card on the surface immediately;",
+            "the rule read the saved list, so a fresh tick looked dead. The store is the live tick list."
+          ],
+          "select": "#ed-persona",
+          "choose": {
+            "value": "UI-Test-Work"
+          },
+          "note": "a tick at the tree lights that model's card on the surface",
+          "then_click": [
+            "#ed-attach input[value=\"ui-tiny-coder\"]"
+          ],
+          "expectText": [
+            {
+              "selector": "#ed-surface-count",
+              "contains": "2 of 3"
+            }
+          ]
         }
       ],
       "expectValues": [

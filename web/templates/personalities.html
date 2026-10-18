@@ -1144,7 +1144,11 @@ h2{margin:18px 0 6px}
       let on = want === null;
       if (want) {
         const cfg = configForModel(mid);
-        on = want.includes(mid) || (cfg && want.includes(cfg))
+        // The rule is the LIVE tick list, not the saved personality: a tick at the tree must
+        // put the card on the surface immediately (owner Oct-18: ticking a model "and nothing
+        // happened" -- this read the saved list, so a fresh tick was invisible until save).
+        // The boxes were seeded from `want` by loadIdentity, so at rest the two agree.
+        on = checked.includes(mid) || (cfg && checked.includes(cfg))
           || checked.some(n => (configByName[n] || {}).base_model === mid);
       }
       c.dataset.onSurface = on ? 'yes' : 'no';
