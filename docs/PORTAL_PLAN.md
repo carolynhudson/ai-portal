@@ -5825,3 +5825,46 @@ button and field read as decoration. That is the lesson: an invisible feature is
 feature, and the fix for "we need a means to create model personalities" was mostly CSS.
 Measured: 1897 px tallest block / 2924 page, no flag. UI suite 93 passed (pre-commit inline,
 twice). Commits `50e9cca` + `6f411cf`.
+
+##### 6.14.1ab The editor edits things you can edit (2026-10-18)
+
+Owner Oct-18, four asks: built-ins should not be editor options; verify the three stored
+personalities are editable; the name field went missing and "max resident" reads like part
+of "name"; and the alias rows in the tree wrap to mush.
+
+**Built-ins left the select.** "If a personality cannot be edited like safe and default they
+should not appear as options in the editor to be edited." Agreed: the deck is the reading
+surface (its cards say "built-in, not editable in place"); `#ed-persona` now carries
+`{% for c in cards if c.editable %}` plus the new mode. The seeding payload moved with it:
+the page seeds the editable set, `/api/personalities` carries every personality's view
+(built-ins' empty configs are asserted there). Five route tests re-scoped; the locked-pair
+test now proves absence-from-the-select + the deck's stated status.
+
+**The three stored personalities verified editable**: `Agentic-PI` (2 models, max 1),
+`Flash-VSCode` (3, max 3), `VSCode` (3, max 3) -- `built_in False`, legal names, model lists
+resolve, no corrupt columns. Live: each shows the editable click-site sentence.
+
+**The name returns.** The field shows for every personality: read-only for stored records
+(the name IS the record; the page states renaming means create-new), typed in new mode. The
+label pair that read as one phrase -- `name` + `max resident` -- is now `name` + **max
+resident models** (+ tooltip). No name field was deleted; it was new-mode-only by design,
+and the design lost to the read.
+
+**Alias rows stack** (owner's layout): the alias carries the row (bigger, bold), the model
+it renames sits below in lesser text prefaced with `↳`, one card. The `renames X` string
+became `↳ X` in the routes contract.
+
+**The height tail.** Built-ins leaving the select made the boot persona a real one, and the
+flow `loadPersona -> loadModel(first model)` has always auto-opened that model's card --
+`safe` never showed it because its grid sat on a card among 17 strips. The auto-opened
+grid measured **3978 px / three viewports**. Fix: `loadModel(name, openCard=true)` --
+persona loads and boot pass `false` and `showCard(null)` parks the grid in the hidden rest
+("pick a card, or pick a model below"); strips and the model select remain the opening
+verbs (a fixture proves it). Strip figure lines now paint for every on-surface card, not
+only the open one. Measured: **2067 px tallest block, no flag.**
+
+**Fixture physics.** With boot on a stored personality, the jinja-toggle cases no longer run
+on an empty built-in grid, and the harness cannot select the empty-valued "leave as is"
+options (`pickOption` skips them) -- so the §6.14.1i clean-summary assertion moved to the
+per-case moment where it is true (the seed-after-create case), and the toggles run last.
+UI suite 94 passed (pre-commit inline). Commit `c493c10`.
