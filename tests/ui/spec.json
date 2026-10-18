@@ -933,23 +933,20 @@
       "expectInert": [
         "_comment",
         "^a\\[nth=3\\]$",
-        "^select#mp-attach-1\\[nth=157\\]$"
+        "^select#mp-attach-1\\[nth=152\\]$",
+        "^select#mp-attach-3\\[nth=168\\]$"
       ],
       "_expectInert_comment": [
-        "a[nth=3] is the sidebar's own Personalities link: the sweep reaches it on the personalities",
-        "page, where clicking it is a reload of the page the harness is already driving. Inert by",
-        "definition on every page (the nav link for the page you are on), and asserted inert for the",
-        "other pages by their own expectNoRequests.",
+        "a[nth=3] is the sidebar's own Personalities link: inert by definition on the page it points at.",
         "",
-        "select#mp-attach-1 is the attach select on the seeded model card, in the state the page",
-        "lands in: UI-Test-Cfg is attached, so the select opens on `UI-Test-Cfg`, and the only",
-        "options the page offers for that file are `none` and `UI-Test-Cfg` (a config attaches only",
-        "to the file it was built on). A select whose options are those two, with the current value",
-        "already chosen, has no third state: the sweep's choice lands on the value it already had.",
-        "",
-        "Declared inert rather than swept as a no-op, and paired with the selectCases below that",
-        "drive the two transitions the select DOES have (attach, detach), so the exemption covers",
-        "the state, not the control."
+        "mp-attach-1 (ui-test-model) and mp-attach-3 (Jackrong/…) in the page's load state (persona 'safe',",
+        "no card open): the page opens on the whole library, no model personality is attached to these",
+        "cards, and the sweep drives them with no card open: the attach select offers only its current",
+        "'none' -- selecting the current value is not a state change in a browser. The attach transition",
+        "IS driven: the selectCases below (and the strip restore path) open cards where a config exists,",
+        "and the selectCases that select UI-Test-Work + ui-tiny-coder drive the two transitions that exist.",
+        "nth values re-derived from the Oct-18 card-surface DOM (the Global card and the moved tick list",
+        "shifted the element counts from the stepper layout)."
       ],
       "+requireConfirmFor": [
         "^/api/personalities/apply$",
@@ -1204,15 +1201,12 @@
         "#editor",
         "#pers-editor",
         "#ed-persona",
-        "#ed-global",
         "#ed-model",
         "#ed-preview",
         "#ed-apply",
         "#ed-summary",
         "#ed-layers",
-        "#ed-clear-global",
         "#ed-clear-model",
-        "#ed-steps",
         "#ed-attach",
         "#ed-attach-note",
         "#ed-create",
@@ -1226,13 +1220,18 @@
         "#pers-safe .pers-strip",
         "#pers-default .pers-strip",
         "#mp-cards",
-        "#mp-rest",
         ".mp-card",
         ".mp-strip",
         "#ed-used-by",
         "#pers-now",
         "#ed-open",
-        "#ed-steps-list"
+        "#ed-identity",
+        "#ed-surface",
+        "#ed-surface-note",
+        "#ed-surface-count",
+        "#ed-card-global",
+        "#ed-global-meta",
+        "#ed-review"
       ],
       "expectText": [
         {
@@ -1502,18 +1501,10 @@
           "contains": "nothing is active"
         },
         {
-          "_comment": [
-            "Queue 33 §6.14.1q, state 3, re-decided by the owner 2026-10-15: the editor opens OPEN.",
-            "The collapsed default measured as 'the editor is missing': five personality cards and the",
-            "generated presets put the opening verb below the fold of a 10,295 px phone page, and an",
-            "owner looking for the editor is not looking for a button that opens it. The collapse verbs",
-            "stay -- closing is still a verb with words -- and the row states, in visible text, the step",
-            "it shows. Asserted as visible text: expectVisible cannot tell a default-open editor from",
-            "one that is opened by script and never closed."
-          ],
+          "_comment": "Oct-18 surface: the open state states itself -- every region is on the page at once, the sentence the owner asked for in place of 'step N of M'. The collapse verb's pairing is asserted in test_ui_contract.",
           "selector": "#ed-collapsed-note",
-          "matches": "Step [0-9]+ of [0-9]+",
-          "note": "open default: the row states the step it shows"
+          "note": "open default: the row states the step it shows",
+          "contains": "the identity, every card, and the review bar are on the page together"
         }
       ],
       "expectNoInjectedMarkup": [
@@ -1545,7 +1536,8 @@
           ]
         }
       ],
-      "tabGroups": []
+      "tabGroups": [],
+      "_expectVisible_comment": "Oct-18 card surface: the stepper (#ed-steps, #ed-steps-list) retired; the regions (#ed-identity, #ed-surface, #ed-review) and the pinned Global card (#ed-card-global, #ed-global-meta) are asserted present together, which is the whole point: nothing swaps the editor away underneath you. #ed-global/#ed-clear-global are NOT in this list: the cards open collapsed (the Oct-15 height lesson -- an open grid measured 5,002 px in one block), and their fields are asserted by the after_select expectValues, which is the stronger claim: the values arrive, not just the markup."
     },
     {
       "name": "help",

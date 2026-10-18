@@ -993,7 +993,7 @@ def test_the_editor_creates_saves_and_deletes_a_personality():
 # The tokens as the page writes them: `c.querySelector('.mp-save').addEventListener(...)`, so the
 # closing paren belongs to the needle.
 CARD_BUTTONS = ["'.mp-strip')", "'.mp-attach')", "'.mp-new')", "'.mp-create')", "'.mp-save')",
-                "'.mp-delete')", "'.mp-detach')"]
+                "'.mp-delete')", "'.mp-detach')", "'.mp-remove')"]
 
 
 def test_the_model_personality_cards_edit_one_object_at_a_time():
@@ -1625,51 +1625,66 @@ def test_the_personality_editor_shows_the_projects_that_run_with_it(client):
 # rule, the shared-config cards). Nothing here moves a field; it changes what is visible at once.
 
 
-def _steps_section(script: str) -> str:
-    """The step-state code, bounded by its own two markers.
+def _surface_section(script: str) -> str:
+    """The card-surface state code, bounded by its own two markers.
 
-    The step layer is deliberately NOT inside loadPersona/syncIdentity/summarize: the editor tests
-    read those functions by name, and a step handler absorbed into an editor function would be
-    claiming that showing a step is part of loading a personality (that absorbed-handler mistake is
-    recorded in plan §6.14.1q's findings). A named marker is how a layer says where it lives — and
-    the section is bounded, because a layer that runs to the end of the script is not a layer: it
-    absorbs every handler written after it, and a rule about that layer would be a rule about the
-    page.
+    The surface layer is deliberately NOT inside loadPersona/syncIdentity/summarize: the editor
+    tests read those functions by name, and a card handler absorbed into an editor function would
+    be claiming that opening a card is part of loading a personality (that absorbed-handler
+    mistake is recorded in plan §6.14.1q's findings). A named marker is how a layer says where it
+    lives — and the section is bounded, because a layer that runs to the end of the script is not
+    a layer: it absorbs every handler written after it, and a rule about that layer would be a
+    rule about the page.
     """
-    start = script.find("// STEPS:")
+    start = script.find("// SURFACE:")
     assert start >= 0, (
-        "the step layer is not marked. The editor's functions are read by name by this file's other "
-        "tests, so the step-state code has to declare where it lives"
+        "the surface layer is not marked. The editor's functions are read by name by this file's "
+        "other tests, so the card-state code has to declare where it lives"
     )
-    end = script.find("// STEPS END:", start)
-    assert end >= 0, "the step layer does not declare where it ends"
+    end = script.find("// SURFACE END:", start)
+    assert end >= 0, "the surface layer does not declare where it ends"
     return script[start:end]
 
 
-def test_the_editor_opens_as_steps_and_says_which_one_is_open(client):
-    """The editor block is one step at a time, with the step named in text.
+def test_the_editor_is_a_card_surface_not_a_stepper(client):
+    """The owner's Oct-18 instruction, as structure: one surface of cards, no stepper.
 
-    `data-step` on the editor element (the page's idiom: state is an attribute, not a class the
-    script flips), one visible section at a time, a stepper naming the steps, and the current step
-    stated where the operator reads it.
+    The stepper measured as a hot mess: tab-shaped links replacing the whole editor with no
+    back/forward. A surface answers the same height problem honestly -- collapsed cards, one
+    field grid per scope -- while every region (identity, cards, review) stays on the page at
+    once, so "which step am I on" is not a question the page can ask. The Global card is pinned
+    (edited, never removed); model cards join and leave the surface with the tick list. State
+    is attributes on the elements (`data-ed-view`, `data-open`, `data-on-surface`) -- the page's
+    own deck idiom -- not classes the script flips.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
-    assert 'id="pers-editor"' in tpl
-    assert "data-ed-step" in tpl, "the editor carries no step state"
-    # The sections the editor's own tests read by id, declared as steps. Names are data attributes
-    # and the ids stay exactly where they are: `ed-global` remains the grid the row tests read, and
-    # step 2 wraps it. A stepper that renamed the ids would move the editor's own guards.
-    for sec in ("ed-identity", "ed-global-fields", "ed-model-step", "ed-review"):
-        assert f'data-ed-step-name="{sec}"' in tpl, f"editor section {sec} is not a step"
-    assert 'id="ed-steps"' in tpl, "the editor has no stepper naming its steps"
-    assert tpl.count('id="ed-global"') == 1, "the stepper must not duplicate the field grids"
+    # The stepper is gone: no step state, no step sections, no stepper list.
+    assert "data-ed-step" not in tpl, "the editor still carries step state"
+    assert 'id="ed-steps-list"' not in tpl, "the stepper list is still on the page"
+    assert "data-ed-step-name" not in tpl, "the sections are still step-swapped"
+    # The three regions, present together, and one wrapper for the collapse verb.
+    for sec in ('id="ed-identity"', 'id="ed-surface"', 'id="ed-review"'):
+        assert sec in tpl, f"the surface is missing {sec}"
+    assert 'id="ed-workbench"' in tpl, "the collapse verb has no single wrapper to hide"
+    # The Global card: pinned, saying so, and hosting the one [*] grid. No control on its strip:
+    # the strip reads and opens; the pin sentence is text, not a locked button.
+    assert 'id="ed-card-global"' in tpl and 'data-pinned="yes"' in tpl, "the Global card is not pinned"
+    card = tpl[tpl.index('id="ed-card-global"'):tpl.index('id="mp-cards"')]
+    assert 'id="ed-global"' in card, "the Global card does not host the [*] grid"
+    assert "always on the surface" in card, "the pinned card does not say it is pinned"
+    strip = card[card.index('class="mp-strip"'):card.index("</button>")]
+    assert "<button" not in strip and "<input" not in strip, "the Global strip carries a write control"
+    # Model cards carry surface membership and the CSS hides off-surface cards.
+    assert "data-on-surface" in tpl, "model cards do not carry surface membership"
+    assert '.mp-card[data-on-surface="no"]{display:none}' in tpl, "off-surface cards are not hidden"
+    assert 'class="mp-remove"' in tpl, "the card has no remove-from-surface verb"
 
     script = _script_of(tpl, "personalities")
-    steps = _steps_section(script)
-    assert "data-ed-step" in steps, "the step state is not what the script writes"
-    assert "ed-steps-list" in steps, "the stepper is not painted by the step layer"
-    # One visible section, stated in text an operator can read.
-    assert re.search(r"textContent|innerText", steps), "the current step is not stated in text"
+    surf = _surface_section(script)
+    assert "data-ed-view" in surf, "the collapse state is not what the script writes"
+    assert "dataset.open" in surf, "the card open state is not what the script writes"
+    assert "onSurface" in surf, "surface membership is not painted from the tick list"
+    assert re.search(r"textContent", surf), "the state is not stated in text an operator reads"
 
 
 def test_the_editor_collapses_to_the_deck_behind_its_own_collapse_verb(client):
@@ -1678,23 +1693,29 @@ def test_the_editor_collapses_to_the_deck_behind_its_own_collapse_verb(client):
     Open is the page's default reading state — the owner's 2026-10-15 instruction: the collapsed
     default measured as "the editor is missing", because the opening verb sat below the fold of a
     10,295 px page. Closing the editor is still a verb with words, and a collapsed editor with no
-    way back is how a page becomes unreadable in a new way.
+    way back is how a page becomes unreadable in a new way. Since Oct-18 there is exactly one
+    thing to hide: `#ed-workbench`, the whole surface at once.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
     assert 'id="ed-open"' in tpl, "the editor has no verb that opens it"
     assert 'id="ed-collapse"' in tpl, "the editor has no verb that closes it"
+    assert 'id="ed-workbench"' in tpl, "collapse has exactly one wrapper to hide"
+    css = tpl[tpl.index('.pers-editor[data-ed-view="collapsed"]'):]
+    assert "#ed-workbench{display:none}" in css[:160], "collapse does not hide exactly the workbench"
     script = _script_of(tpl, "personalities")
-    steps = _steps_section(script)
-    assert "ed-open" in steps and "ed-collapse" in steps, "the collapse verbs are not wired"
-    assert "hidden" in steps, "the collapse verbs are not shown and hidden by the state"
+    surf = _surface_section(script)
+    assert "ed-open" in surf and "ed-collapse" in surf, "the collapse verbs are not wired"
+    assert "hidden" in surf, "the collapse verbs are not shown and hidden by the state"
     assert "collapsed" in tpl, "the collapsed state is not named on the page"
 
 
-def test_the_editor_steps_move_without_moving_a_field(client):
-    """The step layer shows and hides the sections the editor tests already assert on.
+def test_the_card_surface_opens_cards_without_moving_fields(client):
+    """The card layer shows and hides; it does not rebuild fields, copy grids, or write values.
 
-    The grid ids stay singletons — a stepper implemented by duplicating the field grids is two
-    sources of truth for one setting, which is the failure the editor's own tests were written for.
+    The grid ids stay singletons — a card layer implemented by duplicating the field grids is
+    two sources of truth for one setting, which is the failure the editor's own tests were
+    written for. The layer's own markers bound the assertion: a layer that runs to the end of
+    the script absorbs every handler written after it.
     """
     tpl = (ROOT / "web" / "templates" / "personalities.html").read_text()
     assert tpl.count('id="ed-global"') == 1
@@ -1702,12 +1723,12 @@ def test_the_editor_steps_move_without_moving_a_field(client):
     assert tpl.count('id="ed-model"') == 1, "the target <select> id must stay the single one"
 
     script = _script_of(tpl, "personalities")
-    steps = _steps_section(script)
-    # The layer shows and hides sections by setting the editor's own attributes. It does not rebuild
-    # fields, copy grids, write values, or reach into a field: `querySelectorAll` is the selection
-    # API a layer would use to touch fields, and its absence is the assertion.
-    for forbidden in ("innerHTML", "appendChild", "ed-field", "querySelectorAll", ".value"):
-        assert forbidden not in steps, f"the step layer touches field internals ({forbidden})"
+    surf = _surface_section(script)
+    # The layer moves card state, and nothing else: no field internals, no requests, no writes
+    # into a control. (showCard moving the one grid element is the card layer's own honest verb,
+    # asserted where it lives: the model-personality card test.)
+    for forbidden in ("innerHTML", "querySelectorAll", "ed-field", ".value =", "fetch(", "postConfig"):
+        assert forbidden not in surf, f"the card layer touches field internals ({forbidden})"
 
 
 def test_the_deck_strip_carries_the_budget_figure_it_computes(client):

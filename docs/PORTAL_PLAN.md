@@ -5684,3 +5684,53 @@ Remaining open (can proceed without them):
      honest denominator; the step line and log are the truth), and a desktop
      notification (the bar is already the notification).
 10. **Phase J** — see §0 for the step list and target layout.
+
+##### 6.14.1y The editor becomes a card surface, not a stepper (2026-10-18)
+
+The owner's verdict on the queue-33 stepper, Oct-18: *"the personalities editor is a hot mess,
+there are links to 'steps' that are arranged like tabs but just replace the whole editor section
+with no clear way to go back or forward."* The instruction: make the form act like tabs or just
+be tabs — or, the owner's own suggestion, **cards on a surface**: one card per settings group
+with a unique alias per model, addable/removable, plus a **Global card that appears on every
+surface and cannot be removed, only edited**. Clicking a card brings up its editor with its
+current values. Discretion granted; the suggestion is a direction, not a spec.
+
+What the surface is (§6.14.1q's stepper retires; its height lesson stays):
+
+- **Three regions, one page**: identity, surface, review — all visible together. The stepper's
+  "step N of M" is gone because "which step am I on" is no longer a question the page can ask.
+- **The Global card is pinned**: it hosts the one `#ed-global` grid, its strip carries the live
+  `N value(s) in [*] · k proposed` figure, and the pin is stated in text on the strip ("always
+  on the surface · edited, never removed"). No remove control exists.
+- **A model card is on the surface exactly when the tick list covers that model** — the one
+  store. `data-on-surface` is painted from it; untick removes the card (the card's "remove from
+  surface" button is the same untick, and it names what survives: the settings and any model
+  personality). Tick adds it back; clicking an off-surface card's strip also restores it —
+  a card the user clicked is a card they mean to use.
+- **The card is the editor**: opening a card moves the one model grid into it (the §6.14.1k
+  single-input-set rule survives), a second click closes it. The review bar (summary → Preview →
+  Apply, budget, refusals, diff) sits at the bottom of every surface: the ledger is never a step
+  away, and the summary is the first line the surface answers "what would change?" with.
+- **Collapse survives** (the owner's Oct-15 rule): the editor opens open, `#ed-workbench` is the
+  one wrapper the collapse verb hides, and the verbs are words.
+- **The height rule keeps its teeth**: cards open collapsed; the grid at rest lives hidden in
+  `#mp-rest` with the sentence naming the verb. Measured (`tools/layout_measure.py`, laptop):
+  stepper layout 2,024 px with the grid's step 5,335 px one click and a whole step away;
+  open-grid-by-default surface 5,002 px in one block (the same defect, re-added — caught by the
+  measure, fixed the same night); card-surface default **1,534 px tallest block, 2,629 px page,
+  no over-three-viewports flag**, every region reachable without a step.
+
+Assertions that lock it (`test_ui_contract`): the stepper is absent (`data-ed-step`,
+`ed-steps-list`, `data-ed-step-name` all gone); the three regions and the workbench exist;
+the Global card is pinned and hosts the grid with no write control on its strip; the card layer
+is marked (`// SURFACE:` … `// SURFACE END:`) and touches no field internals (`innerHTML`,
+`querySelectorAll`, `ed-field`, `.value =`, `fetch(`, `postConfig` all absent inside it); grid
+ids stay singletons. The jsdom spec asserts the regions visible together, the surface note, the
+pinned card's meta, and the collapse sentence; `#ed-global`/`#ed-clear-global`/`#mp-rest` left
+the visible list on purpose — the cards' fields are claimed by the after-select value assertions
+instead, which is the stronger claim (the values arrive, not just the markup).
+
+The night's jsdom run caught the honest edge cases the redesign had to answer: a strip click on
+an off-surface card was a guarded no-op — dead by the gate's own definition — so the strip
+restores the card to the surface (built-ins open it for reading and say so); and the inert
+attach-select exemptions moved to their new nth paths with the load-state reason restated.

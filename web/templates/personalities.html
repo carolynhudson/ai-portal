@@ -82,28 +82,21 @@ table.keys td.k{font-family:var(--mono,monospace);white-space:nowrap}
 table.keys td.h{color:var(--mut)}
 .wrap{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:6px}
 h2{margin:18px 0 6px}
-/* The flow's three steps as one line above the fields they name: a list, not three headings, so the
-   line stays short and the headings remain the thing the sections are titled by. */
-/* Queue 33 §6.14.1q state 3: the editor as steps, and the deck as the reading surface.
-   The state is an attribute on the editor element (`data-ed-view`, `data-ed-step`) -- the page's own
-   deck idiom -- so the visible step is a fact about the element, not a class the script flips.
-   Collapsed by default: the page's measured defect is one block taller than three viewports, and the
-   editor is what makes it tall. */
-.pers-editor[data-ed-view="collapsed"] [data-ed-step-name],
-.pers-editor[data-ed-view="collapsed"] .ed-steps,
-.pers-editor[data-ed-view="collapsed"] .ed-row:not(.ed-open-row){display:none}
-.pers-editor[data-ed-view="open"] .ed-open-row{margin-bottom:2px}
-.pers-editor[data-ed-view="open"] [data-ed-step-name]{display:none}
-.pers-editor[data-ed-view="open"][data-ed-step="1"] [data-ed-step-name="ed-identity"],
-.pers-editor[data-ed-view="open"][data-ed-step="2"] [data-ed-step-name="ed-global-fields"],
-.pers-editor[data-ed-view="open"][data-ed-step="3"] [data-ed-step-name="ed-model-step"],
-.pers-editor[data-ed-view="open"][data-ed-step="4"] [data-ed-step-name="ed-review"]{display:block}
-.ed-steps button{background:none;border:0;padding:0;cursor:pointer;font:inherit;color:inherit}
-.ed-steps li[data-current="yes"]{color:var(--acc);border-bottom-color:var(--acc);font-weight:600}
-.ed-steps{display:flex;flex-wrap:wrap;gap:4px 16px;list-style:none;margin:10px 0 2px;padding:0;
-  font-size:.78rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
-.ed-steps li[data-step]{border-bottom:2px solid var(--line);padding-bottom:2px}
-.ed-steps li[data-step="1"]{color:var(--acc);border-bottom-color:var(--acc)}
+/* The editor as a card surface (owner's Oct-18 instruction; replaces the queue-33 stepper).
+   The stepper measured as a hot mess: tab-shaped links that replaced the whole editor with no
+   back/forward. A surface answers the same height problem honestly -- collapsed cards, one field
+   grid per scope -- and every region (identity, surface, review) is on screen at once, so
+   "which step am I on" is not a question the page can ask.
+   State lives on the element as an attribute -- the page's own deck idiom (`data-raised`,
+   `data-open`). Collapse survives as a verb with words (owner's 2026-10-15 instruction): the
+   editor opens open, and closing it hides exactly one wrapper, `#ed-workbench`. */
+.pers-editor[data-ed-view="collapsed"] #ed-workbench{display:none}
+.pers-editor[data-ed-view="collapsed"] .ed-open-row{margin:2px 0}
+.ed-surface{display:grid;gap:6px;margin:10px 0}
+/* A model card is on the surface exactly when the personality covers that model -- the tick list
+   is the one store, and `data-on-surface` is painted from it. Removing a card removes it from
+   this personality, never from the library. */
+.mp-card[data-on-surface="no"]{display:none}
 /* A model personality is a named object with settings, so it gets a card: a strip to read, a body to
    edit. One per model, which is what the file can hold. */
 .mp-cards{display:grid;gap:6px;margin:8px 0 10px}
@@ -428,17 +421,26 @@ h2{margin:18px 0 6px}
      "the editor is missing" -- five cards and the generated presets put the opening verb below the
      fold, and looking for a button that opens the editor is not looking for the editor. The editor
      opens open; closing it stays a verb with words. #}
-<div class="pers-editor" id="pers-editor" data-ed-view="open" data-ed-step="1"
+{# Owner's Oct-18 instruction (supersedes the queue-33 stepper): the editor is one surface of
+   cards, not a stepper. The stepper measured as a hot mess — tab-shaped links replacing the whole
+   editor with no back/forward. A surface keeps every region (identity, cards, review) on screen at
+   once, so "which step am I on" is not a question the page can ask. The Global card is pinned:
+   edited, never removed. A model card is on the surface exactly when the personality's tick list
+   covers that model; tick adds the card, untick removes it -- the card leaves the surface, the
+   settings and any model personality stay. #}
+<div class="pers-editor" id="pers-editor" data-ed-view="open"
      data-configs='{{ {"configs": configs, "uses": config_uses,
                        "used_by": used_by} | tojson }}'>
 
-  <section data-ed-step-name="ed-identity">
   <div class="ed-row ed-open-row">
     <button type="button" id="ed-open" class="cta">Open the settings editor</button>
     <span class="mut" id="ed-collapsed-note"></span>
     <button type="button" id="ed-collapse" hidden>Close the editor</button>
   </div>
-  <ol class="ed-steps" id="ed-steps-list" hidden></ol>
+
+  <div id="ed-workbench">
+
+  <section id="ed-identity">
   <div class="ed-row">
     <label for="ed-persona">personality</label>
     {# The personality's own current settings ride on its option (§6.14.1i), computed on the
@@ -465,13 +467,14 @@ h2{margin:18px 0 6px}
     <span class="mono">default</span> on the row applies; it does not mean zero.
   </p>
 
-  {# The three steps, named in the order the page asks them (§6.14.1f answer 2). The numbering is
-     presentation; what it commits to is that step 1 owns the personality itself -- its name, how many
-     models may be resident, the note, which models it covers, create/save/delete -- and steps 2 and 3
-     own the settings it carries. Creating lives here, not on the deck: the deck's one verb is raising. #}
-  <p class="mut" id="ed-steps">
-    <b>Three steps.</b> 1 the personality itself &middot; 2 global ([*]) settings &middot;
-    3 per-model settings. Creating lives here, not on the deck: the deck&rsquo;s one verb is raising.
+  {# The surface named in words, in one sentence above the cards it describes (owner Oct-18).
+     Not a stepper: a heading that states what is on the page, beside the controls it names. #}
+  <p class="mut" id="ed-surface-note">
+    <b>The surface.</b> Every setting this personality carries lives on the page at once: the
+    identity above, one card per setting group below, and the review bar at the bottom.
+    The <span class="mono">Global ([*])</span> card is pinned — edited, never removed.
+    A model card joins the surface when the personality covers that model; the tick list under the
+    cards is what adds and removes them.
   </p>
 
   <div class="ed-row">
@@ -491,17 +494,6 @@ h2{margin:18px 0 6px}
     <span class="mut" id="ed-identity-note"></span>
   </div>
 
-  <h4>Models this personality covers</h4>
-  <div class="ed-attach" id="ed-attach">
-    {# The two kinds a personality's `models` list accepts: a library model id, which is that file
-       under its own name with no settings of its own, and a stored model config, which is the same
-       file addressed by a name the router routes to. The base model is printed for a config because
-       the name is what a client types and the base is what loads. #}
-    {% for o in attach_options %}
-    <label class="ed-attach-item"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.name }}</span>{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
-    {% endfor %}
-  </div>
-  <p class="mut" id="ed-attach-note"></p>
   {# Queue 33's page half (§6.14.1q): which projects run with *this* personality. The answer is not
      the page's to work out -- it names sessions on the host, so it arrives on the payload
      (`used_by`, from projects.by_personality) and the script paints it. A personality edited
@@ -510,9 +502,25 @@ h2{margin:18px 0 6px}
   <p class="mut" id="ed-used-by"></p>
   </section>
 
-  <section data-ed-step-name="ed-global-fields">
-  <h3>2 Global ([*])</h3>
-  <div class="ed-grid" id="ed-global">
+  <section class="ed-surface" id="ed-surface">
+
+  {# The Global card: pinned to the surface by the owner's Oct-18 rule. The strip carries the live
+     figure (the [*] count and what is proposed), so the verdict is readable without opening
+     anything, exactly like the deck's strips. No remove control: the sentence says so. #}
+  <section class="mp-card ed-global-card" id="ed-card-global" data-pinned="yes" data-open="0">
+    <button type="button" class="mp-strip" aria-expanded="false">
+      <span class="mp-name">Global ([*])</span>
+      <span class="mut mp-meta" id="ed-global-meta"></span>
+      <span class="mut">always on the surface · edited, never removed</span>
+    </button>
+    <div class="mp-body" hidden>
+    <p class="mut">What every model this personality loads inherits, unless the model's own card
+      overrides it. A field left empty is not set here — the <span class="mono">default</span>
+      on the row applies.</p>
+    <div class="ed-row">
+      <button type="button" id="ed-clear-global">reset the global fields</button>
+    </div>
+    <div class="ed-grid" id="ed-global">
     {# The row component (§6.14.1): NAME [control] default on one line, the help sentence as the
        thing you click, and a detail underneath it carrying the rule, the side effect, the spellings
        b11429 declares for the key, the model facts the row needs, and the link to the /help section
@@ -559,19 +567,20 @@ h2{margin:18px 0 6px}
       {% endif %}
     {% endfor %}
   </div>
-
+    </div>
   </section>
 
-  <section data-ed-step-name="ed-model-step">
-  <h3>3 Per model</h3>
+  <h4>Models on this surface</h4>
   {# The model personalities live here, as one card per model this personality covers (§6.14.1f
-     answer 2). One per model, not an arbitrary pile: presets.ini has one section per model, and
-     resolve_targets() already refuses two configs on the same model, because "which settings win"
-     would be answered by dictionary ordering. The cards are the selector -- there is one set of
-     inputs, and the open card is where they sit. #}
+     answer 2), and each card is a card on the surface (owner Oct-18): it opens to its own editor,
+     and the tick list under the cards adds it to and removes it from the surface. One card per
+     model, not an arbitrary pile: presets.ini has one section per model, and resolve_targets()
+     already refuses two configs on the same model, because "which settings win" would be answered
+     by dictionary ordering. The card is the selector -- there is one set of inputs, and the open
+     card is where they sit. #}
   <div class="mp-cards" id="mp-cards">
     {% for m in model_ids %}
-    <section class="mp-card" data-model="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>
+    <section class="mp-card" data-model="{{ m }}" data-on-surface="yes" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>
       <button type="button" class="mp-strip" aria-expanded="false">
         <span class="mp-name mono">{{ m }}</span>
         <span class="mut mp-meta"></span>
@@ -584,6 +593,7 @@ h2{margin:18px 0 6px}
             <option value="">none -- this model runs on the personality's [ * ]</option>
           </select>
           <button type="button" class="mp-detach" disabled>detach</button>
+          <button type="button" class="mp-remove">remove from surface</button>
         </div>
         <div class="ed-row">
           <label for="mp-new-{{ loop.index }}">new name</label>
@@ -599,15 +609,14 @@ h2{margin:18px 0 6px}
     </section>
     {% endfor %}
   </div>
-  <div id="mp-rest"></div>
+  <div id="mp-rest" hidden></div>
   <div class="ed-row">
     {# The model selector stays as the target of the per-model fields: a card selects a model, and
-       these two buttons act on the model the open card names. #}
+       the button acts on the model the open card names. (Global reset lives on the Global card.) #}
     <label for="ed-model" class="mut">target</label>
     <select id="ed-model">
       {% for m in model_ids %}<option value="{{ m }}" data-limits='{{ model_row_limits.get(m, {}) | tojson }}'>{{ m }}</option>{% endfor %}
     </select>
-    <button type="button" id="ed-clear-global">reset the global fields</button>
     <button type="button" id="ed-clear-model">reset this model's fields</button>
   </div>
   <div class="ed-grid" id="ed-model-fields">
@@ -652,9 +661,26 @@ h2{margin:18px 0 6px}
     {% endfor %}
   </div>
 
+  {# The tick list: the one store of which models the personality covers, and therefore the
+     add/remove verb of the surface above (owner Oct-18). It lives under the cards so the control
+     and the cards it moves are adjacent; the cards' "remove from surface" button is the same
+     untick, and `syncIdentity` keeps the two views from ever disagreeing. #}
+  <h4>Models this personality covers — tick adds a card, untick removes it</h4>
+  <div class="ed-attach" id="ed-attach">
+    {# The two kinds a personality's `models` list accepts: a library model id, which is that file
+       under its own name with no settings of its own, and a stored model config, which is the same
+       file addressed by a name the router routes to. The base model is printed for a config because
+       the name is what a client types and the base is what loads. #}
+    {% for o in attach_options %}
+    <label class="ed-attach-item"><input type="checkbox" value="{{ o.name }}"> <span class="mono">{{ o.name }}</span>{% if o.base %} <span class="mut">renames {{ o.base }}</span>{% endif %}</label>
+    {% endfor %}
+  </div>
+  <p class="mut" id="ed-attach-note"></p>
+  <p class="mut" id="ed-surface-count"></p>
   </section>
 
-  <section data-ed-step-name="ed-review">
+  <section id="ed-review">
+  <h4>Review</h4>
   <p class="mut" id="ed-summary">no edits proposed</p>
 
   <div class="ed-row">
@@ -672,6 +698,8 @@ h2{margin:18px 0 6px}
     exactly like a setting that took effect.
   </p>
   </section>
+
+  </div><!-- #ed-workbench: the collapse verb shows and hides exactly this wrapper -->
 </div>
 
 <script>
@@ -697,7 +725,7 @@ h2{margin:18px 0 6px}
   const globalFields = [...$('ed-global').querySelectorAll('.ed-field')];
   const modelFields = [...$('ed-model-fields').querySelectorAll('.ed-field')];
 
-  // The shared objects step 3 edits (§6.14.1k) arrive on the editor element, not inside this
+  // The shared objects the model cards edit (§6.14.1k) arrive on the editor element, not in
   // script: the inline scripts are asserted to parse as written (§6.14.1e), and a Jinja expression
   // in a <script> body is text that only becomes JavaScript after rendering. The data is read once,
   // from one place, and a card never works out "used by" for itself.
@@ -747,7 +775,7 @@ h2{margin:18px 0 6px}
     }
     const b = {
       parsed, global: (view && view.global) || {}, models: (view && view.models) || {},
-      // Step 1 fields (§6.14.1f): the personality's identity, not its settings. They come from the
+      // Identity fields (§6.14.1f): the personality itself, not its settings. They come from the
       // same view the settings grids seed from, so the page cannot show one personality's settings
       // beside another personality's name.
       models_max: view && view.models_max != null ? view.models_max : null,
@@ -898,12 +926,16 @@ h2{margin:18px 0 6px}
       opt.textContent = users.length ? `${name} (used by ${users.join(', ')})` : name;
       sel.appendChild(opt);
     }
-    if (attached) sel.value = keep === attached ? attached : attached;
+    if (attached) sel.value = attached;
     const cfgName = sel.value || attached;
     const n = cfgName ? Object.keys(CONFIGS[cfgName]?.settings || {}).length : 0;
-    c.querySelector('.mp-meta').textContent = cfgName
+    // The strip carries the proposed count beside the config's own figure: what the card is
+    // worth and what you are about to change, on the line the glance reads.
+    const md = changed(modelWork(shown, mid), (baseFor(shown).models || {})[mid] || {});
+    c.querySelector('.mp-meta').textContent = (cfgName
       ? `${cfgName} · ${n} setting(s) · used by ${(CONFIG_USES[cfgName] || []).length}`
-      : 'no model personality · runs on [*]';
+      : 'no model personality · runs on [*]')
+      + (md.length ? ` · ${md.length} proposed` : '');
     const users = cfgName ? sharedBy(cfgName) : [];
     c.querySelector('.mp-share').textContent = cfgName
       ? (users.length
@@ -927,6 +959,12 @@ h2{margin:18px 0 6px}
   // reading is that a card you have already opened should answer a second click, not swallow it.
   let openModel = null;
   function showCard(mid) {
+    // A card that is off the surface never hosts the grid while the personality can change
+    // its list: the target select lists every model (the file can be picked from the whole
+    // library), and fields moving into a hidden card would be inputs the operator cannot see.
+    // A built-in's card may open for reading -- the strip says so -- because its list is fixed.
+    if (mid && cards.get(mid) && cards.get(mid).dataset.onSurface === 'no'
+        && baseFor(shown).editable) mid = null;
     openModel = mid || null;
     for (const [m, c] of cards) {
       const on = (m === openModel);
@@ -941,7 +979,11 @@ h2{margin:18px 0 6px}
       }
     }
     if (!openModel) {
-      $('mp-rest').appendChild($('ed-model-fields'));   // no card open: the grid has one resting place
+      // No card open: the grid rests in its slot, hidden. Fields on the open surface with no
+      // model chosen are 2,000 px of inputs nobody has targeted; the card is the place they
+      // live, and the sentence below says how to open one.
+      $('mp-rest').hidden = true;
+      $('mp-rest').appendChild($('ed-model-fields'));
       $('ed-model-count').textContent =
         'no model is open: pick a card, or pick a model below. The fields belong to whichever one you chose.';
     }
@@ -964,101 +1006,86 @@ h2{margin:18px 0 6px}
     else summarize();
   }
 
-  // STEPS: queue 33 §6.14.1q state 3, the editor's own step layer, deliberately outside
-  // loadPersona / syncIdentity / summarize.
-  //
-  // It is outside them because showing a step is not part of loading a personality: the editor's
-  // tests read those functions by name, and a step handler absorbed into one of them would claim
-  // that the step state belongs to the personality (plan §6.14.1q records the absorbed-handler
-  // mistake this avoids). It touches no field: the sections move, the fields stay where the editor's
-  // own tests assert them, in the grids whose ids must stay singletons.
-  const STEPS = [
-    {n: 1, id: 'ed-identity', label: 'personality'},
-    {n: 2, id: 'ed-global-fields', label: 'global ([*])'},
-    {n: 3, id: 'ed-model-step', label: 'per model'},
-    {n: 4, id: 'ed-review', label: 'review'},
-  ];
+  // SURFACE: the editor's card layer (owner's Oct-18 instruction; replaces the queue-33 stepper).
+  // Deliberately outside loadPersona / syncIdentity / summarize: the editor's tests read those
+  // functions by name, and a card handler absorbed into one of them would claim that opening a
+  // card is part of loading a personality (the absorbed-handler mistake plan §6.14.1q records).
+  // The layer shows and hides: card open states, the workbench collapse, and the strips' live
+  // figures. It writes no field value and rebuilds no grid -- the grids stay singletons because
+  // showCard moves the one model grid, never copies it.
   const editorEl = () => $('pers-editor');
-  const stepState = () => editorEl().getAttribute("data-ed-view");  // 'collapsed' | 'open'
-  const currentStep = () => Number(editorEl().getAttribute("data-ed-step") || 1);
+  const viewState = () => editorEl().getAttribute('data-ed-view');  // 'collapsed' | 'open'
 
-  // The stepper is painted from STEPS: a <li> per step, each carrying the step state and naming the
-  // step, so "which one am I on" is text an operator reads, not a number to infer.
-  //
-  // The current step is a <b>, not a button. A button that moves you to the step you are standing on
-  // changes nothing, and the UI gate is right to call that dead -- the page would have to declare the
-  // exemption, which is the page arguing with the gate. The current step is not a verb: it is the
-  // answer to "which one am I on", and it is stated as the step's own text.
-  const paintStepper = () => {
-    const list = $('ed-steps-list');
-    list.replaceChildren(...STEPS.map((st) => {
-      const li = node('li');
-      li.dataset.step = String(st.n);
-      const current = stepState() === "open" && currentStep() === st.n;
-      li.setAttribute("data-current", String(current));
-      const label = `${st.n} ${st.label}`;
-      if (current) {
-        li.append(node('b', null, label));
-        return li;
-      }
-      const b = node('button', null, label);
-      b.type = 'button';
-      b.setAttribute("data-step-to", String(st.n));
-      li.append(b);
-      return li;
-    }));
-  };
-
-  // The current step stated in text, in the row the collapse verbs live in.
-  // Collapsed: the row states the verb it carries. Open: the same row states which step is
-  // showing. The sentence is never empty in either state, so the row is not a control that does
-  // nothing and the step you are on is always readable as text.
-  const paintStepNote = () => {
-    const open = stepState() === 'open';
-    const st = STEPS[currentStep() - 1] || STEPS[0];
+  // The collapse verbs, stated in words and shown one at a time: a page that offers both is a
+  // page offering a verb that does nothing. The note says what the surface holds while open, and
+  // what closing it hides.
+  const paintCollapse = () => {
+    const open = viewState() === 'open';
     $('ed-collapse').hidden = !open;
     $('ed-open').hidden = open;
     $('ed-collapsed-note').textContent = open
-      ? `Step ${st.n} of ${STEPS.length}: ${st.label}. The other steps stay on the page and are`
-        + ' listed above — nothing is disabled by being off-screen.'
+      ? 'Open: the identity, every card, and the review bar are on the page together. Nothing is'
+        + ' hidden behind a step, so there is no step to come back from.'
       : 'The settings editor is closed. The deck above is the reading surface; opening the editor'
         + ' is what lets you change a personality.';
-    $('ed-steps-list').hidden = !open;
   };
-
-  function setStep(n) {
-    const st = STEPS.find((x) => x.n === n) || STEPS[0];
-    editorEl().setAttribute("data-ed-step", String(st.n));
-    editorEl().setAttribute("data-ed-view", "open");
-    paintStepper();
-    paintStepNote();
-  }
-
-  function openEditor() { setStep(currentStep()); }
-  function collapseEditor() {
-    editorEl().setAttribute("data-ed-view", "collapsed");
-    paintStepper();
-    paintStepNote();
-  }
-
-  // Opening the editor is the one verb the editor has when it is collapsed, and collapsing is the
-  // verb it has when it is open. Both are stated in text: the collapsed row carries a sentence, the
-  // stepper's note says which step is showing. `paintStepNote` hides one verb and shows the other,
-  // so the page never offers a verb that does nothing.
+  function openEditor() { editorEl().setAttribute('data-ed-view', 'open'); paintCollapse(); }
+  function collapseEditor() { editorEl().setAttribute('data-ed-view', 'collapsed'); paintCollapse(); }
   $('ed-open').addEventListener('click', openEditor);
   $('ed-collapse').addEventListener('click', collapseEditor);
 
-  $('ed-steps-list').addEventListener('click', (ev) => {
-    const b = ev.target && ev.target.getAttribute("data-step-to");
-    if (b) setStep(Number(b));
-  });
-  paintStepper();
-  paintStepNote();
-  // STEPS END: the step layer's state is `data-ed-view` and `data-ed-step` on the editor element.
-  // The layer reads nothing and writes nothing inside a field, which is why it has no use for
-  // querySelectorAll: the sections move, the fields stay exactly where the editor's tests read them.
+  // The Global card opens and closes exactly like a model card: the strip answers its second
+  // click, and the strip carries the live figure so the verdict reads without opening anything.
+  // It has no remove control -- the card is pinned to the surface (owner's rule).
+  const globalCard = $('ed-card-global');
+  function showGlobal(open) {
+    globalCard.dataset.open = open ? '1' : '0';
+    globalCard.querySelector('.mp-strip').setAttribute('aria-expanded', open ? 'true' : 'false');
+    globalCard.querySelector('.mp-body').hidden = !open;
+  }
+  globalCard.querySelector('.mp-strip').addEventListener('click',
+    () => showGlobal(globalCard.dataset.open !== '1'));
 
-  /* Step 1 (§6.14.1f answer 2): the personality itself -- its name, how many models may be resident,
+  function paintGlobalMeta() {
+    const b = baseFor(shown);
+    const st = workFor(shown);
+    const gd = changed(st.global, b.global);
+    $('ed-global-meta').textContent = `${Object.keys(st.global).length} value(s) in [*]`
+      + (gd.length ? ` · ${gd.length} proposed` : '');
+  }
+
+  // Surface membership is the tick list's answer, repainted whenever the list moves: a card is on
+  // the surface when the personality covers that model -- by its own name, by the config attached
+  // to it, or by whole-library coverage (the null attach state `default` is in).
+  function paintSurface() {
+    const b = baseFor(shown);
+    const want = Array.isArray(b.attach) ? b.attach : null;
+    const checked = checkedAttach();
+    let onCount = 0;
+    for (const [mid, c] of cards) {
+      let on = want === null;
+      if (want) {
+        const cfg = configForModel(mid);
+        on = want.includes(mid) || (cfg && want.includes(cfg))
+          || checked.some(n => (configByName[n] || {}).base_model === mid);
+      }
+      c.dataset.onSurface = on ? 'yes' : 'no';
+      if (on) onCount++;
+      if (!on && openModel === mid) showCard(null);
+      const rm = c.querySelector('.mp-remove');
+      rm.disabled = !b.editable;
+      rm.title = b.editable
+        ? 'remove this model from the personality: the card leaves the surface; the settings and any model personality stay'
+        : `${shown} is built-in: its model list is derived from the library and refused by name at the write endpoints`;
+    }
+    $('ed-surface-count').textContent = `${onCount} of ${cards.size} model cards on the surface`
+      + (want === null ? `: ${shown === NEW ? 'a new personality' : shown} covers the whole library, so every card is on it` : '');
+  }
+  // SURFACE END: the layer's state is `data-ed-view` on the editor and `data-open` /
+  // `data-on-surface` on cards. It reads no field and writes no value, which is why the grid ids
+  // stay singletons and the fields stay exactly where the editor's tests read them.
+
+  /* The identity (§6.14.1f answer 2): the personality itself -- its name, how many models may be,
      its note, which models it covers, and create / save / delete. These are page verbs on
      `personalities/<name>.json`; none of them touches presets.ini, so they are additive writes with
      nothing for Preview to show, and the endpoint they call is not the one Apply calls.
@@ -1099,6 +1126,9 @@ h2{margin:18px 0 6px}
     // is refreshed whenever the list moves. Two controls that can disagree about one list is the
     // deck bug §6.14.1c named, arriving in a new shape.
     if (openModel) fillCard(openModel);
+    // Owner Oct-18: the tick list is the surface's add/remove verb, so every move repaints which
+    // cards are on the surface and what the surface says about itself.
+    paintSurface();
     // Queue 33 (§6.14.1q): the `used by` line belongs to the personality, so it moves with every
     // other step-1 fact. A line computed once at load describes whoever was selected then.
     paintUsedBy(shown);
@@ -1196,6 +1226,7 @@ h2{margin:18px 0 6px}
       if (md.length) parts.push(`[${mid}]: ${fmt(md)}`);
     }
     const el = $('ed-summary');
+    paintGlobalMeta();
     if (!b.parsed) {
       el.textContent = `the settings this personality carries could not be read from this page, `
         + `so the fields are empty and the summary cannot say what changed — Preview is the `
@@ -1367,7 +1398,7 @@ h2{margin:18px 0 6px}
   // loadPersona runs first -- it is the personality being left whose fields must be saved.
   $('ed-persona').addEventListener('change', () => { loadPersona(); loadIdentity(); });
   $('ed-new-name').addEventListener('input', syncIdentity);
-  $('ed-identity-note').dataset.hint = 'step 1';
+  $('ed-identity-note').dataset.hint = 'identity';
   for (const box of attachBoxes()) box.addEventListener('change', syncIdentity);
   $('ed-create').addEventListener('click', () => {
     const body = identityBody();
@@ -1386,7 +1417,7 @@ h2{margin:18px 0 6px}
      portal's own definitions -- `model_configs`, the table the router's sections are generated from
      -- and not to presets.ini, so they need no confirm and no idle machine: the endpoint says so in
      its own docstring, and the page repeats it where the operator reads it. Detaching is the
-     personality's choice and is written by step 1's Save, which is why it is not a request here. */
+     personality's choice and is written by the identity row's Save, not a request here. */
   const cardResult = (c, text) => { c.querySelector('.mp-result').textContent = text; };
 
   async function postConfig(path, body) {
@@ -1429,6 +1460,26 @@ h2{margin:18px 0 6px}
 
   for (const [mid, c] of cards) {
     c.querySelector('.mp-strip').addEventListener('click', () => {
+      if (c.dataset.onSurface === 'no') {
+        // A card hidden from the surface answers a click by coming back: the personality
+        // covers the model again (whole-library coverage becomes an explicit list, which is
+        // what "add one back" honestly means), and the card opens to its values. A built-in
+        // cannot change its list, so its card opens for reading and says what it is.
+        const b = baseFor(shown);
+        const who = shown === NEW ? "a new personality" : shown;
+        if (b.editable) {
+          const boxes = attachBoxes();
+          if (!Array.isArray(b.attach)) for (const box of boxes) box.checked = true;
+          for (const box of boxes) if (box.value === mid) box.checked = true;
+          syncIdentity();
+          selectModel(mid);
+          cardResult(c, `${mid} is back on ${who}'s surface: its model is ticked again. Save the personality to store it.`);
+          return;
+        }
+        selectModel(mid);
+        cardResult(c, `${who} is built-in and does not cover ${mid}: this opens to read only; the write endpoints refuse built-ins by name.`);
+        return;
+      }
       if (openModel === mid) closeCard();
       else selectModel(mid);
     });
@@ -1498,6 +1549,24 @@ h2{margin:18px 0 6px}
       loadModel(mid);
       cardResult(c, `${cfgName} is detached from ${shown} and stays a model personality for the other` +
                      ` personalities that use it. Save the personality to store that.`);
+    });
+    c.querySelector('.mp-remove').addEventListener('click', () => {
+      // Remove from surface: the personality stops covering the model. No request -- the tick
+      // list is the store and Save writes it, exactly like detach. Whole-library coverage
+      // (attach null) becomes an explicit list of every other model, which is what removal from
+      // "covers everything" honestly means; the sentence says so.
+      const b = baseFor(shown);
+      if (!b.editable) return;
+      const boxes = attachBoxes();
+      const cfg = configForModel(mid);
+      if (!Array.isArray(b.attach)) for (const box of boxes) box.checked = true;
+      for (const box of boxes) {
+        if (box.value === mid || (cfg && box.value === cfg)) box.checked = false;
+      }
+      syncIdentity();
+      cardResult(c, `${mid} is off ${shown}'s surface: the card is hidden and its model is off`
+                     + ' the list. Its settings and any model personality are untouched; Save'
+                     + ' the personality to store the removal.');
     });
   }
 
@@ -1571,6 +1640,7 @@ h2{margin:18px 0 6px}
 
   loadPersona();
   loadIdentity();
+  paintCollapse();
   const n = $('ed-model').options.length;
   $('ed-model-count').textContent = `${n} model${n === 1 ? '' : 's'} in the library`;
 })();

@@ -1230,12 +1230,13 @@ def test_step_one_sends_the_personality_the_write_endpoint_accepts(client, libra
     """
     body = client.get("/personalities").text
     for sel in ('id="ed-new-name"', 'id="ed-models-max"', 'id="ed-note"', 'id="ed-attach"',
-                'id="ed-create"', 'id="ed-save"', 'id="ed-delete"', 'id="ed-steps"'):
-        # `ed-steps` names the three steps in words. It is a paragraph, not a list of buttons: a
-        # step that is already showing is a control that changes nothing, and the UI gate is right
-        # to call that dead. The stepper the editor moves through is `ed-steps-list`, painted by
-        # the step layer, and its own guards live in test_ui_contract.
-        assert sel in body, f"step 1 is missing {sel}"
+                'id="ed-create"', 'id="ed-save"', 'id="ed-delete"', 'id="ed-surface"'):
+        # `ed-surface` is the heading and sentence naming what the surface holds (owner Oct-18:
+        # the stepper's "three steps" paragraph retired with the stepper). It is a paragraph, not
+        # a list of buttons: a step that is already showing is a control that changes nothing,
+        # and the UI gate is right to call that dead. The card layer's own guards live in
+        # test_ui_contract.
+        assert sel in body, f"the identity row is missing {sel}"
     # The attach list is the two kinds a personality's `models` accepts, both of them named on the
     # page: a library model id, and a stored config with the file it renames.
     for opt in list(library) + [tuned["config"]]:
