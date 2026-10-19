@@ -1716,6 +1716,8 @@ def test_the_models_library_is_a_tree_not_a_wall(client):
     assert "aria-pressed" in script[:2000], "the leaf does not state its selection"
     assert "mv-filter" in script[:3000] and "dataset.search" in script[:3000], "filter is not wired"
     assert "n.tagName === 'DETAILS'" in script, "the selection's path is not opened"
+    assert "live.length === 1" in script and "for (const l of live) openPath(l)" not in script, \
+        "boot must not pre-open the tree: llama.cpp registers every model it knows"
 
 
 def test_form_controls_read_as_controls(client):
