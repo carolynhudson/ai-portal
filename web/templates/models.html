@@ -159,7 +159,7 @@
                 data-search="{{ (g.repo ~ ' ' ~ s.name ~ ' ' ~ (m.quant or '') ~ ' ' ~ m.id ~ ' ' ~ (m.arch or ''))|lower }}">
           <span class="tag mono mv-q">{{ m.quant or "—" }}</span>
           <span class="mono">{{ m.bytes | sz }}</span>
-          {% if m.live %}<span class="tag ok" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% endif %}
+          {% if m.live %}<span class="tag ok mv-live" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% endif %}
           {% if m.source == "cache" %}<span class="mv-cache" title="found in the Hugging Face hub cache, not under {{ diskroot }} — llama.cpp can load it and does list it, but the portal did not put it there">hub cache</span>{% elif m.source and m.source != "library" %}<span class="mv-cache">{{ m.source }}</span>{% endif %}
         </button>
       {% endfor %}
@@ -314,7 +314,9 @@ function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
   // Boot: exactly one live model opens its card (the operator opened the page to look at
   // what is running); many, or none, opens nothing. Groups rest closed otherwise -- an
   // all-open tree of 20 quant files measured taller than the table it replaced.
-  const live = leaves.filter(l => l.querySelector('.tag.ok'));
+  // `.mv-live`, not `.tag.ok`: capability badges wear the same tone classes, and a leaf
+  // is "live" only when the router registered it.
+  const live = leaves.filter(l => l.querySelector('.mv-live'));
   if (live.length === 1) { open = live[0].dataset.model; openPath(live[0]); }
   for (const l of live) openPath(l);
   paint();
