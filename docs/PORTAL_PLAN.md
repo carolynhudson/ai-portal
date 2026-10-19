@@ -5907,3 +5907,43 @@ rule, and the wall's markers forbidden). Measured: boot 800 px, opened-card page
 the wall never measured under three viewports at this width. UI suite 95 + modelindex 81 +
 smoke/modeladd/network green. Run spec `.scratch/models-tree/spec.md`; commits `efaf7f1` +
 the two follow-ups.
+
+##### 6.14.1ad Dense cards, one quant per branch (2026-10-18, round 2)
+
+Owner round 2 on the models tree: the first cards were too thin — "almost none of the
+details the prior table had." A card must be a detailed, organized breakdown of each
+registered model that answers the operator's actual questions: how big is it, how much
+memory will it likely use, what inputs/features does it support, is it MoE (how many
+experts, how big), is it a split model, every property the portal stores; which models fit
+resident *together*; which ones eat the disk. Minimum: the model's current id on the
+router. And each quant of a model gets **its own branch** so "a model card never has to
+share space with another model."
+
+**The card is the branch body.** Tree: repo → model → `.mv-quant` branch (summary: quant
+chip · size · fits · on-router · hub-cache); opening the branch IS selecting the model,
+and the card renders inside it. An accordion closes the others — the cards are dense by
+design. Six sections, 36 fields, every column the index stores: **on the router** (id on
+router = `live_as`, registered status, fits + max-ctx estimate, peak RAM, priced-at-ctx) ·
+**identity** (model id, gguf name, quantizer repo, quant, arch, source) · **size and
+disk** (size, shards, sidecar bytes, path) · **memory** (weights, KV cache, total, peak,
+trained ctx) · **architecture** (layers, full-attention interval, heads, kv heads,
+embedding length, rope dim, vocab, MoE "n of m experts active per token", ssm) · **inputs
+and features** (template markers, vision, FIM, self-draft layers, draft head, pooling,
+capabilities with their hover notes). Group and model summaries carry **their total bytes
+on disk** ("3 file(s) · 160.0G") — the disk question answers itself at the repo level.
+
+**Queued futures (owner, recorded here so they are not lost):**
+- *Router visibility control*: the "live" light dates from when personalities were meant to
+  control which library models the router sees. Owner still wants that feature, "done in a
+  way that doesn't damage the hf cache or llama model library folder" — i.e. a registration
+  allowlist on the router side, never file moves, never cache writes.
+- *Load/unload buttons on the card* when the llama router is online. Same safety frame as
+  every router mutation: confirm-gated, Status/Settings pattern, and the in-session
+  model-swap ban stays (swaps stay closed-session via tools/model_swap.py).
+- Expert SIZE per expert is not in the index schema (`general.expert_length` is not
+  extracted); the card answers "how many active of how many" today. A schema column +
+  rescan would add it.
+
+Measured: boot 781 px (all closed, 17 branches), one card open 2230 px. UI suite 95 +
+modelindex green; contract rewritten to the branch shape (section list, 36 field labels,
+accordion pin, byte totals, boot rule).
