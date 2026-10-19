@@ -5868,3 +5868,42 @@ on an empty built-in grid, and the harness cannot select the empty-valued "leave
 options (`pickOption` skips them) -- so the §6.14.1i clean-summary assertion moved to the
 per-case moment where it is true (the seed-after-create case), and the toggles run last.
 UI suite 94 passed (pre-commit inline). Commit `c493c10`.
+
+##### 6.14.1ac The models library becomes a tree (2026-10-18)
+
+Owner Oct-18: the llama.cpp datatable is "barely useable" -- the model id overflowed its
+column on virtually every row and obscured the columns behind it; a tree with a filter, like
+the personality editor's, levels from metadata (`general.quantized_by / general.name /
+general.file_type`), one model per leaf, and the leaf's card shows the table's data with the
+parenthesised postfixes as fields of their own.
+
+**The id IS the metadata.** Repository namespace = quantizer, stem = model, `:QUANT` = file
+type -- and that triple is the index's unique key, so three levels guarantee one model per
+leaf; no fourth property was needed (the owner offered one "if the three are not enough").
+`main.py` groups rows into `mv_tree` at render; zero GGUF sniffing.
+
+**The surface.** Closed `<details>` repo groups → model subgroups → leaf BUTTONS (quant chip,
+size, live, hub-cache). The filter hides leaves → subs → groups and opens what matches.
+A leaf click opens the model's card under the tree: 18 fields -- model id, status,
+router-registers-as, source, architecture, quantization, size (all shards), shards, ctx,
+layers, attention interval, experts active/total, vision projector, ssm, capabilities
+(badges keep their hover notes), chat template markers, peak RAM, priced-at-ctx, fits
+(+ max-ctx estimate). The table's sticky-column CSS (the machinery that kept the id visible
+while twelve columns scrolled sideways) is gone with the table; the spec's scroll/sticky
+container entries went with it.
+
+**Two facts the build surfaced.** (1) "Live" on this router means *registered*, and a
+llama.cpp server registers every model it knows -- all 17 leaves carry the light. The boot
+rule "open the live leaves' paths" therefore opened the whole tree; boot now opens nothing
+(no card, note says how) and opens a card only when exactly one model is registered. The
+contract forbids the pre-open loop. (2) Capability badges wear the same `.tag.ok` tone class
+as the live badge -- live detection needed its own `.mv-live` marker.
+
+**Tests.** Page tests re-scoped: the capabilities containment check slices the model's
+`<section class="mv-card">`; the hub-cache marker counts in the tree region. The jsdom sweep
+drives every leaf (click = card mutation), the filter, tabs, and the search XSS contract is
+untouched. New contract: tree-not-wall (fields list, button leaves, `aria-pressed`, boot
+rule, and the wall's markers forbidden). Measured: boot 800 px, opened-card page 2292 px --
+the wall never measured under three viewports at this width. UI suite 95 + modelindex 81 +
+smoke/modeladd/network green. Run spec `.scratch/models-tree/spec.md`; commits `efaf7f1` +
+the two follow-ups.
