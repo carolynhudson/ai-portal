@@ -1096,6 +1096,31 @@ def test_the_dashboard_reports_what_the_router_actually_is():
 # nothing, that forgetting deletes nothing, that Launch is the harness page's verb. All of them are
 # checkable in the page's own JavaScript — which is exactly the point: a page that says one thing
 # and posts another is the failure this test exists for.
+def test_the_projects_page_hands_the_operator_to_the_real_opencode_web():
+    """Owner Oct-18: the portal's own chat panel is a viewer, not the harness -- "I was
+    hoping opencode had a web interface ... and that you could just serve a real opencode
+    session from this server via the portal." `opencode serve` ships the browser client
+    at its root; the page must hand off to it (per row) and name where the sign-in
+    secret lives WITHOUT putting the secret in the page. And the store is shared with
+    the operator's manual `opencode` (the isolation's v1 reason is retired), so sessions
+    launched here appear in `opencode` started from the project folder.
+    """
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    main = (ROOT / "app" / "main.py").read_text()
+    hc = (ROOT / "app" / "core" / "harnessctl.py").read_text()
+    assert "'a', 'proj-web'" in tpl and "Open in OpenCode" in tpl, "no handoff to the real web UI"
+    assert "STATE.harness_web" in tpl and "target = '_blank'" in tpl, "the handoff is not a new-tab link"
+    assert '"harness_web": harnessctl.base' in main, "the payload must carry the host's web root"
+    assert '"harness_key": str(harnessctl.key_path())' in main, \
+        "the page names the KEY FILE; it never carries the password"
+    assert "read_key()" not in main, "the portal must not read the harness password into a page"
+    assert '"XDG_DATA_HOME"' not in hc, \
+        "one shared v2 store: a pinned data home hides portal sessions from manual opencode"
+    assert "err_4c90c294" in hc, "the v1-isolation history stays stated so nobody re-isolates blindly"
+    assert "closed" in hc and '"stale"' in hc, \
+        "a closed turn's running tools read as stale, not as hours of fake activity"
+
+
 def test_the_projects_page_shows_the_toolchain_it_measured():
     tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
     script = _script_of(tpl, "projects.html")

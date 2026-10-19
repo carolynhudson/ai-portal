@@ -223,12 +223,18 @@ def env_mapping(port: int, password: str) -> dict[str, str]:
         # gives the harness its own file — the harness V1 plugin list can differ from the
         # interactive CLI's V2 list, which lives in ~/.config/opencode.
         "OPENCODE_CONFIG_DIR": str(cache_dir(port)),
-        # Measured (ref=err_4c90c294): the v1 host and the v2 CLI shared one
-        # `~/.local/share/opencode/opencode.db`, and the v2 server's schema migration
-        # removed `project_id` — the v1 host then answered every directory-scoped route
-        # with SQLiteError on instance boot. The harness owns a data home; sessions stay
-        # durable in it and no other opencode version rewrites its schema under it.
-        "XDG_DATA_HOME": str(cache_dir(port) / "data"),
+        # Data home: SHARED with the operator's manual `opencode` (the default
+        # ~/.local/share/opencode). History, stated so the next reader does not
+        # re-isolate blindly: this key used to pin the harness to its own data home
+        # because a v1 host and a v2 CLI on one `opencode.db` meant the v2 schema
+        # migration (which dropped `project_id`) broke every directory-scoped route
+        # the v1 host answered (ref=err_4c90c294). That reason died with the v1
+        # harness: HARNESS_BIN above is the v2 binary, and the operator's CLI is v2.
+        # One store is what makes a portal-launched session visible in `opencode`
+        # started from the project folder, and `opencode attach` share live state
+        # (owner, Oct-18). WAL mode is on, so the server and a manual TUI reading the
+        # store together is the supported shape. If the harness is ever pinned back
+        # to a v1 binary, restore the isolation FIRST.
         # The port pre-flight is a portal module, and systemd starts us from $HOME.
         "HARNESS_PYTHON": sys.executable,
         "PYTHONPATH": str(REPO_ROOT),
@@ -704,11 +710,20 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
     `tool` — plus `model`, `agent`, `finish`, `cost`, `tokens`; `idle` closes a turn with an
     `outcome`, and `*-selected`/`*-switched` rows bookkeep switches. The union is normalized
     to rows here, so a host upgrade lands in this function and not in the template.
+
+    The frozen turn (owner Oct-18): a session killed mid-tool — a reboot, an interrupt the
+    store never saw finish — keeps its tool parts at `running` forever, and the portal's
+    viewer printed "shell running" as a live activity for hours, which reads as a hung
+    harness. An `idle` row *after* the last assistant row proves the turn closed; the
+    still-"running" tools on that row are then relabeled `stale` — the viewer is allowed to
+    claim activity only for a turn the host has not closed.
     """
+    items = [i for i in messages(session_id, cwd, port=port) if isinstance(i, dict)]
+    kinds = [i.get("type") for i in items]
+    last_assistant = max((idx for idx, k in enumerate(kinds) if k == "assistant"), default=-1)
+    turn_closed = any(k == "idle" for k in kinds[last_assistant + 1:])
     rows: list[dict] = []
-    for item in messages(session_id, cwd, port=port):
-        if not isinstance(item, dict):
-            continue
+    for item in items:
         kind = item.get("type")
         if kind == "user":
             rows.append({"id": item.get("id"), "role": "user",
@@ -716,7 +731,7 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
                          "model": None, "agent": None, "cost": None,
                          "finish": None, "tokens": {},
                          "time": item.get("time") if isinstance(item.get("time"), dict) else {},
-                         "error": None})
+                         "error": None, "closed": False})
             continue
         if kind != "assistant":
             continue          # idle rows and switch records are turn bookkeeping, not bubbles
@@ -738,7 +753,8 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
                 state = p.get("state")
                 if not isinstance(state, dict):
                     state = {}
-                tools.append({"tool": str(p.get("name") or ""), "state": str(state.get("status") or "")})
+                status = str(state.get("status") or "")
+                tools.append({"tool": str(p.get("name") or ""), "state": status})
         text = "\n".join(texts).strip()
         # Measured on this box: its local models answer with `reasoning` + `tool` parts and
         # often **no text part at all** — a row built from text parts alone printed as an
@@ -757,12 +773,23 @@ def transcript(session_id: str, cwd: str, port: int = DEFAULT_PORT) -> list[dict
         ref = item.get("model")
         if isinstance(ref, dict) and (ref.get("providerID") or ref.get("id")):
             model = {"providerID": ref.get("providerID"), "modelID": ref.get("id")}
+        closed = bool(turn_closed and item is items[last_assistant])
+        if closed:
+            frozen = False
+            for t in tools:
+                if t["state"] == "running":
+                    t["state"] = "stale"
+                    frozen = True
+            if frozen:
+                text += ("\n— the host closed this turn while these tools were still running "
+                         "(a restart or interrupt mid-tool): they never reported back. "
+                         "Open the session in OpenCode to interrupt and continue.")
         rows.append({
             "id": item.get("id"), "role": "assistant", "text": text, "tools": tools,
             "model": model, "agent": item.get("agent"), "cost": item.get("cost"),
             "finish": item.get("finish"), "tokens": item.get("tokens") or {},
             "time": item.get("time") if isinstance(item.get("time"), dict) else {},
-            "error": None,
+            "error": None, "closed": closed,
         })
     return rows
 

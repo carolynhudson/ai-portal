@@ -1628,6 +1628,13 @@ def create_app() -> FastAPI:
                 "served": facts["served"],
                 "scan": projects.scan(),
                 "toolchains": projects.toolchains(),
+                # The host serves opencode's own web app at its root (`opencode serve`
+                # ships the browser client). The page hands the operator to the REAL
+                # harness — full agentic loop, tool activity, permission prompts, session
+                # list — instead of the portal re-implementing it. The password lives in
+                # the key file; the page names the file, never the secret.
+                "harness_web": harnessctl.base(harnessctl.DEFAULT_PORT),
+                "harness_key": str(harnessctl.key_path()),
                 "steps": {k: {"label": v["label"], "does": v["does"], "needs": v["needs"]}
                           for k, v in projects.INIT_STEPS.items()},
                 "order": list(projects.INIT_ORDER),

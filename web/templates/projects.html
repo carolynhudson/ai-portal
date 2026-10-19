@@ -44,6 +44,12 @@
 .proj-serve[data-tone="good"]{color:var(--ok,#2b8a3e)}
 .proj-serve[data-tone="bad"]{color:var(--bad,#b33030)}
 .proj-verbs{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+/* The handoff to opencode's own web UI reads as a control, not a stray link in a wall
+   of buttons: same affordance tokens as every other control on the page. */
+.proj-web{display:inline-flex;align-items:center;font-size:.85em;text-decoration:none;
+  color:var(--acc);border:1.5px solid var(--field-line);border-radius:6px;padding:3px 9px;
+  background:var(--field)}
+.proj-web:hover{border-color:var(--acc)}
 button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 /* The operational state (queue 32, §6.14.1v): the session and nothing else. The list is not
    dimmed behind it — it is *hidden*, because a page that shows both answers two questions at
@@ -448,6 +454,21 @@ function renderRows(rows) {
       serve.dataset.tone = 'muted';
     }
 
+    // The real harness (owner Oct-18): the host serves opencode's OWN web app at its
+    // root — full agentic loop, live tool activity, permission prompts, session
+    // control. A portal-written chat panel cannot match it, so every row hands the
+    // project over there. The link is the host's root; the web UI's homepage lists
+    // sessions per project. The password is never in this page's payload — the title
+    // names the file it lives in.
+    const web = el('a', 'proj-web');
+    web.textContent = 'Open in OpenCode';
+    web.href = STATE.harness_web || '#';
+    web.target = '_blank';
+    web.rel = 'noopener';
+    web.hidden = !STATE.harness_web;
+    web.title = `opencode's own web interface on the harness host: ${STATE.harness_web || '(host url unknown)'}. `
+      + 'Sign in as user "opencode"; the password is in ' + (STATE.harness_key || 'the harness key file') + '.';
+
     // The row that is served carries the verb that opens *this* session in the page — the
     // handoff in reverse, for the project the operator returns to.
     if (st.served === true && st.session) {
@@ -459,7 +480,7 @@ function renderRows(rows) {
       verbs.append(open);
     }
     row.append(name, verbs, path, facts, serve);
-    verbs.append(launch, forget);
+    verbs.append(web, launch, forget);
     box.append(row);
   }
 }
@@ -525,7 +546,8 @@ async function refresh() {
   // The seed is read, not assumed: the host can be started from a shell, and a page
   // that spelled "seeded" from its own config file would be lying about it.
   const h = await req('GET', '/api/harness/status');
-  $('#proj-host').textContent = harnessSeed(h, d.launch);
+  $('#proj-host').textContent = harnessSeed(h, d.launch)
+    + (d.harness_web ? ` — web UI: ${d.harness_web} (user "opencode", password in ${d.harness_key})` : '');
 }
 
 $('#proj-plan').addEventListener('click', () => plan());

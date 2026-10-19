@@ -438,13 +438,17 @@ def test_the_seed_hands_the_host_its_memory_server(monkeypatch):
 def test_the_host_is_told_to_read_the_seeded_directory(monkeypatch):
     """Measured: the host reads its whole config from `OPENCODE_CONFIG_DIR` at startup.
     The env must point it at the seeded directory, not at the CLI's global config.
-    The data home must be the host's own too (measured ref=err_4c90c294: a shared
-    opencode.db migrated by a newer opencode breaks the other version's instance boot),
-    and the binary must be the V2 one the plugin ecosystem is moving to."""
+    The DATA home is deliberately NOT pinned: the isolation existed for a v1 host (the
+    v2 schema migration broke v1 directory routes on a shared db, ref=err_4c90c294), and
+    the harness is v2 — sharing ~/.local/share/opencode is what makes portal-launched
+    sessions visible in a manual `opencode` in the project folder (owner, Oct-18). The
+    binary is the V2 one the plugin ecosystem is moving to."""
     _fresh_state()
     mapping = harnessctl.env_mapping(4096, "probe")
     assert mapping["OPENCODE_CONFIG_DIR"] == str(harnessctl.cache_dir(4096))
-    assert mapping["XDG_DATA_HOME"] == str(harnessctl.cache_dir(4096) / "data")
+    assert "XDG_DATA_HOME" not in mapping, \
+        "one shared v2 store is the point: isolating the data home hides portal " \
+        "sessions from the operator's manual opencode"
     assert mapping["HARNESS_BIN"].endswith("/.opencode/bin/opencode"), mapping["HARNESS_BIN"]
     assert "XDG_CACHE_HOME" not in mapping, "the unit never carried it; the config dir is the seam"
 
@@ -874,6 +878,43 @@ def test_the_transcript_fills_a_bubble_from_what_the_host_actually_sends(monkeyp
     assert rows[2]["text"] == "read completed", \
         f"tool-only step painted as {rows[2]['text']!r}"
     assert rows[3]["text"] == "…", f"a mid-turn row painted as {rows[3]['text']!r}"
+
+
+def test_a_turn_the_host_closed_marks_its_running_tools_stale(monkeypatch):
+    """Owner Oct-18: a session killed mid-tool (the box rebooted while two shells ran)
+    kept its tool parts at `running` forever, and the viewer showed a live 'shell
+    running' for hours — the silent halt read as a broken harness. The host's `idle`
+    row after the last assistant row proves the turn closed; running tools on a closed
+    turn are `stale`, and the bubble says so and names the way out (OpenCode's own
+    controls). An OPEN turn's running tools stay running — that is real activity."""
+    _script_host(monkeypatch, {
+        ("GET", "/api/session/ses_f/message"): (200, {"data": [
+            {"type": "user", "id": "msg_u", "text": "check the specs"},
+            {"type": "assistant", "id": "msg_a",
+             "content": [{"type": "text", "text": "I will gather the info via tools."},
+                          {"type": "tool", "name": "shell", "state": {"status": "running"}},
+                          {"type": "tool", "name": "shell", "state": {"status": "running"}}]},
+            {"type": "idle", "id": "msg_i", "outcome": "succeeded"},
+        ]}),
+    })
+    rows = harnessctl.transcript("ses_f", PROJ)
+    a = rows[1]
+    assert a["closed"] is True
+    assert [t["state"] for t in a["tools"]] == ["stale", "stale"], a["tools"]
+    assert "never reported back" in a["text"] and "OpenCode" in a["text"], a["text"]
+
+
+def test_an_open_turn_keeps_its_running_tools_running(monkeypatch):
+    _script_host(monkeypatch, {
+        ("GET", "/api/session/ses_g/message"): (200, {"data": [
+            {"type": "user", "id": "msg_u", "text": "go"},
+            {"type": "assistant", "id": "msg_a",
+             "content": [{"type": "tool", "name": "shell", "state": {"status": "running"}}]},
+        ]}),
+    })
+    rows = harnessctl.transcript("ses_g", PROJ)
+    assert rows[1]["closed"] is False
+    assert rows[1]["tools"][0]["state"] == "running", "live activity is still live"
 
 
 def test_a_refused_prompt_is_the_hosts_refusal_with_the_hosts_reason(monkeypatch):

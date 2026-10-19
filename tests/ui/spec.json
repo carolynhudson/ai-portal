@@ -1965,7 +1965,8 @@
         "#proj-quit",
         "#proj-question",
         "#proj-question-reply",
-        "#proj-question-reject"
+        "#proj-question-reject",
+        ".proj-web"
       ],
       "expectText": [
         {
@@ -2272,7 +2273,9 @@
                 "default",
                 "Agent-Swift"
               ]
-            }
+            },
+            "harness_web": "http://127.0.0.1:4096/",
+            "harness_key": "/home/cortana/ai/state/portal/harness.key"
           }
         },
         {
