@@ -5947,3 +5947,36 @@ on disk** ("3 file(s) · 160.0G") — the disk question answers itself at the re
 Measured: boot 781 px (all closed, 17 branches), one card open 2230 px. UI suite 95 +
 modelindex green; contract rewritten to the branch shape (section list, 36 field labels,
 accordion pin, byte totals, boot rule).
+
+##### 6.14.1ae The quant is validated against two references (2026-10-18)
+
+Owner: the two Swift Flash Next models both read as **IQ3** in the cards, while the maker
+(and HF) name them IQ3_S and IQ3_XXS — refine the quant extraction, validate via multiple
+references.
+
+**The bug was a grammar bug.** The quant regex required DIGITS after the underscore, and the
+IQ family's exact tags have letters: `IQ3_S`, `IQ3_XXS`, `IQ1_M` all collapsed to their
+stem (and `Q8_0` to `Q8`). The ids stayed unique because llama.cpp's cache-id decoder
+grabs the trailing token whole — so the tree separated the models while the cards (and the
+`quant` column) said the same thing about both. `_QUANT_RE` now captures the export grammar
+whole: IQ-family (`_XXS/_XS/_S/_M/_NL`), K-family (`_M/_S/_XL/_XXS/_XS`, the new K-quant
+wave), unsloth decomposed (`UD-Q5_K_XL` — the quant column now says MORE than the id tag),
+`Qx_0/1`, MXFP, plain widths — and `Qwen3.8` cannot fabricate a `Q3`.
+
+**The second reference is `general.file_type`, and on this box it is a liar.** The sniff now
+reads it through the gguf spec's id table (llama.cpp writes the NUMBER: the Swift IQ3_S
+file declares 26 = IQ1_M, its sibling 23 = IQ2_S). Every GSQ-RCO-flavored GGUF here
+disagrees with its filename (`Q8_0` files declaring `Q5_1`, `Q5_K_M` declaring `IQ2_XS`) —
+exporter sloppiness, not portal bug. `_resolve_quant` validates the pair instead of merging
+it: agreement is silent; a coarse filename tag is refined by the header (`IQ3` + `IQ3_S` →
+IQ3_S); the K-family enum is coarse on its side (there is no Q4_K_M in the table — silence);
+a flat conflict keeps the FILENAME — maker, hub, and the router's own id all use it, and the
+shard sizes side with it (IQ3_S 83.7 G > IQ3_XXS 76.0 G) — and stores `quant_note`, which
+the card renders as a warn badge plus a `header file_type` field, so the operator sees both
+claims and why one won. Schema: `file_type` + `quant_note` columns through the ALTER
+migration, drift-pinned INSERT widened.
+
+`4.2bpw` (ThinkingCap's per-weight naming) is not in the tag grammar and reads as no quant —
+truthful; inventing a tag from "4.2bpw" would be the same class of lie the headers are
+committing. Tests: grammar table (19 names), resolver rule table, and the Swift pair
+reproduced at cache shape with the lying header. Full suite 1190 green.
