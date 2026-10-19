@@ -844,6 +844,26 @@ def create_app() -> FastAPI:
         # is a fact an operator needs, and hiding it makes the merged table a lie.
         extra_live = [m for m in live
                       if modelindex.router_key(m.get("id") or "") not in library_ids]
+        # The tree (owner Oct-18: the 12-column wall overflowed its id column on every row
+        # and obscured the rest). Levels are the id's own metadata -- the repository
+        # namespace is the quantizer (`general.quantized_by`), the stem is the model
+        # (`general.name`), the `:QUANT` tag is the file type (`general.file_type`) -- and
+        # that triple is the index's unique key, so every leaf is exactly one model and a
+        # fourth level is not needed. Zero cost: the facts come out of the ids the page
+        # already renders; nothing sniffs GGUF headers at render time.
+        by_repo: dict[str, dict[str, list]] = {}
+        for m in indexed:
+            repo, _, rest = str(m["id"]).rpartition("/")
+            stem, _, _quant = rest.rpartition(":")
+            by_repo.setdefault(repo or "Local files", {}).setdefault(stem, []).append(m)
+        mv_tree = [{"repo": repo,
+                    "subs": [{"name": name,
+                              "leaves": sorted(by_repo[repo][name],
+                                               key=lambda m: (str(m.get("quant") or ""),
+                                                              str(m["id"])))}
+                             for name in sorted(by_repo[repo], key=str.casefold)],
+                    "n": sum(len(v) for v in by_repo[repo].values())}
+                   for repo in sorted(by_repo, key=str.casefold)]
         pool_h = _human(budget)
         g = metrics.gpu() if hasattr(metrics, "gpu") else None
         if g and g.get("is_igpu"):
@@ -868,6 +888,7 @@ def create_app() -> FastAPI:
                                                if m["verdict"] == "unknown"),
                                            "diskroot": str(paths.LLAMA_MODELS),
                                            "comfy": comfy,
+                                           "mv_tree": mv_tree,
                                            "comfy_categories": cp.categories() if cp else [],
                                            "comfyroot": str(paths.COMFY_MODELS),
                                            # The reference left this page (§6.14.1q / queue 33) and lives on

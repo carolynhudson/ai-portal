@@ -578,16 +578,14 @@
         "#add-src",
         "#add-name",
         "#add-dir",
-        "#add-cat"
+        "#add-cat",
+        "#mv-filter",
+        "#mv-tree",
+        "#mv-card-note",
+        ".mv-leaf"
       ],
       "expectStylesheets": [
         "/static/tabs.css"
-      ],
-      "expectScrollContainers": [
-        "#library-table"
-      ],
-      "expectStickyColumns": [
-        "#library-table"
       ],
       "tabGroups": [
         {

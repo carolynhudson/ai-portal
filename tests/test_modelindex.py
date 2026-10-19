@@ -1188,7 +1188,9 @@ def test_the_models_page_says_what_a_model_can_be_used_for(monkeypatch):
     # ...and a pooling file is badged for what it can actually do, even though
     # its tokenizer declares FIM specials: it cannot generate, so an
     # autocomplete badge on it is a promise the file cannot keep.
-    row = re.search(r"Pools-For-Embeddings.*?</tr>", page, re.S).group(0)
+    # The Oct-18 tree replaced the row: the containment check slices the model's CARD.
+    row = re.search(r'<section class="mv-card" data-model="Pools-For-Embeddings[^"]*"[^>]*>.*?</section>',
+                    page, re.S).group(0)
     assert ">embedder<" in row, row[-200:]
     assert ">autocomplete<" not in row and ">fim?<" not in row, \
         "an embedder was badged as a generator"
@@ -1458,8 +1460,10 @@ def test_a_cache_model_is_marked_as_a_cache_model_on_the_page(monkeypatch):
     body = c.get("/models").text
     assert "org/Cached-GGUF:Q4_K_M" in body, "a model the router can load is missing"
     assert "Library-Model" in body
-    assert body.count("(hub cache)") == 1, (
-        "the marker is on the cache row only — on both, or neither, and the "
+    # Oct-18 tree: the marker lives on the cache row's LEAF, exactly once in the tree.
+    tree = body.split('id="mv-tree"', 1)[1].split('id="mv-card-note"', 1)[0]
+    assert tree.count(">hub cache<") == 1, (
+        "the marker is on the cache leaf only — on both, or neither, and the "
         "operator cannot tell what the portal manages")
 
 

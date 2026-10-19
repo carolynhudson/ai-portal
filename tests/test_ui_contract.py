@@ -1694,6 +1694,30 @@ def test_the_editor_is_a_card_surface_not_a_stepper(client):
     assert re.search(r"textContent", surf), "the state is not stated in text an operator reads"
 
 
+def test_the_models_library_is_a_tree_not_a_wall(client):
+    """Owner Oct-18: the 12-column table was "barely useable" -- the model id overflowed
+    its column on virtually every row and obscured the columns after it. The library is a
+    tree now: quantizer -> model -> quant leaf (the id's own metadata:
+    quantized_by/name/file_type, and that triple is the index's unique key, so every leaf
+    is exactly one model), a filter beside it, and a leaf click opens the model's card:
+    the table's facts as one row each, the parenthesised postfixes as fields of their own.
+    The wall's markers -- #library-table, the sticky-column CSS -- must stay gone.
+    """
+    tpl = (ROOT / "web" / "templates" / "models.html").read_text()
+    assert 'id="mv-tree"' in tpl and 'id="mv-filter"' in tpl, "no tree, no filter"
+    assert 'class="mv-leaf"' in tpl and "mv-leaf\"" in tpl, "leaves are not leaf buttons"
+    assert "<button type=\"button\" class=\"mv-leaf\"" in tpl, "a leaf must be a button (keyboard reach)"
+    assert 'id="library-table"' not in tpl and ".grid-wrap" not in tpl, "the wall is back"
+    for label in ("model id", "router registers as", "quantization", "shards",
+                  "attention interval", "experts (active)", "vision projector",
+                  "chat template", "peak RAM", "priced at ctx", "fits here"):
+        assert f"<span class=\"k\">{label}</span>" in tpl, f"card field missing: {label}"
+    script = tpl[tpl.index("getElementById('mv-tree')"):]
+    assert "aria-pressed" in script[:2000], "the leaf does not state its selection"
+    assert "mv-filter" in script[:3000] and "dataset.search" in script[:3000], "filter is not wired"
+    assert "n.tagName === 'DETAILS'" in script, "the selection's path is not opened"
+
+
 def test_form_controls_read_as_controls(client):
     """Owner Oct-18 (the whole portal): fields were --panel on --panel with 1px --line edges --
     "the background looks identical to the rest of the panel ... borders hardly noticeable,"
