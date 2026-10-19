@@ -315,10 +315,12 @@ function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
   // what is running); many, or none, opens nothing. Groups rest closed otherwise -- an
   // all-open tree of 20 quant files measured taller than the table it replaced.
   // `.mv-live`, not `.tag.ok`: capability badges wear the same tone classes, and a leaf
-  // is "live" only when the router registered it.
+  // is "live" only when the router registered it. And "registered" is generous on a
+  // llama.cpp server (it registers every model it knows, not only the loaded one), so the
+  // boot card opens for EXACTLY one live model and no group paths are pre-opened for the
+  // rest -- opening the live leaves' paths opened all ten groups on this box.
   const live = leaves.filter(l => l.querySelector('.mv-live'));
   if (live.length === 1) { open = live[0].dataset.model; openPath(live[0]); }
-  for (const l of live) openPath(l);
   paint();
 })();
 
