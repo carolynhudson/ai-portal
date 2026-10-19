@@ -5980,3 +5980,47 @@ migration, drift-pinned INSERT widened.
 truthful; inventing a tag from "4.2bpw" would be the same class of lie the headers are
 committing. Tests: grammar table (19 names), resolver rule table, and the Swift pair
 reproduced at cache shape with the lying header. Full suite 1190 green.
+
+##### 6.14.1b The harness IS opencode — the portal hands over, the store is shared (2026-10-19)
+
+Owner on the Projects page: the portal's own chat panel is "kind of useless as an agentic
+harness" — the model announced a tool call and the loop just stopped, no errors, no
+activity; and the project's session was invisible to a manual `opencode` in the folder.
+"I was hoping opencode had a web interface ... and that you could just serve a real
+opencode session from this server via the portal. Fix this!"
+
+**opencode v2 ships the web app in the binary.** `opencode serve` serves it at the server
+root — verified live: `GET :4096/` is the OpenCode SPA. The portal's chat panel is now
+what it should have been: a *viewer*. Every project row carries **"Open in OpenCode"**
+→ the host root (Basic auth: user `opencode`, the page names the key file, never the
+secret); the app's connect screen takes the server address + the same password and shows
+sessions grouped by project. Live-verified: the merged portal sessions appear there
+("Opencode v2 test…", "Local full-duplex voice roleplay app").
+
+**Why the loop halted** (measured, not guessed): the voice-roleplay session's last
+assistant row carries two `shell` tool parts stuck at `running`, `finish: None`, and the
+store's `permission`/`session_pending` tables are **empty** — the model spawned shell
+commands at 13:36 that hung, the owner quit, and the **20:58 reboot** killed the host
+mid-turn (`status=130`). opencode has no bash-timeout knob (v2 config schema checked),
+and the store kept "running" forever, so the portal viewer showed hours of fake
+activity. `transcript()` now reads the host's `idle` row *after* the last assistant row
+as proof the turn closed → running tools become `stale` + the bubble names the way out
+(the real web UI's interrupt/resume). An open turn's running tools stay running.
+
+**One store** (the quibble, fixed): `XDG_DATA_HOME` isolation came out of the harness env
+— its reason (v1 host + v2 CLI on one db: the v2 migration dropped `project_id` and broke
+the v1 server, ref=err_4c90c294) is retired now the harness is v2. The comment in
+`harnessctl.env_mapping` says: re-isolate FIRST if the harness is ever pinned to v1.
+`tools/harness_store_share.py` merged the harness store into `~/.local/share/opencode`:
+same-migration-set gate, backups, **named-column INSERTs** (measured: the two dbs order
+`session_v2`'s columns differently — `SELECT *` would have written every value into the
+wrong column), NULL-safe event_sequence max-merge (the first run crashed on a NOT NULL
+and rolled back clean — the transaction boundary is why the store survived), no-clobber
+storage dirs. Result verified: the harness host serves the merged sessions, the web UI
+lists them by project, and `opencode session list` in ~/ai-projects/voice-roleplay now
+shows both portal-launched sessions beside the folder's own history. `opencode attach
+http://127.0.0.1:4096` shares the live state too (docs, v2).
+
+Queued futures unchanged (router visibility allowlist, card load/unload) plus one new:
+`opencode web --cors` opens the door to the portal *embedding* the web UI (iframe) later;
+today's handoff is a link, and the web UI's own connect screen is the auth.
