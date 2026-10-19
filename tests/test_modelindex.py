@@ -1467,6 +1467,89 @@ def test_a_cache_model_is_marked_as_a_cache_model_on_the_page(monkeypatch):
         "operator cannot tell what the portal manages")
 
 
+def test_quant_tags_are_captured_whole():
+    """The IQ-family exact tags (IQ3_S, IQ3_XXS, IQ1_M) have no DIGITS after the
+    underscore, and the old pattern required them: both Swift Flash Next quants
+    collapsed to "IQ3" in the cards while the router registered them apart. The
+    export grammar has to capture the tag whole -- quantizer suffixes included."""
+    cases = [
+        ("Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf", "IQ3_S"),
+        ("Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf", "IQ3_XXS"),
+        ("model-IQ1_M.gguf", "IQ1_M"),
+        ("model-IQ2_XXS.gguf", "IQ2_XXS"),
+        ("model-IQ4_XS.gguf", "IQ4_XS"),
+        ("model-IQ4_NL.gguf", "IQ4_NL"),
+        ("model-Q4_K_M-00001-of-00002.gguf", "Q4_K_M"),
+        ("model-Q4_K_S.gguf", "Q4_K_S"),
+        ("model-Q5_K_XL.gguf", "Q5_K_XL"),
+        ("model-Q8_K_XL.gguf", "Q8_K_XL"),
+        ("model-Q3_K_XS.gguf", "Q3_K_XS"),
+        ("model-UD-Q4_K_XL.gguf", "UD-Q4_K_XL"),
+        ("model-Q8_0.gguf", "Q8_0"),
+        ("model-Q4_0.gguf", "Q4_0"),
+        ("model-Q2_K.gguf", "Q2_K"),
+        ("model-BF16.gguf", "BF16"),
+        ("model-F16.gguf", "F16"),
+        # No tag is no tag: the model's own name must not fabricate a quant, and
+        # "Qwen3.8" is not "Q3".
+        ("model.gguf", None),
+        ("Qwen3.8-Flash-Next-GGUF.gguf", None),
+    ]
+    for name, want in cases:
+        got = mi._quant_from_name(name)
+        assert got == want, (name, got, want)
+
+
+def test_the_two_quant_references_are_validated_not_merged():
+    """Filename tag vs the header's file_type: agreement is silent, the filename
+    wins on a flat conflict (the maker's convention, the hub's, and the tag the
+    router registers), the header refines a coarse filename tag (IQ3 -> IQ3_S),
+    the K-family enum is coarse on its side (Q4_K for Q4_K_M -- no note), and a
+    conflict is recorded, not swallowed."""
+    assert mi._resolve_quant("Q4_K_M", "Q4_K_M") == ("Q4_K_M", None)
+    q, note = mi._resolve_quant("IQ3", "IQ3_S")
+    assert q == "IQ3_S" and note, "coarse filename tag: the header names the quant"
+    assert mi._resolve_quant("Q4_K_M", "Q4_K") == ("Q4_K_M", None), \
+        "the file_type table has no Q4_K_M; the header being coarse is expected"
+    q, note = mi._resolve_quant("IQ3_S", "IQ1_M")
+    assert q == "IQ3_S" and "IQ1_M" in note and "IQ3_S" in note, \
+        "the Swift case: label kept, disagreement recorded"
+    assert mi._resolve_quant(None, None) == (None, None)
+    assert mi._resolve_quant("Q8_0", None) == ("Q8_0", None)
+    assert mi._resolve_quant(None, "Q5_K") == ("Q5_K", None)
+
+
+def test_conflicting_quant_references_keep_the_filename_and_record_the_note(monkeypatch):
+    """The two Swift Flash Next quants, reproduced at cache shape: ids were always
+    distinct (llama.cpp decodes the filename tag), but the cards showed both as
+    "IQ3" because the quant COLUMN collapsed -- and the maker's own file_type
+    header (IQ1_M on the IQ3_S file) contradicts the filename outright. The row
+    keeps the exact filename tag, carries the header's claim in its own column,
+    and stores the conflict as a note the card can show."""
+    hub = mi.paths.HOME / "quant-hub"
+    repo = "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+    stem = "Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+    snap = _hub_repo(hub, repo, _REV_A,
+                     {f"{stem}-IQ3_S.gguf": _KV, f"{stem}-IQ3_XXS.gguf": _KV})
+    # The IQ3_S file declares file_type 26 = IQ1_M (as the real GSQ-RCO file does).
+    _write_raw_gguf(snap / f"{stem}-IQ3_S.gguf",
+                    [("general.architecture", "testarch"),
+                     ("general.name", "Swift Flash Next"),
+                     ("general.file_type", 26)])
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    _seed_library(monkeypatch, [])
+
+    rows = {r["id"]: r for r in mi.rows()}
+    s = rows[f"{repo}:IQ3_S"]
+    assert s["quant"] == "IQ3_S", "the filename tag must survive intact"
+    assert s["file_type"] == "IQ1_M", "the header's claim is kept as its own fact"
+    assert s["quant_note"] and "IQ1_M" in s["quant_note"] and "IQ3_S" in s["quant_note"], \
+        "the conflict must be recorded, not silently merged"
+    x = rows[f"{repo}:IQ3_XXS"]
+    assert x["quant"] == "IQ3_XXS" and x["file_type"] is None and x["quant_note"] is None, \
+        "one reference, no conflict, no note"
+
+
 #: Which cache paths llama.cpp counts as models, measured against b11146 with
 #: `--cache-list` over a fixture hub. The left column is the path relative to the
 #: revision directory; the right is the id tag it earns, or None for "not a

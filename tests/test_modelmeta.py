@@ -21,9 +21,10 @@ from app.core import modelmeta  # noqa: E402
 # ------------------------------------------------------------------ fixtures
 
 def make_gguf(path, name="Test Model 1B", arch="llama", ctx=4096,
-              tensors=123):
+              tensors=123, file_type=None):
     """A minimal but valid (big-endian) GGUF: magic, version 3, three KV
-    pairs — general.name, general.architecture, <arch>.context_length."""
+    pairs — general.name, general.architecture, <arch>.context_length.
+    `file_type` adds the general.file_type id (the quantization cross-check)."""
     kvs = []
 
     def add_str(key, val):
@@ -40,11 +41,13 @@ def make_gguf(path, name="Test Model 1B", arch="llama", ctx=4096,
     add_str("general.name", name)
     add_str("general.architecture", arch)
     add_u32(f"{arch}.context_length", ctx)
+    if file_type is not None:
+        add_u32("general.file_type", file_type)
 
     # b"GGUF" as LE u32 is 0x46554747; version bytes 00 00 00 03 make the
     # reader pick the big-endian layout (raw_version & 0xFFFF == 0).
     header = (b"GGUF" + b"\x00\x00\x00\x03" +
-              struct.pack(">QQ", tensors, 3))
+              struct.pack(">QQ", tensors, len(kvs)))
     with open(path, "wb") as f:
         f.write(header + b"".join(kvs) + b"\x00" * 64)
 
@@ -81,6 +84,25 @@ def test_sniff_gguf_fields(tmp):
     assert meta["arch"] == "qwen3"
     assert meta["context_length"] == 32768
     assert meta["tensor_count"] == 42
+
+
+def test_file_type_is_sniffed_as_a_quant_name(tmp):
+    """general.file_type is the header's own claim about the quantization, and it
+    is a number (llama.cpp writes the id from the gguf spec table). 21 is IQ3_S.
+    This is the reference that caught the collapsed-IQ3 bug on the Swift files."""
+    p = f"{tmp}/swift.gguf"
+    make_gguf(p, file_type=21)
+    assert modelmeta.sniff_gguf(p)["file_type"] == "IQ3_S"
+
+
+def test_file_type_normalization():
+    # Strings (some exporters write the name) upper-case; numbers map through the
+    # spec table; unmapped numbers and None stay None -- reading a bare number as
+    # a quant name would invent a fact the file does not state.
+    assert modelmeta._file_type_name("q4_k_m") == "Q4_K_M"
+    assert modelmeta._file_type_name(26) == "IQ1_M"
+    assert modelmeta._file_type_name(99) is None
+    assert modelmeta._file_type_name(None) is None
 
 
 def test_sniff_gguf_rejects_non_gguf(tmp):

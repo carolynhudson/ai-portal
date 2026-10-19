@@ -417,6 +417,13 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
         side_meta = modelmeta.sniff_gguf(sp)
         if side_meta:
             break
+    # Quantization, from two references that do not always agree: the filename tag
+    # (the maker's convention, the hub's, and the tag llama.cpp registers) and the
+    # header's general.file_type. _resolve_quant keeps the label and RECORDS the
+    # disagreement instead of swallowing it -- the GSQ-RCO Swift files here declare
+    # file_type IQ1_M/IQ2_S for files the maker names IQ3_S/IQ3_XXS.
+    quant, quant_note = _resolve_quant(_quant_from_name(head.name),
+                                       meta.get("file_type"))
     models.append({
         "id": model_id,
         # 'library' = under ~/ai/models/llama, which the operator owns: taking a
@@ -431,7 +438,11 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
         "mmproj_bytes": side_bytes,
         "arch": meta.get("arch"),
         "name": meta.get("name"),
-        "quant": _quant_from_name(head.name),
+        "quant": quant,
+        # The second reference kept as its own column so the card can show both and
+        # the conflict note explains itself.
+        "file_type": meta.get("file_type"),
+        "quant_note": quant_note,
         "ctx_trained": meta.get("context_length"),
         "layers": meta.get("block_count"),
         "kv_heads": meta.get("attention_kv_count"),
@@ -789,15 +800,62 @@ def _scan_cache_repo(snap: Path, repo_id: str, models: list[dict],
                    models, problems)
 
 
-_QUANT_RE = re.compile(r"(Q\d+(?:_[A-Z]\d*)?|IQ\d+(?:_[A-Z]\d+)?|BF16|F16|F32)",
-                       re.IGNORECASE)
+# The export-tag grammar, longest-alternative-first. The old pattern required DIGITS
+# after the underscore, so the IQ-family exact tags collapsed: IQ3_S and IQ3_XXS both
+# became "IQ3" -- on this box the two Swift Flash Next quants shared one label in the
+# cards while the router registered them apart (IQ1_M, Q8_0 and Q4_K_M lost their
+# suffixes the same way). The filename tag is the maker's own convention and the tag
+# llama.cpp registers, so the grammar has to capture it whole.
+_QUANT_RE = re.compile(
+    r"UD-Q\d_K(?:_(?:XXS|XS|XL|S|M))?"        # unsloth decomposed: UD-Q4_K_XL
+    r"|IQ\d+(?:_(?:XXS|XS|S|M|NL))?"          # IQ3_S, IQ3_XXS, IQ1_M, IQ4_XS, IQ4_NL
+    r"|Q\d+_K(?:_(?:XXS|XS|XL|S|M))?"         # Q4_K_M, Q5_K_XL, Q8_K_XL, Q3_K_XS
+    r"|Q\d+_[01](?:_XL)?"                     # Q4_0, Q5_1, Q4_0_XL
+    r"|MXFP\d(?:_MOE)?"
+    r"|BF16|F16|F32|F64",
+    re.IGNORECASE)
 
 
 def _quant_from_name(name: str) -> str | None:
     """Quant from the filename — the header does not carry it consistently, and
-    the export convention (…-Q4_K_M, …IQ4_XS) is what everyone actually reads."""
+    the export convention (…-Q4_K_M, …IQ3_S) is what everyone actually reads:
+    the maker, the hub, and the id llama.cpp registers all use it."""
     m = _QUANT_RE.search(name)
-    return m.group(1).upper() if m else None
+    return m.group(0).upper() if m else None
+
+
+def _resolve_quant(fn_quant: str | None, ft_name: str | None) -> tuple[str | None, str | None]:
+    """(quant, note) from the two references a GGUF offers for its quantization:
+    the filename tag and the header's general.file_type.
+
+    Agreement is silent; disagreement is the finding, and the finding is kept.
+    The filename wins as the label -- it is the maker's convention, the hub's, and
+    the tag the router registers -- while the header reference fills the gap for
+    files named `model.gguf` and refines a coarse tag. Both directions of
+    "coarser" are real: a filename of `IQ3` against a header `IQ3_S` is the
+    filename being imprecise (take the header); a header of `Q4_K` against a
+    filename `Q4_K_M` is the header's enum being coarse (there is no Q4_K_M in
+    the file_type table -- keep the filename). A flat conflict is recorded, not
+    swallowed: the GSQ-RCO Swift files here declare file_type IQ1_M/IQ2_S for
+    files the maker names IQ3_S/IQ3_XXS, and sizes side with the maker.
+    """
+    if not fn_quant and not ft_name:
+        return None, None
+    if not fn_quant:
+        return ft_name, None
+    if not ft_name:
+        return fn_quant, None
+    fn, ft = fn_quant.upper(), ft_name.upper()
+    if fn == ft:
+        return fn, None
+    if ft.startswith(fn):
+        return ft, (f"the filename tag '{fn}' is coarser than the header's file_type "
+                    f"'{ft}'; the header names the quantization, so it is used")
+    if fn.startswith(ft):
+        return fn, None
+    return fn, (f"the GGUF header declares file_type '{ft}' but the filename tag is "
+                f"'{fn}' — kept the filename: it is the maker's convention and the tag "
+                "the router registers. The size arithmetic sides with it too")
 
 
 # ----------------------------------------------------------------------- store
@@ -805,7 +863,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS model_index (
   id TEXT PRIMARY KEY,
   source TEXT, path TEXT, bytes INTEGER, shard_total INTEGER, mmproj_bytes INTEGER,
-  arch TEXT, name TEXT, quant TEXT, ctx_trained INTEGER,
+  arch TEXT, name TEXT, quant TEXT, file_type TEXT, quant_note TEXT,
+  ctx_trained INTEGER,
   layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
   embedding_length INTEGER, full_attention_interval INTEGER,
   rope_dimension_count INTEGER,
@@ -856,7 +915,7 @@ def _est_row(m: dict, est: dict, ctx: int) -> dict:
 # that was written to prevent it (the imatrix regex, §4.9 notes).
 _WRITE_COLUMNS = (
     "id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
-    "quant", "ctx_trained", "layers", "kv_heads", "attention_heads",
+    "quant", "file_type", "quant_note", "ctx_trained", "layers", "kv_heads", "attention_heads",
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
     "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers",
@@ -932,8 +991,8 @@ def _insert_sql() -> str:
 # together: the executed text is a literal, so no reader or scanner has to prove that the
 # joined identifier list cannot carry model data, and the builder stays the drift check.
 _INSERT_SQL = (
-    'INSERT OR REPLACE INTO model_index ("id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name", "quant", "ctx_trained", "layers", "kv_heads", "attention_heads", "embedding_length", "full_attention_interval", "rope_dimension_count", "expert_count", "expert_used_count", "is_moe", "has_ssm_state", "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers", "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type", "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs", "scanned_at", "header_hash") VALUES '
-    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO model_index ("id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name", "quant", "file_type", "quant_note", "ctx_trained", "layers", "kv_heads", "attention_heads", "embedding_length", "full_attention_interval", "rope_dimension_count", "expert_count", "expert_used_count", "is_moe", "has_ssm_state", "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers", "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type", "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs", "scanned_at", "header_hash") VALUES '
+    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 )
 
 

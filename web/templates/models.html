@@ -183,7 +183,8 @@
             <div class="kv"><span class="k">model id</span><span class="mono">{{ m.id }}</span></div>
             <div class="kv"><span class="k">gguf name</span><span class="mono">{{ m.name or "—" }}</span></div>
             <div class="kv"><span class="k">quantizer (repo)</span><span class="mono">{{ g.repo }}</span></div>
-            <div class="kv"><span class="k">quantization</span><span class="mono">{{ m.quant or "—" }}</span></div>
+            <div class="kv"><span class="k">quantization</span><span class="mono">{{ m.quant or "—" }}{% if m.quant_note %} <span class="tag warn" title="{{ m.quant_note }}">header file_type disagrees</span>{% endif %}</span></div>
+            <div class="kv"><span class="k">header file_type</span><span class="mono" title="general.file_type as the GGUF header declares it; the quantization above keeps the filename tag -- the maker's convention and the tag the router registers">{{ m.file_type or "—" }}</span></div>
             <div class="kv"><span class="k">architecture</span><span class="mono">{{ m.arch or "—" }}</span></div>
             <div class="kv"><span class="k">source</span><span>{% if m.source == "cache" %}<span class="mut">hub cache — llama.cpp discovers it; the portal did not put it there</span>{% elif m.source and m.source != "library" %}{{ m.source }}{% else %}library (portal-managed){% endif %}</span></div>
           </div>

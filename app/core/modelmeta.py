@@ -123,6 +123,31 @@ def _walk_kv(mm, bo: str, kv_count: int, aligned: bool,
     return fields, offs
 
 
+# The gguf spec's general.file_type id table (ids 0..26; llama.cpp writes the number,
+# some exporters write the name as a string). ids past 26 keep being assigned by new
+# quantisers, so an unmapped number normalises to None: reading "37" as if it named a
+# quantization would be inventing a fact the file does not state.
+GGUF_FILE_TYPE_NAMES = {
+    0: "ALL", 1: "F32", 2: "F16", 3: "BF16",
+    4: "Q4_0", 5: "Q4_1", 6: "Q5_0", 7: "Q5_1",
+    8: "Q8_0", 9: "Q8_1", 10: "Q2_K", 11: "Q3_K",
+    12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K",
+    16: "IQ2_XXS", 17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S",
+    20: "IQ4_NL", 21: "IQ3_S", 22: "IQ3_M", 23: "IQ2_S",
+    24: "IQ2_M", 25: "IQ4_XS", 26: "IQ1_M",
+}
+
+
+def _file_type_name(v):
+    """general.file_type normalised to a name: number via the spec table, string
+    upper-cased; None (or an unmapped number) stays None."""
+    if isinstance(v, str):
+        return v.upper()
+    if isinstance(v, int):
+        return GGUF_FILE_TYPE_NAMES.get(v)
+    return None
+
+
 def _header_buffer(f):
     """mmap the file when the filesystem allows, else fall back to a plain
     read of the first few MiB (some filesystems — tmpfs under sandboxing,
@@ -173,6 +198,13 @@ def sniff_gguf(path) -> dict | None:
                     "vision_encoder": fields.get("clip.has_vision_encoder"),
                     "name": fields.get("general.name") or None,
                     "size_label": fields.get("general.size_label") or None,
+                    # general.file_type names the quantization the header declares.
+                    # llama.cpp writes the numeric id from the gguf spec table, some
+                    # tools write the name as a string. It is a CROSS-CHECK for the
+                    # filename tag, not the truth: the GSQ-RCO Swift files on this box
+                    # declare IQ1_M/IQ2_S for files the maker names IQ3_S/IQ3_XXS.
+                    # modelindex resolves the two references and records the conflict.
+                    "file_type": _file_type_name(fields.get("general.file_type")),
                     "context_length": _as_int(fields.get(ap + "context_length")),
                     "tensor_count": tensor_count,
                     "organization": fields.get("general.organization") or None,

@@ -1716,7 +1716,7 @@ def test_the_models_library_is_a_tree_not_a_wall(client):
                 "memory (portal estimate", "architecture", "inputs and features"):
         assert f'<div class="mv-sec">{sec}' in tpl, f"card section missing: {sec}"
     for label in ("id on router", "model id", "gguf name", "quantizer (repo)",
-                  "quantization", "architecture", "source", "size (all shards)", "shards",
+                  "quantization", "header file_type", "architecture", "source", "size (all shards)", "shards",
                   "sidecar file", "path", "weights", "KV cache", "total", "peak RAM",
                   "ctx (trained)", "layers", "full-attention interval", "attention heads",
                   "kv heads", "embedding length", "rope dim", "vocab size", "MoE",
