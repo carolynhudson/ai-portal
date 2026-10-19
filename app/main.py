@@ -858,11 +858,14 @@ def create_app() -> FastAPI:
             by_repo.setdefault(repo or "Local files", {}).setdefault(stem, []).append(m)
         mv_tree = [{"repo": repo,
                     "subs": [{"name": name,
+                              "bytes": sum(int(m.get("bytes") or 0) for m in by_repo[repo][name]),
                               "leaves": sorted(by_repo[repo][name],
                                                key=lambda m: (str(m.get("quant") or ""),
                                                               str(m["id"])))}
                              for name in sorted(by_repo[repo], key=str.casefold)],
-                    "n": sum(len(v) for v in by_repo[repo].values())}
+                    "n": sum(len(v) for v in by_repo[repo].values()),
+                    "bytes": sum(int(m.get("bytes") or 0)
+                                 for v in by_repo[repo].values() for m in v)}
                    for repo in sorted(by_repo, key=str.casefold)]
         pool_h = _human(budget)
         g = metrics.gpu() if hasattr(metrics, "gpu") else None

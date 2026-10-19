@@ -1460,10 +1460,10 @@ def test_a_cache_model_is_marked_as_a_cache_model_on_the_page(monkeypatch):
     body = c.get("/models").text
     assert "org/Cached-GGUF:Q4_K_M" in body, "a model the router can load is missing"
     assert "Library-Model" in body
-    # Oct-18 tree: the marker lives on the cache row's LEAF, exactly once in the tree.
-    tree = body.split('id="mv-tree"', 1)[1].split('id="mv-card-note"', 1)[0]
-    assert tree.count(">hub cache<") == 1, (
-        "the marker is on the cache leaf only — on both, or neither, and the "
+    # Oct-18 tree: the marker is the cache branch's summary chip, exactly once. (The
+    # card's source field spells it with prose after it, so >hub cache< is the chip.)
+    assert body.count(">hub cache<") == 1, (
+        "the marker is on the cache branch only — on both, or neither, and the "
         "operator cannot tell what the portal manages")
 
 

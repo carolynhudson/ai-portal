@@ -19,28 +19,27 @@
 
 /* The library tree (owner Oct-18: the 12-column wall overflowed its id column on nearly
    every row and obscured every column behind it). The tree nests where the wall lined up:
-   quantizer -> model -> quant leaf, one model per leaf, and a selected leaf opens the
-   model's card: one row per fact, the parenthesised postfixes split into fields of their
-   own. The table's sticky-column machinery -- pinned id cell, per-cell borders,
-   horizontal-scroll survival -- exists only to serve a wall this replaces, and it goes. */
-.mv-group,.mv-sub{border:1px solid var(--field-line);border-radius:8px;margin:6px 0;padding:0 10px}
+   quantizer -> model -> ONE BRANCH PER QUANT, and the model's card lives inside its own
+   branch (owner: "a model card never shares space with another model") -- opening the
+   branch is selecting the model, and the cards are dense: every fact the index stores,
+   grouped into what it is, what it costs in RAM and disk, what it can do. */
+.mv-group,.mv-sub,.mv-quant{border:1px solid var(--field-line);border-radius:8px;margin:6px 0;padding:0 10px}
 .mv-sub{margin-left:14px}
-.mv-group>summary,.mv-sub>summary{cursor:pointer;padding:7px 0;font-size:.88rem}
+.mv-quant{margin-left:28px}
+.mv-group>summary,.mv-sub>summary,.mv-quant>summary{cursor:pointer;padding:7px 0;font-size:.88rem}
 .mv-group>summary:hover,.mv-sub>summary:hover{color:var(--acc)}
-.mv-leaves{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px;padding:4px 0 8px}
-.mv-leaf{display:flex;align-items:baseline;gap:8px;text-align:left;cursor:pointer;
-  border:1.5px solid var(--field-line);border-radius:8px;padding:6px 10px;margin:0;
-  background:var(--field);color:var(--fg);font-size:.85rem}
-.mv-leaf:hover{border-color:var(--acc)}
-.mv-leaf:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
-.mv-leaf.mv-sel{border-color:var(--acc);background:rgba(90,169,255,.13)}
-.mv-leaf.mv-sel .mv-q{color:var(--acc)}
-.mv-leaf[hidden],.mv-sub[hidden],.mv-group[hidden]{display:none}
+.mv-quant>summary{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.mv-quant[open]>summary{border-bottom:1px solid var(--line)}
+.mv-quant[hidden],.mv-sub[hidden],.mv-group[hidden]{display:none}
 .mv-cache{font-size:.7rem;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 4px}
-.mv-card{border:1.5px solid var(--acc);border-radius:10px;padding:12px 14px;margin:10px 0;background:var(--panel)}
-.mv-card h4{margin:0 0 6px;font-size:1rem;word-break:break-all}
-.mv-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2px 18px}
-.mv-fields .kv{border-bottom:1px solid var(--line);padding:4px 0;font-size:.85rem}
+.mv-card{margin:8px 0 10px}
+.mv-sec{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);
+  margin:10px 0 3px;border-bottom:1px solid var(--line)}
+.mv-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:2px 18px}
+.mv-fields .kv{border-bottom:1px solid var(--line);padding:4px 0;font-size:.85rem;
+  justify-content:space-between;gap:14px}
+.mv-fields .kv .mono{word-break:break-all;text-align:right}
+.mv-fields .mv-wide{grid-column:1/-1}
 </style>
 
 <h2>Models</h2>
@@ -135,71 +134,102 @@
   {# The tree (owner Oct-18). Levels are the id's own metadata: the repository namespace is
      the quantizer (`general.quantized_by`), the stem is the model (`general.name`), the
      `:QUANT` tag is the file type (`general.file_type`); that triple is the index's unique
-     key, so every leaf is exactly one model and no fourth level is needed. A leaf click
-     opens the model's card below the tree: one row per fact -- the table's twelve columns
-     as fields, and the parenthesised postfixes (`(as alias)`, `(hub cache)`, `(N shards)`,
-     layer `/interval`, MoE `a/t active`, peak `@ctx`) as fields of their own. #}
+     key. The third level is a BRANCH per quant (owner Oct-18: "each quant of a model its
+     own branch so a model card never shares space with another model") -- opening the
+     branch IS selecting the model, and the card lives inside its own branch, never in a
+     shared area. At most one branch is open at a time (the cards are dense by design). #}
   <div class="ed-row">
     <label for="mv-filter">filter</label>
     <input id="mv-filter" type="search" autocomplete="off"
            placeholder="name, quant, quantizer, arch — filters the tree below">
   </div>
   <p class="mut" style="margin:.2rem 0 .6rem">groups rest closed; typing opens what it matches.
-    Click a model leaf to open its full data card; click it again to close it.</p>
+    Opening a quant branch shows that model's full card; opening another closes it.
+    Sizes on a summary are that group's total on disk.</p>
   <div id="mv-tree">
   {% for g in mv_tree %}
   <details class="mv-group">
-    <summary><b>{{ g.repo }}</b> <span class="mut">{{ g.n }} file(s)</span></summary>
+    <summary><b>{{ g.repo }}</b> <span class="mut">{{ g.n }} file(s) · {{ g.bytes | sz }}</span></summary>
     {% for s in g.subs %}
     <details class="mv-sub">
-      <summary><b class="mono">{{ s.name }}</b> <span class="mut">{{ s.leaves|length }} quant(s)</span></summary>
-      <div class="mv-leaves">
+      <summary><b class="mono">{{ s.name }}</b>
+        <span class="mut">{{ s.leaves|length }} quant(s) · {{ s.bytes | sz }}</span></summary>
       {% for m in s.leaves %}
-        <button type="button" class="mv-leaf" data-model="{{ m.id }}" aria-pressed="false"
-                data-search="{{ (g.repo ~ ' ' ~ s.name ~ ' ' ~ (m.quant or '') ~ ' ' ~ m.id ~ ' ' ~ (m.arch or ''))|lower }}">
+      {% set vt = {'yes': 'ok', 'reduced': 'warn', 'never': 'bad'}.get(m.verdict, 'mut') %}
+      <details class="mv-quant" data-model="{{ m.id }}"
+               data-search="{{ (g.repo ~ ' ' ~ s.name ~ ' ' ~ (m.quant or '') ~ ' ' ~ m.id ~ ' ' ~ (m.arch or '') ~ ' ' ~ (m.name or ''))|lower }}">
+        <summary>
           <span class="tag mono mv-q">{{ m.quant or "—" }}</span>
           <span class="mono">{{ m.bytes | sz }}</span>
-          {% if m.live %}<span class="tag ok mv-live" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% endif %}
+          <span class="tag {{ vt }}" title="{{ m.verdict }}{% if m.verdict == 'reduced' and m.est_ctx %} — max about {{ m.est_ctx | ctxlen }} here{% endif %}">{{ m.verdict }}</span>
+          {% if m.live %}<span class="tag ok mv-live" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">on router</span>{% endif %}
           {% if m.source == "cache" %}<span class="mv-cache" title="found in the Hugging Face hub cache, not under {{ diskroot }} — llama.cpp can load it and does list it, but the portal did not put it there">hub cache</span>{% elif m.source and m.source != "library" %}<span class="mv-cache">{{ m.source }}</span>{% endif %}
-        </button>
+        </summary>
+        <section class="mv-card" data-model="{{ m.id }}">
+          <div class="mv-sec">on the router</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">id on router</span><span class="mono">{% if m.live %}{{ m.live_as }}{% else %}<span class="mut">not registered</span>{% endif %}</span></div>
+            <div class="kv"><span class="k">status</span><span>{% if m.live %}<span class="tag ok" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">registered</span>{% else %}<span class="tag mut" title="on disk, not registered with the router">not registered</span>{% endif %}</span></div>
+            <div class="kv"><span class="k">fits here</span><span>{% if m.verdict == "yes" %}<span class="tag ok" title="fits at its trained context, with headroom">fits</span>
+              {% elif m.verdict == "reduced" %}<span class="tag warn" title="does not fit at its trained context. Nothing in presets.ini sets ctx-size, so llama.cpp's fit (on by default) picks a smaller context at load; write ctx-size in this model's section to make that decision yourself">reduced</span>
+              {% elif m.verdict == "never" %}<span class="tag bad" title="cannot be paid for here even at a minimal context">never</span>
+              {% else %}<span class="tag mut" title="no attention geometry in the index, so there is no number to compare against the aperture">unknown</span>{% endif %}</span></div>
+            {% if m.verdict == "reduced" and m.est_ctx %}<div class="kv"><span class="k">max ctx estimate</span><span class="mono" title="the portal's estimate of the largest context that fits, shown as an estimate -- it is not written to the file the router reads">{{ m.est_ctx | ctxlen }}</span></div>{% endif %}
+            <div class="kv"><span class="k">peak RAM</span><span class="mono">{{ m.peak_h }}</span></div>
+            <div class="kv"><span class="k">priced at ctx</span><span class="mono">{{ (m.est_ctx or 0) | ctxlen }}</span></div>
+          </div>
+          <div class="mv-sec">identity</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">model id</span><span class="mono">{{ m.id }}</span></div>
+            <div class="kv"><span class="k">gguf name</span><span class="mono">{{ m.name or "—" }}</span></div>
+            <div class="kv"><span class="k">quantizer (repo)</span><span class="mono">{{ g.repo }}</span></div>
+            <div class="kv"><span class="k">quantization</span><span class="mono">{{ m.quant or "—" }}</span></div>
+            <div class="kv"><span class="k">architecture</span><span class="mono">{{ m.arch or "—" }}</span></div>
+            <div class="kv"><span class="k">source</span><span>{% if m.source == "cache" %}<span class="mut">hub cache — llama.cpp discovers it; the portal did not put it there</span>{% elif m.source and m.source != "library" %}{{ m.source }}{% else %}library (portal-managed){% endif %}</span></div>
+          </div>
+          <div class="mv-sec">size and disk</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">size (all shards)</span><span class="mono">{{ m.bytes | sz }}</span></div>
+            <div class="kv"><span class="k">shards</span><span class="mono">{{ m.shard_total or 1 }}</span></div>
+            <div class="kv"><span class="k">sidecar file</span><span class="mono">{{ (m.mmproj_bytes | sz) if m.mmproj_bytes else "none" }}</span></div>
+            <div class="kv mv-wide"><span class="k">path</span><span class="mono">{{ m.path }}</span></div>
+          </div>
+          <div class="mv-sec">memory (portal estimate at its trained context)</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">weights</span><span class="mono">{{ (m.est_weights | sz) if m.est_weights else "—" }}</span></div>
+            <div class="kv"><span class="k">KV cache</span><span class="mono">{{ (m.est_kv | sz) if m.est_kv else "—" }}</span></div>
+            <div class="kv"><span class="k">total</span><span class="mono">{{ (m.est_total | sz) if m.est_total else "—" }}</span></div>
+            <div class="kv"><span class="k">peak RAM</span><span class="mono">{{ m.peak_h }}</span></div>
+            <div class="kv"><span class="k">ctx (trained)</span><span class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</span></div>
+          </div>
+          <div class="mv-sec">architecture</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">layers</span><span class="mono">{{ m.layers if m.layers is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">full-attention interval</span><span class="mono">{{ m.full_attention_interval if m.full_attention_interval else "—" }}</span></div>
+            <div class="kv"><span class="k">attention heads</span><span class="mono">{{ m.attention_heads if m.attention_heads is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">kv heads</span><span class="mono">{{ m.kv_heads if m.kv_heads is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">embedding length</span><span class="mono">{{ m.embedding_length if m.embedding_length is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">rope dim</span><span class="mono">{{ m.rope_dimension_count if m.rope_dimension_count is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">vocab size</span><span class="mono">{{ m.vocab_size if m.vocab_size is not none else "—" }}</span></div>
+            <div class="kv"><span class="k">MoE</span><span class="mono">{% if m.is_moe %}mixture-of-experts: {{ m.expert_used_count }} of {{ m.expert_count }} experts active per token{% else %}dense{% endif %}</span></div>
+            <div class="kv"><span class="k">ssm state</span><span class="mono">{{ "recurrent state tensors in the header" if m.has_ssm_state else "no" }}</span></div>
+          </div>
+          <div class="mv-sec">inputs and features</div>
+          <div class="mv-fields">
+            <div class="kv"><span class="k">chat template</span><span>{% if not m.has_chat_template %}<span class="tag warn" title="the GGUF carries no tokenizer.chat_template — a base/completion model">no template</span>{% else %}{% for k in m.template_markers.split(',') if m.template_markers %}<span class="tag info">{{ k }}</span> {% endfor %}{% if not m.template_markers %}<span class="mut">template, no roles</span>{% endif %}{% endif %}</span></div>
+            <div class="kv"><span class="k">vision</span><span class="mono">{{ (m.sidecar_type or "mmproj") if m.has_mmproj else ("declared" if m.has_vision else "no projector") }}</span></div>
+            <div class="kv"><span class="k">fill-in-middle</span><span class="mono">{{ "declared" if m.has_fim else "no" }}</span></div>
+            <div class="kv"><span class="k">self-draft layers</span><span class="mono">{{ m.nextn_layers if m.nextn_layers else "—" }}</span></div>
+            <div class="kv"><span class="k">draft head</span><span class="mono">{% if m.draft_tensors is none %}—{% else %}{{ "present" if m.draft_tensors else "missing from weights" }}{% endif %}</span></div>
+            <div class="kv"><span class="k">pooling</span><span class="mono">{{ m.pooling_type if m.pooling_type is not none else "—" }}</span></div>
+            <div class="kv mv-wide"><span class="k">capabilities</span><span>{% for c in m.caps or [] %}<span class="tag {{ c.tone }}" title="{{ c.note }}">{{ c.label }}</span> {% endfor %}{% if not m.caps %}<span class="mut">none labelled</span>{% endif %}</span></div>
+          </div>
+        </section>
+      </details>
       {% endfor %}
-      </div>
     </details>
     {% endfor %}
   </details>
-  {% endfor %}
-  </div>
-  <p class="mut" id="mv-card-note">No model is open: pick one above and its full data card appears here.</p>
-  <div id="mv-cards">
-  {% for m in indexed %}
-  <section class="mv-card" data-model="{{ m.id }}" hidden>
-    <h4 class="mono">{{ m.id }}{% if m.live_as and m.live_as != m.id %} <span class="mut">(as {{ m.live_as }})</span>{% endif %}</h4>
-    <div class="mv-fields">
-      <div class="kv"><span class="k">model id</span><span class="mono">{{ m.id }}</span></div>
-      <div class="kv"><span class="k">status</span><span>{% if m.live %}<span class="tag ok" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">live</span>{% else %}<span class="tag mut" title="on disk, not loaded">not loaded</span>{% endif %}</span></div>
-      {% if m.live_as and m.live_as != m.id %}<div class="kv"><span class="k">router registers as</span><span class="mono">{{ m.live_as }}</span></div>{% endif %}
-      <div class="kv"><span class="k">source</span><span>{% if m.source == "cache" %}<span class="mut">hub cache</span>{% elif m.source and m.source != "library" %}{{ m.source }}{% else %}library{% endif %}</span></div>
-      <div class="kv"><span class="k">architecture</span><span class="mono">{{ m.arch or "—" }}</span></div>
-      <div class="kv"><span class="k">quantization</span><span class="mono">{{ m.quant or "—" }}</span></div>
-      <div class="kv"><span class="k">size (all shards)</span><span class="mono">{{ m.bytes | sz }}</span></div>
-      <div class="kv"><span class="k">shards</span><span class="mono">{{ m.shard_total or 1 }}</span></div>
-      <div class="kv"><span class="k">ctx (trained)</span><span class="mono">{{ (m.ctx_trained or 0) | ctxlen }}</span></div>
-      <div class="kv"><span class="k">layers</span><span class="mono">{{ m.layers if m.layers is not none else "—" }}</span></div>
-      <div class="kv"><span class="k">attention interval</span><span class="mono">{{ m.full_attention_interval if m.full_attention_interval else "—" }}</span></div>
-      <div class="kv"><span class="k">experts (active)</span><span class="mono">{% if m.is_moe %}{{ m.expert_used_count }} of {{ m.expert_count }}{% else %}dense{% endif %}</span></div>
-      <div class="kv"><span class="k">vision projector</span><span class="mono">{{ m.sidecar_type if m.has_mmproj else "none" }}</span></div>
-      <div class="kv"><span class="k">ssm state</span><span class="mono">{{ "yes" if m.has_ssm_state else "no" }}</span></div>
-      <div class="kv"><span class="k">capabilities</span><span>{% for c in m.caps or [] %}<span class="tag {{ c.tone }}" title="{{ c.note }}">{{ c.label }}</span> {% endfor %}{% if not m.caps %}<span class="mut">none</span>{% endif %}</span></div>
-      <div class="kv"><span class="k">chat template</span><span>{% if not m.has_chat_template %}<span class="tag warn" title="the GGUF carries no tokenizer.chat_template — a base/completion model">no template</span>{% else %}{% for k in m.template_markers.split(',') if m.template_markers %}<span class="tag info">{{ k }}</span> {% endfor %}{% if not m.template_markers %}<span class="mut">template, no roles</span>{% endif %}{% endif %}</span></div>
-      <div class="kv"><span class="k">peak RAM</span><span class="mono">{{ m.peak_h }}</span></div>
-      <div class="kv"><span class="k">priced at ctx</span><span class="mono">{{ (m.est_ctx or 0) | ctxlen }}</span></div>
-      <div class="kv"><span class="k">fits here</span><span>{% if m.verdict == "yes" %}<span class="tag ok" title="fits at its trained context, with headroom">fits</span>
-        {% elif m.verdict == "reduced" %}<span class="tag warn" title="does not fit at its trained context. Nothing in presets.ini sets ctx-size, so llama.cpp's fit (on by default) picks a smaller context at load; write ctx-size in this model's section to make that decision yourself">reduced</span>
-        {% elif m.verdict == "never" %}<span class="tag bad" title="cannot be paid for here even at a minimal context">never</span>
-        {% else %}<span class="tag mut" title="no attention geometry in the index, so there is no number to compare against the aperture">unknown</span>{% endif %}</span></div>
-      {% if m.verdict == "reduced" and m.est_ctx %}<div class="kv"><span class="k">max ctx estimate</span><span class="mono" title="the portal's estimate of the largest context that fits, shown as an estimate -- it is not written to the file the router reads">{{ m.est_ctx | ctxlen }}</span></div>{% endif %}
-    </div>
-  </section>
   {% endfor %}
   </div>
   {% if unknown_n %}
@@ -259,48 +289,39 @@
 function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// The library tree (owner Oct-18): filter the tree, and a leaf click opens that model's
-// card. Selection is one id and nothing else -- the cards are server-rendered and hidden,
-// the click moves which one is visible, and no request is made (the page writes nothing).
+// The library tree (owner Oct-18): filter, plus ONE BRANCH PER QUANT whose body IS the
+// model's card -- opening the branch is selecting the model, and the card never shares
+// space with another model (the cards are dense, so opening one closes the others).
+// No request is made: the page writes nothing.
 (function(){
   const tree = document.getElementById('mv-tree');
   if (!tree) return;
-  const cards = Array.from(document.querySelectorAll('.mv-card'));
-  const leaves = Array.from(tree.querySelectorAll('.mv-leaf'));
-  const note = document.getElementById('mv-card-note');
-  let open = null;
-  const paint = () => {
-    for (const l of leaves) {
-      const on = l.dataset.model === open;
-      l.classList.toggle('mv-sel', on);
-      l.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
-    for (const c of cards) c.hidden = c.dataset.model !== open;
-    note.hidden = open !== null;
-  };
+  const quants = Array.from(tree.querySelectorAll('.mv-quant'));
   const openPath = (el) => {
-    for (let n = el; n && n !== tree; n = n.parentElement)
+    for (let n = el.parentElement; n && n !== tree; n = n.parentElement)
       if (n.tagName === 'DETAILS') n.open = true;
   };
-  for (const l of leaves)
-    l.addEventListener('click', () => {
-      open = (open === l.dataset.model) ? null : l.dataset.model;
-      paint();
-      if (open) openPath(l);
+  // Accordion: opening a quant branch closes every other one. 'toggle' is the native
+  // event for a details opening, including the summary click -- no click handler needed.
+  for (const q of quants)
+    q.addEventListener('toggle', () => {
+      if (!q.open) return;
+      for (const o of quants) if (o !== q) o.open = false;
+      openPath(q);
     });
-  // The filter (same contract as the personality editor's): typing hides leaves that match
-  // nothing, subgroups that lose all their leaves, and groups that lose all their subs;
-  // clearing shows everything. Hiding is display, not deletion -- the click handlers and
-  // the cards are untouched, so a filtered tree is a view, not a change.
+  // The filter (same contract as the personality editor's): typing hides quant branches
+  // that match nothing, subgroups that lose all their branches, and groups that lose all
+  // their subs; clearing shows everything. Hiding is display, not deletion -- the branches
+  // and their cards are untouched, so a filtered tree is a view, not a change.
   document.getElementById('mv-filter').addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     for (const grp of tree.querySelectorAll('.mv-group')) {
       let ghits = 0;
       for (const sub of grp.querySelectorAll('.mv-sub')) {
         let shits = 0;
-        for (const l of sub.querySelectorAll('.mv-leaf')) {
-          const hit = !q || (l.dataset.search || '').includes(q);
-          l.hidden = !hit;
+        for (const qn of sub.querySelectorAll('.mv-quant')) {
+          const hit = !q || (qn.dataset.search || '').includes(q);
+          qn.hidden = !hit;
           if (hit) shits++;
         }
         sub.hidden = shits === 0;
@@ -311,17 +332,13 @@ function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
       if (ghits && q) grp.open = true;
     }
   });
-  // Boot: exactly one live model opens its card (the operator opened the page to look at
-  // what is running); many, or none, opens nothing. Groups rest closed otherwise -- an
-  // all-open tree of 20 quant files measured taller than the table it replaced.
-  // `.mv-live`, not `.tag.ok`: capability badges wear the same tone classes, and a leaf
-  // is "live" only when the router registered it. And "registered" is generous on a
-  // llama.cpp server (it registers every model it knows, not only the loaded one), so the
-  // boot card opens for EXACTLY one live model and no group paths are pre-opened for the
-  // rest -- opening the live leaves' paths opened all ten groups on this box.
-  const live = leaves.filter(l => l.querySelector('.mv-live'));
-  if (live.length === 1) { open = live[0].dataset.model; openPath(live[0]); }
-  paint();
+  // Boot: every group rests CLOSED. "Live" here means REGISTERED, and a llama.cpp server
+  // registers every model it knows -- all 17 leaves carry the light -- so pre-opening the
+  // live paths opened the whole tree on this box. Exactly ONE registered model opens its
+  // branch (the operator came to look at what is running); many, or none, opens nothing.
+  // `.mv-live`, not `.tag.ok`: capability badges wear the same tone classes.
+  const live = quants.filter(q => q.querySelector('.mv-live'));
+  if (live.length === 1) { live[0].open = true; openPath(live[0]); }
 })();
 
 // Tab switching. Pass the clicked tab in: reading the global `event` breaks

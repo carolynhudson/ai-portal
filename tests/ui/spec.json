@@ -581,8 +581,7 @@
         "#add-cat",
         "#mv-filter",
         "#mv-tree",
-        "#mv-card-note",
-        ".mv-leaf"
+        ".mv-quant"
       ],
       "expectStylesheets": [
         "/static/tabs.css"

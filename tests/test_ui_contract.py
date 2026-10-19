@@ -1697,27 +1697,43 @@ def test_the_editor_is_a_card_surface_not_a_stepper(client):
 def test_the_models_library_is_a_tree_not_a_wall(client):
     """Owner Oct-18: the 12-column table was "barely useable" -- the model id overflowed
     its column on virtually every row and obscured the columns after it. The library is a
-    tree now: quantizer -> model -> quant leaf (the id's own metadata:
-    quantized_by/name/file_type, and that triple is the index's unique key, so every leaf
-    is exactly one model), a filter beside it, and a leaf click opens the model's card:
-    the table's facts as one row each, the parenthesised postfixes as fields of their own.
-    The wall's markers -- #library-table, the sticky-column CSS -- must stay gone.
+    tree now: quantizer -> model -> ONE BRANCH PER QUANT (the id's own metadata:
+    quantized_by/name/file_type -- the index's unique key, so every branch is exactly one
+    model), a filter beside it, and the model's card is the branch's body (owner: "a model
+    card never has to share space with another model"). The card is a dense, organised
+    breakdown -- every fact the index stores, grouped into what the model IS, what it
+    costs in RAM and disk, and what it can DO -- so an operator can pick a model for a
+    task, decide which models fit resident together, and see what eats the disk.
+    The wall's markers (#library-table, sticky-column CSS) must stay gone.
     """
     tpl = (ROOT / "web" / "templates" / "models.html").read_text()
     assert 'id="mv-tree"' in tpl and 'id="mv-filter"' in tpl, "no tree, no filter"
-    assert 'class="mv-leaf"' in tpl and "mv-leaf\"" in tpl, "leaves are not leaf buttons"
-    assert "<button type=\"button\" class=\"mv-leaf\"" in tpl, "a leaf must be a button (keyboard reach)"
+    assert '<details class="mv-quant" data-model=' in tpl, \
+        "quants are not branches with the card as their body"
     assert 'id="library-table"' not in tpl and ".grid-wrap" not in tpl, "the wall is back"
-    for label in ("model id", "router registers as", "quantization", "shards",
-                  "attention interval", "experts (active)", "vision projector",
-                  "chat template", "peak RAM", "priced at ctx", "fits here"):
-        assert f"<span class=\"k\">{label}</span>" in tpl, f"card field missing: {label}"
+    # Card sections: the owner's questions each need fields to answer.
+    for sec in ("on the router", "identity", "size and disk",
+                "memory (portal estimate", "architecture", "inputs and features"):
+        assert f'<div class="mv-sec">{sec}' in tpl, f"card section missing: {sec}"
+    for label in ("id on router", "model id", "gguf name", "quantizer (repo)",
+                  "quantization", "architecture", "source", "size (all shards)", "shards",
+                  "sidecar file", "path", "weights", "KV cache", "total", "peak RAM",
+                  "ctx (trained)", "layers", "full-attention interval", "attention heads",
+                  "kv heads", "embedding length", "rope dim", "vocab size", "MoE",
+                  "ssm state", "chat template", "vision", "fill-in-middle",
+                  "self-draft layers", "draft head", "pooling", "capabilities",
+                  "fits here", "max ctx estimate", "priced at ctx"):
+        assert f'<span class="k">{label}</span>' in tpl, f"card field missing: {label}"
+    assert "{{ g.bytes | sz }}" in tpl and "{{ s.bytes | sz }}" in tpl, \
+        "group summaries must state their total on disk (the disk-space question)"
     script = tpl[tpl.index("getElementById('mv-tree')"):]
-    assert "aria-pressed" in script[:2000], "the leaf does not state its selection"
-    assert "mv-filter" in script[:3000] and "dataset.search" in script[:3000], "filter is not wired"
-    assert "n.tagName === 'DETAILS'" in script, "the selection's path is not opened"
+    assert "addEventListener('toggle'" in script and "o.open = false" in script, \
+        "cards are dense: opening a branch must close the others"
+    assert "mv-filter" in script and "dataset.search" in script, "filter is not wired"
+    assert "n.tagName === 'DETAILS'" in script, "the open branch's path is not opened"
     assert "live.length === 1" in script and "for (const l of live) openPath(l)" not in script, \
         "boot must not pre-open the tree: llama.cpp registers every model it knows"
+    assert "'.mv-live'" in script, "live detection needs the dedicated marker (caps share .tag.ok)"
 
 
 def test_form_controls_read_as_controls(client):
