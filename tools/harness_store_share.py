@@ -132,11 +132,15 @@ def main() -> int:
         d.execute(
             "INSERT OR IGNORE INTO main.event_sequence (aggregate_id, seq, owner_id) "
             "SELECT aggregate_id, seq, owner_id FROM src.event_sequence")
+        # NULL-safe: the WHERE guarantees the subquery row exists, so SET can never
+        # assign NULL to a NOT NULL column (measured: an unconditional max() subquery
+        # crashed exactly that way for aggregates the src store does not have).
         d.execute(
             "UPDATE main.event_sequence SET seq = "
-            "(SELECT max(sq.seq) FROM src.event_sequence sq WHERE sq.aggregate_id = "
-            "main.event_sequence.aggregate_id AND sq.seq > main.event_sequence.seq) "
-            "WHERE aggregate_id IN (SELECT aggregate_id FROM src.event_sequence)")
+            "(SELECT sq.seq FROM src.event_sequence sq "
+            " WHERE sq.aggregate_id = main.event_sequence.aggregate_id) "
+            "WHERE seq < (SELECT sq.seq FROM src.event_sequence sq "
+            "             WHERE sq.aggregate_id = main.event_sequence.aggregate_id)")
         print("event_sequence: aggregates merged, seqs taken as max")
     d.commit()
     d.execute("DETACH DATABASE src")
