@@ -6084,3 +6084,36 @@ applies to every dashboard panel: `oc-*-btn` ship `disabled`, and the unlock lin
 literally in `loadOpencodeUpd` where the panel test can see them. (3) `/api/services`
 mirrors `MANAGED_UNITS`, so a new managed unit is a test-pinned payload change.
 Suite: 1216 collected, green.
+
+##### 6.14.1d The image-forge research: an agent-facing toolbox has a real engine path (2026-10-25)
+
+Owner opened the image-toolbox exploration (generation + editing + deterministic
+helpers for the agent; the feature list is a research starting point, not an MVP)
+and proposed two acceptance anchors: a header logo replacing the "AI Portal"
+text, and a favicon set. The research round lands in **docs/IMAGE_FORGE_PROPOSAL.md**
+(adjudication pending). Findings that shape the design:
+
+- **The engine carries images** (source-verified, opencode v2): MCP tool results
+  with image content parts become file attachments (`tool/mcp.ts toContent()` →
+  `data:<mime>;base64`), and `tool-output.ts` gates by model modality — models
+  that cannot receive bytes inline get a retained file path. So "return the
+  visual state" works with zero protocol change whenever the box gains a vision
+  model; today (all GGUFs `is_vision=False`, zero mmproj) the loop closes on
+  `inspect` numbers + ASCII previews, not pixels.
+- **Exact pixels by construction**: diffusion gen is legal only at 16-multiples;
+  the toolbox accepts exact px, generates at the nearest legal size, and the
+  Pillow/numpy bench (the ComfyUI venv already ships them) delivers the exact
+  target. OpenAI's API solves the same pain with fixed presets; the bench is
+  our preset. **Alpha is data, not luck**: chroma-key gen (magenta) + numpy
+  Lab-ΔE keying + premultiplied resize + despill, with `inspect` probes
+  (alpha coverage, fringe count, border purity) as the numeric eyes;
+  Qwen-Image-Layered (native RGBA layers, Apache-2.0, ~45 GB peak on-demand —
+  not downloaded) is the phase-2 research gate.
+- **Prior art reads as verbs**: Stability's ops (`inpaint`, `outpaint`,
+  `remove_background`, `replace_subject`), OpenAI's alpha-zero masks +
+  `background:"transparent"` + quality dial, Firefly's iterative passes. The
+  proposal: ONE MCP server (stdlib stdio like `kb_mcp`), nine tools, canvas =
+  manifest + version files (undo = pointer; harness restarts kill in-memory
+  state — the journal's own lesson), fixed workflow templates (the plugin
+  supply-chain lesson), ComfyUI on-demand with `/free` after and confirm-gated
+  start against the 108 GiB aperture.
