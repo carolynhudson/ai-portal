@@ -6117,3 +6117,51 @@ text, and a favicon set. The research round lands in **docs/IMAGE_FORGE_PROPOSAL
   state — the journal's own lesson), fixed workflow templates (the plugin
   supply-chain lesson), ComfyUI on-demand with `/free` after and confirm-gated
   start against the 108 GiB aperture.
+
+##### 6.14.1e mmproj truth: the router has been seeing all along, the library table was blind (2026-10-25)
+
+Owner noticed (correctly): the HF cache carries `mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf`
+beside the session model's quant, while the portal's facts said vision everywhere was
+false. Measured the chain end to end:
+
+- **llama.cpp auto-pairs HF-cache projectors by substring.** `common/preset.cpp`:
+  the cache loader scans the snapshot dir, `is_mmproj_file` = filename contains
+  "mmproj", and sets `LLAMA_ARG_MMPROJ` on the preset. The router journal proves it
+  ran: `load_model: loaded multimodal model, '…/mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf'`
+  (loaded on every model start since Oct 20), and `/v1/models` reports the live
+  model's `architecture.input_modalities: [text, image]`. **The session model IS
+  vision-capable today.** No new launch parameters are needed: the filename
+  mismatch (base-model naming, `mmproj-Swift-…` vs quant `Swift-1.5-…-IQ3_S`)
+  is irrelevant to llama.cpp's substring rule — and the per-model INI accepts any
+  llama-server arg key (`key_to_opt`), so `mmproj = <path>` is a legal
+  personality-section override, by format, today.
+- **The portal's cache scan already pairs them too**: `modelindex.scan_cache`
+  ranks sidecars by directory depth (`_best_sibling` handles the root-level
+  mmproj beside per-quant files — the same naming case). Live read: both Swift
+  quants return `has_mmproj=True, has_vision=True, sidecar_type=mmproj,
+  mmproj_bytes=907543520`; 7 of 19 cache rows are vision.
+- **The blindness was scope**: `INDEX.json` is the *library* table (N3,
+  `scan_library` over `~/ai/models/llama`), and cache models are not in it.
+  Reading that file (as owner and as this session did) says "is_vision=False
+  everywhere" — true of the library, false of the box.
+
+**Queued (portal, small run)**: surface the cache-scan's vision facts in the
+models tree the way the library rows show them (the card template already renders
+`vision: mmproj` from `has_mmproj/sidecar_type`; the tree's quantizer→model→quant
+branch is INDEX-driven, so cache rows need the same field path), add the
+`mmproj = <path>` line to the personality editor grid (validate: file exists,
+sniffs as projector; override semantics = "replace the auto-pair"), and show the
+live `input_modalities` beside the disk fact. No launch-argv plumbing needed —
+measured that llama.cpp owns it.
+
+**Image-forge consequence** (IMAGE_FORGE_PROPOSAL §1, rewritten): the visual
+feedback loop closes in-model from day one (MCP image tool-result → file
+attachment → pixels; source-verified engine path). The gate is memory, and it is
+measured: ~10 GiB MemAvailable with the ~40 GB IQ3_S resident — qwen-image
+(~32 GiB pipeline) and z-image-turbo (~22 GiB) do not fit beside it. Binding
+contract on the design: single queued job, pre-load gate (refuse with printed
+arithmetic), `POST /free {"unload_models":true,"free_memory":true}` after every
+job, idle-stop ComfyUI, short-lived bench subprocesses. First feasible pairing:
+a forge session on `Qwopus3.5-4B-Coder-GGUF` (its snapshot carries
+`mmproj-F32.gguf`, ~5 GiB resident) → z-image-turbo fits with margin. The gate
+refuses with exactly that sentence.

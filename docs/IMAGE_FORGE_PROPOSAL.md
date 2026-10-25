@@ -14,6 +14,39 @@ Status: proposal for adjudication. Nothing implemented.
 
 ## 1. Measured ground (this box, Oct-25)
 
+- **Vision is LIVE, today, on the session model.** The router journal:
+  `load_model: loaded multimodal model, '.../mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf'`,
+  and `/v1/models` reports the session model's `architecture.input_modalities:
+  [text, image]`. llama.cpp's HF-cache preset loader auto-pairs mmproj files
+  (`common/preset.cpp: is_mmproj_file` substring rule, per-snapshot), so the
+  vision tower has been loaded with the model all along. The portal's cache scan
+  sees it too (`scan_cache → has_mmproj=True, has_vision=True, sidecar_type=mmproj,
+  907 MB`; 7 vision rows in cache). The blind spot was `INDEX.json`'s library-only
+  scope, not the detection. The personality INI format natively accepts
+  `mmproj = <path>` overrides (llama.cpp `key_to_opt` maps any llama-server arg);
+  portal editor surfacing of that line is a recorded queue item. **The forge's
+  visual feedback loop can therefore close in-model from day one** — MCP image
+  tool-results → file attachment → pixels (§1 opencode source facts).
+- **The memory arithmetic is the real constraint** (measured, session with the
+  ~40 GB IQ3_S resident): `free` shows **~10 GiB MemAvailable**. Pipelines:
+  qwen-image ≈ 20 GiB diffusion + 8.8 GiB TE + 0.6 GiB VAE + torch overhead
+  ≈ **~32 GiB**; z-image-turbo ≈ 12 + 7.5 + 0.6 + overhead ≈ **~22 GiB**.
+  Neither fits beside this model — the owner's demand is exactly right, and the
+  forge's **load gate** is: refuse any ComfyUI job whose pipeline estimate +
+  8 GiB safety exceeds MemAvailable, refusing **with the arithmetic printed**
+  (loaded models' bytes, MemAvailable, pipeline need). Path to first gens: run
+  the forge session on a small vision-capable model — the box already has
+  `Jackrong/Qwopus3.5-4B-Coder-GGUF` **with `mmproj-F32.gguf` in its snapshot**
+  (auto-paired by the same rule), ~5 GiB resident → z-image-turbo fits beside
+  it with margin. The gate states this path when it refuses.
+- **Memory-efficiency contract** (owner requirement, binding on the design):
+  single queued job at a time; pre-load MemAvailable gate as above; after every
+  job `POST /free {"unload_models": true, "free_memory": true}`; the bench
+  helper is short-lived subprocesses (no resident image process); ComfyUI idle
+  stop policy (default 10 min); the MCP server itself is stdlib stdio — a few
+  MB. The forge NEVER swaps router models (closed-session swaps only, §4 rules);
+  when the gate refuses, the stated remedy is a swap at session end, not a
+  forced load.
 - **ComfyUI 0.39.0** installed at `~/ai/comfyui`, service `ai-comfyui` (off by
   default — models are not resident, which is the owner's requirement). Its venv
   already carries **Pillow, numpy, scipy, torch**; it lacks cv2/skimage/rembg/
@@ -30,9 +63,9 @@ Status: proposal for adjudication. Nothing implemented.
   `GET /queue`, `POST /interrupt`, `POST /free` (model unload), `GET /object_info`,
   `GET /system_stats`. Official docs confirm a pure-urllib (no websocket) loop:
   submit → poll `/history/{prompt_id}` → fetch `/view`. Stdlib-only client: feasible.
-- **No vision model exists on the box**: every GGUF in the model library is
-  `is_vision=False`, zero mmproj files (INDEX.json). The harness model running this
-  session is text-only. **Today the agent cannot see pixels.** (See §6.)
+- **No vision GGUF exists in the scanned library**: every INDEX row is
+  `is_vision=False`, zero mmproj files under `~/ai/models/` (library-only
+  scan). The HF cache carries them (§1 first bullet) — see correction above.
 - **The engine carries images.** Source-verified in opencode v2
   (`packages/core/src/tool/mcp.ts` → `toContent()`): an MCP tool result with an image
   content part becomes `{type:"file", uri:"data:<mime>;base64,…"}` in the tool
@@ -212,10 +245,14 @@ Both anchors land on a real, shippable artifact — not a throwaway demo.
   anchor prep (palette, safe-zones) runs here.
 - **P1 forge**: templates + `gen`/`edit` + lifecycle (`confirm` start, `/free`,
   idle-stop policy) + audit + `preview:image` blocks. Anchors 1+2 end-to-end.
-- **P2 alpha research + seeing**: Qwen-Image-Layered decision (download +
+- **P2 alpha research + seeing-harder**: Qwen-Image-Layered decision (download +
   aperture + timing measurement on this box), rembg CPU evaluation (gate:
   BiRefNet CPU latency), optional cv2/imagehash/piexif into the comfy venv,
-  and the **vision-model decision** (§7) so the visual loop closes in-model.
+  and the **vision session pairing** (measured §1): forge sessions run on a
+  small mmproj-paired model (Qwopus-4B-Coder has `mmproj-F32.gguf` in-snapshot;
+  ~5 GiB) so the pipeline fits the gate; portal-side queue item — surface the
+  `mmproj = <path>` personality line + vision facts from the cache scan in the
+  models tree/editor (INDEX.json's library-only scope is the known blind spot).
 - **P3 portal surface** (recorded, not built): a gallery pane (canvas
   versions as history), Status-page footprint, per-personality tool scoping.
 
@@ -232,8 +269,13 @@ Both anchors land on a real, shippable artifact — not a throwaway demo.
 
 ## 7. Honest limits (stated up front)
 
-- Today's agent is text-only: the loop closes on measurements, not pixels;
-  composition-level judgment stays with the human until a vision model lands.
+- The session model IS vision-capable (measured §1) — the visual loop closes
+  in-model **when the model's context carries the image**; what remains true is
+  that small quants see small details poorly: composition/color/alpha judgment
+  is reliable for IQ3-class vision, fine text rendering (the "malformed text"
+  failure) is judged best by crop-preview zooms, and the `inspect` numeric
+  probes stay the ground truth for exactness. A 27B/vision-strong model improves
+  this; the swap rules own that.
 - qwen-edit-2509 compliance and mask adherence are model qualities, not API
   guarantees (community evidence: soft mask compliance everywhere, OpenAI
   included). Seeds + drafts + deterministic repair (`op`) is the mitigation.
