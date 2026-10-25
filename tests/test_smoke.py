@@ -162,7 +162,9 @@ def test_services_endpoint_shape():
     r = c.get("/api/services")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"llamacpp", "comfyui", "portal"}
+    # harness joined Oct-25: the opencode host is a managed unit (Settings row,
+    # restart verb, and the opencode tab's restart all ride this endpoint).
+    assert set(body) == {"llamacpp", "comfyui", "portal", "harness"}
     for v in body.values():
         assert {"unit", "name", "state", "controllable"} <= set(v)
 

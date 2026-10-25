@@ -36,6 +36,7 @@ from .core import (
     agentconfig,
     db,
     harnessctl,
+    harnessupd,
     health,
     kb,
     llamakey,
@@ -291,6 +292,14 @@ class BindBody(BaseModel):
     address: str | None = None
     external: bool | None = None
     restart: bool = False       # restart the unit now (router: confirm first)
+    confirm: bool = False
+
+
+class OpencodeUpdateBody(BaseModel):
+    """Verb on the opencode tab. `confirm` because all three verbs restart
+    something: the upgrade replaces the binary the host starts next, the restart
+    ends the running turn, and the plugin update re-seeds and restarts the host.
+    Sessions and transcripts live in the store and survive all three."""
     confirm: bool = False
 
 
@@ -2391,6 +2400,110 @@ def create_app() -> FastAPI:
                  f"external={res['external']}")
         return res
 
+    # ------------------------------------------- opencode harness updates
+    # The Projects page runs sessions on `opencode serve`; this tab is how the
+    # operator keeps that host current. Three versions, three facts (measured
+    # Oct-25): the RUNNING host (the service keeps the binary it started with),
+    # the DISK binary (the CLI self-updates under it), and the LATEST v2 tag
+    # (GitHub releases/latest is the v1 line — tags are the v2 channel).
+    @app.get("/api/updates/opencode")
+    def api_updates_opencode(refresh: bool = False, _=Depends(_require_auth)):
+        """The read-only update state: versions, plugins, and what each verb
+        would do. Cached an hour; ?refresh=1 re-reads GitHub + npm."""
+        return harnessupd.check(refresh=refresh)
+
+    @app.post("/api/updates/opencode/upgrade")
+    def api_update_opencode(body: OpencodeUpdateBody, _=Depends(_require_auth)):
+        """Run opencode's own updater (`opencode upgrade`) on the harness binary.
+
+        Official channel, user-level (no root), and it does NOT touch the running
+        service: the host keeps its version until restarted — which is the next
+        verb, and the tab says so. The harness is not the router: no model work
+        is interrupted mid-download, and sessions live in the store.
+        """
+        if not body.confirm:
+            raise HTTPException(409, {"ok": False,
+                                      "errors": ["the upgrade replaces the binary the "
+                                                 "harness starts next — send confirm=true"]})
+        binp = harnessctl.harness_bin()
+        if not binp.exists():
+            raise HTTPException(409, {"ok": False,
+                                      "errors": [f"no harness binary at {binp}"]})
+        try:
+            p = subprocess.run([str(binp), "upgrade"], capture_output=True,
+                               text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            db.event("harness", "upgrade", "timeout after 600s")
+            raise HTTPException(504, {"ok": False,
+                                      "errors": ["the upgrade did not finish in 600s; "
+                                                 "the binary on disk is unchanged"]}) from None
+        tail = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()[-8:]
+        ok = p.returncode == 0
+        db.event("harness", "upgrade", f"rc={p.returncode} {'ok' if ok else (tail[-1] if tail else '')}")
+        if not ok:
+            raise HTTPException(502, {"ok": False, "errors": tail or [f"rc={p.returncode}"]})
+        harnessupd._CACHE.update(at=0.0, data=None)   # the disk moved: re-read next look
+        return {"ok": True, "tail": tail, "restart_needed": True}
+
+    @app.post("/api/updates/opencode/restart")
+    def api_restart_opencode(body: OpencodeUpdateBody, _=Depends(_require_auth)):
+        """Restart the harness host: it picks up the on-disk binary and the
+        seeded config. Running turns end; sessions, transcripts and context are
+        the store's and resume (the unit being a service is what this is for)."""
+        if not body.confirm:
+            raise HTTPException(409, {"ok": False,
+                                      "errors": ["a restart ends the turn running right now — "
+                                                 "send confirm=true"]})
+        act = systemd.service_action("harness", "restart")
+        harnessupd._CACHE.update(at=0.0, data=None)
+        db.event("harness", "restart",
+                 f"{'ok' if act.get('ok') else act.get('error')}")
+        if not act.get("ok"):
+            raise HTTPException(502, act)
+        return act
+
+    @app.post("/api/updates/opencode/plugins")
+    def api_update_opencode_plugins(body: OpencodeUpdateBody,
+                                    _=Depends(_require_auth)):
+        """Pin every plugin that has an update to its npm latest, then re-seed
+        and restart the host so the new pins load. Pinned-by-construction: the
+        seed refuses unpinned specs, so 'update' is a pin move, never a
+        floating 'latest'.
+        """
+        if not body.confirm:
+            raise HTTPException(409, {"ok": False,
+                                      "errors": ["updating plugins re-seeds and restarts "
+                                                 "the host — send confirm=true"]})
+        state = harnessupd.check(refresh=True)
+        specs = harnessctl.plugin_specs()
+        moved, refused = [], []
+        for row in state["plugins"]:
+            if not row["update_available"] or not row["latest"]:
+                continue
+            spec = f"{row['name']}@{row['latest']}"
+            moved.append(spec)
+            specs = [spec if s.split("@")[0] == row["name"] else s for s in specs]
+        if not moved:
+            return {"ok": True, "changed": False, "specs": specs,
+                    "note": "every plugin is at its latest"}
+        port = serviceconf.port_of("harness", harnessctl.DEFAULT_PORT)
+        db.set_setting("harness_plugins", specs)
+        try:
+            # seed reads the same setting, so sync writes the moved pins into
+            # the config home and restarts the host that will load them.
+            out = harnessctl.sync(port=port, log=lambda *_: None)
+        except harnessctl.HarnessError as e:
+            # The pins are written and the seed reads them: the next host start
+            # applies them. Say exactly that, rather than claiming they loaded.
+            db.event("harness", "plugins", f"pins written, restart refused: {e}")
+            raise HTTPException(503, {"ok": False, "specs": specs,
+                                      "errors": [f"pins updated to {', '.join(moved)}; "
+                                                 f"the host restart failed: {e}"]}) from None
+        harnessupd._CACHE.update(at=0.0, data=None)
+        db.event("harness", "plugins", f"pins -> {', '.join(moved)}; restarted ok")
+        return {"ok": True, "changed": True, "specs": specs, "moved": moved,
+                "status": out}
+
     # ------------------------------------------- network exposure (LAN access)
     @app.get("/api/network")
     def api_network(_=Depends(_require_auth)):
@@ -2420,7 +2533,9 @@ def create_app() -> FastAPI:
             if entry is not None:
                 entry["auth"] = serviceconf.auth_state(
                     key, key_configured=(llamakey.configured()
-                                         if key == "llamacpp" else None))
+                                         if key == "llamacpp"
+                                         else harnessctl.key_present()
+                                         if key == "harness" else None))
         return report
 
     @app.get("/api/exposure")
@@ -2458,12 +2573,15 @@ def create_app() -> FastAPI:
                  f"service {service}: bind {res['previous']} -> {res['host']} "
                  f"({res['mode']})")
         if body.restart:
-            if service == "llamacpp" and not body.confirm:
-                raise HTTPException(400, {"ok": False,
-                                          "errors": ["restarting the llama.cpp "
-                                                     "router drops every agent "
-                                                     "session riding it — send "
-                                                     "confirm=true"]})
+            _gates = {
+                "llamacpp": ("restarting the llama.cpp router drops every agent "
+                             "session riding it — send confirm=true"),
+                "harness": ("restarting the harness host ends the turn a session is "
+                            "running right now (sessions/transcripts persist in the "
+                            "store) — send confirm=true"),
+            }
+            if service in _gates and not body.confirm:
+                raise HTTPException(400, {"ok": False, "errors": [_gates[service]]})
             act = systemd.service_action(service, "restart")
             res["restart"] = act
             db.event("portal", "network",

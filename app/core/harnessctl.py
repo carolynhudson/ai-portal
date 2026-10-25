@@ -67,6 +67,38 @@ _TIMEOUT = 20
 # written, and an unpinned entry resolves to whatever latest is on release day.
 HARNESS_V2_PLUGINS = ["opencode-search@1.0.0"]
 
+# A plugin spec the seed will accept: npm-style name, EXACT version. Unpinned is
+# refused by design: an unpinned entry resolves to "whatever latest is on release
+# day", and a host restart is then a silent supply-chain event.
+_PINNED_PKG_RE = re.compile(r"^@?[A-Za-z0-9._-]+(/@?[A-Za-z0-9._-]+)?@\d+\.\d+\.\d+$")
+
+
+def harness_bin() -> Path:
+    """The binary the harness unit execs (same path env_mapping seeds into
+    HARNESS_BIN). The Status tab's version rows and upgrade verb act on this."""
+    return paths.HOME / ".opencode" / "bin" / "opencode"
+
+
+def plugin_specs() -> list[str]:
+    """The harness plugin list, pinned `name@version` strings.
+
+    Portal-managed via the `harness_plugins` setting so the Status tab's
+    pin-update verb has something to write; the source constant is the default
+    for a box that never edited it. The seed reads the same function, so what
+    the page lists is what the host will load on its next start.
+    """
+    from . import db
+    raw = db.get_setting("harness_plugins", None)
+    if not isinstance(raw, list) or not raw:
+        return list(HARNESS_V2_PLUGINS)
+    specs = [str(x).strip() for x in raw if str(x).strip()]
+    bad = [s for s in specs if not _PINNED_PKG_RE.match(s)]
+    if bad:
+        raise HarnessError(
+            f"unpinned plugin specs refused: {', '.join(bad)} — pin name@x.y.z; "
+            "an unpinned entry means 'whatever is latest on release day'")
+    return specs
+
 
 class HarnessError(Exception):
     """A refusal the caller can show the operator verbatim."""
@@ -179,7 +211,13 @@ def seed_cache_home(port: int, log=print) -> dict:
     (cache / "data").mkdir(parents=True, exist_ok=True)   # the host's own session store home
     files = []
     cfg = json.loads((src / "opencode.json").read_text())
-    cfg["plugins"] = [{"package": p} for p in HARNESS_V2_PLUGINS]
+    try:
+        cfg["plugins"] = [{"package": p} for p in plugin_specs()]
+    except HarnessError as e:
+        # A corrupt plugin list must not brick the host: fall back to the
+        # pinned default and say so in the journal, where the operator will look.
+        log(f"harness seed: plugin list refused ({e}); loading the default")
+        cfg["plugins"] = [{"package": p} for p in HARNESS_V2_PLUGINS]
     cfg.pop("plugin", None)
     # The portal's memory server rides the same copy discipline as the plugins: the
     # harness sees exactly what the seed writes. `sys.executable` and `__file__` are
@@ -216,7 +254,7 @@ def env_mapping(port: int, password: str) -> dict[str, str]:
         # The wrapper honors `HARNESS_BIN` (measured: `BIN="${HARNESS_BIN:-…}"`). Pointing it
         # at the V2 binary is the harness upgrade: the plugin ecosystem is migrating to the
         # V2 `Plugin.define` spec, and a V2 host loads the same packages the CLI loads.
-        "HARNESS_BIN": str(paths.HOME / ".opencode" / "bin" / "opencode"),
+        "HARNESS_BIN": str(harness_bin()),
         # Measured on the live 1.19.0 host: the server reads its whole agent config
         # (providers, model list, default model, plugins, AGENTS.md) from
         # `OPENCODE_CONFIG_DIR` at startup. Pointing it at the seeded directory is what

@@ -529,7 +529,8 @@ def test_update_buttons_ship_locked_in_the_markup():
     """
     tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
     for btn in ("upd-btn", "comfy-upd-btn", "hf-upd-btn", "switch-build-btn",
-                "delete-build-btn", "purge-stray-btn"):
+                "delete-build-btn", "purge-stray-btn",
+                "oc-upgrade-btn", "oc-restart-btn", "oc-plugins-btn"):
         tag = next((ln for ln in tpl.splitlines() if f'id="{btn}"' in ln), None)
         assert tag is not None, f"button {btn} is not on the dashboard"
         assert "disabled" in tag, (
@@ -547,7 +548,8 @@ def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
     the page does not control.
     """
     tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
-    pairs = {"#comfy-upd-btn": "loadComfyUpd", "#hf-upd-btn": "loadHfUpd"}
+    pairs = {"#comfy-upd-btn": "loadComfyUpd", "#hf-upd-btn": "loadHfUpd",
+             "#oc-upgrade-btn": "loadOpencodeUpd"}
     for sel, loader in pairs.items():
         start = tpl.index("function " + loader + "(")
         end = next(i for i in range(start + 1, len(tpl)) if tpl[i:i + 9] == "function ")
@@ -1119,6 +1121,30 @@ def test_the_projects_page_hands_the_operator_to_the_real_opencode_web():
     assert "err_4c90c294" in hc, "the v1-isolation history stays stated so nobody re-isolates blindly"
     assert "closed" in hc and '"stale"' in hc, \
         "a closed turn's running tools read as stale, not as hours of fake activity"
+
+
+def test_the_opencode_tab_names_the_three_versions_and_keeps_the_key_out():
+    """Owner Oct-25: a Status tab for the harness's updates. The page must show
+    the three versions (they are three facts: running / disk / latest-v2), the
+    verbs must confirm, and the harness's Basic-auth password must never reach
+    any page's markup — the pages name the key FILE, the server reads the key."""
+    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    settings = (ROOT / "web" / "templates" / "settings.html").read_text()
+    for marker in ("switchUpdateTab('opencode', this)", 'id="update-opencode"',
+                   "oc-running", "oc-disk", "oc-latest", "oc-plugins",
+                   "loadOpencodeUpd", "ocVerb"):
+        assert marker in dash, f"opencode tab marker missing: {marker}"
+    for verb in ("upgrade", "restart", "plugins"):
+        assert f"'{verb}'" in dash, f"verb button for {verb} missing"
+    assert "window.confirm(confirmText)" in dash, "the verbs fire without a confirmation"
+    assert "if (OC_BUSY) return;" in dash, "a verb mid-flight must not be clickable twice"
+    for page, name in ((dash, "dashboard"), (settings, "settings")):
+        assert "OPENCODE_SERVER_PASSWORD" not in page, \
+            f"{name}: the harness password env var has no business in page markup"
+    # Settings rows are payload-driven; the harness row's constraint (modes
+    # loopback|all) must come from the endpoint, not be hardcoded in the page.
+    assert "s.modes" in settings, "the bind select ignores the payload's modes"
+    assert "'harness'" in settings, "no harness row in the service order"
 
 
 def test_the_projects_page_shows_the_toolchain_it_measured():

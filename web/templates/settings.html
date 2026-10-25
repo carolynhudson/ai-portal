@@ -31,6 +31,7 @@
     <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('llamacpp')">restart router</button>
     <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('comfyui')">restart ComfyUI</button>
     <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('portal')">restart portal</button>
+    <button class="ghost" style="padding:5px 12px;font-size:13px" onclick="restartSvc('harness')">restart harness</button>
   </div>
 </div>
 
@@ -85,7 +86,7 @@
 </div>
 
 <script>
-const ORDER = ['llamacpp', 'comfyui', 'portal'];
+const ORDER = ['llamacpp', 'comfyui', 'portal', 'harness'];
 const MODE_LABEL = {loopback: 'loopback only', lan: 'this LAN address', all: 'all interfaces (LAN)'};
 let DATA = null;      // /api/settings/services
 let NET = null;       // /api/network
@@ -146,7 +147,11 @@ function bindSelectHtml(key, s){
     addr += `<option value="${esc(i.address)}" ${s.host === i.address ? 'selected' : ''}>${esc(i.address)} (${esc(i.name)})</option>`;
   addr += `</select>`;
   let sel = `<select id="bind-${key}" onchange="onBindChange('${key}')" style="width:170px;padding:5px;border:1px solid var(--line);border-radius:6px;background:#0b0e13;color:var(--fg)">`;
-  for(const m of ['loopback', 'lan', 'all'])
+  // The modes per service come from the payload (the endpoint enforces the same
+  // list): the harness host cannot bind a single interface — the portal's client
+  // to it is loopback-pinned — so it offers loopback and all, and the page must
+  // not offer what the endpoint would refuse.
+  for(const m of (s.modes && s.modes.length ? s.modes : ['loopback', 'lan', 'all']))
     sel += `<option value="${m}" ${s.mode === m ? 'selected' : ''}>${m} — ${MODE_LABEL[m]}</option>`;
   sel += `</select>`;
   return sel + addr;
@@ -267,7 +272,9 @@ async function saveRow(key){
 async function restartSvc(key){
   const s = DATA && DATA.services ? DATA.services[key] : {label: key};
   const extra = key === 'llamacpp'
-    ? '\n\nWARNING: restarting the router drops every agent session riding on it — including any AI agent working right now.' : '';
+    ? '\n\nWARNING: restarting the router drops every agent session riding on it — including any AI agent working right now.'
+    : key === 'harness'
+    ? '\n\nWARNING: restarting the harness host ends the turn a session is running right now. Sessions, transcripts and context live in the store and resume.' : '';
   if(!confirm(`Restart ${s.label}? Its new settings take effect now.${extra}`)) return;
   const note = key === 'portal'
     ? document.getElementById('shared-env-msg')

@@ -161,6 +161,14 @@ MANAGED_UNITS = {
         "confirm": ("Restart the portal itself? The page will reconnect in a "
                     "moment."),
     },
+    "harness": {
+        "unit": "ai-harness",
+        "name": "opencode harness host",
+        "confirm": ("Restarting the harness host ends the turn a session is "
+                    "running right now. Sessions, transcripts and context live "
+                    "in the store and resume; unsent in-flight work is lost. "
+                    "Continue?"),
+    },
 }
 
 

@@ -398,6 +398,7 @@
   <div class="update-tab" onclick="switchUpdateTab('huggingface', this)">huggingface-cli</div>
   <div class="update-tab" onclick="switchUpdateTab('python', this)">Python / venv</div>
   <div class="update-tab" onclick="switchUpdateTab('gpu', this)">GPU Drivers / SDKs</div>
+  <div class="update-tab" onclick="switchUpdateTab('opencode', this)">opencode</div>
 </div>
 
 <div id="update-llamacpp" class="update-tab-content active">
@@ -560,6 +561,42 @@
         runtime uses the system RADV driver.
       </span>
     </div>
+  </div>
+</div>
+
+<div id="update-opencode" class="update-tab-content">
+  {# ---- opencode harness -------------------------------------------------- #}
+  {# Three versions because they are three facts (measured Oct-25): the RUNNING
+     service keeps the binary it started with, the DISK binary self-updates under
+     it (opencode's autoupdate), and LATEST is the v2 tag channel — GitHub's
+     "latest release" answers the v1 line. The verbs act on the harness the
+     Projects page launches sessions on; sessions live in the store, so all
+     three restart verbs are resume-safe. #}
+  <div class="card">
+    <h3>opencode harness host</h3>
+    <div class="kv"><span class="k">running host</span><span class="mono" id="oc-running">—</span></div>
+    <div class="kv"><span class="k">binary on disk</span><span class="mono" id="oc-disk">—</span></div>
+    <div class="kv"><span class="k">latest v2 release</span><span class="mono" id="oc-latest">—</span></div>
+    <p class="mut" id="oc-note">Versions read on demand (GitHub + npm); a read that
+      failed says so instead of reading as “up to date”.</p>
+    <div class="row">
+      <button id="oc-refresh-btn" class="btn" disabled onclick="loadOpencodeUpd(true)">Check now</button>
+      <button id="oc-upgrade-btn" class="btn" disabled onclick="ocVerb('upgrade', 'Upgrade the harness binary? It replaces the file the host starts next; the running service is untouched.')"
+              title="runs `opencode upgrade` (official channel, user-level)">Upgrade binary</button>
+      <button id="oc-restart-btn" class="btn" disabled onclick="ocVerb('restart', 'Restart the harness host? A running turn ends; sessions and transcripts persist and resume.')"
+              title="picks up the on-disk binary and the seeded config">Restart host</button>
+      <button id="oc-plugins-btn" class="btn" disabled onclick="ocVerb('plugins', 'Update the plugin pins to their npm latest? Re-seeds the config and restarts the host.')"
+              title="pins every plugin that has an update, then restarts the host">Update plugin pins</button>
+      <span class="pill mut" id="oc-pill">—</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Plugins (pinned)</h3>
+    <p class="mut">The seed writes pinned <code class="mono">name@version</code> specs — an unpinned
+      entry means “whatever is latest on release day”, so an update here is a pin move plus a
+      restart, never a floating latest. Built-ins need no plugin; the portal's own integration
+      is the <code class="mono">portal-memory</code> MCP server in the config.</p>
+    <div id="oc-plugins" class="mut">—</div>
   </div>
 </div>
 
@@ -1438,6 +1475,7 @@ function loadPanelOnce(tab){
   if (tab === 'huggingface') loadHfUpd();
   if (tab === 'python') loadPythonInfo();
   if (tab === 'gpu') { loadGpuInfo(); loadGpuApply(); }
+  if (tab === 'opencode') loadOpencodeUpd(false);
 }
 // The llama.cpp tab is the one displayed at page load, so it earns its fetch now.
 loadPanelOnce('llamacpp');
@@ -1768,4 +1806,100 @@ async function applyGpu(){
   if (want && want.indexOf('update-') === 0) openUpdateTab(want.slice('update-'.length));
 })();
 </script>
+
+<script>
+// The opencode tab (owner Oct-25): keep the harness the Projects page launches
+// sessions on current. Reads are cheap and cached an hour; every verb confirms
+// and busy-guards (night-half-2's lesson: a verb mid-flight must not be
+// clickable twice).
+let OC_BUSY = false;
+function ocSetPill(text, tone){
+  const el = document.getElementById('oc-pill');
+  el.textContent = text;
+  el.className = 'pill ' + (tone === 'bad' ? 'bad' : tone === 'warn' ? 'bad' : tone === 'good' ? 'ok' : 'mut');
+}
+function ocBusy(on){
+  OC_BUSY = on;
+  for (const id of ['oc-refresh-btn','oc-upgrade-btn','oc-restart-btn','oc-plugins-btn']){
+    const b = document.getElementById(id);
+    if (b) b.disabled = on;
+  }
+}
+function renderOpencode(d){
+  const o = d.opencode || {};
+  const note = (v, n) => v ? v + (n ? ` — ${n}` : '') : (n || 'unknown');
+  document.getElementById('oc-running').textContent = note(o.running, o.running_note);
+  document.getElementById('oc-disk').textContent = note(o.disk, o.disk_note);
+  document.getElementById('oc-latest').textContent = note(o.latest, o.latest_note);
+  const flags = [];
+  if (o.update_available) flags.push('binary update available');
+  if (o.restart_needed) flags.push('disk moved under the running host: restart applies it');
+  const ups = (d.plugins || []).filter(p => p.update_available);
+  if (ups.length) flags.push(ups.length + ' plugin pin(s) behind');
+  ocSetPill(flags.length ? flags.join(' · ') : (d.cached ? 'up to date (cached check)' : 'up to date'),
+            flags.length ? 'warn' : 'good');
+  const box = document.getElementById('oc-plugins');
+  box.textContent = '';
+  for (const p of (d.plugins || [])){
+    const row = document.createElement('div');
+    row.className = 'kv';
+    row.innerHTML = `<span class="k">${esc(p.name)}</span><span class="mono">`
+      + `pinned ${esc(p.pinned || '—')} · loaded ${esc(p.loaded || '—')}`
+      + ` · latest ${esc(p.latest || '?')}`
+      + (p.status === 'active' ? ' · <span style="color:var(--ok)">active</span>' : '')
+      + (p.update_available ? ' · <span style="color:var(--warn)">update available</span>' : '')
+      + `</span>`;
+    box.append(row);
+  }
+  if (!(d.plugins || []).length){
+    const p = document.createElement('div'); p.className='mut';
+    p.textContent = 'no plugins pinned — the host runs on built-ins';
+    box.append(p);
+  }
+}
+async function loadOpencodeUpd(refresh){
+  ocBusy(true);
+  try{
+    const r = await fetch('/api/updates/opencode' + (refresh ? '?refresh=1' : ''),
+                          {credentials:'same-origin'});
+    if (!r.ok){ ocSetPill('the update read failed: HTTP ' + r.status, 'bad'); return; }
+    renderOpencode(await r.json());
+  } catch(e){
+    ocSetPill('the update read failed: ' + e, 'bad');
+  } finally {
+    // the lock releases here, in the loader that fills the panel: a button
+    // clickable before the payload arrives acts on a guess.
+    ocBusy(false);
+    document.getElementById('oc-refresh-btn').disabled = false;
+    document.getElementById('oc-upgrade-btn').disabled = false;
+    document.getElementById('oc-restart-btn').disabled = false;
+    document.getElementById('oc-plugins-btn').disabled = false;
+  }
+}
+async function ocVerb(verb, confirmText){
+  if (OC_BUSY) return;
+  if (!window.confirm(confirmText)) return;
+  ocBusy(true);
+  ocSetPill(verb + ' running…', 'muted');
+  try{
+    const r = await fetch('/api/updates/opencode/' + verb, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({confirm: true})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){
+      const err = (d && d.detail && (d.detail.errors || d.detail)) || ('HTTP ' + r.status);
+      ocSetPill(verb + ' refused: ' + (Array.isArray(err) ? err.join('; ') : err), 'bad');
+      return;
+    }
+    ocSetPill(verb + ' done', 'good');
+    await loadOpencodeUpd(true);
+  } catch(e){
+    ocSetPill(verb + ' failed: ' + e, 'bad');
+  } finally {
+    ocBusy(false);
+  }
+}
+</script>
+
 {% endblock %}

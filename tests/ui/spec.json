@@ -291,6 +291,41 @@
             "lists_age_h": 10.4,
             "job": null
           }
+        },
+        {
+          "status": 200,
+          "body": {
+            "opencode": {
+              "running": "2.0.32",
+              "running_note": null,
+              "disk": "2.1.4",
+              "disk_note": null,
+              "latest": "2.1.4",
+              "latest_note": null,
+              "update_available": false,
+              "restart_needed": true
+            },
+            "plugins": [
+              {
+                "name": "opencode-search",
+                "pinned": "1.0.0",
+                "loaded": "1.0.0",
+                "status": "active",
+                "latest": "1.0.0",
+                "update_available": false,
+                "note": null
+              }
+            ],
+            "loaded_note": null,
+            "checked_at": 1761400000.0,
+            "verbs": [
+              "upgrade",
+              "restart",
+              "plugins"
+            ],
+            "cached": false
+          },
+          "path": "^/api/updates/opencode$"
         }
       ],
       "expectStylesheets": [
@@ -300,8 +335,8 @@
         {
           "tabs": ".update-tab",
           "panels": ".update-tab-content",
-          "expectTabs": 5,
-          "expectPanels": 5
+          "expectTabs": 6,
+          "expectPanels": 6
         }
       ],
       "requireConfirmFor": [
@@ -313,7 +348,8 @@
         "^/api/updates/comfyui$",
         "^/api/updates/hf$",
         "^/api/services/llamacpp/start$",
-        "^/api/updates/gpu$"
+        "^/api/updates/gpu$",
+        "^/api/updates/opencode/(upgrade|restart|plugins)$"
       ],
       "expectText": [
         {
@@ -768,7 +804,10 @@
         "#save-comfyui",
         "#save-portal",
         "#key-state",
-        "#key-body"
+        "#key-body",
+        "#bind-harness",
+        "#port-harness",
+        "#save-harness"
       ],
       "expectEnabled": [
         "#save-llamacpp",

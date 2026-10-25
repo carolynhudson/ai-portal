@@ -286,6 +286,60 @@ def test_router_restart_via_bind_requires_confirm(client):
     assert "confirm" in str(r.json())
 
 
+def test_harness_bind_offers_loopback_and_all_only():
+    """The opencode host's modes are constrained (owner Oct-25 asked for LAN
+    access): `lan` binds ONE interface address, which moves the endpoint off
+    127.0.0.1 — and the portal's own client to the harness is loopback-pinned
+    (test_the_client_never_leaves_loopback), so a lan bind would cut the portal
+    off the host the Projects page launches sessions on."""
+    ports = serviceconf.service_ports()["harness"]
+    assert ports["modes"] == ["loopback", "all"]
+    with pytest.raises(ValueError) as e:
+        serviceconf.set_bind("harness", "lan")
+    assert "loopback" in str(e.value), "the refusal must say what is allowed and why"
+    assert serviceconf.read_service_env("harness")["HARNESS_HOST"] == "127.0.0.1", \
+        "a refused bind must not have touched the env"
+
+
+def test_harness_bind_moves_the_host_and_keeps_the_rest_of_the_env(client):
+    """harness.env carries the server password and the binary path alongside
+    the host; the bind write moves ONLY HARNESS_HOST (the wrapper execs
+    `--hostname $HARNESS_HOST`, so exposure is this value)."""
+    conf = serviceconf.SERVICE_CONF["harness"]
+    serviceconf.write_service_env("harness", {
+        conf["host_key"]: "127.0.0.1", conf["port_key"]: "4096",
+        "OPENCODE_SERVER_PASSWORD": "s3cret", "HARNESS_BIN": "/x/opencode"})
+    r = client.post("/api/settings/services/harness/bind", json={"bind": "all"})
+    assert r.status_code == 200, r.text
+    assert r.json()["host"] == "0.0.0.0" and r.json()["mode"] == "all"
+    env = serviceconf.read_service_env("harness")
+    assert env["OPENCODE_SERVER_PASSWORD"] == "s3cret", \
+        "the bind write must not strip the secret the wrapper needs"
+    assert env["HARNESS_BIN"] == "/x/opencode"
+    # and back home
+    assert client.post("/api/settings/services/harness/bind",
+                       json={"bind": "loopback"}).json()["host"] == "127.0.0.1"
+
+
+def test_harness_restart_via_bind_requires_confirm(client):
+    # the harness restart ends a running turn (sessions persist) — same gate
+    # shape as the router's, its own reason
+    r = client.post("/api/settings/services/harness/bind",
+                    json={"bind": "loopback", "restart": True})
+    assert r.status_code == 400
+    assert "confirm" in str(r.json())
+
+
+def test_settings_services_payload_carries_harness_modes(client):
+    """The page renders exactly the payload's modes; an endpoint that offered
+    what it would refuse is the bug this pins."""
+    body = client.get("/api/settings/services").json()
+    h = body["services"]["harness"]
+    assert h["modes"] == ["loopback", "all"]
+    assert h["label"] == "opencode harness host"
+    assert "HTTP Basic" in h["auth"] and h["code_exec"] is True
+
+
 def test_dashboard_shows_who_can_reach_each_service(client):
     """The heroes must state the bind: 'can other systems reach this?' is the
     question an operator looks at first, and it must not be guessed."""

@@ -390,6 +390,24 @@ def test_the_seed_says_which_files_it_carried(monkeypatch):
     assert set(out["files"]) == {"opencode.json", "AGENTS.md"}, out
 
 
+def test_a_corrupt_plugin_list_falls_back_to_the_pins_and_says_so(monkeypatch):
+    """The plugin list is a setting the Status page writes; a hand-corrupted
+    unpinned list must not brick the host — the seed loads the pinned default
+    and puts the refusal in the log line the operator reads."""
+    from app.core import db
+    _fresh_state()
+    db.set_setting("harness_plugins", ["opencode-search"])   # unpinned: refused
+    logs = []
+    try:
+        harnessctl.seed_cache_home(4095, log=logs.append)
+    finally:
+        db.set_setting("harness_plugins", None)
+    seeded = json.loads((harnessctl.cache_dir(4095) / "opencode.json").read_text())
+    assert seeded["plugins"] == [{"package": p} for p in harnessctl.HARNESS_V2_PLUGINS]
+    assert any("plugin list refused" in l for l in logs), \
+        "a silent fallback would let an edited list read as if it loaded"
+
+
 def test_the_seed_writes_the_harness_plugin_list_the_host_can_load(monkeypatch):
     """The harness is a V2 host (measured 2.0.29): it loads `plugins` entries with
     `Plugin.define` packages, and its compatibility layer normalizes the V1 `plugin` key —
