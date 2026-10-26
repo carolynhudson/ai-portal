@@ -1112,7 +1112,8 @@ def test_the_projects_page_hands_the_operator_to_the_real_opencode_web():
     hc = (ROOT / "app" / "core" / "harnessctl.py").read_text()
     assert "'a', 'proj-web'" in tpl and "Open in OpenCode" in tpl, "no handoff to the real web UI"
     assert "STATE.harness_web" in tpl and "target = '_blank'" in tpl, "the handoff is not a new-tab link"
-    assert '"harness_web": harnessctl.base' in main, "the payload must carry the host's web root"
+    assert '"harness_web": _link(' in main, \
+        "the payload must carry the host's web root, spelled with the CLIENT'S host"
     assert '"harness_key": str(harnessctl.key_path())' in main, \
         "the page names the KEY FILE; it never carries the password"
     assert "read_key()" not in main, "the portal must not read the harness password into a page"
@@ -1121,6 +1122,24 @@ def test_the_projects_page_hands_the_operator_to_the_real_opencode_web():
     assert "err_4c90c294" in hc, "the v1-isolation history stays stated so nobody re-isolates blindly"
     assert "closed" in hc and '"stale"' in hc, \
         "a closed turn's running tools read as stale, not as hours of fake activity"
+
+
+def test_browser_jump_off_links_echo_the_clients_host():
+    """Owner Oct-26: every link the portal serves must be spelled with an
+    address the clicking system can reach. The rule: links the BROWSER follows
+    carry the host the browser itself used (`_link`/request-host); URLs that
+    live services on THIS box (agent configs, harness baseUrls, probes) stay
+    loopback. Pinned: the projects payload builds harness_web via _link, and
+    the dashboard ships no literal loopback jump-off href."""
+    main = (ROOT / "app" / "main.py").read_text()
+    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    assert "_link(request,\n                                    serviceconf.port_of(\"harness\"" in main \
+        or '"harness_web": _link(' in main
+    assert 'href="http://127.0.0.1' not in dash, \
+        "a literal loopback jump-off link in the dashboard markup: a LAN browser \
+follows it to itself"
+    assert "router_web" in dash and "comfy.link" in dash, \
+        "the hero links must use the request-host builders, not the payload's loopback view"
 
 
 def test_the_opencode_tab_names_the_three_versions_and_keeps_the_key_out():

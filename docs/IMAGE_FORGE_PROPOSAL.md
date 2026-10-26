@@ -63,7 +63,7 @@ Status: proposal for adjudication. Nothing implemented.
   `krea2_turbo_fp8` (fast/turbo), `Qwen-Image-2512-Lightning-4steps` and
   `Qwen-Image-Edit-2509-Lightning-4steps` LoRAs (4-step fast paths),
   `qwen_image_vae` + `ae` (Flux), text encoders `qwen_2.5_vl_7b_fp8` (+ qwen3vl_4b).
-  **Qwen-Image-Layered is NOT downloaded** (the RGBA-layer model — §3.4, phase gate).
+  **Qwen-Image-Layered is NOT downloaded** (the RGBA-layer model — §1b, download gate).
 - **The API surface is measured from the install** (`server.py` routes):
   `POST /prompt {prompt, client_id}` (flat API-format node graph), `GET /history/{id}`,
   `GET /view?filename&subfolder&type`, `POST /upload/image`, `POST /upload/mask`,
@@ -281,7 +281,7 @@ The design bar, from the tools the owner has used and the current APIs:
    size, and the deterministic bench delivers the exact target (fit/crop/pad).
    The agent tool signature accepts exact px and delivers exact px.
 2. **Alpha is data, not luck.** Generation composites on a chroma key and the
-   bench keys it deterministically (numpy); Layered (§2.4) is the research path
+   bench keys it deterministically (numpy); Layered (§1b) is the research path
    to native RGBA. The tool layer exposes `background:"transparent"` semantics
    like OpenAI's parameter, hiding the pipeline.
 3. **The loop is the product.** Canvas + versions + undo, previews, probes,

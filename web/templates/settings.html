@@ -167,6 +167,9 @@ function liveHtml(key){
               : '<span class="mut">◌</span>';
     out += `<div style="font-size:12px">${dot} <a class="mono" href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> <span class="mut">${esc(u.label)}</span></div>`;
   }
+  if(e.this_host_url)
+    // The portal's own jump-off rule: the address THIS browser can reach.
+    out += `<div style="font-size:12px">→ <a class="mono" href="${esc(e.this_host_url)}" target="_blank" rel="noopener">${esc(e.this_host_url)}</a> <span class="mut">from this browser</span></div>`;
   if(e.pending_restart)
     out += `<div style="font-size:12px;color:var(--warn)">⚠ configured open, still not reachable — restart required</div>`;
   if(e.auth && e.auth.warning && e.mode !== 'loopback')

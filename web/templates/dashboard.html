@@ -128,8 +128,10 @@
        style="{{ '' if b.mode == 'loopback' else 'background:rgba(210,153,34,.15);color:var(--warn)' }}">
       {% if b.mode == 'loopback' %}loopback only{% elif b.mode == 'all' %}open to LAN :{{ b.port }}{% else %}{{ b.host }}:{{ b.port }}{% endif %}</a>
     <div class="hero-controls">
-      <a class="btn btn-sm" href="{{ r.web_ui or (r.host ~ '/') }}" target="_blank" rel="noopener">Web UI ↗</a>
-      <a class="btn btn-sm" href="{{ r.host }}/v1/models" target="_blank" rel="noopener">API ↗</a>
+      {# Jump-off links echo the host the browser used (router_web from the
+         request); r.web_ui/r.host are the service's own loopback view. #}
+      <a class="btn btn-sm" href="{{ router_web }}" target="_blank" rel="noopener">Web UI ↗</a>
+      <a class="btn btn-sm" href="{{ router_web }}v1/models" target="_blank" rel="noopener">API ↗</a>
       <button data-needs-machine onclick="svcAction('llamacpp', 'start')">start</button>
       <button data-needs-machine onclick="svcAction('llamacpp', 'stop')">stop</button>
       <button data-needs-machine onclick="svcAction('llamacpp', 'restart')">restart</button>
@@ -151,12 +153,12 @@
     <div class="pulse-lights">
       <span class="light-row">
         <span class="light {{ 'on' if r.web.ok else 'off' }}" id="light-web"></span>
-        <a href="http://127.0.0.1:8080/" target="_blank" rel="noopener">web</a>
+        <a href="{{ router_web }}" target="_blank" rel="noopener">web</a>
         <span class="mut" id="web-state">{{ ('ok · ' ~ r.web.ms ~ 'ms') if r.web.ok else 'down' }}</span>
       </span>
       <span class="light-row">
         <span class="light {{ 'on' if r.api.ok else 'off' }}" id="light-api"></span>
-        <a href="http://127.0.0.1:8080/v1/models" target="_blank" rel="noopener">api</a>
+        <a href="{{ router_web }}v1/models" target="_blank" rel="noopener">api</a>
         <span class="mut" id="api-state">{{ ('ok · ' ~ r.api.ms ~ 'ms') if r.api.ok else 'down' }}</span>
       </span>
       <span class="kv" style="margin:0"><span class="k">models</span>
@@ -326,7 +328,7 @@
        style="{{ '' if cb.mode == 'loopback' else 'background:rgba(210,153,34,.15);color:var(--warn)' }}">
       {% if cb.mode == 'loopback' %}loopback only{% elif cb.mode == 'all' %}open to LAN :{{ cb.port }}{% else %}{{ cb.host }}:{{ cb.port }}{% endif %}</a>
     <div class="hero-controls">
-      <a class="btn btn-sm" href="{{ comfy.host }}" target="_blank" rel="noopener">Web UI ↗</a>
+      <a class="btn btn-sm" href="{{ comfy.link or comfy.host }}" target="_blank" rel="noopener">Web UI ↗</a>
       <button data-needs-machine onclick="svcAction('comfyui', 'start')">start</button>
       <button data-needs-machine onclick="svcAction('comfyui', 'stop')">stop</button>
       <button data-needs-machine onclick="svcAction('comfyui', 'restart')">restart</button>
@@ -336,7 +338,7 @@
     <div>
       <div class="light-row">
         <span class="light {{ 'on' if comfy.web.ok else 'off' }}" id="comfy-light"></span>
-        <a class="light-label" href="{{ comfy.host }}" target="_blank" rel="noopener">Web UI</a>
+        <a class="light-label" href="{{ comfy.link or comfy.host }}" target="_blank" rel="noopener">Web UI</a>
         <span class="mut" id="comfy-web">{{ ('ok · ' ~ comfy.web.ms ~ 'ms') if comfy.web.ok else 'down' }}</span>
       </div>
     </div>

@@ -573,6 +573,20 @@ def _llama_behind() -> dict:
     return res
 
 
+def _comfy_with_link(request: Request) -> dict:
+    """comfy_snapshot plus the URL THIS client can open (hero jump-off)."""
+    d = comfy_snapshot()
+    d["link"] = _request_link(request, serviceconf.port_of("comfyui", 8188))
+    return d
+
+
+def _request_link(request: Request, port: int, path: str = "/") -> str:
+    """Module-level twin of create_app's _link (the template global): the host
+    the client used, sibling port. Single-operator console, same rule."""
+    host = request.url.hostname or "127.0.0.1"
+    return f"http://{host}:{port}{path}"
+
+
 def comfy_snapshot() -> dict:
     """Live ComfyUI state for the dashboard hero (mirrors router_mod.snapshot()).
 
@@ -620,6 +634,20 @@ def create_app() -> FastAPI:
     templates.env.filters["dur"] = _dur
     templates.env.filters["sz"] = _human
     templates.env.filters["ctxlen"] = _ctxlen
+
+    def _link(request: Request, port: int, path: str = "/") -> str:
+        """The jump-off link builder: the host the CLIENT used, sibling port.
+
+        A page served over halo.local must hand out halo.local:4096, never
+        127.0.0.1:4096 — the address the browser reached the portal by is, by
+        definition, an address that browser can reach. Service-to-service URLs
+        that live on THIS machine (agent configs, harness baseUrls, probes)
+        stay loopback; only browser-facing links echo the request host.
+        """
+        host = request.url.hostname or "127.0.0.1"
+        return f"http://{host}:{port}{path}"
+
+    templates.env.globals["_link"] = _link
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     log.info("AI Portal %s: home=%s ai_root=%s state=%s",
              app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)
@@ -801,7 +829,8 @@ def create_app() -> FastAPI:
                    if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
         return templates.TemplateResponse(request, "dashboard.html",
                                           {"providers": providers, "health": hb,
-                                           "r": snap, "comfy": comfy_snapshot(), "census": census,
+                                           "r": snap, "comfy": _comfy_with_link(request), "census": census,
+                                           "router_web": _link(request, serviceconf.port_of("llamacpp", 8080)),
                                            "disk": disk, "gpu": gpu_txt,
                                            "sampled": datetime.now().strftime("%H:%M:%S"),
                                            "settings": db.current_settings()})
@@ -1625,7 +1654,7 @@ def create_app() -> FastAPI:
         return out
 
     # ------------------------------------------------------ projects (§6.14.1n)
-    def _projects_payload() -> dict:
+    def _projects_payload(request: Request) -> dict:
         """The inactive-state payload: the registry, the folders the registry does not know, the
         toolchains the init shortlist depends on, and the projects root's own health.
 
@@ -1642,7 +1671,9 @@ def create_app() -> FastAPI:
                 # harness — full agentic loop, tool activity, permission prompts, session
                 # list — instead of the portal re-implementing it. The password lives in
                 # the key file; the page names the file, never the secret.
-                "harness_web": harnessctl.base(harnessctl.DEFAULT_PORT),
+                "harness_web": _link(request,
+                                    serviceconf.port_of("harness",
+                                                        harnessctl.DEFAULT_PORT)),
                 "harness_key": str(harnessctl.key_path()),
                 "steps": {k: {"label": v["label"], "does": v["does"], "needs": v["needs"]}
                           for k, v in projects.INIT_STEPS.items()},
@@ -1663,12 +1694,12 @@ def create_app() -> FastAPI:
         the row's Launch button is labelled inert rather than shown as a button that does nothing.
         Rendering reads; it creates and writes nothing.
         """
-        return templates.TemplateResponse(request, "projects.html", _projects_payload())
+        return templates.TemplateResponse(request, "projects.html", _projects_payload(request))
 
     @app.get("/api/projects")
-    def api_projects(_=Depends(_require_auth)):
+    def api_projects(request: Request, _=Depends(_require_auth)):
         """The projects page's data, as an endpoint (D1: every read is also an endpoint)."""
-        return _projects_payload()
+        return _projects_payload(request)
 
     @app.post("/api/projects/launch")
     def api_projects_launch(body: ProjectLaunchBody, _=Depends(_require_auth)):
@@ -2366,10 +2397,16 @@ def create_app() -> FastAPI:
         return {"ok": True, "env": env}
 
     @app.get("/api/settings/services")
-    def api_settings_services(_=Depends(_require_auth)):
+    def api_settings_services(request: Request, _=Depends(_require_auth)):
         """Per-service host/port (current values from the env files) plus the
         shared runtime environment — data for the Settings page."""
-        return {"services": serviceconf.service_ports(),
+        svcs = serviceconf.service_ports()
+        for v in svcs.values():
+            # The address THIS browser can reach for this service (the portal's
+            # own jump-off link rule; ports of 0 mean "not listening").
+            v["this_host_url"] = (_link(request, v["port"])
+                                  if v.get("port") else None)
+        return {"services": svcs,
                 "shared_env": serviceenv.read_env()}
 
     @app.get("/api/settings/services/{service}/validate")
@@ -2591,7 +2628,7 @@ def create_app() -> FastAPI:
 
     # ------------------------------------------- llama.cpp router API key
     @app.get("/api/settings/llamacpp/apikey")
-    def api_router_key_status(_=Depends(_require_auth)):
+    def api_router_key_status(request: Request, _=Depends(_require_auth)):
         """Router auth state: configured (launch env), enforced (live probe),
         and the key itself — this console is single-operator, so the value is
         returned rather than masked; the endpoint is behind the app password."""
@@ -2600,6 +2637,9 @@ def create_app() -> FastAPI:
         if st["configured"]:
             base = serviceconf.base_url("llamacpp", 8080)
             st["web_ui_url"] = llamakey.web_ui_url(base)
+            # ...and the same URL spelled the way THIS client can reach it.
+            st["web_ui_url"] = st["web_ui_url"].replace(
+                "//127.0.0.1:", f"//{request.url.hostname or '127.0.0.1'}:")
         return st
 
     @app.post("/api/settings/llamacpp/apikey")

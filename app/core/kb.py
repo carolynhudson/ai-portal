@@ -42,6 +42,7 @@ DOC_ORDER = [
     ("HARNESS_LANDSCAPE_RESEARCH.md", "Harness landscape — ACP, web-native shapes, extension parity"),
     ("MEMORY_PLUGIN_RESEARCH.md", "Memory plugins — candidates, licences, engines measured on this box"),
     ("PORTAL_POLISH.md", "Design and workflow debt — the operator's list, measured, with proposed shapes"),
+    ("IMAGE_FORGE_PROPOSAL.md", "Image forge — the agent-facing image toolbox proposal, measured ground and design"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")

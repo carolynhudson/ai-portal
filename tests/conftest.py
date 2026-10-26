@@ -61,6 +61,14 @@ else:
     os.environ["AI_PORTAL_HOME"] = SUITE_HOME
     _MADE_HOME = True
 
+# The harness unit's config-home override belongs to the operator's environment,
+# not to the suite: `seed_cache_home` prefers `OPENCODE_CONFIG_DIR` over the
+# redirected HOME, so running the suite from a shell that sourced
+# ~/ai/config/harness.env leaks the REAL seeded host into the seed tests --
+# measured Oct-26: three seed tests accepted the seed their gate exists to
+# refuse. The suite owns this variable, so it drops it.
+os.environ.pop("OPENCODE_CONFIG_DIR", None)
+
 
 @pytest.fixture(autouse=True, scope="session")
 def _never_the_real_home():

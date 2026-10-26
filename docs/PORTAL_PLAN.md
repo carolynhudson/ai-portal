@@ -6257,3 +6257,55 @@ template registry (16-mult for the 20B/z-image family, 32 for 2.1). License
 caveat recorded: qwen-research (non-commercial) — fine for this personal
 box, lands on the inventory license line. Layered (~45 G) and 2511-Q4 drop
 behind 2.1 in the download queue.
+
+##### 6.14.1i The links rule + the Windows forge kit (2026-10-26, overnight batch)
+
+Owner's two overnight asks: (a) stage everything the image forge's Windows
+backend needs into a folder, automated with PowerShell as far as is safe, and
+(b) make every link the portal serves reachable **by the system clicking it** —
+a name (halo.local) over a flat IP where resolvable.
+
+**The links rule (measured, then enforced).** The portal's payload URLs are
+loopback because the services that consume them (agent configs, harness
+baseUrls, probes) live on this box — those stay loopback **by design**. The
+defect was the BROWSER jump-offs: a page opened over halo.local handed out
+`http://127.0.0.1:4096/` harness links, and a LAN browser follows that to
+itself. The rule, implemented in `main.py`: `_link(request, port, path)`
+builds every browser-facing URL from the **host the client used** (by
+definition reachable by that client), wired into the projects payload
+(`harness_web`), the dashboard hero (router web/api via `router_web`, ComfyUI
+via `comfy.link`), `/api/settings/services` (`this_host_url` per service), and
+the router apikey status (`web_ui_url`). Pinned by
+`test_jump_off_links_echo_the_clients_host` (network, computes ports —
+earlier tests move them) and `test_browser_jump_off_links_echo_the_clients_host`
+(contract: the dashboard ships **no** literal loopback jump-off href).
+
+**deploy/windows-forge/** — the whole Windows half of §1c in one folder,
+SFTP-copyable to RainbowBlock.local: `model_files.json` is the SINGLE model
+inventory (the Qwen-Image-2.1 int8_convrot + Turbo + Qwen3-VL-8B int8 TE + 2.1
+VAE hf rows; the Q4_K_M optional tier; the z-image-turbo bring-up trio marked
+`copy_from_halo` so nobody re-downloads what the Halo box already owns);
+`install_forge.ps1` (git/Python ≥3.10 via winget when missing, ComfyUI clone,
+ComfyUI-GGUF — the one accepted custom node, §6 #4 — venv + CUDA cu124 torch
+(sm_75), HF downloads driven BY the inventory, idempotent, prints the SFTP
+copy list it cannot do itself); `start_comfyui.ps1` (`--listen 0.0.0.0
+--disable-smart-memory --preview-method none` — the memory contract's
+Windows twin); `firewall_forge.ps1` (self-elevating, admin; inbound 8188
+allowed **only** from the portal IP — ComfyUI answers unauthenticated, the
+rule is the gate); `register_autostart.ps1` (user-level AtLogOn task — the
+GPU lives in the desktop session); `verify_forge.ps1` (torch-CUDA, engine
+reply, VRAM, every inventory file). README.md is the owner's step list. The
+Portal side consumes the endpoint as a config value (§1c) when P0 lands.
+
+**Suite repairs the full run surfaced (1212 green, 5 red → all green):**
+1. `docs/IMAGE_FORGE_PROPOSAL.md` was never in `kb.DOC_ORDER`, so the
+   proposal's own `§3.4` citations dangled — the citation test is exactly the
+   guard that catches this; registered the file, and fixed two real dangling
+   refs that named sections that never existed (`§3.4`/`§2.4` for Layered →
+   `§1b`, the download gate that actually discusses it).
+2. `OPENCODE_CONFIG_DIR` leaked from the operator's shell (it is in
+   `~/ai/config/harness.env`, and `seed_cache_home` prefers the env over the
+   redirected HOME) — three seed tests accepted a seed their gate exists to
+   refuse. conftest now drops the variable at import, beside the home
+   ownership block; the seed tests pass with the leak supplied on the command
+   line as a witness.

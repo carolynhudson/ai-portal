@@ -330,6 +330,28 @@ def test_harness_restart_via_bind_requires_confirm(client):
     assert "confirm" in str(r.json())
 
 
+def test_jump_off_links_echo_the_clients_host(client):
+    """Owner Oct-26: a link is only good if the clicker can follow it. Pages
+    served over halo.local must hand out halo.local URLs — the host the
+    client used is, by definition, reachable by that client."""
+    H = {"host": "halo.local"}
+    hp = serviceconf.port_of("harness", 4096)   # earlier tests move ports
+    lp = serviceconf.port_of("llamacpp", 8080)
+    r = client.get("/api/projects", headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["harness_web"] == f"http://halo.local:{hp}/", \
+        "the harness handoff must not send a LAN browser to its own 127.0.0.1"
+    r = client.get("/api/settings/services", headers=H)
+    for key, v in r.json()["services"].items():
+        want = f"http://halo.local:{v['port']}/" if v["port"] else None
+        assert v["this_host_url"] == want, key
+    page = client.get("/", headers=H)
+    assert f'href="http://halo.local:{lp}/"' in page.text, \
+        "the router hero links must echo the client's host"
+    assert 'href="http://127.0.0.1' not in page.text, \
+        "a literal loopback jump-off link leaked into a rendered page"
+
+
 def test_settings_services_payload_carries_harness_modes(client):
     """The page renders exactly the payload's modes; an endpoint that offered
     what it would refuse is the bug this pins."""
