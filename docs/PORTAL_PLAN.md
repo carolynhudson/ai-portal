@@ -6204,3 +6204,25 @@ tables):
 Queued: embed sidecar load-on-first-request + idle-eject setting; ComfyUI-GGUF
 node exception decision + 2511-Q4 download gate (proposal §6 #6/#7); swap-fill
 observation (watch, not act).
+
+##### 6.14.1g The idle second box slots into the forge as a remote backend (2026-10-25)
+
+Owner revealed the second machine — 7950X3D, 64 GB DDR5, **RTX 2080 Ti (11 GiB,
+Turing)**, Windows 11, often idle — and asked whether it can contribute compute,
+skeptically. It fits the forge with almost zero architecture cost: the engine
+backend is the ComfyUI HTTP API, so the remote is **a config value** (endpoint
+URL) — workspaces, bench, gate arithmetic all stay local; the gate reads the
+remote's `/system_stats`. The fit (proposal §1c): z-image-turbo fp8 (~10-11 GiB
+peak — the fast path), qwen-edit **Q3_K_M GGUF** 9.8 GiB fits via ComfyUI-GGUF,
+and qwen-edit **Q4 13.1 GiB fits by hybrid block-swap** — ComfyUI's built-in
+block-swap is exactly the owner's "MOE hybrid, minimal swapping" pattern, in
+diffusion form. 2080 Ti facts that bound the table: 11 GiB (not 12), fp16
+tensors fast, fp8 weights dequant to fp16 (no fp8 compute). Security line:
+ComfyUI is unauthenticated — remote bind = LAN with a Windows firewall rule
+scoped to 192.168.1.228; same trust domain the harness joined on Oct-25, not a
+new opening. Test protocol T0 is zero-cost (portable ComfyUI + ~12 GiB of
+downloads + two admin firewall commands): measure s/gen and peak VRAM running
+the forge's own frozen templates against it; the gate gets measured remote
+numbers. Side probe recorded, no commitment: a Qwen3-30B-A3B-class MoE under
+64 GB RAM hybrid on llama.cpp/Windows — a t/s benchmark answers "what is that
+box worth as an LLM peer" without touching the portal's router rules.

@@ -152,6 +152,57 @@ with load state) + swap fill, not `free`-`used`.
    fits with ~60 G headroom. Even IQ3_S + z-image-turbo passes the gate today.
    A second machine buys speed, not feasibility.
 
+## 1c. Remote forge backend — the 7950X3D / 2080 Ti box (Windows 11, often idle)
+
+Owner's second machine: Ryzen 7950X3D (16c Zen4, AVX-512, 96 MB L3), 64 GB
+DDR5, **RTX 2080 Ti — 11 GiB** (Turing: strong fp16, no fp8/bf16 compute —
+fp8 *weights* dequantize to fp16, which is fine), LAN, mostly idle. The
+forge architecture takes it natively: the engine backend is the ComfyUI HTTP
+API (`/prompt`, `/history`, `/view`, `/upload/image`), so "remote ComfyUI" is
+**a config value** (endpoint URL) — the MCP server stays a local child of the
+harness, workspaces stay local, the gate reads the remote's `/system_stats`
+for its arithmetic.
+
+Fit table (11 GiB class, weights; fp16-optimized, 2509-era evidence from the
+GGUF community):
+
+| pipeline | VRAM need | verdict on 2080 Ti |
+|---|---|---|
+| **z-image-turbo fp8** (6.5) + qwen3vl-4b fp8 TE (4.9) + vae | ~10-11 peak | **fits tight**; 4-step turbo — the fast path, estimate 10-20 s/gen |
+| **qwen-image-edit Q3_K_M GGUF** (9.8) + Qwen2.5-VL Q4 TE (4.4, streaming) + lightning-4step | ~10-11 with GGUF streaming | **fits** with ComfyUI-GGUF; estimate 25-40 s/edit at 4 steps |
+| qwen-image-edit Q4_K_M GGUF (13.1) | 13.1 > 11 | **hybrid block-swap** — ComfyUI's built-in block-swap is the diffusion analogue of llama.cpp's `--n-gpu-layers` MOE offload (the owner's "hybrid with minimal swapping" pattern, directly): ~1.5-2× slower, fits |
+| qwen fp8 safetensors (20 G) | 20 | no |
+| krea2_turbo fp8 (13 G), FLUX.2 class | 13+ | no |
+| anima-preview3-base (3.9) + T5 | ~6-7 | fits with room |
+| SDXL/SD3.5-Medium fp8 | 5-7 | fits (weaker editing story; not the target) |
+| CPU-only z-image on the 7950X3D | RAM | ~2 min/gen — the no-VRAM fallback |
+
+The Strix Halo keeps what it is best at (256-bit LPDDR5X bandwidth for the
+LLM + the big-RAM quant pipelines + the deterministic bench); the 2080 Ti
+contributes what it lacks (CUDA fp16 tensor throughput). Security: ComfyUI
+answers **unauthenticated** — the remote bind must be LAN-interface with a
+Windows firewall rule scoped to the portal box (192.168.1.228), stated in the
+setup script; the harness is already LAN-exposed on the same trust domain, so
+this matches, not extends, the current exposure.
+
+**Test protocol (owner: skeptical, open to testable ideas) — T0 is zero-cost:**
+1. Windows box: portable/green ComfyUI + ComfyUI-GGUF node; download
+   z-image-turbo fp8 (6.5 G) + qwen3vl-4b TE + vae + 2511-Lightning LoRA;
+   `--listen 0.0.0.0`; firewall rule inbound 8188 scoped to LocalAddress
+   192.168.1.228 (owner runs the admin commands).
+2. Portal box: `GET http://WIN:8188/system_stats` (network + version + VRAM
+   facts), then run the forge's own frozen templates against it — z-image
+   1024²/4-step, qwen-edit Q3 + lightning, qwen-edit Q4 + block-swap —
+   recording **s/gen and peak VRAM from /system_stats**. The remote gate gets
+   measured numbers, and P1 anchors (logo/favicon) generate on the remote
+   backend if T0 passes.
+3. Side interest (the "useful compute" question, cheap to measure): llama.cpp
+   on Windows with a MoE hybrid — Qwen3-30B-A3B-class Q4 under 64 GB RAM with
+   experts on CPU / attention on the 2080 Ti — a t/s benchmark tells the owner
+   what that box is really worth as an LLM peer; recorded as a probe, not a
+   commitment (the portal's router-model rules stay: it is not the portal's
+   router).
+
 ## 2. Prior art — how image tools are built for callers (2026)
 
 The design bar, from the tools the owner has used and the current APIs:
