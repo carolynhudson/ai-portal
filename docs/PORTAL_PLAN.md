@@ -6226,3 +6226,34 @@ the forge's own frozen templates against it; the gate gets measured remote
 numbers. Side probe recorded, no commitment: a Qwen3-30B-A3B-class MoE under
 64 GB RAM hybrid on llama.cpp/Windows — a t/s benchmark answers "what is that
 box worth as an LLM peer" without touching the portal's router rules.
+
+##### 6.14.1h Qwen-Image-2.1: the owner's find collapses four pipelines into one (2026-10-25)
+
+Owner flagged `Qwen/Qwen-Image-2.1` ("strangely small compared to prior
+versions") and asked if the generator+editor+transparency claims are real.
+Verified (HF card, docs.comfy.org, Unsloth, community GGUF guides): the
+smallness is a **new architecture** — 7B visual component, 32 single-stream
+DiT layers, mixed-granularity attention + prefix-KV reuse — not a shrunk 20B.
+One model: text→image, instruction editing (10 references, **circles /
+painted annotations / separate masks**, identity preservation), **native RGBA
+generation + transparent-layer editing + subject extraction**, improved
+typography; native to 2048²+, guidance multiples of **32** (VAE 16×).
+ComfyUI supports it natively from day one — official templates + **Turbo
+8-step** checkpoints; the official package ships **int8_convrot** diffusion
+and TE files (the same family as krea2 on this box; Turing has int8 tensor
+cores, so the int8 tier is fast, not just compact). Quant ecosystem: 156
+repos, GGUF Q8_0 7.6 G, **Q4_K_M ~4.6 G**; Unsloth: INT8 > FP8 by LPIPS,
+Q4+Q4-TE runs CPU-only in 12-16 GB RAM.
+
+Forge consequence (proposal §1b/§3.3/§3.4/§1c/§6#7): the unified engine the
+forge was going to assemble from gen+edit+Layered+chroma-keying is one
+download — ~27 GiB (base int8 + Turbo int8 + Qwen3-VL-8B int8 TE + 2.1 VAE)
+for ~15-17 GiB per pipeline, Q4 tier ~11-12, **fits the 2080 Ti at ~10-11
+peak**. Native RGBA becomes the primary alpha path with the bench probes as
+verifier (coverage/fringe/histogram get numbers before a canvas accepts a
+model's own alpha claim; the magenta-key pipeline stays as the independent
+comparator + photo/legacy fallback). Per-model legal rounding joins the
+template registry (16-mult for the 20B/z-image family, 32 for 2.1). License
+caveat recorded: qwen-research (non-commercial) — fine for this personal
+box, lands on the inventory license line. Layered (~45 G) and 2511-Q4 drop
+behind 2.1 in the download queue.

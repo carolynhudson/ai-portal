@@ -102,6 +102,34 @@ full coding-agent loop (big model resident + generation) work on this box?
 | qwen-image-edit-2511 GGUF Q4_K_M + Lightning-4step | 13.1 | 4.4 (Qwen2.5-VL-7B GGUF Q4_K_M, vision tower included) | 0.3+0.85 | ~22-23 | download gate |
 | same, Q3_K_M (dynamic: first/last blocks kept Q8) | 9.8 | 4.4 | 0.3+0.85 | ~19-20 | download gate |
 | z-image-turbo GGUF Q4 (community quants exist) | ~4.7 | ~2.6 | 0.6 | ~12-13 | availability check |
+| **Qwen-Image-2.1 int8_convrot** (native t2i+edit+**RGBA**+extract; 8-step Turbo is a separate ckpt) | 7.3 | 4.5 (Qwen3-VL-8B int8/w4a8) | 0.25 | **~15-17** | **PRIORITY download** |
+| **Qwen-Image-2.1 Turbo** int8_convrot (8 steps) | 7.3 | 4.5 | 0.25 | **~15-17** | priority download |
+| Qwen-Image-2.1 GGUF **Q4_K_M** | ~4.6 | 4.5 (int8 TE fine) | 0.25 | **~11-12** | priority download |
+
+**Qwen-Image-2.1 (owner-flagged, Oct-25 — verified against the HF card + docs):**
+the "strangely small" is the point — it is a NEW compact architecture: 7B
+visual component (32 single-stream DiT layers, mixed-granularity attention,
+prefix-KV reuse), not a shrunk 20B. ONE model = text→image, instruction
+editing (up to 10 reference images; local edits via **circles / painted
+annotations / separate masks**; identity preservation), **native RGBA
+generation + transparent-layer editing + subject extraction from photos** —
+the unified engine the forge was going to assemble from four pipelines
+(gen / edit / layered / chroma-keying). Official ComfyUI support from day
+one (templates + **Turbo 8-step** checkpoints; official Comfy-Org package
+ships bf16 + int8_convrot diffusion models — the same int8-convrot family
+as krea2 on this box — + Qwen3-VL-8B TE variants + dedicated 2.1 VAE).
+Community quants: 156 repos already (GGUF Q2→Q8; Q8_0 7.6 G, Q4_K_M ~4.6;
+Unsloth: **INT8 > FP8** by LPIPS, FP8 runs at 6 GB with offload, Q4+Q4-TE
+runs CPU-only in 12-16 GB RAM → trivial for this box's aperture). CFG 1.0,
+euler 25-40 (base) / 8 (Turbo). Native sizes to 2048²+; guidance says
+**multiples of 32** (VAE 16× — §3.4 updates to 32 for 2.1).
+Caveats, stated: **qwen-research license** (non-commercial research — fine
+for this personal box, recorded on the inventory's license line like every
+model); "native transparency" is a model-quality claim → the bench's alpha
+probes (§3.3) verify every RGBA generation numerically, keying stays for
+photos/legacy paths; Q4 _K quants on diffusion are loader-sensitive
+(reports of slower _K-path compute on some GGUF forks — measure at T0;
+Q8_0/int8_convrot is the fast-safe tier, Q4 the RAM tier).
 
 Quant ground truth (city96/QuantStack/unsloth; GGUF diffusion needs the
 **ComfyUI-GGUF** custom node — a supply-chain decision, see §6): Q8_0 ≈
@@ -168,6 +196,7 @@ GGUF community):
 
 | pipeline | VRAM need | verdict on 2080 Ti |
 |---|---|---|
+| **Qwen-Image-2.1 GGUF Q4_K_M** (4.6) + Qwen3-VL-8B TE int8/w4a8 (4.5) + 2.1 VAE | ~10-11 peak | **fits** — unified gen+edit+native RGBA on the Ti (Q8/int8 tier ~13 needs block-swap; Turing HAS int8 tensor cores, so the official int8_convrot tier is fast, not just compact) |
 | **z-image-turbo fp8** (6.5) + qwen3vl-4b fp8 TE (4.9) + vae | ~10-11 peak | **fits tight**; 4-step turbo — the fast path, estimate 10-20 s/gen |
 | **qwen-image-edit Q3_K_M GGUF** (9.8) + Qwen2.5-VL Q4 TE (4.4, streaming) + lightning-4step | ~10-11 with GGUF streaming | **fits** with ComfyUI-GGUF; estimate 25-40 s/edit at 4 steps |
 | qwen-image-edit Q4_K_M GGUF (13.1) | 13.1 > 11 | **hybrid block-swap** — ComfyUI's built-in block-swap is the diffusion analogue of llama.cpp's `--n-gpu-layers` MOE offload (the owner's "hybrid with minimal swapping" pattern, directly): ~1.5-2× slower, fits |
@@ -314,6 +343,18 @@ conventions) — the cheap, journal-style answer to "what are the expectations".
 
 ### 3.3 The alpha pipeline (the owner's workaround, productized)
 
+**Qwen-Image-2.1 changes the primary path** (§1b): it generates **native
+RGBA** (prompted "This is an RGBA image with transparency… background is
+transparent"), edits transparent layers, and extracts subjects from photos.
+The pipeline becomes: `gen background:"transparent"` → 2.1 native RGBA →
+**bench verification** (coverage %, fringe count, border alpha histogram —
+model claims get numbers before the canvas accepts them) → `op` fixes
+(feather/despill/fill-hole) as needed. The chroma-key pipeline below stays
+as the fallback tier: photo sources, the older on-disk models (2509/2512),
+and as the **independent verifier** for native alpha (gen the same asset on
+magenta, key it, compare alpha vs the native's — when the two agree, the
+alpha is trustworthy; when they don't, the bench's numeric probes decide).
+
 1. `gen … background:"transparent"` → template prompts for a **solid #FF00FF
    backdrop** (magenta: far from skin/earth/greens, standard keying color; the
    prompt carries "flat solid background, no shadows, no gradient, object with
@@ -336,7 +377,11 @@ conventions) — the cheap, journal-style answer to "what are the expectations".
 (512×256 → 1024×512 at 2× for quality), generates, then `fit`/`cover`/`pad`
 deterministically to exactly 300×150; `inspect` confirms. Tools accept exact
 px; the model never sees the exact px. This is the OpenAI "fixed presets" idea
-with the bench as the enforcement.
+with the bench as the enforcement. The legal rounding is **per-model**:
+16-multiples for the 20B qwen family / z-image, **32-multiples for
+Qwen-Image-2.1** (VAE 16× + patch, official guidance says multiples of 32) —
+the template registry carries each model's rule, so the tool surface never
+changes.
 
 ### 3.5 Visual state back to the caller — three channels, one protocol
 
@@ -395,11 +440,14 @@ Both anchors land on a real, shippable artifact — not a throwaway demo.
    says frozen templates, no nodes. An explicit, measured exception for this
    one package is the cleanest shape; without it the fp8 on-disk pipelines
    are the only ones the forge runs.
-7. **Download gate** (§1b table): qwen-image-edit-2511 GGUF Q4_K_M (~13 G) +
-   Qwen2.5-VL-7B GGUF Q4_K_M TE (~4.4 G) + 2511 Lightning LoRA — these are
-   what make "27B coding agent + full qwen-edit generation" comfortable on
-   this box. z-image-turbo (already on disk) is the zero-download first
-   pipeline.
+7. **Download gate** (§1b table): **Qwen-Image-2.1 is the priority** —
+   official Comfy-Org package: `qwen_image_2.1_int8_convrot` + Turbo int8
+   (8-step) + Qwen3-VL-8B int8 TE + 2.1 VAE ≈ **~27 GiB of downloads** for
+   the full unified pipeline (base + turbo) at ~15-17 GiB RAM each, with
+   GGUF Q4 (~4.6 G) as the light tier; it unifies gen, edit (masks/
+   annotations/10 refs), **native RGBA**, and subject extraction. The
+   2511-Q4 qwen-edit path and Layered (~45 G, decomposition niche) drop
+   behind it. z-image-turbo stays as the zero-download first bring-up.
 
 ## 7. Honest limits (stated up front)
 
