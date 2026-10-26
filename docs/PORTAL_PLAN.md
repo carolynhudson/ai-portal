@@ -6165,3 +6165,42 @@ job, idle-stop ComfyUI, short-lived bench subprocesses. First feasible pairing:
 a forge session on `Qwopus3.5-4B-Coder-GGUF` (its snapshot carries
 `mmproj-F32.gguf`, ~5 GiB resident) → z-image-turbo fits with margin. The gate
 refuses with exactly that sentence.
+
+##### 6.14.1f The box measured at full load: quant pipelines, the real footprint, and the embed-model myth (2026-10-25)
+
+Owner asked three research questions (quant-tuned generation/editing pipelines;
+what the portal stack actually costs; whether unloaded-RAM-from-MCP-services
+buys a generation) and guessed the full coding loop needs a second machine or
+a 27B primary. Measured all of it (IMAGE_FORGE_PROPOSAL §1b now carries the
+tables):
+
+- **Quant tuning is real and current**: GGUF diffusion quants for exactly the
+  models on this box (city96/QuantStack/unsloth): qwen-image-edit Q4_K_M
+  **13.1 GiB** ("excellent quality, widely recommended"), Q3_K_M 9.8 ("good",
+  dynamic quant keeps first/last blocks Q8), TE Qwen2.5-VL-7B GGUF Q4_K_M
+  **4.4 GiB** (vision tower included; Qwen2.5-VL, not Qwen3-VL). Needs the
+  ComfyUI-GGUF custom node — a supply-chain exception decision, recorded.
+  The fp8 pipelines on disk cost ~33 GiB; the 2511-Q4 path ~22-23;
+  z-image-turbo (on disk, zero downloads) ~22. HiDream-E1.1: 22 GB + 14 GB TE
+  stack for 768² — skipped, no advantage.
+- **The full-box audit**: router unit anon 16.5 GiB (IQ3_S loaded: KV+compute
+  buffers; the 40 GiB model itself is **file-backed mmap** — the kernel evicts
+  it under pressure, trading inference speed for RAM), portal 0.5, harness 0.3,
+  desktop ~4, **ai-embed: inactive, 0 GiB — the RAG embed model was never the
+  hog** (owner's hypothesis, disproven by measurement; `kb_mcp` degrades to
+  FTS + vectorize queue while it is down). Swap: /swap.img 7.9/8 G — pressure
+  history of the 40 G model, not a leak. MemAvailable swings 10→35 GiB with
+  load state — the forge gate must read MemAvailable + swap fill, never
+  `free`-`used`.
+- **The answers**: (1) a z-image-turbo generation passes the gate **today**
+  (22 G + 8 G safety < 35 GiB MemAvailable) with IQ3_S resident, zero
+  downloads; qwen-image fp8 (~33+8) is refused by ~6 G. (2) Lazy-load +
+  idle-eject adopted for the embed sidecar (portal setting, minutes) —
+  safe today because kb_mcp already queues vectors. (3) The full loop runs on
+  **this** machine as 27B-Q8 primary (31 G file-backed; the 27B snapshots
+  carry their mmproj) + qwen-edit-Q4 (~22 G) ≈ 57 G of 122 G. A second
+  machine buys speed, not feasibility.
+
+Queued: embed sidecar load-on-first-request + idle-eject setting; ComfyUI-GGUF
+node exception decision + 2511-Q4 download gate (proposal §6 #6/#7); swap-fill
+observation (watch, not act).

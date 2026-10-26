@@ -40,13 +40,20 @@ Status: proposal for adjudication. Nothing implemented.
   (auto-paired by the same rule), ~5 GiB resident → z-image-turbo fits beside
   it with margin. The gate states this path when it refuses.
 - **Memory-efficiency contract** (owner requirement, binding on the design):
-  single queued job at a time; pre-load MemAvailable gate as above; after every
-  job `POST /free {"unload_models": true, "free_memory": true}`; the bench
-  helper is short-lived subprocesses (no resident image process); ComfyUI idle
-  stop policy (default 10 min); the MCP server itself is stdlib stdio — a few
-  MB. The forge NEVER swaps router models (closed-session swaps only, §4 rules);
+  single queued job at a time; pre-load gate reading **MemAvailable + swap fill**
+  (measured: MemAvailable swings 10→35 GiB with load state; the router model is
+  file-backed mmap — evictable under pressure, trading inference speed for RAM;
+  ComfyUI weights are anon) — refuse when pipeline estimate + 8 GiB safety
+  exceeds MemAvailable, **refusing with the arithmetic printed** (loaded
+  models' bytes, MemAvailable, swap state, pipeline need); after every job
+  `POST /free {"unload_models": true, "free_memory": true}`; the bench helper
+  is short-lived subprocesses (no resident image process); ComfyUI idle stop
+  policy (default 10 min); the MCP server itself is stdlib stdio — a few MB.
+  The forge NEVER swaps router models (closed-session swaps only, §4 rules);
   when the gate refuses, the stated remedy is a swap at session end, not a
-  forced load.
+  forced load. Portal hygiene adopted alongside: the embed sidecar becomes
+  **load-on-first-request with idle-eject** (setting, minutes; `kb_mcp`
+  already degrades to FTS + vectorize queue when it is down).
 - **ComfyUI 0.39.0** installed at `~/ai/comfyui`, service `ai-comfyui` (off by
   default — models are not resident, which is the owner's requirement). Its venv
   already carries **Pillow, numpy, scipy, torch**; it lacks cv2/skimage/rembg/
@@ -78,6 +85,72 @@ Status: proposal for adjudication. Nothing implemented.
   qwen2.5-vl 7b fp8 (~8.8 GiB) + torch overhead ≈ ~30 GiB against the 108 GiB
   aperture, shared with whatever the router holds. Generation must be **on-demand
   with `/free` after**, never a resident service.
+
+## 1b. Quant-pipeline research + full-box memory audit (Oct-25, round 2)
+
+Owner asks: are there quant-tuned generation/editing pipelines that keep quality
+while shrinking the load, how much does the portal stack itself cost, and can a
+full coding-agent loop (big model resident + generation) work on this box?
+
+**Pipeline costs (GiB, weights; +3-5 GiB torch/ComfyUI overhead each):**
+
+| pipeline | diffusion | text encoder | VAE+LoRA | ≈ total | status |
+|---|---|---|---|---|---|
+| qwen-image-2512 fp8 | 20.0 | 8.8 (qwen2.5-vl fp8) | 0.6 | ~33 | **on disk** |
+| qwen-image-edit-2509 fp8 | 20.0 | 8.8 | 0.6 | ~33 | **on disk** |
+| z-image-turbo bf16 | 12.0 | 4.9 (qwen3vl-4b fp8) | 0.6 | ~22 | **on disk** |
+| qwen-image-edit-2511 GGUF Q4_K_M + Lightning-4step | 13.1 | 4.4 (Qwen2.5-VL-7B GGUF Q4_K_M, vision tower included) | 0.3+0.85 | ~22-23 | download gate |
+| same, Q3_K_M (dynamic: first/last blocks kept Q8) | 9.8 | 4.4 | 0.3+0.85 | ~19-20 | download gate |
+| z-image-turbo GGUF Q4 (community quants exist) | ~4.7 | ~2.6 | 0.6 | ~12-13 | availability check |
+
+Quant ground truth (city96/QuantStack/unsloth; GGUF diffusion needs the
+**ComfyUI-GGUF** custom node — a supply-chain decision, see §6): Q8_0 ≈
+near-original, Q4_K_M "excellent quality, widely recommended", Q3_K_M good,
+Q2_K "somewhat usable" — the dynamic quant keeps first/last transformer blocks
+at Q8 (community patch notes + city96's imgsli comparisons); that is the
+"clever tuning" available. Qwen2.5-VL (not Qwen3-VL) is the TE for qwen
+pipelines; GGUF TE includes the vision tower edit needs. The Lightning
+4-step LoRAs for 2512/2511 exist (box has the 2509/2512 pair). HiDream-E1.1
+(instruction editing) measured 22 GB/768²/28 steps + a 14 GiB TE stack — no
+advantage over the qwen GGUF path; skipped.
+
+**Full-box audit (live, cgroup v2 + ps):**
+
+| consumer | RAM |
+|---|---|
+| router unit (IQ3_S loaded: anon KV/buffers 16.5 G + 40 G file-backed mmap pages) | 16.5 anon |
+| portal (uvicorn) | 0.5 G |
+| harness (opencode serve 2.1.4) | 0.3 G |
+| **ai-embed sidecar** | **0 G — inactive** (RAG MCP stdio child is a few MB; embedding was never the hog) |
+| desktop (firefox ~2 G, gnome ~1.5 G, snap-store 0.5 G) | ~4 G |
+| swap: `/swap.img` 7.9/8 G used, swappiness 60 | pressure history, not a leak |
+
+Key mechanics: the router's 40 GB model is **file-backed mmap** — the kernel
+evicts those pages under pressure (disk re-reads = my inference slows during a
+generation, and swap absorbs old desktop pages). ComfyUI's weights land as
+**anon** memory. So "generation beside the big model" trades speed for RAM by
+design, and the gate must read **MemAvailable** (measured swinging 10→35 G
+with load state) + swap fill, not `free`-`used`.
+
+**Verdicts (the owner's questions, answered with arithmetic):**
+
+1. *"Unload the embed model to fit a small generation?"* — embed is already
+   unloaded (0 G). With IQ3_S resident right now: MemAvailable ~35 G ≥
+   z-image-turbo ~22 G + 8 G safety → **gate ALLOWS a z-image generation today,
+   zero downloads, this session's model resident**; qwen-image (~33 G + 8) is
+   refused by ~6 G. The embed model never was the blocker.
+2. *"Lazy-load MCP services with idle ejection?"* — adopted for design:
+   the embed sidecar goes load-on-first-request + idle-eject (portal setting,
+   minutes, 0=always-on); `kb_mcp` already degrades to FTS + a vectorize queue
+   when the sidecar is down, so the lazy tier is safe today. Cheaper tier
+   recorded: embeddinggemma-300m (~0.6 G, an NPU build is already in the HF
+   cache) for a resident embedding option.
+3. *"Full coding loop needs a second machine, or qwen3.8-27b as primary?"* —
+   **this machine suffices for the 27B pairing**: Q8_K_XL-27B (~31 G,
+   file-backed; the 27B family snapshots carry their mmproj → vision) +
+   qwen-image-edit Q4 (~22 G) + infra ~4 G + safety ≈ ~57 G of 122 G:
+   fits with ~60 G headroom. Even IQ3_S + z-image-turbo passes the gate today.
+   A second machine buys speed, not feasibility.
 
 ## 2. Prior art — how image tools are built for callers (2026)
 
@@ -266,6 +339,16 @@ Both anchors land on a real, shippable artifact — not a throwaway demo.
 4. Tool naming: `image-forge` server, verb tools as above (context cost: ~9
    tool definitions accepted?).
 5. Per-personality scoping: all agents get the tools, or an "artist" personality?
+6. **ComfyUI-GGUF custom node** (city96): the Q4/Q3 pipeline path needs it —
+   it is one widely-used node package, and the proposal's supply-chain rule
+   says frozen templates, no nodes. An explicit, measured exception for this
+   one package is the cleanest shape; without it the fp8 on-disk pipelines
+   are the only ones the forge runs.
+7. **Download gate** (§1b table): qwen-image-edit-2511 GGUF Q4_K_M (~13 G) +
+   Qwen2.5-VL-7B GGUF Q4_K_M TE (~4.4 G) + 2511 Lightning LoRA — these are
+   what make "27B coding agent + full qwen-edit generation" comfortable on
+   this box. z-image-turbo (already on disk) is the zero-download first
+   pipeline.
 
 ## 7. Honest limits (stated up front)
 
