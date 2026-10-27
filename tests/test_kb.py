@@ -77,6 +77,33 @@ def test_citations_in_the_page_templates_resolve_too():
     assert not dangling, f"templates cite sections that do not exist: {dangling}"
 
 
+def test_the_outline_groups_cover_every_document_and_lead_with_the_friendly_pair():
+    """The help rail is a reading order, not a filter (owner, Oct-26).
+
+    Every document docs_available() lists must appear in exactly one outline
+    group -- an ungrouped doc appended to the last group is allowed, a dropped
+    doc is not. The first group is the friendly pair (Start here + glossary),
+    open; the engineering corpus is the collapsed group. And the friendly docs
+    are real corpus: their sections index, search finds them by plain words.
+    """
+    groups = kb.outline()
+    flat = [d["name"] for g in groups for d in g["docs"]]
+    avail = [n for n, _ in kb.docs_available()]
+    assert sorted(flat) == sorted(avail), "the outline dropped or duplicated a document"
+    assert groups[0]["open"] is True and "Start here" in groups[0]["title"]
+    assert [n for n, _ in kb.docs_available()][:2] == ["START_HERE.md", "GLOSSARY.md"], \
+        "the friendly pair must be first in DOC_ORDER: /help#number precedence is set there"
+    assert [d["name"] for d in groups[0]["docs"]] == ["START_HERE.md", "GLOSSARY.md"]
+    closed = [g for g in groups if not g["open"]]
+    assert closed and any(d["name"] == "PORTAL_PLAN.md" for g in closed for d in g["docs"]), \
+        "the engineering corpus is not in a collapsed group"
+    hits = kb.search("quantization")
+    assert any(h["doc"] == "GLOSSARY.md" for h in hits), "the glossary is not searchable"
+    hits = kb.search("what is a slot")
+    assert any(h["doc"] in ("GLOSSARY.md", "START_HERE.md") for h in hits), \
+        "a plain-language question must land in the friendly corpus"
+
+
 def test_no_citation_anywhere_in_docs_points_at_nothing():
     """The docs are the largest citation corpus in the portal and had no guard of its own.
 

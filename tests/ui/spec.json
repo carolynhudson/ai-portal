@@ -1621,7 +1621,10 @@
       "expectRequests": [],
       "expectVisible": [
         "#kb-search",
-        "#kb-toc",
+        "#kb-outline",
+        "#kb-rail-toggle",
+        "#kb-viewer",
+        "#kb-welcome",
         "#kb-sec-addr",
         "#kb-sec-title",
         "#kb-sec-meta",
@@ -1632,7 +1635,7 @@
       "expectHidden": [
         "#kb-section"
       ],
-      "note": "XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
+      "note": "two-pane docs browser (owner Oct-26). XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
     },
     {
       "name": "projects-active",

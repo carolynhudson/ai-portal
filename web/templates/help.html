@@ -2,29 +2,51 @@
 {% block title %}Help · AI Portal{% endblock %}
 {% block body %}
 <style>
-/* The knowledge base page. Two ways in: search a term, or follow a § citation from a
-   setting. Both land on the same section view, so a citation and a search are the same act. */
-.kb-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
-.kb-bar input[type=search]{flex:1 1 260px;min-width:200px;padding:8px 10px;border:1px solid var(--line);
+/* The knowledge base, as a two-pane document browser: a narrow outline rail
+   (search pinned at its top) and a viewer. The owner's direction (Oct-26):
+   a friendly welcome and plain-language glossary first, the engineering
+   corpus in its correct context inside the same outline, everything
+   searchable, and every § citation from any page landing in this viewer.
+
+   The outline is one vertical scrolling list. `columns:2` measured 1,024 px
+   of client width against 13,749 px of content (docs/PORTAL_POLISH.md §9):
+   multi-column layout balances a long list ACROSS the inline axis, so a
+   253-section index becomes 13.4 viewports of horizontal scrolling that the
+   box's own overflow-y cannot reach. A table of contents is scanned top to
+   bottom; the rail is a list with vertical overflow, and this ban is pinned
+   by test_ui_contract. */
+.kb-app{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start}
+.kb-app.kb-rail-off{grid-template-columns:42px minmax(0,1fr)}
+.kb-rail{position:sticky;top:10px;max-height:calc(100vh - 84px);display:flex;flex-direction:column;
+  border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+.kb-rail-off .kb-rail .kb-searchbar,.kb-rail-off .kb-rail .kb-outline{display:none}
+.kb-rail-off #kb-rail-toggle{writing-mode:vertical-rl;padding:10px 0;width:100%}
+.kb-searchbar{display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.kb-searchbar input[type=search]{flex:1 1 0;min-width:0;padding:8px 10px;border:1px solid var(--line);
   border-radius:8px;background:var(--bg,#12161b);color:inherit}
-.kb-docs{font-size:12px;color:var(--mut);margin:0 0 14px;display:flex;gap:14px;flex-wrap:wrap}
+.kb-outline{flex:1 1 auto;overflow-y:auto;padding:8px 10px;font-size:12px;column-count:1}
+.kb-group{margin:0 0 6px}
+.kb-group-h{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);
+  cursor:pointer;padding:3px 0;user-select:none}
+.kb-toc-doc{margin:2px 0}
+.kb-toc-doc>summary{font-size:12px;font-weight:600;cursor:pointer;padding:2px 0;user-select:none;
+  list-style-position:outside}
+.kb-toc-rows{padding-left:10px}
+.kb-outline a{display:block;color:inherit;text-decoration:none;padding:1px 0;opacity:.85;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-outline a:hover{color:var(--acc);opacity:1}
+.kb-outline a[aria-current]{color:var(--acc);opacity:1}
+.kb-outline .l3{padding-left:10px;opacity:.75}
+.kb-outline .l4{padding-left:20px;opacity:.62}
+.kb-rail-foot{flex:0 0 auto;border-top:1px solid var(--line);padding:6px 10px;
+  display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--mut)}
+.kb-viewer{min-width:0}
+#kb-welcome .kb-quick{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
 .kb-hit{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
 .kb-hit h4{margin:0 0 4px;font-size:14px}
 .kb-hit .kb-addr{color:var(--acc);font-size:12px;font-family:ui-monospace,monospace}
 .kb-hit .kb-meta{font-size:12px;color:var(--mut);margin:0 0 6px}
 .kb-hit .kb-ex{font-size:13px;color:var(--mut)}
-/* One column, scrolling vertically. `columns:2` measured 1,024 px of client width against
-   13,749 px of content (docs/PORTAL_POLISH.md §9): multi-column layout balances a long list
-   ACROSS the inline axis, so a 253-section index becomes 13.4 viewports of horizontal
-   scrolling that the box's own overflow-y cannot reach. */
-.kb-toc{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 14px;
-  max-height:260px;overflow-y:auto;font-size:12px;column-count:1}
-.kb-toc-doc{margin:0 0 8px}
-.kb-toc-doc-h{font-size:12px;font-weight:600;margin:0 0 2px;position:sticky;top:0;background:var(--panel)}
-.kb-toc a{display:block;color:inherit;text-decoration:none;padding:1px 0;opacity:.85}
-.kb-toc a:hover{color:var(--acc);opacity:1}
-.kb-toc .l3{padding-left:10px;opacity:.75}
-.kb-toc .l4{padding-left:20px;opacity:.62}
 #kb-section{border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 14px}
 #kb-section h3{margin:0 0 2px;font-size:16px}
 #kb-section .kb-addr{color:var(--acc);font-size:12px;font-family:ui-monospace,monospace}
@@ -37,72 +59,102 @@
 .help code{font-family:ui-monospace,monospace;font-size:12.5px;background:#0e1216;padding:1px 4px;border-radius:4px}
 .help table{border-collapse:collapse;font-size:12.5px;margin:8px 0}
 .help th,.help td{border:1px solid var(--line);padding:4px 8px;text-align:left}
-.help a.kbref{color:var(--acc)}
+.help a.kbref,.help a{color:var(--acc)}
 .mut{color:var(--mut)}
+@media(max-width:900px){
+  .kb-app,.kb-app.kb-rail-off{grid-template-columns:1fr}
+  .kb-rail{position:static;max-height:56vh}
+  .kb-rail-off .kb-rail .kb-searchbar,.kb-rail-off .kb-rail .kb-outline{display:revert}
+  #kb-rail-toggle{display:none}
+}
 </style>
 
-<div class="card help">
-  <h3>Help &amp; knowledge base</h3>
-  <p class="mut" style="margin:0 0 10px">
-    The portal's settings pages keep a setting's detail short and cite the measurement behind it
-    (“§6.12.6”). This page is what those citations point at: every documented section, searchable,
-    with a stable address taken from its own heading.
-  </p>
+<div class="kb-app" id="kb-app">
 
-  <div class="kb-docs">
-    {% for name, title in docs %}<span><b>{{ name }}</b> — {{ title }}</span>{% endfor %}
-    <span>{{ count }} sections indexed</span>
-  </div>
-
-  <form class="kb-bar" method="get" action="/help">
-    <input id="kb-search" type="search" name="q" value="{{ q }}" placeholder="search the docs — “kv unified”, “fit ctx”, “cache id”">
-    <button type="submit">Search</button>
-  </form>
-
-  {% if q %}
-  <p class="mut" id="kb-status" style="margin:0 0 8px">{{ hits|length }} section{{ "" if hits|length == 1 else "s" }}
-    for “{{ q }}”</p>
-  <div id="kb-results">
-    {% if not hits %}<p class="mut">Nothing matched. Try fewer words.</p>{% endif %}
-    {% for h in hits %}
-    <div class="kb-hit">
-      <h4><a class="kbref" href="/help#{{ h.id }}">{{ h.title }}</a></h4>
-      <div class="kb-meta">{{ h.doc }} · <span class="kb-addr">§{{ h.id }}</span> · line {{ h.line }}</div>
-      <div class="kb-ex">{{ h.excerpt }}</div>
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="kb-toc" id="kb-toc">
-    {% for d, dtitle in docs %}
-    {% set rows = toc | selectattr("doc", "equalto", d) | list %}
-    {% if rows %}
-    <div class="kb-toc-doc">
-      <div class="kb-toc-doc-h">{{ dtitle }}</div>
-      {% for t in rows %}
-      <a class="l{{ t.level }}" href="/help#{{ t.id }}">§{{ t.id }} {{ t.title }}</a>
+  <aside class="kb-rail" id="kb-rail" aria-label="Help outline">
+    <form class="kb-searchbar" method="get" action="/help">
+      <input id="kb-search" name="q" type="search" value="{{ q }}" autocomplete="off"
+             placeholder="Search the docs — “quantization”, “fit ctx”, “kv cache”"
+             aria-label="Search the documentation">
+      <button type="submit">Search</button>
+    </form>
+    <div class="kb-outline" id="kb-outline">
+      {% for g in groups %}
+      <details class="kb-group"{{ ' open' if g.open }}>
+        <summary class="kb-group-h">{{ g.title }}</summary>
+        {% for d in g.docs %}
+        <details class="kb-toc-doc" data-doc="{{ d.name }}"{% if d.name == 'START_HERE.md' %} open{% endif %}>
+          <summary title="{{ d.title }}">{{ d.title.split(' — ')[0] }}</summary>
+          <div class="kb-toc-rows">
+            {% for t in d.rows %}
+            <a class="kbref l{{ t.level }}" href="/help#{{ t.id }}"
+               title="{{ d.name }} · §{{ t.id }}">{{ t.title if t.id[0] not in '0123456789' else '§' ~ t.id ~ ' ' ~ t.title }}</a>
+            {% endfor %}
+          </div>
+        </details>
+        {% endfor %}
+      </details>
       {% endfor %}
     </div>
-    {% endif %}
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <div id="kb-section" hidden>
-    <div class="kb-addr" id="kb-sec-addr"></div>
-    <h3 id="kb-sec-title"></h3>
-    <p class="mut" id="kb-sec-meta"></p>
-    <div id="kb-sec-body"></div>
-    <div class="kb-nav">
-      <button type="button" class="ghost" id="kb-close">close</button>
-      <a href="/help" id="kb-permalink">permalink</a>
+    <div class="kb-rail-foot">
+      <button type="button" class="ghost" id="kb-rail-toggle" aria-expanded="true"
+              title="Hide the outline rail">« outline</button>
+      <span>{{ count }} sections</span>
     </div>
-  </div>
+  </aside>
 
-  <p class="mut" style="margin-top:14px;font-size:12px">
-    Section numbers are the headings themselves — a link made here keeps pointing at the same
-    prose after the docs grow, which is why setting help cites a number and not a sentence.
-  </p>
+  <main class="kb-viewer" id="kb-viewer">
+    <div class="card" id="kb-welcome">
+      <h3>Help &amp; knowledge base</h3>
+      <p class="mut" style="margin:0 0 10px">New here? The
+        <a class="kbref" href="/help#1">two-minute tour</a> explains what this
+        machine is and what every page is for;
+        <a class="kbref" href="/help#words-you-ll-meet">Words you'll meet</a>
+        explains any term in plain sentences.</p>
+      <p class="mut" style="margin:0 0 10px">Settings pages cite the
+        measurement behind a setting (“§6.12.6”); that citation is a link,
+        and it opens here — every documented section, searchable, with a
+        stable address taken from its own heading.</p>
+      <div class="kb-quick">
+        <a class="kbref" href="/help#1">Start here</a>
+        <a class="kbref" href="/help#words-you-ll-meet">Glossary</a>
+        <a class="kbref" href="/help#ctx-size">Settings reference</a>
+      </div>
+    </div>
+
+    {% if q %}
+    <p class="mut" id="kb-status" style="margin:0 0 8px">{{ hits|length }} section{{ "" if hits|length == 1 else "s" }}
+      for “{{ q }}”</p>
+    <div id="kb-results">
+      {% if not hits %}<p class="mut">Nothing matched. Try fewer words.</p>{% endif %}
+      {% for h in hits %}
+      <div class="kb-hit">
+        <h4><a class="kbref" href="/help#{{ h.id }}">{{ h.title }}</a></h4>
+        <div class="kb-meta">{{ h.doc }} · <span class="kb-addr">§{{ h.id }}</span> · line {{ h.line }}</div>
+        <div class="kb-ex">{{ h.excerpt }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div id="kb-results" hidden></div>
+    {% endif %}
+
+    <div id="kb-section" hidden>
+      <div class="kb-addr" id="kb-sec-addr"></div>
+      <h3 id="kb-sec-title"></h3>
+      <p class="mut" id="kb-sec-meta"></p>
+      <div id="kb-sec-body"></div>
+      <div class="kb-nav">
+        <button type="button" class="ghost" id="kb-close">close</button>
+        {# href is set the moment a section opens. An href of "/help" is a link
+           that navigates to the page you are standing on: the ui sweep probes
+           every a[href] in the DOM, hidden or not, and a control that goes
+           nowhere is exactly what that sweep exists to fail. #}
+        <a id="kb-permalink">permalink</a>
+      </div>
+    </div>
+  </main>
+
 </div>
 
 <script>
@@ -154,27 +206,59 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+  function markActive(ref){
+    document.querySelectorAll('#kb-outline a[aria-current]').forEach(
+      (a) => a.removeAttribute('aria-current'));
+    if(!ref) return;
+    const a = document.querySelector('#kb-outline a[href="/help#' + ref + '"]');
+    if(!a) return;
+    a.setAttribute('aria-current', 'true');
+    // Reveal the row the reader is reading: an outline that hides the current
+    // section makes the viewer's context a guessing game.
+    for(let el = a; el && el.id !== 'kb-outline'; el = el.parentElement){
+      if(el.tagName === 'DETAILS') el.open = true;
+    }
+  }
+
   async function openSection(ref){
     const box = $(SEC);
-    if(!ref){ if(box) box.hidden = true; return; }
+    if(!ref){ box.hidden = true; markActive(null); show('welcome'); return; }
+    box.hidden = false;
+    show('section');
+    $('kb-sec-addr').textContent = '§' + ref;
+    $('kb-sec-title').textContent = 'Loading…';
+    $('kb-sec-meta').textContent = 'fetching §' + ref;
     const r = await fetch('/api/help/section/' + encodeURIComponent(ref), {credentials:'same-origin'});
     const d = await r.json().catch(() => ({}));
     if(!r.ok){
-      box.hidden = false;
-      $('kb-sec-addr').textContent = '§' + ref;
       $('kb-sec-title').textContent = 'No such section';
       $('kb-sec-meta').textContent = (d && d.detail) || 'the citation names nothing in docs/';
-      mount($('kb-sec-body'), '');
+      mount($('kb-sec-body'),
+            '<p class="mut">This citation points at a heading that no document carries. ' +
+            'Search for the topic instead: <a class="kbref" href="/help?q=' +
+            encodeURIComponent(ref) + '">search “' + esc(ref) + '”</a>.</p>');
+      $('kb-permalink').href = '/help#' + ref;
+      markActive(ref);
       return;
     }
-    box.hidden = false;
     $('kb-sec-addr').textContent = '§' + d.id;
     $('kb-sec-title').textContent = d.title;
     $('kb-sec-meta').textContent = d.doc + ' · heading level ' + d.level;
     mount($('kb-sec-body'), d.html || '');
+    $('kb-permalink').href = '/help#' + d.id;
+    markActive(d.id);
     // Scroll if the browser can. scrollIntoView is absent in some DOMs (jsdom has no
     // layout), and a page script must not throw over a nicety like smooth scrolling.
     if (typeof box.scrollIntoView === 'function') box.scrollIntoView({block: 'start'});
+  }
+
+  function show(which){
+    // One state in the viewer at a time: welcome, results, section. The
+    // results pane is server-rendered for /help?q=, so "welcome" yields to it.
+    const w = $('kb-welcome'), res = $('kb-results'), sec = $(SEC);
+    if(w) w.hidden = (which !== 'welcome') || !!(res && !res.hidden && res.childElementCount);
+    if(res && which === 'section') res.hidden = true;
+    if(which === 'welcome' && res && location.search.indexOf('q=') < 0) res.hidden = true;
   }
 
   document.addEventListener('click', (e) => {
@@ -193,8 +277,100 @@
   const close = $('kb-close');
   if(close) close.addEventListener('click', () => {
     $(SEC).hidden = true;
+    show('welcome');
+    markActive(null);
     history.replaceState(null, '', window.location.pathname);
   });
+
+  // Permalink is the page's promise that a section has a stable address, so
+  // clicking it must do something you can see: it puts the full address on
+  // the page (and on the clipboard where the browser allows it), and clicking
+  // again folds it away. A toggle, not a timer: a repeated click is a
+  // repeated answer, and the ui sweep probes controls more than once.
+  const perm = $('kb-permalink');
+  if(perm) perm.addEventListener('click', (e) => {
+    e.preventDefault();
+    const url = location.origin + (perm.getAttribute('href') || '/help');
+    if(perm.dataset.shown === '1'){
+      perm.dataset.shown = '0';
+      perm.textContent = 'permalink';
+      return;
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
+    perm.dataset.shown = '1';
+    perm.textContent = 'address shown: ' + url;
+  });
+
+  // Escape closes the section (unless typing in the search box, where Escape
+  // is the browser's "clear field" key).
+  document.addEventListener('keydown', (e) => {
+    if(e.key !== 'Escape') return;
+    const t = e.target;
+    if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    const box = $(SEC);
+    if(box && !box.hidden) close.click();
+  });
+
+  // The rail toggle is a preference, and it persists: an operator with a
+  // narrow window should not re-open the rail on every page view.
+  const RAIL = 'kb-rail-collapsed';
+  const toggle = $('kb-rail-toggle');
+  function setRail(off){
+    $('kb-app').classList.toggle('kb-rail-off', off);
+    if(toggle){
+      toggle.setAttribute('aria-expanded', off ? 'false' : 'true');
+      // The collapsed rail keeps the toggle visible as a glyph; the name has
+      // to say what the glyph does (A11Y-01: a control's name is its job).
+      toggle.setAttribute('aria-label', off ? 'Show the help outline' : 'Hide the help outline');
+      toggle.textContent = off ? '»' : '« outline';
+    }
+    try{ localStorage.setItem(RAIL, off ? '1' : '0'); }catch(e){ /* private mode */ }
+  }
+  if(toggle) toggle.addEventListener('click', () => {
+    setRail(!$('kb-app').classList.contains('kb-rail-off'));
+  });
+  try{ if(localStorage.getItem(RAIL) === '1') setRail(true); }catch(e){ /* private mode */ }
+
+  // Typing filters the outline live; submitting is the real search (server-
+  // ranked, deep-linkable). The two modes must not fight: Enter posts the
+  // form, filtering never does.
+  const search = $('kb-search');
+  function applyFilter(){
+    const q = (search.value || '').trim().toLowerCase();
+    document.querySelectorAll('#kb-outline .kb-group').forEach((g) => {
+      let groupHit = false;
+      g.querySelectorAll('.kb-toc-doc').forEach((d) => {
+        let docHit = false;
+        d.querySelectorAll('a').forEach((a) => {
+          const hit = !q || a.textContent.toLowerCase().indexOf(q) >= 0
+                        || (d.dataset.doc || '').toLowerCase().indexOf(q) >= 0;
+          a.style.display = hit ? '' : 'none';
+          if(hit) docHit = true;
+        });
+        d.style.display = docHit ? '' : 'none';
+        if(q && docHit) d.open = true;
+        if(docHit) groupHit = true;
+      });
+      g.style.display = groupHit ? '' : 'none';
+      if(q && groupHit) g.open = true;
+    });
+    if(!q){
+      // Restore the declared default (the template's `open` attributes) by
+      // removing the filter's forced opens on groups; doc defaults survive.
+      document.querySelectorAll('#kb-outline .kb-group').forEach((g) => {
+        if(g.dataset.opened === '1') g.open = true;
+      });
+    }
+  }
+  document.querySelectorAll('#kb-outline .kb-group').forEach((g) => {
+    if(g.open) g.dataset.opened = '1';
+  });
+  if(search){
+    search.addEventListener('input', applyFilter);
+    if(search.value) applyFilter();
+  }
 
   window.addEventListener('hashchange', () => openSection(decodeURIComponent(location.hash.slice(1))));
   if(location.hash) openSection(decodeURIComponent(location.hash.slice(1)));

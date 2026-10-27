@@ -655,57 +655,91 @@ def test_the_help_line_is_the_control_you_click():
     assert '.ed-detail:not([open])>summary .ed-more-open{display:none}' in tpl
 
 
-def test_the_help_toc_is_a_list_that_scrolls():
-    """A 253-section list in a 220 px box is a vertical list, never a column ribbon.
+def test_the_help_outline_is_a_list_that_scrolls():
+    """A 253-section outline is a vertical list, never a column ribbon.
 
     docs/PORTAL_POLISH.md §9 measured the help page's TOC at 1,024 px of client width against
     13,749 px of content -- 13.4 viewports of horizontal scrolling, 208 nodes in one ribbon.
     The cause is the CSS multi-column layout (`columns:2`): columns balance content ACROSS
     the inline axis, so a long vertical list becomes a wide one that the box's own
-    `overflow-y:auto` cannot reach. The reader scans a table of contents top to bottom; a
-    ribbon makes the scan a horizontal hunt, and the widest element on the page is the page's
-    own index.
+    `overflow-y:auto` cannot reach. The reader scans a table of contents top to bottom.
 
-    The guard is on the declaration, not on a screenshot: the same class of cheap mirror the
-    tab-geometry test uses, so a reverted rule is caught in milliseconds.
+    Oct-26 the owner asked for a two-pane docs browser: the class carrying the outline is
+    now `.kb-outline` (the rail), and the ban travels with it -- the rail is a vertical
+    scrolling list, not a ribbon, and not a width-capped box that hides sections below
+    the fold.
     """
     tpl = (ROOT / "web" / "templates" / "help.html").read_text()
     head = tpl[:tpl.index("</style>")] if "</style>" in tpl else tpl
-    rule = re.search(r"\.kb-toc\s*\{([^}]*)\}", head, re.S)
-    assert rule, "no .kb-toc rule in the help page's own stylesheet"
-    decls = rule.group(1)
+    rules = re.findall(r"\.kb-outline\s*\{([^}]*)\}", head, re.S)
+    assert rules, "no .kb-outline rule in the help page's own stylesheet"
+    decls = ";".join(rules)
     for prop in ("column-count", "columns"):
         m = re.search(rf"(^|[;\s]){prop}\s*:\s*([^;]+)", decls)
         assert not m or m.group(2).strip() in ("1", "1 auto", "auto 1"), (
-            f".kb-toc declares {prop}: {m.group(2).strip()!r}. A multi-column TOC is a ribbon: "
+            f".kb-outline declares {prop}: {m.group(2).strip()!r}. A multi-column TOC is a ribbon: "
             "columns balance the list across the inline axis, so 253 sections become 13.4 "
             "viewports of horizontal scrolling (measured: 1,024 px client width, 13,749 px "
-            "content, docs/PORTAL_POLISH.md §9). The TOC is a vertical list.")
+            "content, docs/PORTAL_POLISH.md §9). The outline is a vertical list.")
     assert "overflow-y:auto" in decls or "overflow:auto" in decls, (
-        f".kb-toc has no vertical scroll in {decls.strip()!r}: a capped-height index that "
+        f".kb-outline has no vertical scroll in {decls.strip()!r}: a scrolling rail that "
         "cannot scroll hides the sections below the fold, which is the failure the ribbon "
         "was a workaround for")
 
 
-def test_the_help_toc_is_an_outline_of_documents():
-    """A table of contents groups by document, so the reader knows which file they are in.
+def test_the_help_outline_is_an_outline_of_documents():
+    """A table of contents groups by document, inside a reading order.
 
-    docs/PORTAL_PLAN.md §6.14.2: the help page's outline lists the living documents and their
-    top-level headings. A flat ribbon of 235 links with section numbers does not answer "which
-    document is §6.14.1u in" -- and a reader scanning an index reads it as a tree, not as a list.
-
-    The guard is on the template's loop: the outline is one group per document, each with a
-    heading, so the shape is asserted where it is written.
+    docs/PORTAL_PLAN.md §6.14.2: the outline lists the living documents and their
+    headings -- a flat ribbon of links does not answer "which document is §6.14.1u in".
+    Oct-26 the owner added the layer above it: friendly docs first, the engineering
+    corpus grouped under Reference & history, "visible if selected like any other
+    link" -- so the rail renders kb.outline()'s groups, a <details> per group and per
+    document, and the payload is the group tree, not a flat list.
     """
     tpl = (ROOT / "web" / "templates" / "help.html").read_text()
-    toc = tpl[tpl.index('class="kb-toc"'):tpl.index("{% endif %}", tpl.index('class="kb-toc"'))]
-    assert "kb-toc-doc" in toc, (
-        "the help TOC renders one flat list of links: an outline has to name the document each "
-        "section belongs to, which is the first thing a reader scanning an index wants")
-    assert "kb-toc-doc-h" in toc, (
-        "the TOC has document groups without a heading for each group")
-    assert "equalto" in toc, (
-        "the TOC loop does not group sections by document")
+    rail = tpl[tpl.index('id="kb-outline"'):tpl.index('class="kb-rail-foot"')]
+    assert "for g in groups" in rail, "the rail does not render the outline's groups"
+    assert "kb-group" in rail and "kb-toc-doc" in rail, (
+        "the outline is not a two-level tree: groups of documents, documents of sections")
+    assert "data-doc" in rail, "document groups do not name the document they carry"
+    main = (ROOT / "app" / "main.py").read_text()
+    assert '"groups": kb.outline()' in main, "the payload must carry the group tree"
+    kbmod = (ROOT / "app" / "core" / "kb.py").read_text()
+    assert '"Reference & history"' in kbmod, "the engineering corpus has no group"
+    assert re.search(r'"Reference & history",\s*\[[^\]]*\],\s*False', kbmod), (
+        "the Reference & history group is open by default: the owner's direction is the "
+        "engineering corpus collapsed, not hidden -- visible if selected, like any other link")
+
+
+def test_the_help_page_is_a_two_pane_browser():
+    """The owner's layout (Oct-26): narrow outline rail left, document viewer right,
+    search impossible to miss, and the section fetch's sanitizer untouched.
+
+    The pin is on the declarations: the grid rule, the rail/viewer ids, the search
+    form sitting above the outline in the rail, the friendly anchors the welcome
+    card offers resolving in the corpus, and the sanitizer allowlist surviving the
+    rewrite (the section body is fetched doc text; the allowlist is the XSS gate).
+    """
+    tpl = (ROOT / "web" / "templates" / "help.html").read_text()
+    head = tpl[:tpl.index("</style>")]
+    assert re.search(r"\.kb-app\s*\{[^}]*grid-template-columns:\s*300px", head), (
+        "no two-pane grid (rail + viewer) in the help page")
+    for id_ in ("kb-rail", "kb-viewer", "kb-outline", "kb-search", "kb-welcome",
+                "kb-results", "kb-section", "kb-rail-toggle"):
+        assert f'id="{id_}"' in tpl, f"missing {id_}"
+    assert tpl.index("kb-searchbar") < tpl.index('id="kb-outline"'), (
+        "the search box is not at the top of the rail: the owner asked for easy to find")
+    assert 'aria-expanded' in tpl, "the rail collapse has no aria state"
+    assert "const ALLOWED" in tpl and "SAFE_HREF" in tpl, (
+        "the section renderer's node allowlist is gone -- fetched doc text must stay sanitized")
+    from app.core import kb
+    ids = {s["id"] for s in kb.sections()}
+    for anchor in ("1", "words-you-ll-meet", "gguf", "quantization", "context-window",
+                   "kv-cache", "mmproj", "slot", "personality", "router", "harness", "mcp"):
+        assert anchor in ids, f"the welcome card links /help#{anchor}, which names nothing"
+    assert kb.find("words-you-ll-meet")["doc"] == "GLOSSARY.md"
+    assert kb.find("gguf")["doc"] == "GLOSSARY.md"
 
 
 def test_a_row_is_one_line():

@@ -30,6 +30,8 @@ from pathlib import Path
 # deliberately absent: it is superseded by PORTAL_PLAN.md, and a search page that returns both
 # invites reading the obsolete one.
 DOC_ORDER = [
+    ("START_HERE.md", "Start here — a friendly tour of the portal"),
+    ("GLOSSARY.md", "Words you'll meet — the plain-language glossary"),
     ("PORTAL_PLAN.md", "Portal plan — subsystems, decisions, and measured findings"),
     ("MODEL_SIGNALS.md", "Model signals — how to know what a GGUF can do before loading it"),
     ("ENVIRONMENT.md", "This box — hardware, units, paths, and the machine's limits"),
@@ -196,14 +198,28 @@ def refs_in(text: str) -> list[str]:
     return out
 
 
+# Question words carry no topic: a searcher asking "what is a slot" means "slot".
+# This is a lookup corpus, not a search engine; the list is the questions people type.
+_STOP_TERMS = {"what", "is", "the", "a", "an", "how", "does", "do", "of", "for", "and",
+               "or", "to", "in", "on", "with", "why", "when", "where", "can", "about",
+               "are", "was", "it", "its", "this", "that", "which"}
+
+
 def search(query: str, limit: int = 30, docs_dir: Path | None = None) -> list[dict]:
     """Rank sections by how much of the query they contain.
 
     Title hits count for more than body hits, because a reader searching "kv unified" wants the
     section *named* for it, not every section that mentions it in passing. A section that
     mentions the query 40 times is not 40 times more relevant, so body matches are capped.
+
+    Two rules that keep a *question* working as a query (owner Oct-26: help is for people
+    who type "what is a slot"): question words are dropped -- "what/is/the" score on every
+    page that contains them -- and short terms count only at word boundaries, so "is" does
+    not score inside "this". Substring noise is what made plain questions land in the plan
+    journal and buried the plain-language answers written for them.
     """
-    terms = [t for t in re.split(r"[^a-z0-9]+", str(query).lower()) if len(t) >= 2]
+    terms = [t for t in re.split(r"[^a-z0-9]+", str(query).lower())
+             if len(t) >= 2 and t not in _STOP_TERMS]
     if not terms:
         return []
     scored = []
@@ -214,7 +230,8 @@ def search(query: str, limit: int = 30, docs_dir: Path | None = None) -> list[di
         for t in terms:
             if t in title:
                 score += 10
-            n = body.count(t)
+            n = (len(re.findall(rf"\b{re.escape(t)}\b", body)) if len(t) <= 3
+                 else body.count(t))
             if n:
                 score += 1 + min(n, 5)
         if score:
@@ -238,6 +255,54 @@ def _excerpt(body: str, terms: list[str], width: int = 220) -> str:
 def docs_available(docs_dir: Path | None = None) -> list[tuple[str, str]]:
     root = _doc_root(docs_dir)
     return [(n, t) for n, t in DOC_ORDER if (root / n).is_file()]
+
+
+# The outline's groups (owner, Oct-26): the rail reads friendly-first, and the
+# engineering corpus sits in one collapsed group "in its correct context ...
+# visible if selected like any other link". A doc missing from every group
+# lands in the last one -- the outline may not silently drop a document, so
+# the mapping is a preference, never a filter.
+OUTLINE_GROUPS = [
+    ("Start here", ["START_HERE.md", "GLOSSARY.md"], True),
+    ("Working with the portal",
+     ["PORTAL_SETTINGS.md", "MODEL_SIGNALS.md", "ENVIRONMENT.md", "DEBUGGING.md", "UPDATES.md"],
+     True),
+    ("Reference & history",
+     ["PORTAL_PLAN.md", "PORTAL_UI.md", "PORTAL_LAYOUT.md", "PI_HARNESS_RESEARCH.md",
+      "HARNESS_LANDSCAPE_RESEARCH.md", "MEMORY_PLUGIN_RESEARCH.md", "PORTAL_POLISH.md",
+      "IMAGE_FORGE_PROPOSAL.md"],
+     False),
+]
+
+
+def outline(docs_dir: Path | None = None) -> list[dict]:
+    """The help rail as groups of documents, each document as its section rows.
+
+    `toc()` is the flat row list; this is the shape a reader scans: group,
+    documents, sections. Group order and open-ness are the owner's reading
+    order (friendly first, engineering collapsed); docs no group claims are
+    appended to the final group so nothing can vanish from the index.
+    """
+    by_name = dict(docs_available(docs_dir))
+    rows_by_doc: dict[str, list[dict]] = {}
+    for t in toc(docs_dir):
+        rows_by_doc.setdefault(t["doc"], []).append(t)
+    seen: set[str] = set()
+    groups: list[dict] = []
+    for title, names, open_default in OUTLINE_GROUPS:
+        docs = [{"name": n, "title": by_name[n], "rows": rows_by_doc.get(n, [])}
+                for n in names if n in by_name]
+        seen.update(d["name"] for d in docs)
+        if docs:
+            groups.append({"title": title, "open": open_default, "docs": docs})
+    left = [{"name": n, "title": t, "rows": rows_by_doc.get(n, [])}
+            for n, t in docs_available(docs_dir) if n not in seen]
+    if left:
+        if groups:
+            groups[-1]["docs"].extend(left)
+        else:
+            groups.append({"title": "Documents", "open": True, "docs": left})
+    return groups
 
 
 # ------------------------------------------------------------------ rendering

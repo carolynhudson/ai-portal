@@ -6301,7 +6301,7 @@ Portal side consumes the endpoint as a config value (§1c) when P0 lands.
 1. `docs/IMAGE_FORGE_PROPOSAL.md` was never in `kb.DOC_ORDER`, so the
    proposal's own `§3.4` citations dangled — the citation test is exactly the
    guard that catches this; registered the file, and fixed two real dangling
-   refs that named sections that never existed (`§3.4`/`§2.4` for Layered →
+   refs that named sections that never existed (3.4 / 2.4 for Layered →
    `§1b`, the download gate that actually discusses it).
 2. `OPENCODE_CONFIG_DIR` leaked from the operator's shell (it is in
    `~/ai/config/harness.env`, and `seed_cache_home` prefers the env over the
@@ -6309,3 +6309,62 @@ Portal side consumes the endpoint as a config value (§1c) when P0 lands.
    refuse. conftest now drops the variable at import, beside the home
    ownership block; the seed tests pass with the leak supplied on the command
    line as a witness.
+
+##### 6.14.1j Help becomes a two-pane documentation browser with a friendly front door (2026-10-26)
+
+Owner's overnight brief: re-organize Help as the classic docs browser — narrow
+collapsible outline left, document viewer right, search easy to find; the dev
+documents stay (they are good) but belong in the outline's correct context,
+visible when selected; and the whole thing must read as a friendly welcome for
+a first-time, non-expert user. A future run (declared, not this one): make the
+other pages feel like a tool, not a text-heavy web form.
+
+**The corpus gained the layer it never had.** All 13 indexed documents were
+engineering — a newcomer's first search landed in the plan journal. Two new
+docs lead the registry now: `START_HERE.md` (welcome, the pages in use-order,
+five minutes of useful things, how search and citations work) and
+`GLOSSARY.md` (every machine word in plain sentences — GGUF, quantization,
+context, KV cache, mmproj, slot/swap, personality, router, harness, MCP —
+each pointing at the page, the setting key, or the deep section that owns it).
+Glossary terms are slug sections on the settings-reference precedent
+(`/help#gguf`), so anchors are stable and collision-free; friendly docs sit
+first in DOC_ORDER, which also decides `/help#<bare number>` precedence.
+
+**The page is a browser, pinned where it was measured.** `.kb-app` grid: 300px
+rail + viewer, both scroll independently (the outline is a tree scanned
+top-to-bottom; the viewer is a document). Groups and documents are native
+`<details>` — keyboard and screen reader for free, JS only enhances. The
+search box is pinned at the rail top: typing filters the outline live, Enter
+posts the server-ranked search (`/help?q=` stays deep-linkable). Reference &
+history is one collapsed group — the owner's "visible if selected like any
+other link" is `open: False`, never hidden. Deep links (`/help#6.12.22`,
+per-key settings anchors) land in the viewer and the rail reveals the owning
+document (aria-current + forced expand). The rail collapse persists
+(localStorage), Escape closes the section, the sanitizer allowlist survives
+untouched (pinned). The multi-column ban from PORTAL_POLISH 9 travels with
+the redesign: the pin now targets `.kb-outline` and keeps the measured proof.
+
+**kb learned two things.** `outline()` is the group tree (group → documents →
+sections; a doc no group claims is appended, never dropped — the outline is a
+reading order, not a filter). And `search()` dropped question words and
+counts short terms at word boundaries: "what is a slot" used to score on
+"is" inside "this" and land in the journal; now the glossary answers.
+
+**Measured, the honest way (P2 run, .scratch/help-browser/).** The packaged
+design-pipeline machine gates are not installed on this box (router/validator
+scripts absent — only SKILL.md + references), so the run ran in prose
+artifacts with the limitation recorded; no machine verdict claimed. The
+fixture taught two rules worth keeping: (1) the ui sweep probes EVERY
+`a[href]` in the DOM, hidden included — a permalink with a placeholder href
+of "/help" is a dead control, and (2) a control probed twice must answer
+twice: the permalink is now a toggle that reveals/copy/confirms the stable
+address on every click. And `_slug` turns "you'll" into "you-ll": an anchor
+is what the slug function says, not what the prose suggests — the anchor
+tests caught it before the page shipped.
+
+Pins moved with the design (contract tests encode decisions; the owner
+changed the decision): the TOC-scroll pin retargets `.kb-outline`, the
+outline-of-documents pin now asserts group→document→section, and new pins
+hold the two-pane grid, the rail-top search, the collapsed reference group,
+the sanitizer, and the welcome card's anchors resolving. Full suite green
+(see the commit).

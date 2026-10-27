@@ -952,6 +952,7 @@ def create_app() -> FastAPI:
             "q": q,
             "hits": hits,
             "toc": kb.toc(),
+            "groups": kb.outline(),
             "docs": kb.docs_available(),
             "count": len(kb.sections()),
         })
