@@ -6418,3 +6418,36 @@ written by a forked opencode session on the resident model), COVER-SHEET.md
 (what to ask the builder for, non-builder language). The plan's Tier gates,
 linter mapping, and golden-query moat are the discussion's ideas made
 handable.
+
+##### 6.14.1l Remote compute relays — the borrowed-machine contract (2026-10-27, design-refined, not scheduled)
+
+Owner raised the partner's MacBook Pro (M4 Max class, 128 GB): a future
+service like the image forge's remote backend, but a **protected llama.cpp
+router** for sub-agents, extension of portal abilities, and model testing the
+Halo box cannot host beside a resident agent — first named use: the
+ai-voice-chat **roleplay tournament**, harness+judge local, the candidate
+model chain (e.g. Flash-Next IQ3_S, an 83.74 GB pair) resident on the Mac,
+engine tuning co-evolving between rounds. Owner's hard requirements: idle
+unload and **system "in use" detection** — a borrowed machine is not a
+server, and the human always outranks the job.
+
+The idea is written up as `docs/REMOTE_COMPUTE_PROPOSAL.md` (registered in
+the kb corpus, Reference & history): the **relay contract** — one shape for
+every borrowed machine (ComfyUI-on-Windows is its image instance):
+authed OpenAI endpoint (llama-server `--api-key`; Comfy stays keyless +
+firewalled), control plane (status/load/unload, the `/free` and
+closed-session-swap disciplines applied remotely), **remote fit-gate
+arithmetic** (`vm_stat`/`memory_pressure`/swap, never `used`), idle contract,
+and the **etiquette tier** — presence gates (green = locked/idle, amber =
+active, red = call/battery; unknown fails toward the human), a reserved
+memory floor for the partner, scoped `caffeinate`, pressure auto-preempt, a
+menu-bar kill switch, job-start notifications, quiet hours, and a
+zero-file-access boundary (the relay agent is outbound state only). The
+"two AI connections for one prompt" question answered honestly: no harness
+fuses two backends per completion; the real shapes are **model-as-tool**
+(MCP `consult`) and **sibling sessions** (character sessions bound to relay
+models, judge on Halo's resident model — the projects-launch model binding
+measured 2.0.29 makes this the zero-harness-change path). P0-P3 phased; §8
+is the consent checklist the owner and partner fill together before anything
+is built — the partner's floor GB, tiers, quiet hours and kill switch are
+config values, not manners.

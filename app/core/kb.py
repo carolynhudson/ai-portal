@@ -45,6 +45,7 @@ DOC_ORDER = [
     ("MEMORY_PLUGIN_RESEARCH.md", "Memory plugins — candidates, licences, engines measured on this box"),
     ("PORTAL_POLISH.md", "Design and workflow debt — the operator's list, measured, with proposed shapes"),
     ("IMAGE_FORGE_PROPOSAL.md", "Image forge — the agent-facing image toolbox proposal, measured ground and design"),
+    ("REMOTE_COMPUTE_PROPOSAL.md", "Remote compute — borrowed machines as protected model backends (relay contract, etiquette, tournaments)"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -270,7 +271,7 @@ OUTLINE_GROUPS = [
     ("Reference & history",
      ["PORTAL_PLAN.md", "PORTAL_UI.md", "PORTAL_LAYOUT.md", "PI_HARNESS_RESEARCH.md",
       "HARNESS_LANDSCAPE_RESEARCH.md", "MEMORY_PLUGIN_RESEARCH.md", "PORTAL_POLISH.md",
-      "IMAGE_FORGE_PROPOSAL.md"],
+      "IMAGE_FORGE_PROPOSAL.md", "REMOTE_COMPUTE_PROPOSAL.md"],
      False),
 ]
 
