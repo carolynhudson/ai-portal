@@ -6368,3 +6368,53 @@ outline-of-documents pin now asserts group→document→section, and new pins
 hold the two-pane grid, the rail-top search, the collapsed reference group,
 the sanitizer, and the welcome card's anchors resolving. Full suite green
 (see the commit).
+
+##### 6.14.1k Queued directives: projects-launch model default + the inventory unification session (2026-10-27)
+
+Owner queued two things; neither is built, both are decided direction.
+
+**Projects-launch default model rule (owner, Oct-27).** New projects should
+default to the **currently loaded personality**, and its model chosen by:
+first **agent-capable model currently loaded and available** ("agent" =
+a model able to use tools — the real minimum for a coding harness); when the
+personality defines a model that is unloaded, fall back to the **largest
+defined agent model that fits in available RAM**. Trigger evidence: a raw
+`create_session` binds the *host default*, which points at an IQ3_XXS
+registered-but-not-resident — the turn died as a provider 400 "model is not
+loaded" in the transcript with no guidance. The personality path dodges this
+today (launch-through-card pins a real model); the rule generalizes it.
+Dependencies: an agent-capability field on model rows (chat template with
+tool support) and the fit math for "largest that fits" — the same data model
+the next item plans. Do not bolt on ad hoc.
+
+**Inventory unification — a collaborative session, not an agent plan (owner,
+Oct-27).** Manage together: the HF hub cache (low-effort library), the
+llama.cpp model library in the portal's file structure, the model db, and the
+personalities library. Owner wants research + real cost/benefit balancing in
+the session. Evidence collected the same day, filed here:
+
+1. `ai/state/llama/INDEX.json` persisted `files: 20` (library) and
+   `hf_cache: 0` while the router served **20 cache models** — the cache view
+   exists at runtime (`scan_cache` pairs mmprojs) but the durable artifact is
+   library-only. The two views are real and unreconciled.
+2. The agent's self-report of its own model was **wrong by family-name
+   inference**: "resident 27B" — the 27B repos exist on disk as *separate*
+   files. Sniffing the file the router actually serves: arch `qwen4exp`,
+   size_label `512x56B`, 83.74 GB IQ3_S pair, ctx 262144; the paired mmproj
+   declares `clip` + `has_vision_encoder = true` (449M), audio not declared.
+   A name-derived label attached a size belonging to other files to this one.
+3. The same file carries a declared-vs-named quant collision (header
+   `IQ1_M`, filename `IQ3_S`) — known to `modelmeta` ("the maker names them
+   so"), a live example of why name-derived facts are quarantined.
+
+Early rule worth adopting independently (cheap): **every model fact on every
+surface is sniffed from the file (`modelmeta.sniff_gguf`), never derived from
+a name, and declared-vs-named conflicts are displayed, not silently
+resolved.**
+
+Same day, shipped: `~/ai-projects/legal-ai-plan/` — CONTEXT.md (distilled
+grounding discussion), PLAN.md (219-line vendor-neutral case-assistant plan
+written by a forked opencode session on the resident model), COVER-SHEET.md
+(what to ask the builder for, non-builder language). The plan's Tier gates,
+linter mapping, and golden-query moat are the discussion's ideas made
+handable.
