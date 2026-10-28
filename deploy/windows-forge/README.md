@@ -63,6 +63,19 @@ Then point the portal at it (Settings → ComfyUI host, or
   It is a supply-chain decision recorded in the proposal (§6 #4) — only
   city96's repo, pinned clone.
 - **Security**: ComfyUI answers unauthenticated; inbound 8188 is firewalled
-  to the portal IP alone. Keep the lease static.
+  to the portal IP alone. The rule pins an **IP, not `halo.local`**:
+  `netsh` resolves a name once, at rule-add time, and the firewall does
+  not re-resolve (and does not speak mDNS) — a name rule freezes whatever
+  IP it saw and breaks silently when the lease moves. With a static lease
+  the IP *is* the stable identifier. Keep the lease static.
+- **File encoding**: all `.ps1` files are pure ASCII on purpose. Windows
+  PowerShell 5.1 reads scripts as ANSI (system code page); a UTF-8 em-dash
+  arrives as three mojibake bytes, breaks string quoting, and cascades into
+  parse errors. Don't "prettify" these files with unicode punctuation.
+- **Licensing**: the Qwen-Image-2.1 repos are public — no HF login needed
+  to download. The qwen-research license text link on the repos currently
+  404s (upstream metadata quirk); read the terms in the repo READMEs.
+  Only if a repo ever turns gated would `hf auth login` be needed (the
+  installer names that step on a 401/403).
 - The portal's forge MCP (§5 P0) talks to `http://RainbowBlock.local:8188`
   as a config value — same HTTP API it uses locally.

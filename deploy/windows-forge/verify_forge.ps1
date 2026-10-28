@@ -1,4 +1,4 @@
-# verify_forge.ps1 — run on the Windows box after everything is installed.
+# verify_forge.ps1 - run on the Windows box after everything is installed.
 param([int]$Port = 8188, [string]$Root = "C:\forge")
 $fail = 0
 function Check([string]$label, [bool]$ok, [string]$detail = "") {

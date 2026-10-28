@@ -1,4 +1,4 @@
-# register_autostart.ps1 — start the forge engine at logon (user-level task,
+# register_autostart.ps1 - start the forge engine at logon (user-level task,
 # no admin: ComfyUI needs the logged-in desktop session for the GPU anyway).
 param(
     [string]$Root = "C:\forge",

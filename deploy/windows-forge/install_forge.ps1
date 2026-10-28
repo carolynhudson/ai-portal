@@ -1,4 +1,4 @@
-# install_forge.ps1 — image-forge remote backend installer (RainbowBlock.local)
+# install_forge.ps1 - image-forge remote backend installer (RainbowBlock.local)
 #
 # What this is: the Windows-side half of the "image forge" MCP plan
 # (docs/IMAGE_FORGE_PROPOSAL.md on the Halo box). ComfyUI + the ComfyUI-GGUF
@@ -38,7 +38,7 @@ Say ("disk free on {0}: {1} GB" -f $RootDir.Substring(0,1), $freeGB)
 if ($freeGB -lt 80) { Say "WARNING: <80 GB free; models + venv need the room. Continuing." }
 
 $gpu = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -like "*NVIDIA*" }
-if (-not $gpu) { throw "No NVIDIA GPU visible — this box is the CUDA backend; check drivers first." }
+if (-not $gpu) { throw "No NVIDIA GPU visible - this box is the CUDA backend; check drivers first." }
 Say ("GPU: {0} ({1} GB)" -f $gpu[0].Name, [math]::Round($gpu[0].AdapterRAM / 1GB, 0))
 # 2080 Ti is sm_75 (Turing): int8 tensor cores yes, fp8/bf16 compute no. The
 # int8_convrot files from Comfy-Org are the fast tier; the gate on the portal
@@ -79,7 +79,7 @@ if (-not (Test-Path (Join-Path $Comfy "main.py"))) {
 
 $ggufNode = Join-Path $Comfy "custom_nodes\ComfyUI-GGUF"
 if (-not (Test-Path $ggufNode)) {
-    Say "cloning ComfyUI-GGUF (city96) — the Q4/Q8 loader, the one accepted custom node"
+    Say "cloning ComfyUI-GGUF (city96) - the Q4/Q8 loader, the one accepted custom node"
     git clone --depth 1 https://github.com/city96/ComfyUI-GGUF $ggufNode
 }
 
@@ -88,7 +88,7 @@ if (-not (Test-Path $VenvPy)) {
     Say "creating venv"
     & py $pyArgs -m venv (Join-Path $RootDir "venv")
 }
-Say "installing torch (CUDA 12.4 wheel line — sm_75 supported) + ComfyUI requirements"
+Say "installing torch (CUDA 12.4 wheel line - sm_75 supported) + ComfyUI requirements"
 function Guard([string]$what) {
     if ($LASTEXITCODE -ne 0) { throw ("{0} failed (exit {1}) - see {2}" -f $what, $LASTEXITCODE, $LogFile) }
 }

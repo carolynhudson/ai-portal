@@ -1,7 +1,7 @@
-# start_comfyui.ps1 — the forge engine launcher (RainbowBlock.local)
-# Flags come from the portal's memory-efficiency contract (IMAGE_FORGE_PROPOSAL §1):
+# start_comfyui.ps1 - the forge engine launcher (RainbowBlock.local)
+# Flags come from the portal's memory-efficiency contract (IMAGE_FORGE_PROPOSAL ?1):
 #   --listen 0.0.0.0      LAN-reachable; the Windows firewall rule scopes 8188
-#                         INBOUND TO THE PORTAL BOX ONLY (firewall_forge.ps1) —
+#                         INBOUND TO THE PORTAL BOX ONLY (firewall_forge.ps1) -
 #                         ComfyUI answers unauthenticated, the rule is the gate.
 #   --disable-smart-memory  models leave VRAM/RAM when a job ends (the /free
 #                         contract's steady-state twin; the forge MCP calls

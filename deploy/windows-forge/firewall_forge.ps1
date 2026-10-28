@@ -1,4 +1,4 @@
-# firewall_forge.ps1 — scope ComfyUI's port to the portal box (RUN AS ADMIN)
+# firewall_forge.ps1 - scope ComfyUI's port to the portal box (RUN AS ADMIN)
 #
 # ComfyUI's API has NO authentication. The security model is the firewall:
 # inbound 8188 is allowed ONLY from the portal (halo.local). Same trust domain
@@ -12,7 +12,7 @@ param(
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
          ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) {
-    Write-Host "elevating…"
+    Write-Host "elevating..."
     Start-Process powershell -Verb RunAs -ArgumentList "-File `"$PSCommandPath`" -PortalIp $PortalIp -Port $Port -RuleName `"$RuleName`""
     exit
 }
