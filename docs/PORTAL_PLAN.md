@@ -6451,3 +6451,39 @@ measured 2.0.29 makes this the zero-harness-change path). P0-P3 phased; §8
 is the consent checklist the owner and partner fill together before anything
 is built — the partner's floor GB, tiers, quiet hours and kill switch are
 config values, not manners.
+
+##### 6.14.1m The sparkline became a sliding time window (2026-10-28, overnight)
+
+Owner's read of the router hero: the generating number beside the sparkline
+resized and shifted the canvas every time its digits changed — "ruining the
+feeling of motion" — and the chart's poll-cadence jumps made time feel
+stepped. The llama.cpp report rate (~3 s per slot's print_timing, 5 s bins)
+stays as is; the *window* is what moves now.
+
+The row is the chart: the `.tps-row` draws the sparkline full width, and the
+big generating number moved to the totals row (kept, `font-variant-numeric:
+tabular-nums`, so its digits stop jittering the layout). `#tps-now`, its
+setText line, and the UI-sweep probe all survive untouched.
+
+`drawPulse` is now time-x arithmetic on the **client's clock**: rlog anchors
+journal stamps to epoch and every payload carries `time.now`, so the client
+extrapolates now = payload clock + elapsed-since-arrival (`PULSE_POLL`), and
+a 1 s redraw loop (`every()`, hidden-tab-skipped like everything on this
+page) slides the window continuously between 2.5 s polls. The grid spans
+exactly `[now − window, now]` — points older than the window are culled by
+construction. Idle slots and breaks in a slot's line draw as **zeros** (the
+band falls onto the stack below it; a gap never reads as "stopped" as well
+as a zero does). The owner delegated the in-flight-no-sample case: a slot the
+log still believes is generating (`state` generate/prompt, `age_s` ≤ ~9 s —
+three print cadences) carries its last reported rate to the right edge as a
+**dashed tail** — "still generating, about this fast" — and past that
+staleness nothing is extrapolated; the line falls to zero and the silence
+keeps its label ("last sample Ns ago"). Falsities the chart must keep
+telling: sample times, staleness, and the estimated stretch of line drawn
+dashed, never solid.
+
+The jsdom driver in `tests/test_hero.py` grew the behaviors this contract
+promises — `zero-fills-idle-slot`, `carries-active-rate-to-edge`,
+`culls-old-points` — beside the pre-existing `names-the-silence` honesty
+pin, and `test_the_chart_row_is_only_the_chart` pins the layout (number out
+of the chart row) and the sliding-window machinery as source markers.

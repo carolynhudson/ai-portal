@@ -17,9 +17,11 @@
 .light.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
 .light.off{background:var(--bad);box-shadow:0 0 6px var(--bad)}
 .light-label{min-width:70px}
-.tps-row{display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap}
-.tps-big{font-size:22px;font-weight:700;color:var(--acc)}
-.tps-chart{flex:1;min-width:220px}
+{# the chart row is the chart: a number in this row resizes and shifts the
+   sparkline as its digits change, which kills the sense of motion #}
+.tps-row{margin-top:14px}
+.tps-big{font-size:20px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums}
+.tps-chart{width:100%}
 .tps-chart canvas{height:52px;width:100%}
 .feed-head{margin:16px 0 6px;font-size:13px;text-transform:none;letter-spacing:.02em}
 .feed{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
@@ -202,15 +204,17 @@
   </div>
 
   <div class="tps-row">
-    <div class="kv" style="min-width:160px"><span class="k">generating</span>
-      <span class="mono tps-big" id="tps-now">—</span>
-      <span class="mut">tokens/s</span></div>
     <div class="tps-chart"><canvas id="tps" width="560" height="52"></canvas></div>
   </div>
 
   <div class="pulse-signals" id="pulse-signals"></div>
 
   <div class="totals-row">
+    {# the generating rate lives with the token totals, not beside the chart:
+       its digits changing must not move the sparkline #}
+    <div class="kv"><span class="k">generating</span>
+      <span class="mono tps-big" id="tps-now">—</span>
+      <span class="mut">tokens/s</span></div>
     <div class="kv"><span class="k">prompt tokens (in)</span><span class="mono" id="tok-in">—</span></div>
     <div class="kv"><span class="k">generated tokens (out)</span><span class="mono" id="tok-out">—</span></div>
     <div class="kv"><span class="k">service RAM</span><span class="mono" id="svc-ram">{% if r.memory %}{{ (r.memory.current / 1073741824) | round(1) }} G{% if r.memory.peak %} · peak {{ (r.memory.peak / 1073741824) | round(1) }} G{% endif %}{% else %}—{% endif %}</span></div>
@@ -649,6 +653,9 @@ const PHASE = {prompt: 'reading prompt', generate: 'generating', queued: 'queued
 // lines a person could act on, never the 3-second timing chatter
 let feedView = 'attention';
 let LAST = null;
+// arrival instant (client ms) of the pulse behind LAST: between polls the chart
+// slides on the client's own clock, anchored to this instant (see drawPulse)
+let PULSE_POLL = null;
 
 function laneDetail(s){
   if (s.state === 'generate'){
@@ -712,58 +719,103 @@ function drawPulse(pulse){
   if (!tpsCx) return;
   const series = (pulse && pulse.series) || {};
   const W = tpsCv.width, H = tpsCv.height, all = series.bins || [];
+  const binS = series.bin_s || 5, winS = series.window_s || 420;
+  // The x axis is a sliding TIME window [now - window, now] drawn on the
+  // client's clock. rlog anchors the journal stamps to epoch and every
+  // payload carries the log clock (time.now), so the client extrapolates:
+  // now = the payload's clock reading + seconds elapsed since that payload
+  // arrived. The window slides continuously at redraw cadence, not in
+  // poll-cadence jumps, and points past the left edge are culled by
+  // construction (the grid starts at the edge).
+  const off = (typeof PULSE_POLL !== "undefined" && PULSE_POLL)
+            ? Math.max(0, (Date.now() - PULSE_POLL) / 1000) : 0;
+  const now = ((pulse.time && pulse.time.now) || (all.length ? all[all.length - 1].t : 0)) + off;
+  const left = now - winS;
   tpsCx.clearRect(0, 0, W, H);
   const peakOf = b => Object.keys(b.per).reduce((a, k) => a + b.per[k], 0);
-  // A 5-second bin with no sample means llama.cpp has not printed in it yet, not
-  // that throughput fell to zero — so the area stops at the last real sample and
-  // the gap is named instead of drawn as a cliff.
-  let bins = all, silence = 0;
-  if (bins.length){
-    let last = bins.length - 1;
-    while (last > 0 && !peakOf(bins[last])) last--;
-    if (peakOf(bins[last])){
-      bins = bins.slice(0, last + 1);
-      silence = ((pulse.time && pulse.time.now) || 0) - bins[bins.length - 1].t;
-    }
-  }
-  if (!bins.some(peakOf)){
+  const binAt = {};
+  let lastSample = 0;
+  all.forEach(b => { binAt[b.t] = b.per; if (b.t > lastSample && peakOf(b) > 0) lastSample = b.t; });
+  // llama.cpp prints a slot's rate every ~3 s, so a generating slot always
+  // has a few seconds with no new sample. For a slot the log still believes
+  // is generating and no older than ~3 print cadences, its last reported
+  // rate is carried to `now` (dashed): "still generating, about this fast".
+  // Past that staleness nothing is extrapolated and the line falls to zero.
+  const active = {};
+  (pulse.slots || []).forEach(s => {
+    if ((s.state === 'generate' || s.state === 'prompt')
+        && (s.age_s == null || s.age_s <= 9))
+      active[String(s.id)] = Number(s.gen_tps) || 0;
+  });
+  // One uniform time grid across the window: every bin carries a value per
+  // slot — the bin's sample, a zero for slots with no sample in that bin
+  // (an idle thread or a break in that thread's line draws as zero, never
+  // as a gap), and the right edge carries the active slots' rates.
+  const grid = [];
+  for (let t = Math.ceil(left / binS) * binS; t <= now + 1e-6; t += binS) grid.push(t);
+  if (now - grid[grid.length - 1] > 0.2) grid.push(now);
+  const right = grid[grid.length - 1];
+  const ids = [];
+  all.forEach(b => Object.keys(b.per).forEach(k => { if (ids.indexOf(k) < 0) ids.push(k); }));
+  Object.keys(active).forEach(k => { if (ids.indexOf(k) < 0) ids.push(k); });
+  ids.sort((a, b) => a - b);
+  const valueAt = (id, t) => {
+    // the carried rate applies at the right edge, for active slots only;
+    // everywhere else (and for quiet slots at the edge) the bin's own
+    // sample rules, and a missing sample is a zero
+    if (t >= right - 1e-6 && active[id] != null) return active[id];
+    const per = binAt[t];
+    return per && per[id] != null ? Number(per[id]) : 0;
+  };
+  const totals = grid.map(t => ids.reduce((a, id) => a + valueAt(id, t), 0));
+  if (!totals.some(v => v > 0)){
     tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
     tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
     tpsCx.fillStyle = '#6b7483'; tpsCx.font = '11px ui-monospace, Menlo, monospace';
     tpsCx.fillText('no token activity in this window', 4, H / 2);
     return;
   }
-  const totals = bins.map(peakOf);
   const peak = Math.max(20, Math.max.apply(null, totals));
-  const ids = [];
-  bins.forEach(b => Object.keys(b.per).forEach(k => { if (ids.indexOf(k) < 0) ids.push(k); }));
-  ids.sort((a, b) => a - b);
-  const n = bins.length - 1 || 1;
-  const xAt = i => (i / n) * W;
+  const xAt = t => ((t - left) / winS) * W;
   const yAt = v => H - (v / peak) * (H - 8) - 2;
   // stacked areas, one band per slot, so "three prompts at once" reads as height
   // and "one long generation" reads as width
-  let cum = bins.map(() => 0);
+  let cum = grid.map(() => 0);
   ids.forEach((id, k) => {
     const color = SLOT_COLORS[k % SLOT_COLORS.length];
-    const top = bins.map((b, i) => cum[i] + (b.per[id] || 0));
+    const top = grid.map((t, i) => cum[i] + valueAt(id, t));
     tpsCx.beginPath();
-    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(i), yAt(v)) : tpsCx.moveTo(xAt(i), yAt(v)); });
-    for (let i = bins.length - 1; i >= 0; i--) tpsCx.lineTo(xAt(i), yAt(cum[i]));
+    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(grid[i]), yAt(v)) : tpsCx.moveTo(xAt(grid[0]), yAt(v)); });
+    for (let i = grid.length - 1; i >= 0; i--) tpsCx.lineTo(xAt(grid[i]), yAt(cum[i]));
     tpsCx.closePath();
     tpsCx.fillStyle = color + '4d'; tpsCx.fill();
     tpsCx.beginPath();
-    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(i), yAt(v)) : tpsCx.moveTo(xAt(i), yAt(v)); });
+    top.forEach((v, i) => { i ? tpsCx.lineTo(xAt(grid[i]), yAt(v)) : tpsCx.moveTo(xAt(grid[0]), yAt(v)); });
     tpsCx.strokeStyle = color; tpsCx.lineWidth = 1.2; tpsCx.stroke();
+    // the dashed carry-forward tail from the slot's last real sample to the edge
+    if (active[id] != null && active[id] > 0){
+      let li = -1;
+      for (let i = 0; i < grid.length; i++)
+        if (grid[i] < right - 1e-6 && binAt[grid[i]] && binAt[grid[i]][id] != null) li = i;
+      if (li >= 0 && xAt(grid[li]) < W - 2){
+        tpsCx.beginPath();
+        tpsCx.setLineDash([4, 3]);
+        tpsCx.moveTo(xAt(grid[li]), yAt(cum[li] + active[id]));
+        tpsCx.lineTo(W, yAt(cum[cum.length - 1] + active[id]));
+        tpsCx.strokeStyle = color; tpsCx.stroke();
+        tpsCx.setLineDash([]);
+      }
+    }
     cum = top;
   });
-  const span = (bins[bins.length - 1].t - bins[0].t) / 60;
+  const silence = lastSample ? now - lastSample : winS;
   tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
   tpsCx.fillText(peak.toFixed(0) + ' t/s', 3, 9);
-  tpsCx.fillText(Math.max(1, Math.round(span)) + ' min'
-                 + (silence > (series.bin_s || 5) * 1.5
-                    ? ' · last sample ' + Math.round(silence) + 's ago'
-                    : ' · generating now →'), 3, H - 2);
+  tpsCx.fillText(Math.max(1, Math.round(winS / 60)) + ' min'
+                 + (Object.keys(active).length
+                    ? ' · generating now →'
+                    : (silence > binS * 1.5
+                       ? ' · last sample ' + Math.round(silence) + 's ago' : '')), 3, H - 2);
 }
 function renderSignals(p){
   const el = document.getElementById('pulse-signals');
@@ -831,6 +883,7 @@ function renderRouter(d){
         .reduce((a, k) => a + bins[bins.length - 1].per[k], 0) : null;
   const latest = now != null ? now : (d.tps && d.tps.latest);
   setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
+  PULSE_POLL = Date.now();
   drawPulse(p);
   renderSignals(p);
   const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
@@ -965,6 +1018,10 @@ function startMachinePoll(){
 
 tick();
 every(_poll, tick);
+// the polls add samples; this loop adds the sense of time moving: the chart's
+// sliding window is redrawn on the client clock (every() skips hidden tabs),
+// so the sparkline crawls left between polls instead of jumping once per poll
+every(1000, () => { if (LAST && LAST.pulse) drawPulse(LAST.pulse); });
 </script>
 <script>
 // ComfyUI hero — mirrors the router hero's polling (5s; ComfyUI is

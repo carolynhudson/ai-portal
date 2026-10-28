@@ -177,6 +177,18 @@ const SLOT_COLORS = ["#5aa9ff", "#f0883e"];
 
 const say = (label, ok) => console.log(label + " " + (ok ? "yes" : "no"));
 
+// the calls between a strokeStyle set and the path before it are that slot's
+// stroked line — the only way to see one slot's polyline through the proxy
+const segFor = (color) => {
+  let end = -1;
+  for (let i = calls.length - 1; i >= 0; i--)
+    if (calls[i][0] === "strokeStyle" && calls[i][1] === color) { end = i; break; }
+  const pts = [];
+  for (let i = end - 1; i >= 0 && (calls[i][0] === "moveTo" || calls[i][0] === "lineTo"); i--)
+    pts.push(calls[i][1]);
+  return pts.reverse();
+};
+
 // 50 seconds of samples, then silence: the area must stop at the last real
 // sample and the gap must be named, not drawn as a drop to zero
 drawPulse({ series: { bins: Array.from({ length: 10 }, (_, i) => ({
@@ -197,6 +209,48 @@ say("empty-says-so", calls.filter(c => c[0] === "fillText")
 
 // all-empty bins must not divide by zero or throw
 drawPulse({ series: { bins: [{ t: 1, per: {} }], bin_s: 5 }, time: { now: 99 } });
+
+// a slot that stops mid-window draws its zeros (falls onto the stack below
+// it), never a gap: slot 3 generates in the first bins then goes quiet
+calls.length = 0;
+drawPulse({ series: { bins: Array.from({ length: 9 }, (_, i) => ({
+      t: 100 + i * 5, per: i <= 4 ? { "1": 6, "3": 4 } : { "1": 6 } })),
+    bin_s: 5, window_s: 60 }, time: { now: 140 } });
+const seg3 = segFor("#f0883e");
+// stacked band: slot 3's top sits at 10 t/s while it generates, at slot 1's
+// 6 t/s once idle — so "zero rate" means its y lands on the 6-line and stays
+// (the chart's scale floor is 20 t/s, so the y's follow from that)
+const yBusy = 52 - (10 / 20) * 44 - 2;
+const yIdle = 52 - (6 / 20) * 44 - 2;
+const late3 = seg3.filter(p => p[0] >= 420);
+say("zero-fills-idle-slot",
+    late3.length >= 3 && seg3.some(p => Math.abs(p[1] - yBusy) < 0.01)
+    && late3.every(p => Math.abs(p[1] - yIdle) < 0.01));
+
+// an in-flight slot whose newest rate is not in a bin yet carries its last
+// rate to the right edge as a dashed tail (not a cliff, not a fabricated bin)
+calls.length = 0;
+drawPulse({ series: { bins: Array.from({ length: 7 }, (_, i) => ({
+      t: 1000 + i * 5, per: { "1": 8 } })), bin_s: 5, window_s: 420 },
+    time: { now: 1034 },
+    slots: [{ id: 1, state: "generate", age_s: 2, gen_tps: 8 }] });
+const seg1 = segFor("#5aa9ff");
+say("carries-active-rate-to-edge",
+    Math.max(...seg1.map(p => p[0])) === 560
+    && calls.some(c => c[0] === "setLineDash" && c[1][0] && c[1][0][0] === 4)
+    && calls.filter(c => c[0] === "fillText").map(c => c[1][0])
+         .some(t => /generating now/.test(t)));
+
+// the window is a sliding TIME window: samples older than the window are
+// gone from the drawing entirely — nothing is plotted left of x=0
+calls.length = 0;
+drawPulse({ series: { bins: [{ t: 10, per: { "1": 9 } }, { t: 20, per: { "1": 9 } }],
+    bin_s: 5, window_s: 420 }, time: { now: 5000 } });
+const pts2 = calls.filter(c => c[0] === "moveTo" || c[0] === "lineTo").map(c => c[1]);
+say("culls-old-points", pts2.every(p => p[0] >= 0 && p[0] <= 560)
+    && calls.filter(c => c[0] === "fillText").map(c => c[1][0])
+         .some(t => /no token activity/.test(t)));
+
 console.log("survived");
 """
 
@@ -223,9 +277,32 @@ def test_throughput_chart_draws_what_the_bins_say():
     lines = dict(line.split(" ", 1) for line in out.stdout.strip().splitlines()
                  if " " in line)
     for behaviour in ("draws-areas", "reaches-right-edge", "names-the-silence",
-                      "labels-peak", "empty-says-so"):
+                      "labels-peak", "empty-says-so", "zero-fills-idle-slot",
+                      "carries-active-rate-to-edge", "culls-old-points"):
         assert lines.get(behaviour) == "yes", f"{behaviour}: {out.stdout}"
     assert "survived" in out.stdout
+
+
+def test_the_chart_row_is_only_the_chart():
+    """The generating number must not live beside the sparkline: its digit
+    width shifting the canvas is exactly what kills the sense of motion, so
+    the number lives in the totals row and the chart row draws alone."""
+    template = pathlib.Path(__file__).resolve().parents[1] / "web" / "templates" / "dashboard.html"
+    text = template.read_text()
+    row = text[text.index('<div class="tps-row">'):text.index('<div class="pulse-signals"')]
+    assert 'id="tps"' in row, "the sparkline left its row"
+    assert "tps-big" not in row and "tps-now" not in row,         "a number in the chart row resizes the chart as its digits change"
+    assert text.count('id="tps-now"') == 1
+    assert 'id="tps-now"' in text[text.index('<div class="totals-row">'):],         "the generating readout has to live somewhere readable"
+    # the sliding-time-window machinery, pinned as the source it is: a client
+    # clock anchored to each payload, a grid that starts at the window edge
+    # (cull by construction), the dashed carry-forward, and the redraw loop
+    # that slides the window between polls
+    src = text[text.index("function drawPulse(pulse){"):]
+    for marker in ("series.window_s", "PULSE_POLL", "setLineDash", "Math.ceil(left / binS)"):
+        assert marker in src, f"drawPulse lost {marker!r}"
+    assert "every(1000, () => { if (LAST && LAST.pulse) drawPulse(LAST.pulse); });" in text, \
+        "the between-poll redraw is what makes the window slide; it must run"
 
 
 # ------------------------------------------------------------- model switching
