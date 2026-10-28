@@ -6565,3 +6565,64 @@ busy while the log went quiet, so the bar rests inside its warning ring.
 `prefers-reduced-motion` kills the band entirely (the lane board's
 kill-switch rule was already in the sheet; the flow joined it). Pinned by
 `test_states_that_cannot_be_measured_flow_instead_of_faking_progress`.
+
+##### 6.14.1o Motion pass: ten frames, a monotonic clock, an eased scale, ticks in front (2026-10-28)
+
+The owner watched the new window slide and named what was missing: the
+animation read as too few frames, the graph *jerked backward* — most
+visibly when a slot changed state — and an error in the router log never
+appeared as a tick on the chart's timeline. All three were real:
+
+* **Frame rate**: the slide ran at one redraw per second — 1.3 px per
+  frame at 560 px / 7 min. At ten frames a second (`every(100, …)`,
+  hidden-tab-skipped as always) the same speed is a sub-pixel glide.
+* **Reverse jumps**: `now` is extrapolated from the payload's log stamp —
+  the timestamp of the **last logged line**, behind a 2 s snapshot cache.
+  When a slot changes state, a fresh payload can carry a stamp *older*
+  than the last frame's extrapolated `now`, and the whole graph slides
+  right for a frame. The clock is now **monotonic** (`drawPulse._lastNow`):
+  the window may pause, never rewind.
+* **Hidden event ticks**: ticks drew *before* the stacked areas, and a
+  peak-height fill painted right over the top band — an error hidden
+  behind the data it explains is worse than no shape at all. Ticks now
+  draw last, in front, slightly larger (3×9 px), in the silent window too.
+* **Scale pops** (the same state-change jerk, vertically): the raw peak
+  can double in one frame when a slot starts, and every y rescales
+  instantly. The scale now **eases** toward its target (20 % per frame —
+  a slow breathe at redraw cadence).
+
+Cross-frame state lives on the function object (`_lastNow`, `_peakShown`)
+so the extracted jsdom driver can reset it per scenario. New pins:
+`now-never-rewinds` (an older stamped payload parks the sample in the
+past, not at the right edge), `smooths-the-scale` (peak label steps
+between the old and new targets), `ticks-in-front` (fillRect ordered after
+the fills). The monotonic clock has one honest cost: during a long silence
+the window pauses at the last extrapolated edge rather than advancing on
+phantom time — which is exactly what the silence label is for.
+
+##### 6.14.1p The Windows forge kit, audited against the authorities (2026-10-28)
+
+Before the owner runs the kit on RainbowBlock.local, every artifact was
+verified against what it claims to touch:
+
+* **Manifest**: the real repo is `Comfy-Org/Qwen-Image-2.1` (the kit said
+  `…-comfyui`: 404). File names confirmed by Comfy's own docs and repo
+  pages; sizes corrected (TE 9.4 GB). The unsloth GGUF repo puts
+  `qwen-image-2.1-Q4_K_M.gguf` at the **repo root** (4.2 GB, not 4.6) and
+  the GGUF loader reads `models/gguf/` — the manifest gained a `dest`
+  field and the installer moves the landed file there.
+* **`/system_stats` schema** (verified live against the local ComfyUI
+  0.39, which was started, probed, and idle-stopped again): the response
+  is `system.comfyui_version` + `devices[]` with `vram_total` — the kit's
+  verify script read `system.cuda.version`/`devices[0].total`, which do
+  not exist, so the VRAM check could never pass. Fixed; README wording too.
+* **Installer hardening**: `hf.exe` (venv) is the downloader, with the
+  module entry as fallback; every pip/git/download step checks
+  `$LASTEXITCODE` (PowerShell 5.1 does not stop on native exit codes —
+  a failed 24 GB download used to flow on silently); the gated-license
+  case (qwen-research: sign in + accept on the repo page + `hf auth
+  login`) throws with those exact steps named.
+* **Firewall**: the elevation hop now forwards `-RuleName` (idempotent
+  delete-then-add survives a custom name).
+* The `copy_from_halo` sources were confirmed on this box at the
+  manifest's sizes (12.3 / 5.2 / 0.33 GB).

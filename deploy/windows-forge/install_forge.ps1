@@ -89,25 +89,47 @@ if (-not (Test-Path $VenvPy)) {
     & py $pyArgs -m venv (Join-Path $RootDir "venv")
 }
 Say "installing torch (CUDA 12.4 wheel line — sm_75 supported) + ComfyUI requirements"
+function Guard([string]$what) {
+    if ($LASTEXITCODE -ne 0) { throw ("{0} failed (exit {1}) - see {2}" -f $what, $LASTEXITCODE, $LogFile) }
+}
 & $VenvPy -m pip install --upgrade pip | Out-Null
 & $VenvPy -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+Guard "pip torch (cu124)"
 & $VenvPy -m pip install -r (Join-Path $Comfy "requirements.txt")
+Guard "pip ComfyUI requirements"
 & $VenvPy -m pip install "huggingface_hub[cli]"
+Guard "pip huggingface_hub[cli]"
 Say "torch CUDA check:"
 & $VenvPy -c "import torch; print('cuda:', torch.cuda.is_available(), '| device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '-')"
 
 # ---------------------------------------------------------------- models
 $Inv = Get-Content (Join-Path $PSScriptRoot "model_files.json") -Raw | ConvertFrom-Json
-function Get-Hf([string]$repo, [string]$file) {
-    $dest = Join-Path (Join-Path $Comfy "models") (Split-Path $file -Parent)
-    $target = Join-Path (Join-Path $Comfy "models") $file
-    if (Test-Path $target) { Say ("have: " + $file); return }
-    Say ("download: " + $repo + " :: " + $file)
-    & $VenvPy -m huggingface_hub.cli.__main__ download $repo $file --local-dir (Join-Path $Comfy "models")
+$Hf = Join-Path $RootDir "venv\Scripts\hf.exe"
+function Get-Hf($row) {
+    $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row.dest : $row.file)
+    if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return }
+    Say ("download: " + $row.repo + " :: " + $row.file)
+    if (-not (Test-Path $Hf)) { $Hf = $VenvPy }   # fall back to the module entry point
+    if ($Hf -eq $VenvPy) {
+        & $VenvPy -m huggingface_hub.cli download $row.repo $row.file --local-dir (Join-Path $Comfy "models")
+    } else {
+        & $Hf download $row.repo $row.file --local-dir (Join-Path $Comfy "models")
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw ("download failed for " + $row.file + " (exit " + $LASTEXITCODE + "). If the repo is"
+             + " license-gated (qwen-research): sign in at huggingface.co, accept the license on the"
+             + " repo page, then:  & `"" + (Join-Path $RootDir "venv\Scripts\hf.exe") + "`" auth login  - and re-run.")
+    }
+    if ($row.dest) {
+        $landed = Join-Path (Join-Path $Comfy "models") $row.file
+        $dest = Join-Path (Join-Path $Comfy "models") $row.dest
+        New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+        if ((Test-Path $landed) -and ($landed -ne $dest)) { Move-Item -Force $landed $dest }
+    }
 }
 if (-not $SkipModels) {
-    foreach ($row in $Inv.hf) { Get-Hf $row.repo $row.file }
-    if ($IncludeGGUF) { foreach ($row in $Inv.hf_optional_gguf) { Get-Hf $row.repo $row.file } }
+    foreach ($row in $Inv.hf) { Get-Hf $row }
+    if ($IncludeGGUF) { foreach ($row in $Inv.hf_optional_gguf) { Get-Hf $row } }
 }
 Say "copy-from-halo list (SFTP from halo.local; the installer cannot reach the Halo box):"
 foreach ($row in $Inv.copy_from_halo) { Say ("  {0}  ->  ComfyUI\models\{1}" -f $row.from, $row.to) }

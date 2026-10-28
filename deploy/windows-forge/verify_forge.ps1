@@ -11,9 +11,11 @@ Check "torch CUDA" ($torch -like "True*") $torch
 # 2. the engine answers
 try {
     $r = Invoke-RestMethod "http://127.0.0.1:$Port/system_stats" -TimeoutSec 5
-    Check "ComfyUI /system_stats" $true ("version " + $r.system.cuda.version + " | torch " + $r.system.pytorch.version)
-    $g = $r.system.cuda.devices[0]
-    Check "VRAM visible" ([double]$g.total -gt 10GB) ("total {0:N1} GB" -f ($g.total/1GB))
+    Check "ComfyUI /system_stats" $true ("version " + $r.system.comfyui_version + " | torch " + $r.system.pytorch_version)
+    # schema (verified against ComfyUI 0.39): system.comfyui_version, devices[] with
+    # name/type/vram_total - there is no system.cuda object
+    $g = @($r.devices | Where-Object { $_.type -eq "cuda" })[0]
+    Check "GPU visible" ($g -and [double]$g.vram_total -gt 10GB) ("{0} | total {1:N1} GB" -f $g.name, ($g.vram_total/1GB))
 } catch { Check "ComfyUI /system_stats" $false $_.Exception.Message }
 # 3. model inventory on disk (from model_files.json)
 $Inv = Get-Content (Join-Path $PSScriptRoot "model_files.json") -Raw | ConvertFrom-Json

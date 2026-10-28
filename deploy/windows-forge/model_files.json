@@ -2,23 +2,67 @@
   "_comment": [
     "The image-forge remote backend's model inventory. install_forge.ps1 downloads",
     "the 'hf' rows from Hugging Face; the 'copy' rows come from halo.local over SFTP",
-    "(paths under 'from' are on the Halo box) — they are already paid for, no re-download.",
-    "Dest folders are relative to the ComfyUI root (C:\\forge\\ComfyUI by default).",
-    "Sizes are approximations from the model cards (Oct-2026 research, IMAGE_FORGE_PROPOSAL 1b/1c)."
+    "(paths under 'from' are on the Halo box) - they are already paid for, no re-download.",
+    "Dest folders are relative to the ComfyUI root (C:\\forge\\ComfyUI by default);",
+    "a 'dest' field downloads the file from the repo path in 'file' and moves it to 'dest'.",
+    "Qwen-Image-2.1 repos are qwen-research licensed: sign in, accept the license on each",
+    "repo page, and run 'hf auth login' in the venv before downloading, or hf exits 401/403.",
+    "Sizes verified against the repos 2026-10-28."
   ],
   "hf": [
-    {"repo": "Comfy-Org/Qwen-Image-2.1-comfyui", "file": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors", "size_gb": 7.3, "why": "Qwen-Image-2.1 unified gen+edit+native-RGBA, int8 (Unsloth: int8 > fp8 by LPIPS; Turing has int8 tensor cores)"},
-    {"repo": "Comfy-Org/Qwen-Image-2.1-comfyui", "file": "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors", "size_gb": 7.3, "why": "official Turbo distill — 8-step fast path (drafts)"},
-    {"repo": "Comfy-Org/Qwen-Image-2.1-comfyui", "file": "text_encoders/qwen3vl_8b_int8_convrot.safetensors", "size_gb": 8.5, "why": "Qwen-Image-2.1's text encoder (Qwen3-VL-8B, int8 tier)"},
-    {"repo": "Comfy-Org/Qwen-Image-2.1-comfyui", "file": "vae/qwen_image_2.1_vae_bf16.safetensors", "size_gb": 0.3, "why": "2.1's dedicated VAE (16x spatial: legal sizes are 32-multiples)"}
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+      "size_gb": 7.3,
+      "why": "Qwen-Image-2.1 unified gen+edit+native-RGBA, int8 (Unsloth: int8 > fp8 by LPIPS; Turing has int8 tensor cores)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+      "size_gb": 7.3,
+      "why": "official Turbo distill \u2014 8-step fast path (drafts)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+      "size_gb": 9.4,
+      "why": "Qwen-Image-2.1's text encoder (Qwen3-VL-8B, int8 tier)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "vae/qwen_image_2.1_vae_bf16.safetensors",
+      "size_gb": 0.3,
+      "why": "2.1's dedicated VAE (16x spatial: legal sizes are 32-multiples)"
+    }
   ],
   "hf_optional_gguf": [
-    {"repo": "unsloth/Qwen-Image-2.1-GGUF", "file": "diffusion_models/qwen-image-2.1-Q4_K_M.gguf", "size_gb": 4.6, "why": "RAM tier for the 11 GiB card (needs ComfyUI-GGUF, installed); _K quants: measure at T0, Q8/int8 is the fast tier"}
+    {
+      "repo": "unsloth/Qwen-Image-2.1-GGUF",
+      "file": "qwen-image-2.1-Q4_K_M.gguf",
+      "size_gb": 4.2,
+      "why": "RAM tier for the 11 GiB card (needs ComfyUI-GGUF, installed); repo-root file, lands in models/gguf/ where the loader looks",
+      "dest": "gguf/qwen-image-2.1-Q4_K_M.gguf"
+    }
   ],
   "copy_from_halo": [
-    {"from": "~/ai/comfyui/models/diffusion_models/z_image_turbo_bf16.safetensors", "to": "diffusion_models/", "size_gb": 12.0, "why": "zero-download bring-up pipeline (works before any HF download)"},
-    {"from": "~/ai/comfyui/models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors", "to": "text_encoders/", "size_gb": 4.9, "why": "z-image-turbo's text encoder"},
-    {"from": "~/ai/comfyui/models/vae/ae.safetensors", "to": "vae/", "size_gb": 0.3, "why": "Flux ae VAE (z-image family)"}
+    {
+      "from": "~/ai/comfyui/models/diffusion_models/z_image_turbo_bf16.safetensors",
+      "to": "diffusion_models/",
+      "size_gb": 12.0,
+      "why": "zero-download bring-up pipeline (works before any HF download)"
+    },
+    {
+      "from": "~/ai/comfyui/models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+      "to": "text_encoders/",
+      "size_gb": 4.9,
+      "why": "z-image-turbo's text encoder"
+    },
+    {
+      "from": "~/ai/comfyui/models/vae/ae.safetensors",
+      "to": "vae/",
+      "size_gb": 0.3,
+      "why": "Flux ae VAE (z-image family)"
+    }
   ],
   "verify": {
     "endpoint": "http://127.0.0.1:8188",
