@@ -762,7 +762,16 @@ function drawPulse(pulse){
   // construction (the grid starts at the edge).
   const off = (typeof PULSE_POLL !== "undefined" && PULSE_POLL)
             ? Math.max(0, (Date.now() - PULSE_POLL) / 1000) : 0;
-  const now = ((pulse.time && pulse.time.now) || (all.length ? all[all.length - 1].t : 0)) + off;
+  let now = ((pulse.time && pulse.time.now) || (all.length ? all[all.length - 1].t : 0)) + off;
+  // Monotonic: `now` is extrapolated from the payload's log stamp, and that
+  // stamp is the LAST LOGGED LINE, not wall time - behind a 2 s snapshot
+  // cache a fresh payload can carry an OLDER stamp than the last frame's
+  // extrapolated now (typical when a slot changes state and stamps arrive).
+  // The window may pause; it must never run backward: a backward jump reads
+  // as the whole graph jerking right. (State lives on the function object so
+  // the extracted test driver can reset it: _lastNow/_peakShown.)
+  if (now < (drawPulse._lastNow || 0)) now = drawPulse._lastNow;
+  drawPulse._lastNow = now;
   const left = now - winS;
   tpsCx.clearRect(0, 0, W, H);
   const peakOf = b => Object.keys(b.per).reduce((a, k) => a + b.per[k], 0);
@@ -817,7 +826,14 @@ function drawPulse(pulse){
     return per && per[id] != null ? Number(per[id]) : 0;
   };
   const totals = grid.map(t => ids.reduce((a, id) => a + valueAt(id, t), 0));
-  const peak = Math.max(20, Math.max.apply(null, totals));
+  // The scale eases toward its target: when a slot starts, stops, or its
+  // carry lands on the edge, the raw peak can double in one frame - rescaling
+  // every y instantly reads as the whole graph popping. Easing at redraw
+  // cadence (10 frames/s) makes the axis a slow breathe, not a jolt.
+  const target = Math.max(20, Math.max.apply(null, totals));
+  const peak = drawPulse._peakShown
+             ? drawPulse._peakShown + (target - drawPulse._peakShown) * 0.2 : target;
+  drawPulse._peakShown = peak;
   const xAt = t => ((t - left) / winS) * W;
   const yAt = v => H - (v / peak) * (H - 8) - 2;
   tpsCx.save();
@@ -825,17 +841,21 @@ function drawPulse(pulse){
   // router events as shapes on the time axis: the journal's own "worth
   // noticing" list (swaps, stalls, context limits, cache pressure) placed at
   // the time it happened — so "what was happening at that dip" answers itself.
-  // Ticks draw in the silent window too: a warning during silence matters most.
+  // They draw LAST, in front of the areas: a peak-height fill painted over the
+  // top band, and an error hidden by the data it explains is worse than no
+  // shape at all. The silent window draws them too: a warning while the
+  // router is quiet is the one that matters.
   const EV = { error: '#f85149', warn: '#d29922', notice: '#58a6ff' };
-  (pulse.attention || []).forEach(a => {
+  const drawTicks = () => (pulse.attention || []).forEach(a => {
     const te = now - (a.age_s || 0);
     if (te < left - 1 || te > now + 1) return;
     tpsCx.fillStyle = EV[a.level] || '#8b949e';
-    tpsCx.fillRect(xAt(te), 0, 2, 5);
+    tpsCx.fillRect(xAt(te) - 1, 0, 3, 9);
   });
   if (!totals.some(v => v > 0)){
     tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
     tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
+    drawTicks();
     tpsCx.fillStyle = '#6b7483'; tpsCx.font = '11px ui-monospace, Menlo, monospace';
     tpsCx.fillText('no token activity in this window', 4, H / 2);
     tpsCx.restore();
@@ -886,6 +906,7 @@ function drawPulse(pulse){
     tpsCx.strokeStyle = '#a5d6ff'; tpsCx.lineWidth = 1; tpsCx.stroke();
     tpsCx.setLineDash([]);
   }
+  drawTicks();
   tpsCx.restore();
   const silence = lastSample ? now - lastSample : winS;
   tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
@@ -1099,7 +1120,7 @@ every(_poll, tick);
 // the polls add samples; this loop adds the sense of time moving: the chart's
 // sliding window is redrawn on the client clock (every() skips hidden tabs),
 // so the sparkline crawls left between polls instead of jumping once per poll
-every(1000, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });
+every(100, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });
 </script>
 <script>
 // ComfyUI hero — mirrors the router hero's polling (5s; ComfyUI is

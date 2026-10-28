@@ -189,8 +189,13 @@ const segFor = (color) => {
   return pts.reverse();
 };
 
+// the chart keeps cross-frame state (monotonic now, eased scale) on the
+// function object: each scenario starts from a clean clock and scale
+const reset = () => { drawPulse._lastNow = 0; drawPulse._peakShown = 0; };
+
 // 50 seconds of samples, then silence: the area must stop at the last real
 // sample and the gap must be named, not drawn as a drop to zero
+reset();
 drawPulse({ series: { bins: Array.from({ length: 10 }, (_, i) => ({
       t: 1000 + i * 5, per: i < 7 ? { "1": 6, "3": 2 } : {} })),
     bin_s: 5, window_s: 420 }, time: { now: 1000 + 13 * 5 } });
@@ -202,16 +207,19 @@ say("names-the-silence", labels.some(t => /last sample \d+s ago/.test(t)));
 say("labels-peak", labels.some(t => /^\d+ t\/s$/.test(t)));
 
 // an empty window says so instead of drawing a flat line pretending to be data
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: [], bin_s: 5, window_s: 420 }, time: { now: 1 } });
 say("empty-says-so", calls.filter(c => c[0] === "fillText")
   .map(c => c[1][0]).some(t => /no token activity/.test(t)));
 
 // all-empty bins must not divide by zero or throw
+reset();
 drawPulse({ series: { bins: [{ t: 1, per: {} }], bin_s: 5 }, time: { now: 99 } });
 
 // a slot that stops mid-window draws its zeros (falls onto the stack below
 // it), never a gap: slot 3 generates in the first bins then goes quiet
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: Array.from({ length: 9 }, (_, i) => ({
       t: 100 + i * 5, per: i <= 4 ? { "1": 6, "3": 4 } : { "1": 6 } })),
@@ -229,6 +237,7 @@ say("zero-fills-idle-slot",
 
 // an in-flight slot whose newest rate is not in a bin yet carries its last
 // rate to the right edge as a dashed tail (not a cliff, not a fabricated bin)
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: Array.from({ length: 7 }, (_, i) => ({
       t: 1000 + i * 5, per: { "1": 8 } })), bin_s: 5, window_s: 420 },
@@ -241,6 +250,7 @@ say("carries-active-rate-to-edge",
 
 // the window is a sliding TIME window: samples older than the window are
 // gone from the drawing entirely — nothing is plotted left of x=0
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: [{ t: 10, per: { "1": 9 } }, { t: 20, per: { "1": 9 } }],
     bin_s: 5, window_s: 420 }, time: { now: 5000 } });
@@ -252,6 +262,7 @@ say("culls-old-points", pts2.every(p => p[0] >= 0 && p[0] <= 560)
 // the line enters from OFF the left edge and the canvas clips it: the oldest
 // point scrolls out of view instead of leaving a stub that grows and pops
 // when it falls off the window (the owner's "gap that shrinks then pops")
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: Array.from({ length: 8 }, (_, i) => ({
       t: 995 + i * 5, per: { "1": 7 } })), bin_s: 5, window_s: 420 },
@@ -263,6 +274,7 @@ say("extends-past-left-edge",
 // the chart is more than one metric: prompt rates ride the same grid on
 // their own scale (prefill is ~20x generation speed), and router events are
 // little shapes on the time axis, at the time they happened
+reset();
 calls.length = 0;
 drawPulse({ series: { bins: Array.from({ length: 8 }, (_, i) => ({
       t: 995 + i * 5, per: i > 2 ? { "1": 7 } : {},
@@ -283,6 +295,47 @@ say("labels-both-scales", labelsE.some(t => /^\d+ t\/s$/.test(t))
     && labelsE.some(t => /own scale/.test(t)));
 say("labels-the-axis", labelsE.some(t => /-7:00/.test(t))
     && labelsE.some(t => /now/.test(t)));
+
+// the window must never run backward: the snapshot is TTL-cached and its
+// stamp is the last LOGGED line, so a fresh payload can carry an older
+// stamp than the last frame's extrapolated now - points would jump right
+reset();
+drawPulse({ series: { bins: [{ t: 1000, per: { "1": 6 } }], bin_s: 5, window_s: 420 },
+    time: { now: 1000 } });
+calls.length = 0;
+drawPulse({ series: { bins: [{ t: 990, per: { "1": 6 } }], bin_s: 5, window_s: 420 },
+    time: { now: 990 } });
+const ptsR = calls.filter(c => c[0] === "moveTo" || c[0] === "lineTo").map(c => c[1]);
+// clamped, now stays 1000: the 990 sample sits at (990-580)/420*560, NOT at
+// the right edge - a rewound clock would park it at x=560
+say("now-never-rewinds", ptsR.some(p => Math.abs(p[0] - (990 - 580) / 420 * 560) < 0.01)
+    && !ptsR.some(p => p[0] > 560.5));
+
+// the y scale eases: a slot starting doubles the raw peak, the drawn scale
+// must step toward it (10 frames/s), not rescale the whole graph in one jolt
+reset();
+calls.length = 0;
+drawPulse({ series: { bins: [{ t: 1000, per: { "1": 6 } }], bin_s: 5, window_s: 420 },
+    time: { now: 1000 } });
+drawPulse({ series: { bins: Array.from({ length: 30 }, (_, i) => ({
+      t: 860 + i * 5, per: { "1": 40 } })), bin_s: 5, window_s: 420 },
+    time: { now: 1000 } });
+const peakLabels = calls.filter(c => c[0] === "fillText").map(c => c[1][0])
+  .filter(t => /^\d+ t\/s$/.test(t)).map(parseFloat);
+say("smooths-the-scale", peakLabels[0] === 20 && peakLabels[1] > 20 && peakLabels[1] < 40);
+
+// events draw IN FRONT of the areas: the earlier order painted fills over
+// the ticks and an error hid behind the data it explained
+reset();
+calls.length = 0;
+drawPulse({ series: { bins: Array.from({ length: 30 }, (_, i) => ({
+      t: 860 + i * 5, per: { "1": 40 } })), bin_s: 5, window_s: 420 },
+    time: { now: 1000 },
+    attention: [{ level: "error", text: "out of memory", age_s: 30 }] });
+const order = calls.map(c => c[0]);
+const iFill = Math.max(order.lastIndexOf("fill"), order.lastIndexOf("stroke"));
+const iTick = order.lastIndexOf("fillRect");
+say("ticks-in-front", iTick > iFill && iTick >= 0);
 
 console.log("survived");
 """
@@ -314,7 +367,8 @@ def test_throughput_chart_draws_what_the_bins_say():
                       "carries-active-rate-to-edge", "culls-old-points",
                       "extends-past-left-edge", "marks-events",
                       "draws-prompt-band", "labels-both-scales",
-                      "labels-the-axis"):
+                      "labels-the-axis", "now-never-rewinds",
+                      "smooths-the-scale", "ticks-in-front"):
         assert lines.get(behaviour) == "yes", f"{behaviour}: {out.stdout}"
     assert "survived" in out.stdout
 
@@ -358,10 +412,11 @@ def test_the_chart_row_is_only_the_chart():
     src = text[text.index("function drawPulse(pulse){"):]
     for marker in ("series.window_s", "PULSE_POLL", "setLineDash",
                    "Math.floor(left / binS)", "tpsCx.clip()", "PULSE_KEEP",
-                   "pulseForChart", "prPeak", "fillRect", "a5d6ff"):
+                   "pulseForChart", "prPeak", "fillRect", "a5d6ff",
+                   "_lastNow", "_peakShown"):
         assert marker in src, f"drawPulse lost {marker!r}"
-    assert "every(1000, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });" in text, \
-        "the between-poll redraw is what makes the window slide; it must run"
+    assert "every(100, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });" in text, \
+        "the between-poll redraw is what makes the window glide; 10 frames/s is the floor"
 
 
 # ------------------------------------------------------------- model switching
