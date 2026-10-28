@@ -118,9 +118,10 @@ function Get-Hf($row) {
         & $Hf download $row.repo $row.file --local-dir (Join-Path $Comfy "models")
     }
     if ($LASTEXITCODE -ne 0) {
-        throw ("download failed for " + $row.file + " (exit " + $LASTEXITCODE + "). If the repo is"
-             + " license-gated (qwen-research): sign in at huggingface.co, accept the license on the"
-             + " repo page, then:  & `"" + (Join-Path $RootDir "venv\Scripts\hf.exe") + "`" auth login  - and re-run.")
+        # one line, single-quoted path: 5.1 chokes on multi-line + continuation
+        # inside throw(...) and on backtick-escaped quotes in long strings
+        $hfCmd = Join-Path $RootDir "venv\Scripts\hf.exe"
+        throw ("download failed for " + $row.file + " (exit " + $LASTEXITCODE + "). If the repo is license-gated (qwen-research): sign in at huggingface.co, accept the license, then run:  & '" + $hfCmd + "' auth login  - and re-run this installer.")
     }
     if ($row.dest) {
         $landed = Join-Path (Join-Path $Comfy "models") $row.file

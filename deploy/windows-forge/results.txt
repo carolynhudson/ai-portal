@@ -1,44 +1,26 @@
-PS C:\forge\kit> .\install_forge.ps1 -IncludeGGUF
-At C:\forge\kit\install_forge.ps1:109 char:64
-+ ...  $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row.de ...
-+                                                                 ~
-Unexpected token '?' in expression or statement.
-At C:\forge\kit\install_forge.ps1:109 char:63
-+ ...    $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row. ...
-+                                                                  ~
+At C:\forge\kit\install_forge.ps1:121 char:100
++ ... d for " + $row.file + " (exit " + $LASTEXITCODE + "). If the repo is"
++                                                                          ~
 Missing closing ')' in expression.
+At C:\forge\kit\install_forge.ps1:120 char:30
++     if ($LASTEXITCODE -ne 0) {
++                              ~
+Missing closing '}' in statement block or type definition.
 At C:\forge\kit\install_forge.ps1:108 char:23
 + function Get-Hf($row) {
 +                       ~
 Missing closing '}' in statement block or type definition.
-At C:\forge\kit\install_forge.ps1:109 char:87
-+ ... -Path (Join-Path $Comfy "models") ($row.dest ? $row.dest : $row.file)
+At C:\forge\kit\install_forge.ps1:123 char:119
++ ... ath $RootDir "venv\Scripts\hf.exe") + "`" auth login  - and re-run.")
 +                                                                         ~
 Unexpected token ')' in expression or statement.
-At C:\forge\kit\install_forge.ps1:110 char:57
-+     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
-+                                                         ~
-Unexpected token '?' in expression or statement.
-At C:\forge\kit\install_forge.ps1:110 char:56
-+     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
-+                                                        ~
-Missing closing ')' in expression.
-At C:\forge\kit\install_forge.ps1:110 char:28
-+     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
-+                            ~
-Missing closing '}' in statement block or type definition.
-At C:\forge\kit\install_forge.ps1:110 char:80
-+ ... target) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); retur ...
-+                                                                 ~
-Unexpected token ')' in expression or statement.
-At C:\forge\kit\install_forge.ps1:110 char:81
-+ ... arget) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return ...
-+                                                                 ~
-Unexpected token ')' in expression or statement.
-At C:\forge\kit\install_forge.ps1:110 char:91
-+ ... get) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return }
-+                                                                         ~
+At C:\forge\kit\install_forge.ps1:124 char:5
++     }
++     ~
 Unexpected token '}' in expression or statement.
-Not all parse errors were reported.  Correct the reported errors and try again.
+At C:\forge\kit\install_forge.ps1:131 char:1
++ }
++ ~
+Unexpected token '}' in expression or statement.
     + CategoryInfo          : ParserError: (:) [], ParseException
-    + FullyQualifiedErrorId : UnexpectedToken
+    + FullyQualifiedErrorId : MissingEndParenthesisInExpression
