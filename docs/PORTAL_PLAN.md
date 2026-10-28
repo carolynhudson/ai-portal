@@ -6543,3 +6543,25 @@ Driver pins: `marks-events` (one tick, in-window, amber; the out-of-window
 error skipped), `draws-prompt-band`, `labels-both-scales`, `labels-the-axis`.
 rlog pins: prompt bins on their own channel, separate from generation, and
 the prefill→generate transition landing in one bin on both channels.
+
+##### 6.14.1n The slot bars learned flow, not fake progress (2026-10-28)
+
+Owner's read of the lane board: the bars "change color, rapidly fill and
+empty" and a slow, honest fill is almost never seen. That is the physics of
+what is measurable: **only the prompt phase has an end the log reports**
+(prefill progress %), so prompt is the one bar that slowly fills — and it
+only exists for a few seconds per request. Generation has no knowable
+length (the sampler stops when it stops), so its bar parks at 100% and the
+width transition animates 0→100→0 on every state change: the rapid
+fill/empty. The old generation "animation" was a background-position
+shimmer, nearly invisible at 7 px.
+
+The board now speaks three states honestly: **prompt fills** (the real
+percentage), **generating flows** (a soft band of light crossing the full
+bar every 1.5 s — "tokens moving right now", low contrast, peripheral),
+**queued flows slower and dimmer** (2.6 s — waiting is not streaming),
+**idle rests** empty, and **stalled stops the flow** — the state claims
+busy while the log went quiet, so the bar rests inside its warning ring.
+`prefers-reduced-motion` kills the band entirely (the lane board's
+kill-switch rule was already in the sheet; the flow joined it). Pinned by
+`test_states_that_cannot_be_measured_flow_instead_of_faking_progress`.

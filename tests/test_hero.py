@@ -319,6 +319,27 @@ def test_throughput_chart_draws_what_the_bins_say():
     assert "survived" in out.stdout
 
 
+def test_states_that_cannot_be_measured_flow_instead_of_faking_progress():
+    """The lane bars' vocabulary: prompt is the one phase with a real end
+    (the log reports prefill progress), so prompt is the one bar allowed to
+    fill. Generation has no known token count, so its bar is full and FLOWS;
+    queued flows slower and dimmer; stalled stops flowing - a slot whose
+    state claims busy while the log went quiet must look at rest, not busy."""
+    text = (pathlib.Path(__file__).resolve().parents[1] / "web" / "templates" / "dashboard.html").read_text()
+    assert "@keyframes lane-flow" in text, "the flow animation left the sheet"
+    assert ".lane.s-generate .lane-bar i::after,.lane.s-queued .lane-bar i::after" in text, \
+        "generating and queued bars must carry the flow"
+    assert "animation-duration:2.6s" in text, "queued flows slower than generating: waiting is not streaming"
+    assert ".lane.stalled .lane-bar i::after{display:none}" in text, \
+        "a stalled slot's flow must stop: the bar rests when the log goes quiet"
+    prompt_seg = text[text.index(".lane.s-prompt .lane-bar i{"):text.index(".lane.s-generate .lane-phase")]
+    assert "::after" not in prompt_seg, \
+        "the prompt bar shows the real percentage; it must not also flow"
+    reduced = text[text.index("@media(prefers-reduced-motion:reduce)"):]
+    assert ".lane-bar i::after{display:none}" in reduced, \
+        "reduced-motion users get a static bar, never a moving one"
+
+
 def test_the_chart_row_is_only_the_chart():
     """The generating number must not live beside the sparkline: its digit
     width shifting the canvas is exactly what kills the sense of motion, so
