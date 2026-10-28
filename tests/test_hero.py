@@ -237,9 +237,7 @@ drawPulse({ series: { bins: Array.from({ length: 7 }, (_, i) => ({
 const seg1 = segFor("#5aa9ff");
 say("carries-active-rate-to-edge",
     Math.max(...seg1.map(p => p[0])) === 560
-    && calls.some(c => c[0] === "setLineDash" && c[1][0] && c[1][0][0] === 4)
-    && calls.filter(c => c[0] === "fillText").map(c => c[1][0])
-         .some(t => /generating now/.test(t)));
+    && calls.some(c => c[0] === "setLineDash" && c[1][0] && c[1][0][0] === 4));
 
 // the window is a sliding TIME window: samples older than the window are
 // gone from the drawing entirely — nothing is plotted left of x=0
@@ -261,6 +259,30 @@ drawPulse({ series: { bins: Array.from({ length: 8 }, (_, i) => ({
 const ptsL = calls.filter(c => c[0] === "moveTo" || c[0] === "lineTo").map(c => c[1]);
 say("extends-past-left-edge",
     ptsL.some(p => p[0] < -1) && calls.some(c => c[0] === "clip"));
+
+// the chart is more than one metric: prompt rates ride the same grid on
+// their own scale (prefill is ~20x generation speed), and router events are
+// little shapes on the time axis, at the time they happened
+calls.length = 0;
+drawPulse({ series: { bins: Array.from({ length: 8 }, (_, i) => ({
+      t: 995 + i * 5, per: i > 2 ? { "1": 7 } : {},
+      pr: i > 2 ? {} : { "1": 800 } })), bin_s: 5, window_s: 420 },
+    time: { now: 1032 },
+    attention: [
+      { level: "warn", text: "cache pressure", age_s: 20 },
+      { level: "error", text: "out of memory", age_s: 5000 }
+    ] });
+const rects = calls.filter(c => c[0] === "fillRect").map(c => c[1]);
+const labelsE = calls.filter(c => c[0] === "fillText").map(c => c[1][0]);
+say("marks-events", rects.length === 1
+    && rects[0][0] > 0 && rects[0][0] < 560
+    && calls.some(c => c[0] === "fillStyle" && c[1] === "#d29922"));
+say("draws-prompt-band", calls.some(c => c[0] === "strokeStyle" && c[1] === "#a5d6ff")
+    && labelsE.some(t => /prompt 800 t\/s/.test(t)));
+say("labels-both-scales", labelsE.some(t => /^\d+ t\/s$/.test(t))
+    && labelsE.some(t => /own scale/.test(t)));
+say("labels-the-axis", labelsE.some(t => /-7:00/.test(t))
+    && labelsE.some(t => /now/.test(t)));
 
 console.log("survived");
 """
@@ -290,7 +312,9 @@ def test_throughput_chart_draws_what_the_bins_say():
     for behaviour in ("draws-areas", "reaches-right-edge", "names-the-silence",
                       "labels-peak", "empty-says-so", "zero-fills-idle-slot",
                       "carries-active-rate-to-edge", "culls-old-points",
-                      "extends-past-left-edge"):
+                      "extends-past-left-edge", "marks-events",
+                      "draws-prompt-band", "labels-both-scales",
+                      "labels-the-axis"):
         assert lines.get(behaviour) == "yes", f"{behaviour}: {out.stdout}"
     assert "survived" in out.stdout
 
@@ -313,7 +337,7 @@ def test_the_chart_row_is_only_the_chart():
     src = text[text.index("function drawPulse(pulse){"):]
     for marker in ("series.window_s", "PULSE_POLL", "setLineDash",
                    "Math.floor(left / binS)", "tpsCx.clip()", "PULSE_KEEP",
-                   "pulseForChart"):
+                   "pulseForChart", "prPeak", "fillRect", "a5d6ff"):
         assert marker in src, f"drawPulse lost {marker!r}"
     assert "every(1000, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });" in text, \
         "the between-poll redraw is what makes the window slide; it must run"

@@ -6510,3 +6510,36 @@ window at the real clock, zeros behind them, the silence label ticking —
 and the 1 s redraw loop runs off the kept payload, so the transient hole
 never reaches the screen. Honest by construction: kept data is real data,
 staling visibly.
+
+The owner then asked for the chart to carry more than one metric and named
+the traps: prompt t/s runs ~20x generation (scale crush), multi-thread
+series can get busy, the grey corner text is nearly useless, and the right
+endpoint dips look fake. What the pane grew:
+
+* **Prompt-rate channel, end to end.** rlog now bins prompt rates on the
+  same 5 s grid (`bins[].pr` — the progress and prompt-eval prints already
+  carried them, time-stamped, un-binned), and the bins_out loop spans both
+  channels (a prefill-only window is a window). The client draws a dashed
+  slate-blue band normalized to *its own* peak in the bottom strip — the
+  label says "prompt N t/s · own scale". Sharing the generation axis is the
+  crush the owner named; normalizing per metric is the honest answer.
+* **Events as shapes on the time axis.** The journal's own attention list
+  (swaps, stalls, cache pressure, context limits) maps `age_s` back to bin
+  time and draws small ticks along the top edge: red = error, amber = warn,
+  blue = notice. They draw during silence too — a warning while the router
+  is quiet is the one that matters.
+* **The right edge, per the owner's own rule.** Generating → assume
+  generation continues (the dashed carry-forward). Prompt/queued/idle →
+  assume zero. The prompt-phase drop that looks like a "fake dip" is the
+  true zero — prefill produces no tokens — and the band above now *says
+  why*: "the thread is reading, not dead". The guess is replaced the moment
+  the real rate prints (the redraw cycle), so no fabricated curve.
+* **Labels earn their space.** Top-left = generation scale (peak t/s),
+  top-right = the prompt band's scale (only when drawn), bottom = the time
+  axis ("−7:00" … "now", "last sample Ns ago" when quiet). The old prose
+  status line is gone; the shapes say it.
+
+Driver pins: `marks-events` (one tick, in-window, amber; the out-of-window
+error skipped), `draws-prompt-band`, `labels-both-scales`, `labels-the-axis`.
+rlog pins: prompt bins on their own channel, separate from generation, and
+the prefill→generate transition landing in one bin on both channels.

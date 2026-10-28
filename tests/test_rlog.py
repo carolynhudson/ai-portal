@@ -285,6 +285,29 @@ def test_bins_are_five_second_slots_per_slot_and_capped_to_the_window():
     assert pulse["slot_ids"] == [1, 3]
 
 
+def test_prompt_rates_bin_on_their_own_channel_beside_generation():
+    # prefill prints its rate on the same print_timing cadence; the chart
+    # needs it time-stamped on the same grid, on its own scale
+    raw = [
+        stamp(10, body="slot launch_slot_: id  1 | task 5 | processing task"),
+        stamp(12, body="slot print_timing: id  1 | task 5 | prompt processing, n_tokens =   1024, progress = 0.25, t =   4.00 s / 256.00 tokens per second"),
+        stamp(16, body="slot print_timing: id  1 | task 5 | prompt processing, n_tokens =   4096, progress = 1.00, t =  16.00 s / 256.00 tokens per second"),
+        stamp(20, body="slot print_timing: id  1 | task 5 | prompt eval time = 16000.00 ms / 4096 tokens (256.00 tokens per second, 3.91 ms per token)"),
+        stamp(24, body="slot print_timing: id  1 | task 5 | n_gen =  128, tg =   6.00 t/s, tg_3s =   6.00 t/s"),
+    ]
+    pulse = rlog.parse(raw, window_s=60, bin_s=5, now_wall=30.0)
+    bins = pulse["series"]["bins"]
+    prs = [b for b in bins if b.get("pr")]
+    assert prs, "prompt rates never reached the bins"
+    assert all(v == 256.0 for b in prs for v in b["pr"].values())
+    assert any(b["pr"] and not b["per"] for b in bins), "prefill-only bins missing"
+    assert any(b["per"] for b in bins), "generation bins missing"
+    # prefill ending and generation starting inside one 5 s bin land in the
+    # same bin, on their separate channels: that is the real transition time
+    both = [b for b in bins if b["pr"] and b["per"]]
+    assert both and all(b["pr"] == {"1": 256.0} for b in both)
+
+
 def test_wall_clock_ages_when_the_journal_supplies_them():
     epoch = 1_700_000_000.0
     pairs = [

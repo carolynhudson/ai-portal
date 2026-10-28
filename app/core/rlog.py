@@ -270,6 +270,9 @@ def parse(lines, *, window_s: int = 420, bin_s: int = 5,
     requests: list[dict] = []
     completions: list[dict] = []
     bins: dict[int, dict[str, float]] = {}
+    # prompt rates ride the same 5 s grid in their own dict: prefill runs at
+    # 5-30x generation speed, so the chart keeps it on its own scale
+    pbins: dict[int, dict[str, float]] = {}
     keeps: list[float] = []
     prompt_rates: list[float] = []
     gen_rates: list[float] = []
@@ -344,6 +347,7 @@ def parse(lines, *, window_s: int = 420, bin_s: int = 5,
                     slot.prompt_pct = max(0.0, min(1.0, float(pm.group(2))))
                     slot.prompt_tps = float(pm.group(4))
                     prompt_rates.append(slot.prompt_tps)
+                    pbins.setdefault(int(t / bin_s) * bin_s, {})[str(slot.id)] = slot.prompt_tps
                     continue
                 if gm := GEN_RE.search(body):
                     n = int(gm.group(1))
@@ -364,6 +368,7 @@ def parse(lines, *, window_s: int = 420, bin_s: int = 5,
                     slot.prompt_pct = 1.0
                     slot.prompt_tps = float(pem.group(3))
                     prompt_rates.append(slot.prompt_tps)
+                    pbins.setdefault(int(t / bin_s) * bin_s, {})[str(slot.id)] = slot.prompt_tps
                     continue
                 if gem := GEN_EVAL_RE.search(body):
                     slot.gen_ms = float(gem.group(1))
@@ -418,13 +423,16 @@ def parse(lines, *, window_s: int = 420, bin_s: int = 5,
     # the chart covers one window, not the whole journal tail: three hours of
     # 5-second bins would be 2000+ entries of payload for pixels that aren't there
     bins = {k: v for k, v in bins.items() if k >= horizon}
+    pbins = {k: v for k, v in pbins.items() if k >= horizon}
     bins_out = []
-    if bins:
-        start = int(min(bins) // bin_s) * bin_s
+    keys = set(bins) | set(pbins)     # a prefill-only window is still a window
+    if keys:
+        start = int(min(keys) // bin_s) * bin_s
         end = int(wall // bin_s) * bin_s
         b = start
         while b <= end:
-            bins_out.append({"t": round(float(b), 1), "per": bins.get(b, {})})
+            bins_out.append({"t": round(float(b), 1), "per": bins.get(b, {}),
+                           "pr": pbins.get(b, {})})
             b += bin_s
 
     return {

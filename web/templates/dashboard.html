@@ -750,11 +750,24 @@ function drawPulse(pulse){
   const binAt = {};
   let lastSample = 0;
   all.forEach(b => { binAt[b.t] = b.per; if (b.t > lastSample && peakOf(b) > 0) lastSample = b.t; });
+  // prompt rates ride the same 5 s grid (bins' "pr" channel). Prefill runs
+  // 5-30x generation speed, so it gets its own normalized band, never the
+  // generation axis: sharing the scale would crush generation to a floor line.
+  const binAtPr = {};
+  let prPeak = 0;
+  all.forEach(b => {
+    if (b.pr){
+      binAtPr[b.t] = b.pr;
+      Object.keys(b.pr).forEach(k => { prPeak = Math.max(prPeak, Number(b.pr[k]) || 0); });
+    }
+  });
   // llama.cpp prints a slot's rate every ~3 s, so a generating slot always
   // has a few seconds with no new sample. For a slot the log still believes
   // is generating and no older than ~3 print cadences, its last reported
   // rate is carried to `now` (dashed): "still generating, about this fast".
-  // Past that staleness nothing is extrapolated and the line falls to zero.
+  // A slot in prompt phase carries ZERO — prefill produces no tokens, and
+  // the prompt band above says why the gen line is flat. Past the
+  // staleness limit nothing is extrapolated and the line falls to zero.
   const active = {};
   (pulse.slots || []).forEach(s => {
     if ((s.state === 'generate' || s.state === 'prompt')
@@ -785,8 +798,22 @@ function drawPulse(pulse){
     return per && per[id] != null ? Number(per[id]) : 0;
   };
   const totals = grid.map(t => ids.reduce((a, id) => a + valueAt(id, t), 0));
+  const peak = Math.max(20, Math.max.apply(null, totals));
+  const xAt = t => ((t - left) / winS) * W;
+  const yAt = v => H - (v / peak) * (H - 8) - 2;
   tpsCx.save();
   tpsCx.beginPath(); tpsCx.rect(0, 0, W, H); tpsCx.clip();
+  // router events as shapes on the time axis: the journal's own "worth
+  // noticing" list (swaps, stalls, context limits, cache pressure) placed at
+  // the time it happened — so "what was happening at that dip" answers itself.
+  // Ticks draw in the silent window too: a warning during silence matters most.
+  const EV = { error: '#f85149', warn: '#d29922', notice: '#58a6ff' };
+  (pulse.attention || []).forEach(a => {
+    const te = now - (a.age_s || 0);
+    if (te < left - 1 || te > now + 1) return;
+    tpsCx.fillStyle = EV[a.level] || '#8b949e';
+    tpsCx.fillRect(xAt(te), 0, 2, 5);
+  });
   if (!totals.some(v => v > 0)){
     tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
     tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
@@ -795,9 +822,6 @@ function drawPulse(pulse){
     tpsCx.restore();
     return;
   }
-  const peak = Math.max(20, Math.max.apply(null, totals));
-  const xAt = t => ((t - left) / winS) * W;
-  const yAt = v => H - (v / peak) * (H - 8) - 2;
   // stacked areas, one band per slot, so "three prompts at once" reads as height
   // and "one long generation" reads as width
   let cum = grid.map(() => 0);
@@ -828,15 +852,29 @@ function drawPulse(pulse){
     }
     cum = top;
   });
+  // prompt-rate band: dashed slate-blue line, normalized to its own peak in
+  // the window, confined to the bottom strip. It says "the thread is reading"
+  // — the honest reason the generation line is flat at the start of a request.
+  if (prPeak > 0){
+    const yP = v => H - 2 - (v / prPeak) * 26;
+    const prTot = grid.map(t => {
+      const per = binAtPr[t];
+      return per ? Object.keys(per).reduce((a, k) => a + (Number(per[k]) || 0), 0) : 0;
+    });
+    tpsCx.beginPath();
+    prTot.forEach((v, i) => { i ? tpsCx.lineTo(xAt(grid[i]), yP(v)) : tpsCx.moveTo(xAt(grid[0]), yP(v)); });
+    tpsCx.setLineDash([2, 3]);
+    tpsCx.strokeStyle = '#a5d6ff'; tpsCx.lineWidth = 1; tpsCx.stroke();
+    tpsCx.setLineDash([]);
+  }
   tpsCx.restore();
   const silence = lastSample ? now - lastSample : winS;
   tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
   tpsCx.fillText(peak.toFixed(0) + ' t/s', 3, 9);
-  tpsCx.fillText(Math.max(1, Math.round(winS / 60)) + ' min'
-                 + (Object.keys(active).length
-                    ? ' · generating now →'
-                    : (silence > binS * 1.5
-                       ? ' · last sample ' + Math.round(silence) + 's ago' : '')), 3, H - 2);
+  if (prPeak > 0) tpsCx.fillText('prompt ' + Math.round(prPeak) + ' t/s · own scale', W - 170, 9);
+  tpsCx.fillText('-' + Math.max(1, Math.round(winS / 60)) + ':00', 3, H - 2);
+  tpsCx.fillText(silence > binS * 1.5
+                 ? 'now · last sample ' + Math.round(silence) + 's ago' : 'now', W - 160, H - 2);
 }
 function renderSignals(p){
   const el = document.getElementById('pulse-signals');
