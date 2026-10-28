@@ -656,6 +656,20 @@ let LAST = null;
 // arrival instant (client ms) of the pulse behind LAST: between polls the chart
 // slides on the client's own clock, anchored to this instant (see drawPulse)
 let PULSE_POLL = null;
+// last payload that actually carried samples, for the chart alone
+let PULSE_KEEP = null;
+function pulseForChart(p){
+  const bs = (p && p.series && p.series.bins) || [];
+  if (bs.some(b => Object.keys(b.per).length)){ PULSE_KEEP = p; return p; }
+  // A payload with no bins means one of two things the client cannot tell
+  // apart: the router has been quiet for the whole window (true, draw the
+  // empty message), or the snapshot builder failed this cycle and serves
+  // rlog.parse([]) (app/router.py) — a one-poll hole. Drawing the last real
+  // samples for a few seconds more is true data aging out of the window,
+  // zeros behind it, silence label ticking; flickering the line away on a
+  // transient read failure is not.
+  return PULSE_KEEP || p;
+}
 
 function laneDetail(s){
   if (s.state === 'generate'){
@@ -751,8 +765,11 @@ function drawPulse(pulse){
   // slot — the bin's sample, a zero for slots with no sample in that bin
   // (an idle thread or a break in that thread's line draws as zero, never
   // as a gap), and the right edge carries the active slots' rates.
+  // The grid starts one bin BEYOND the left edge (floor, not ceil) and the
+  // drawing is clipped to the canvas: the oldest point scrolls off screen
+  // instead of leaving a stub that grows then pops away when it falls off.
   const grid = [];
-  for (let t = Math.ceil(left / binS) * binS; t <= now + 1e-6; t += binS) grid.push(t);
+  for (let t = Math.floor(left / binS) * binS; t <= now + 1e-6; t += binS) grid.push(t);
   if (now - grid[grid.length - 1] > 0.2) grid.push(now);
   const right = grid[grid.length - 1];
   const ids = [];
@@ -768,11 +785,14 @@ function drawPulse(pulse){
     return per && per[id] != null ? Number(per[id]) : 0;
   };
   const totals = grid.map(t => ids.reduce((a, id) => a + valueAt(id, t), 0));
+  tpsCx.save();
+  tpsCx.beginPath(); tpsCx.rect(0, 0, W, H); tpsCx.clip();
   if (!totals.some(v => v > 0)){
     tpsCx.strokeStyle = '#2a303a'; tpsCx.lineWidth = 1;
     tpsCx.beginPath(); tpsCx.moveTo(0, H - 2); tpsCx.lineTo(W, H - 2); tpsCx.stroke();
     tpsCx.fillStyle = '#6b7483'; tpsCx.font = '11px ui-monospace, Menlo, monospace';
     tpsCx.fillText('no token activity in this window', 4, H / 2);
+    tpsCx.restore();
     return;
   }
   const peak = Math.max(20, Math.max.apply(null, totals));
@@ -808,6 +828,7 @@ function drawPulse(pulse){
     }
     cum = top;
   });
+  tpsCx.restore();
   const silence = lastSample ? now - lastSample : winS;
   tpsCx.fillStyle = '#6b7483'; tpsCx.font = '10px ui-monospace, Menlo, monospace';
   tpsCx.fillText(peak.toFixed(0) + ' t/s', 3, 9);
@@ -884,7 +905,7 @@ function renderRouter(d){
   const latest = now != null ? now : (d.tps && d.tps.latest);
   setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');
   PULSE_POLL = Date.now();
-  drawPulse(p);
+  drawPulse(pulseForChart(p));
   renderSignals(p);
   const fmtTok = (x) => (x != null) ? Number(x).toLocaleString() : '—';
   setText('tok-in', fmtTok(d.totals && d.totals.prompt_tokens));
@@ -1021,7 +1042,7 @@ every(_poll, tick);
 // the polls add samples; this loop adds the sense of time moving: the chart's
 // sliding window is redrawn on the client clock (every() skips hidden tabs),
 // so the sparkline crawls left between polls instead of jumping once per poll
-every(1000, () => { if (LAST && LAST.pulse) drawPulse(LAST.pulse); });
+every(1000, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });
 </script>
 <script>
 // ComfyUI hero — mirrors the router hero's polling (5s; ComfyUI is

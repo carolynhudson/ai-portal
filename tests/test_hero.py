@@ -251,6 +251,17 @@ say("culls-old-points", pts2.every(p => p[0] >= 0 && p[0] <= 560)
     && calls.filter(c => c[0] === "fillText").map(c => c[1][0])
          .some(t => /no token activity/.test(t)));
 
+// the line enters from OFF the left edge and the canvas clips it: the oldest
+// point scrolls out of view instead of leaving a stub that grows and pops
+// when it falls off the window (the owner's "gap that shrinks then pops")
+calls.length = 0;
+drawPulse({ series: { bins: Array.from({ length: 8 }, (_, i) => ({
+      t: 995 + i * 5, per: { "1": 7 } })), bin_s: 5, window_s: 420 },
+    time: { now: 1032 } });
+const ptsL = calls.filter(c => c[0] === "moveTo" || c[0] === "lineTo").map(c => c[1]);
+say("extends-past-left-edge",
+    ptsL.some(p => p[0] < -1) && calls.some(c => c[0] === "clip"));
+
 console.log("survived");
 """
 
@@ -278,7 +289,8 @@ def test_throughput_chart_draws_what_the_bins_say():
                  if " " in line)
     for behaviour in ("draws-areas", "reaches-right-edge", "names-the-silence",
                       "labels-peak", "empty-says-so", "zero-fills-idle-slot",
-                      "carries-active-rate-to-edge", "culls-old-points"):
+                      "carries-active-rate-to-edge", "culls-old-points",
+                      "extends-past-left-edge"):
         assert lines.get(behaviour) == "yes", f"{behaviour}: {out.stdout}"
     assert "survived" in out.stdout
 
@@ -299,9 +311,11 @@ def test_the_chart_row_is_only_the_chart():
     # (cull by construction), the dashed carry-forward, and the redraw loop
     # that slides the window between polls
     src = text[text.index("function drawPulse(pulse){"):]
-    for marker in ("series.window_s", "PULSE_POLL", "setLineDash", "Math.ceil(left / binS)"):
+    for marker in ("series.window_s", "PULSE_POLL", "setLineDash",
+                   "Math.floor(left / binS)", "tpsCx.clip()", "PULSE_KEEP",
+                   "pulseForChart"):
         assert marker in src, f"drawPulse lost {marker!r}"
-    assert "every(1000, () => { if (LAST && LAST.pulse) drawPulse(LAST.pulse); });" in text, \
+    assert "every(1000, () => { if (PULSE_KEEP) drawPulse(PULSE_KEEP); });" in text, \
         "the between-poll redraw is what makes the window slide; it must run"
 
 

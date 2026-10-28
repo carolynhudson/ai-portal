@@ -6487,3 +6487,26 @@ promises — `zero-fills-idle-slot`, `carries-active-rate-to-edge`,
 `culls-old-points` — beside the pre-existing `names-the-silence` honesty
 pin, and `test_the_chart_row_is_only_the_chart` pins the layout (number out
 of the chart row) and the sliding-window machinery as source markers.
+
+Two artifacts the owner spotted in the live chart, both fixed the same night:
+
+*The left gap that shrinks then pops.* The time grid started at the first bin
+boundary **after** the window's left edge (`Math.ceil`), so the polyline's
+oldest point sat up to one bin (5 s ≈ 7 px) inside the canvas: the stub
+slid right with `now` and vanished when the grid advanced — "pops back to
+maximum size." The grid now starts one bin *beyond* the left edge
+(`Math.floor`) and the drawing is clipped to the canvas rect: the oldest
+point scrolls out of view off-screen, and the point behind it is already at
+the edge. Nothing to pop. The driver pins it as `extends-past-left-edge`
+(a point drawn at x < 0, and `clip` called).
+
+*The line disappears for a frame.* Not the client's clocks: the snapshot
+builder's exception path (app/router.py) serves `rlog.parse([])` — a
+zero-bin pulse indistinguishable from true silence — so one journal-read
+hiccup flickers the chart to "no token activity." The client now keeps the
+last payload that carried samples (`PULSE_KEEP`/`pulseForChart`): an empty
+payload draws the last *real* bins a few seconds longer — aging out of the
+window at the real clock, zeros behind them, the silence label ticking —
+and the 1 s redraw loop runs off the kept payload, so the transient hole
+never reaches the screen. Honest by construction: kept data is real data,
+staling visibly.
