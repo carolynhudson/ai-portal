@@ -1,0 +1,44 @@
+PS C:\forge\kit> .\install_forge.ps1 -IncludeGGUF
+At C:\forge\kit\install_forge.ps1:109 char:64
++ ...  $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row.de ...
++                                                                 ~
+Unexpected token '?' in expression or statement.
+At C:\forge\kit\install_forge.ps1:109 char:63
++ ...    $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row. ...
++                                                                  ~
+Missing closing ')' in expression.
+At C:\forge\kit\install_forge.ps1:108 char:23
++ function Get-Hf($row) {
++                       ~
+Missing closing '}' in statement block or type definition.
+At C:\forge\kit\install_forge.ps1:109 char:87
++ ... -Path (Join-Path $Comfy "models") ($row.dest ? $row.dest : $row.file)
++                                                                         ~
+Unexpected token ')' in expression or statement.
+At C:\forge\kit\install_forge.ps1:110 char:57
++     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
++                                                         ~
+Unexpected token '?' in expression or statement.
+At C:\forge\kit\install_forge.ps1:110 char:56
++     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
++                                                        ~
+Missing closing ')' in expression.
+At C:\forge\kit\install_forge.ps1:110 char:28
++     if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : ...
++                            ~
+Missing closing '}' in statement block or type definition.
+At C:\forge\kit\install_forge.ps1:110 char:80
++ ... target) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); retur ...
++                                                                 ~
+Unexpected token ')' in expression or statement.
+At C:\forge\kit\install_forge.ps1:110 char:81
++ ... arget) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return ...
++                                                                 ~
+Unexpected token ')' in expression or statement.
+At C:\forge\kit\install_forge.ps1:110 char:91
++ ... get) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return }
++                                                                         ~
+Unexpected token '}' in expression or statement.
+Not all parse errors were reported.  Correct the reported errors and try again.
+    + CategoryInfo          : ParserError: (:) [], ParseException
+    + FullyQualifiedErrorId : UnexpectedToken

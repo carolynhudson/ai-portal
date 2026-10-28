@@ -106,8 +106,10 @@ Say "torch CUDA check:"
 $Inv = Get-Content (Join-Path $PSScriptRoot "model_files.json") -Raw | ConvertFrom-Json
 $Hf = Join-Path $RootDir "venv\Scripts\hf.exe"
 function Get-Hf($row) {
-    $target = Join-Path (Join-Path $Comfy "models") ($row.dest ? $row.dest : $row.file)
-    if (Test-Path $target) { Say ("have: " + ($row.dest ? $row.dest : $row.file)); return }
+    # PS 5.1: no ternary operator (that is PS7+); plain if/else assignments only
+    $rel = if ($row.dest) { $row.dest } else { $row.file }
+    $target = Join-Path (Join-Path $Comfy "models") $rel
+    if (Test-Path $target) { Say ("have: " + $rel); return }
     Say ("download: " + $row.repo + " :: " + $row.file)
     if (-not (Test-Path $Hf)) { $Hf = $VenvPy }   # fall back to the module entry point
     if ($Hf -eq $VenvPy) {
