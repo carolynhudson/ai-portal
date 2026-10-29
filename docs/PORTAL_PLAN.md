@@ -6657,3 +6657,37 @@ apologize for exactly that). The replacement needs no apology:
   re-acquires a metrics poll and the global strip stays at 20 s). A
   mutation pair pins that the lights *keep* updating (a frozen alert is
   the one that fails exactly when needed).
+
+##### 6.14.1r The portal got a face: the HALO mark (2026-10-29)
+
+Owner asked for retro-future logo candidates drawn as SVG. The process
+mattered as much as the product:
+
+* **Palette discipline** — every colour is the portal's own (`--acc`,
+  violet, ok/warn/bad, chrome greys). A logo that borrows the chrome's
+  colours belongs to the chrome.
+* **True transparency** — no background plate in any file; every glow is
+  a gradient fading to `stop-opacity="0"`, so the mark sits on the
+  portal's surfaces, not a card of its own.
+* **A vision loop** — render each SVG in the portal's own Chromium
+  (Playwright), *look at the raster*, feed fixes back. It caught six
+  defects invisible in source: two clipped taglines, a dead gate mouth,
+  scanlines that read as venetian blinds, edges that vanished on light
+  backgrounds, a broken-image first sheet (the sheet sat in /tmp away
+  from the SVGs).
+* **Naming** — the owner ruled that "AI Portal" is a functional
+  description, not a brand; text in a logo is free creative. Four
+  lockups were offered (HALO / GATE·228 / LOCALSKY / SPARKDRIVE); the
+  owner chose the Halo Aperture mark with the name **HALO** — the
+  machine's own name (Strix Halo), the ring the mark already drew.
+
+Shipped: `web/static/portal-mark.svg` (nav), `favicon.svg` (the same
+mark), `portal-wordmark.svg` (mark + HALO). The shipped wordmark has
+zero font dependency — H, A, L are hand-built rects and an even-odd
+triangle, O is a stroked ring, so the letterforms are the same geometry
+language as the mark and render identically on every machine. The nav
+brand is the 26 px mark + the name; the head carries the SVG favicon.
+A contract test (`test_hero.py`) pins the wiring and forbids `<text>`
+or `font-family` from ever returning to the shipped assets. Candidates,
+preview page, and the final contact sheet live in
+`~/ai/logs/portal-logos-20261028/`.

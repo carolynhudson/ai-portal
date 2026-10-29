@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 96" width="330" height="96">
+  <!-- HALO wordmark: the chosen logo (owner, 2026-10-29). Letterforms are
+       hand-built geometry (rects, one evenodd triangle, one stroked ring):
+       zero font dependency, identical render everywhere. Transparent. -->
+  <defs>
+    <radialGradient id="ha-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="58%" stop-color="#5aa9ff" stop-opacity="0"/>
+      <stop offset="72%" stop-color="#5aa9ff" stop-opacity=".22"/>
+      <stop offset="86%" stop-color="#bc8cff" stop-opacity=".10"/>
+      <stop offset="100%" stop-color="#bc8cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ha-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#bc8cff"/>
+    </linearGradient>
+    <radialGradient id="ha-core" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#5aa9ff" stop-opacity=".34"/>
+      <stop offset="100%" stop-color="#5aa9ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#bc8cff"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(2,12) scale(0.5625)">
+    <circle cx="64" cy="64" r="63" fill="url(#ha-halo)"/>
+    <circle cx="64" cy="64" r="40" fill="none" stroke="url(#ha-ring)" stroke-width="9"
+            stroke-linecap="round" stroke-dasharray="35.2 6.7" transform="rotate(18 64 64)"/>
+    <circle cx="64" cy="64" r="24" fill="url(#ha-core)"/>
+    <polygon points="64,42 83.05,53 83.05,75 64,86 44.95,75 44.95,53"
+             fill="none" stroke="url(#ha-ring)" stroke-width="2.5" opacity=".85"/>
+    <circle cx="64" cy="64" r="3.6" fill="#d29922"/>
+    <circle cx="64" cy="64" r="7" fill="none" stroke="#d29922" stroke-width="1" opacity=".45"/>
+  </g>
+  <g fill="url(#wm)">
+    <rect x="100" y="32" width="8" height="44"/><rect x="134" y="32" width="8" height="44"/>
+    <rect x="100" y="50" width="42" height="8"/>
+    <path fill-rule="evenodd" d="M182,32 208,76 156,76 Z M182,46 195,68 169,68 Z"/>
+    <rect x="222" y="32" width="8" height="44"/><rect x="222" y="68" width="30" height="8"/>
+  </g>
+  <circle cx="292" cy="54" r="18" fill="none" stroke="url(#wm)" stroke-width="8"/>
+</svg>

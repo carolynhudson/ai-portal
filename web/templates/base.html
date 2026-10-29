@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}AI Portal{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <script src="/static/htmx.min.js"></script>
 {# shared markup sanitizer: every panel insert goes through safeSet #}
 <script src="/static/safe.js"></script>
@@ -16,7 +17,7 @@
 body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
 a{color:var(--acc);text-decoration:none}
 nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-nav .brand{font-weight:700;margin-right:auto}
+nav .brand{font-weight:700;margin-right:auto;display:flex;align-items:center;gap:9px;letter-spacing:.06em}
 nav a{color:var(--fg)}
 nav a:hover{color:var(--acc)}
 /* Resource lights: healthy is QUIET grey - the light is the alarm, not a
@@ -103,7 +104,7 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
 </head>
 <body>
 <nav>
-  <span class="brand">AI Portal</span>
+  <span class="brand"><img src="/static/portal-mark.svg" alt="" width="26" height="26">HALO</span>
   <a href="/">Status</a>
   <a href="/models">Models</a>
   <a href="/health">Health</a>

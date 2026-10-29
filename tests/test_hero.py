@@ -394,6 +394,24 @@ def test_states_that_cannot_be_measured_flow_instead_of_faking_progress():
         "reduced-motion users get a static bar, never a moving one"
 
 
+def test_the_halo_brand_is_wired_and_font_free():
+    """Owner picked the Halo Aperture mark and the name HALO (2026-10-29);
+    "AI Portal" is a functional description, not a brand. The shipped assets
+    must stay: linked in the head, present in the nav, and free of font
+    dependencies - the wordmark's letterforms are hand-built geometry, so a
+    box with no Futura renders the same logo as one with it."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    base = (root / "web/templates/base.html").read_text()
+    assert 'rel="icon"' in base and "/static/favicon.svg" in base, (
+        "the head must carry the SVG favicon")
+    assert "/static/portal-mark.svg" in base and ">HALO</span>" in base, (
+        "the nav brand is the mark + the chosen name")
+    for name in ("portal-mark.svg", "favicon.svg", "portal-wordmark.svg"):
+        svg = (root / "web/static" / name).read_text()
+        assert "<text" not in svg, f"{name} gained font-dependent <text>"
+        assert "font-family" not in svg, f"{name} asks for a font"
+
+
 def test_the_machine_panel_is_gone_and_the_lights_are_always_on():
     """Owner: the Machine detail panel is gone, but the portal must shout when
     RAM or disk get dangerously low - visible with no click, no scroll, on

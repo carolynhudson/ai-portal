@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Halo Aperture: the machine's name (Strix Halo) as a halo, the portal as
+       an open iris, the agent as the spark in the middle. Transparent: every
+       glow is an alpha-fading gradient, no background plate. -->
+  <defs>
+    <radialGradient id="ha-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="58%" stop-color="#5aa9ff" stop-opacity="0"/>
+      <stop offset="72%" stop-color="#5aa9ff" stop-opacity=".22"/>
+      <stop offset="86%" stop-color="#bc8cff" stop-opacity=".10"/>
+      <stop offset="100%" stop-color="#bc8cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ha-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#bc8cff"/>
+    </linearGradient>
+    <radialGradient id="ha-core" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#5aa9ff" stop-opacity=".34"/>
+      <stop offset="100%" stop-color="#5aa9ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="63" fill="url(#ha-halo)"/>
+  <!-- six iris blades: a dashed ring, rounded caps, rotated to open the eye -->
+  <circle cx="64" cy="64" r="40" fill="none" stroke="url(#ha-ring)" stroke-width="9"
+          stroke-linecap="round" stroke-dasharray="35.2 6.7" transform="rotate(18 64 64)"/>
+  <circle cx="64" cy="64" r="24" fill="url(#ha-core)"/>
+  <polygon points="64,42 83.05,53 83.05,75 64,86 44.95,75 44.95,53"
+           fill="none" stroke="url(#ha-ring)" stroke-width="2.5" opacity=".85"/>
+  <circle cx="64" cy="64" r="3.6" fill="#d29922"/>
+  <circle cx="64" cy="64" r="7" fill="none" stroke="#d29922" stroke-width="1" opacity=".45"/>
+</svg>
