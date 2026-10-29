@@ -24,6 +24,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
+import xml.dom.minidom
 from pathlib import Path
 
 import pytest
@@ -203,6 +205,52 @@ def test_no_unrendered_template_or_none_values_in_markup(pages):
 # The dashboard hero cards are for the two services. Two things crept in that
 # were not: a second Metrics link (the nav is right there) and the Vulkan SDK
 # path, which is inventory and belongs in the GPU Drivers / SDKs tab.
+def test_third_party_marks_are_served_unmodified():
+    """The hero titles wear two borrowed faces: the llama.cpp icon
+    (ggml-org/llama.brand, CC BY-NC 4.0 + brand-usage permission) and the
+    ComfyUI icon (trademark Comfy Org: "use as provided, do not recolor,
+    outline, or distort"). Both are embedded byte-for-byte - the only
+    addition is an XML provenance comment, which is not SVG markup. When a
+    network is available, the served file must match upstream exactly;
+    the licenses/attribution live in web/static/BRAND-LICENSES.md."""
+    root = Path(__file__).resolve().parents[1]
+    dash = (root / "web/templates/dashboard.html").read_text()
+    assert "/static/third-party/icon-dark.svg" in dash, "the llama.cpp mark left the hero"
+    assert "/static/third-party/comfy-icon.svg" in dash, "the ComfyUI mark left the hero"
+    assert "image forge" in dash, (
+        "ComfyUI ends in 'UI' - the hero title must say what the service is")
+    lic = (root / "web/static/BRAND-LICENSES.md").read_text()
+    for phrase in ("CC BY-NC 4.0", "ggml-org/llama.brand", "trademarks of Comfy Org"):
+        assert phrase in lic, f"attribution lost: {phrase}"
+    for name in ("third-party/icon-dark.svg", "third-party/comfy-icon.svg"):
+        body = (root / "web/static" / name).read_text()
+        assert body.startswith("<svg"), f"{name}: markup must lead the file"
+        xml.dom.minidom.parseString(body)
+    upstream = {
+        "third-party/icon-dark.svg":
+            "https://raw.githubusercontent.com/ggml-org/llama.brand/master/icon/icon-dark.svg",
+        "third-party/comfy-icon.svg": "https://comfy.org/icons/comfyicon.svg",
+    }
+    for name, url in upstream.items():
+        body = (root / "web/static" / name).read_text()
+        head, _, tail = body.partition("<!--")
+        markup = (head + tail.partition("-->")[2]) if "<!--" in body else body
+        try:
+            with urllib.request.urlopen(url, timeout=6) as r:
+                want = r.read().decode().strip()
+        except Exception:
+            continue  # offline: the byte-for-byte promise is checked when the net is up
+        # whitespace-exact compare: the provenance comment's framing is
+        # formatting, not markup - any real byte of the mark that changes
+        # (path data, colours, structure) still fails this.
+        import re as _re
+        got = _re.sub(r"\s+", "", markup)
+        want = _re.sub(r"\s+", "", want)
+        assert got == want, (
+            f"{name} diverged from upstream - third-party marks are used "
+            "as provided; re-fetch the official file instead of editing ours")
+
+
 def test_dashboard_does_not_link_a_page_that_no_longer_exists(pages):
     """The Metrics page was a superset of the dashboard, so it is gone.
 

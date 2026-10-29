@@ -9,6 +9,13 @@
 .router-hero{border-color:var(--acc)}
 .hero-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .hero-head h3{margin:0}
+/* Hero titles carry the service's own official mark (served unmodified, see
+   web/static/BRAND-LICENSES.md): the icon is recognition, the words beside
+   it are ours - "ComfyUI" alone repeats "UI", so the subtitle says what the
+   pane is. The gap keeps the mark clear of the text (trademark hygiene). */
+.hero-head h3{display:flex;align-items:center;gap:9px}
+.hero-head h3 img.hero-icon{width:22px;height:22px;border-radius:5px;display:block}
+.hero-head h3 .hero-sub{font-weight:400;font-size:12px;color:var(--mut);letter-spacing:.02em}
 .hero-controls{margin-left:auto;display:flex;gap:6px;align-items:center}
 .hero-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
 @media(max-width:640px){.hero-cols{grid-template-columns:1fr}}
@@ -139,7 +146,7 @@
 {# ---- live router: the reason to open the portal ---- #}
 <div class="card router-hero">
   <div class="hero-head">
-    <h3>llama.cpp router</h3>
+    <h3><img class="hero-icon" src="/static/third-party/icon-dark.svg" alt="" width="22" height="22">llama.cpp router</h3>
     <span class="pill {{ 'ok' if r.service.state == 'active' else 'bad' }}" id="router-state">{{ r.service.state }}</span>
     <span class="mut" id="router-since">{% if r.service.since %}up since {{ r.service.since }}{% endif %}</span>
     <span class="mut mono" style="margin-left:8px">svc: {{ r.service.name }}</span>
@@ -341,7 +348,7 @@
 {# ---- live ComfyUI: the other running thing on this box ---- #}
 <div class="card router-hero">
   <div class="hero-head">
-    <h3>ComfyUI</h3>
+    <h3><img class="hero-icon" src="/static/third-party/comfy-icon.svg" alt="" width="22" height="22">ComfyUI <span class="hero-sub">· image forge</span></h3>
     <span class="pill {{ 'ok' if comfy.service.state == 'active' else 'bad' }}" id="comfy-state">{{ comfy.service.state }}</span>
     <span class="mut" id="comfy-since">{% if comfy.service.since %}up since {{ comfy.service.since }}{% endif %}</span>
     <span class="mut mono" style="margin-left:8px">svc: ai-comfyui</span>

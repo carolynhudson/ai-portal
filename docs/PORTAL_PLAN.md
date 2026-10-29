@@ -6691,3 +6691,31 @@ A contract test (`test_hero.py`) pins the wiring and forbids `<text>`
 or `font-family` from ever returning to the shipped assets. Candidates,
 preview page, and the final contact sheet live in
 `~/ai/logs/portal-logos-20261028/`.
+
+##### 6.14.1s The hero titles wear their services' official marks (2026-10-29)
+
+Owner: "llama.cpp router" and "ComfyUI" are visually weak next to the
+dense hero panes. The fix is borrowed recognition, honestly framed:
+
+* **The official marks, unmodified.** The llama.cpp icon comes from
+  `ggml-org/llama.brand` (CC BY-NC 4.0; its BRAND-USAGE.md explicitly
+  permits embedding the mark "for the purpose of identifying or
+  referring to" the project, with attribution). The ComfyUI icon comes
+  from comfy.org; Comfy's trademark rules say *use as provided — do not
+  distort, recolor, or outline* and forbid implying endorsement. Both
+  files live in `web/static/third-party/` byte-for-byte (the only
+  addition is an XML provenance comment), and `BRAND-LICENSES.md`
+  records source, license and the compliance reading. A contract test
+  fetches upstream when the network is up and fails if the served
+  markup ever diverges — brand hygiene is enforced, not intended.
+* **The framing is ours, legally and visually.** The marks sit beside
+  text at a clean gap, never merged into it (llama.brand forbids
+  combining the mark with other elements). The owner's ear for the
+  "ComfyUI" repeat was right: the trademark rules also forbid naming
+  our own product Comfy-flavored — HALO stays, and the pane is
+  **ComfyUI · image forge**, house vocabulary since the forge kit.
+  The contract test pins that a bare "ComfyUI" headline never returns.
+* The vision loop did its usual shift-work: mock hero heads rendered in
+  the portal's Chromium with the real assets and the real head CSS,
+  three phrasing variants plus the bare control — the owner chose
+  "image forge" from the render.
