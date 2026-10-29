@@ -233,6 +233,16 @@ MUTATIONS = [
         "generating",
     ),
     (
+        # the machine's resource lights fill in once, then freeze: the alert
+        # that quietly stops updating is the one that fails exactly when needed
+        "resource lights never update",
+        "templates/base.html",
+        "      if (r.ok) paint(await r.json());",
+        "      if (r.ok) null;",
+        "dashboard",
+        "#reslights",
+    ),
+    (
         "throughput readout never fills in",
         "templates/dashboard.html",
         "  setText('tps-now', latest != null ? Number(latest).toFixed(1) : '—');",

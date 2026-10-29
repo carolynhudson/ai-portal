@@ -387,33 +387,6 @@
    testing. Its sections live here, collapsed: disk and GPU are read once, at page load,
    and say when; the CPU/memory chart is the one part with a real time signal, so it
    polls (docs/PORTAL_PLAN.md sec 6.13). #}
-<details class="card" id="machine-detail" style="margin-top:14px">
-  <summary>Machine detail <span class="mut">CPU · memory · disk · GPU</span></summary>
-  <div style="margin-top:10px">
-    <canvas id="machine-chart" width="1000" height="140"></canvas>
-    <div class="kv" style="margin-top:8px"><span class="k">CPU</span>
-      <span class="mono" id="machine-cpu">—</span>
-      <span class="mut" id="machine-polled">not polled yet</span></div>
-    <div class="kv"><span class="k">Memory</span><span class="mono" id="machine-mem">—</span></div>
-    <div class="kv"><span class="k">Load (1/5/15)</span><span class="mono" id="machine-load">—</span></div>
-    <div class="grid" style="margin-top:10px">
-      <div class="card">
-        <h3>Disk <span class="mut" id="disk-sampled">sampled {{ sampled }}</span></h3>
-        {% for d in disk %}
-        <div class="kv"><span class="k">{{ d[0] }}</span><span class="mono">{{ d[1] }}</span></div>
-        {% else %}
-        <div class="kv"><span class="mut">no mounts reported</span></div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <h3>GPU (best-effort) <span class="mut" id="gpu-sampled">sampled {{ sampled }}</span></h3>
-        <div class="mono">{{ gpu }}</div>
-        <div class="kv" style="margin-top:8px"><span class="k">live</span>
-          <span class="mono" id="machine-gpu">—</span></div>
-      </div>
-    </div>
-  </div>
-</details>
 
 {# ---- Tool Repository Update Status ---- #}
 <h2>Tool Repository Update Status</h2>
@@ -1066,54 +1039,6 @@ function every(ms, fn){
   document.addEventListener('visibilitychange', () => { if (!document.hidden) run(); });
 }
 
-// The machine detail panel is the one part of this page with a real time signal (the
-// CPU/memory chart), so it polls: 5 s, the cache age of the GPU numbers it shows, and
-// only while the panel is open. Disk and GPU at page load do not poll.
-const MACHINE_POLL_MS = 5000;
-const machineHist = []; const MACHINE_MAX = 90;
-let machineTimer = null;
-async function machineTick(){
-  try{
-    const r = await fetch('/api/metrics', {credentials:'same-origin'});
-    if (r.status === 401) { gotoInternal('/login'); return; }
-    const m = await r.json();
-    const cpu = m.cpu_percent ?? 0;
-    const mem = (m.memory && m.memory.percent) ?? 0;
-    machineHist.push({cpu, mem}); if (machineHist.length > MACHINE_MAX) machineHist.shift();
-    setText('machine-cpu', cpu.toFixed(1) + '%');
-    setText('machine-mem', mem.toFixed(1) + '% (' + (m.memory.used/1e9).toFixed(0) + '/'
-                       + (m.memory.total/1e9).toFixed(0) + ' GB)');
-    setText('machine-load', m.load['1'].toFixed(2) + ' / ' + m.load['5'].toFixed(2)
-                       + ' / ' + m.load['15'].toFixed(2));
-    setText('machine-polled', 'polled ' + new Date().toTimeString().slice(0, 8));
-    if (m.gpu && m.gpu.use_percent != null) setText('machine-gpu', m.gpu.use_percent + '%');
-    const cv = document.getElementById('machine-chart');
-    if (cv) {
-      const cx = cv.getContext('2d'), W = cv.width, H = cv.height;
-      cx.clearRect(0, 0, W, H);
-      const line = (data, color) => {
-        cx.beginPath(); cx.strokeStyle = color; cx.lineWidth = 2;
-        data.forEach((v, i) => { const x = i/(MACHINE_MAX-1)*W;
-          const y = H - (Math.min(v, 100)/100)*H; i ? cx.lineTo(x, y) : cx.moveTo(x, y); });
-        cx.stroke();
-      };
-      line(machineHist.map(h => h.cpu), '#5aa9ff');
-      line(machineHist.map(h => h.mem), '#d29922');
-    }
-  }catch(e){ /* keep the last good sample */ }
-}
-function startMachinePoll(){
-  if (machineTimer) return;
-  machineTimer = setInterval(() => {
-    const d = document.getElementById('machine-detail');
-    if (d && d.open && !document.hidden) machineTick();
-  }, MACHINE_POLL_MS);
-}
-(function(){
-  const d = document.getElementById('machine-detail');
-  if (!d) return;
-  d.addEventListener('toggle', () => { if (d.open) { machineTick(); startMachinePoll(); } });
-})();
 
 tick();
 every(_poll, tick);

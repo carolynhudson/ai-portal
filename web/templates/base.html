@@ -19,6 +19,16 @@ nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--
 nav .brand{font-weight:700;margin-right:auto}
 nav a{color:var(--fg)}
 nav a:hover{color:var(--acc)}
+/* Resource lights: healthy is QUIET grey - the light is the alarm, not a
+   decoration. RAM and DISK live in the nav so they are visible on every page
+   without opening anything; they light up only when the value is low. */
+.reslights{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--mut);white-space:nowrap}
+.reslights .rl{display:flex;align-items:center;gap:5px}
+.reslights .rl i{width:8px;height:8px;border-radius:50%;background:#3a414d;flex:none}
+.reslights .rl.warn{color:var(--warn)}
+.reslights .rl.warn i{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.reslights .rl.crit{color:var(--bad)}
+.reslights .rl.crit i{background:var(--bad);box-shadow:0 0 10px var(--bad)}
 main{padding:20px;max-width:1100px;margin:0 auto}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
@@ -101,6 +111,10 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   <a href="/projects">Projects</a>
   <a href="/settings">Settings</a>
   <a href="/help">Help</a>
+  <span class="reslights" id="reslights" role="status" aria-live="polite">
+    <span class="rl" id="rl-ram"><i></i><span>RAM —</span></span>
+    <span class="rl" id="rl-disk"><i></i><span>DISK —</span></span>
+  </span>
   <form method="post" action="/logout" style="margin:0">
     <button type="submit" class="ghost">Logout</button>
   </form>
@@ -277,6 +291,57 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   // instead of waiting up to 15 s, so the refusal in the dialog matches the bar
   // the operator looks at next.
   window.__portalPaintJob = pump;
+})();
+</script>
+
+<script>
+// Resource lights: the machine shouting when it is almost out of room.
+// Polls /api/metrics (server-side cache 10 s) on every page; text nodes only,
+// never markup. The thresholds are the point of the whole widget, so they are
+// named constants, and the tooltips carry the arithmetic.
+(function(){
+  const RAM_WARN = 12, RAM_CRIT = 6;     // % of RAM free (MemAvailable)
+  const DISK_WARN = 85, DISK_CRIT = 92;  // % of the filesystem used
+  const el = (id) => document.getElementById(id);
+  const box = el('reslights'); if (!box) return;
+  const g = (x) => (x / 1073741824).toFixed(0);
+  function set(id, cls, txt, tip){
+    const e = el(id); if (!e) return;
+    e.className = 'rl' + (cls ? ' ' + cls : '');
+    e.children[1].textContent = txt;
+    e.title = tip;
+  }
+  function paint(m){
+    const mem = m.memory;
+    if (mem && mem.total){
+      const freePct = 100 * mem.available / mem.total;
+      set('rl-ram', freePct < RAM_CRIT ? 'crit' : freePct < RAM_WARN ? 'warn' : '',
+          'RAM ' + g(mem.available) + ' G free',
+          'MemAvailable ' + g(mem.available) + ' of ' + g(mem.total) + ' G ('
+          + freePct.toFixed(0) + '% free) - warn under ' + RAM_WARN + '%, critical under ' + RAM_CRIT + '%');
+    }
+    const d = m.disk || {};
+    const ks = Object.keys(d).filter(k => d[k] && d[k].percent != null);
+    if (ks.length){
+      let worst = ks[0];
+      ks.forEach(k => { if (d[k].percent > d[worst].percent) worst = k; });
+      const w = d[worst];
+      set('rl-disk', w.percent >= DISK_CRIT ? 'crit' : w.percent >= DISK_WARN ? 'warn' : '',
+          'DISK ' + w.percent.toFixed(0) + '%',
+          ks.map(k => k + ': ' + d[k].percent.toFixed(0) + '% used, ' + g(d[k].free) + ' G free').join(' - ')
+          + ' - warn over ' + DISK_WARN + '%, critical over ' + DISK_CRIT + '% (worst mount shown)');
+    }
+  }
+  async function resTick(){
+    try{
+      const r = await fetch('/api/metrics', {credentials:'same-origin'});
+      if (r.ok) paint(await r.json());
+    }catch(e){ /* the lights keep the last truth */ }
+  }
+  const run = () => { if (!document.hidden) resTick(); };
+  run();
+  setInterval(run, 20000);
+  document.addEventListener('visibilitychange', run);
 })();
 </script>
 </body>

@@ -394,6 +394,24 @@ def test_states_that_cannot_be_measured_flow_instead_of_faking_progress():
         "reduced-motion users get a static bar, never a moving one"
 
 
+def test_the_machine_panel_is_gone_and_the_lights_are_always_on():
+    """Owner: the Machine detail panel is gone, but the portal must shout when
+    RAM or disk get dangerously low - visible with no click, no scroll, on
+    every page: the resource lights live in the nav, healthy is quiet grey,
+    and the light is the alarm."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    dash = (root / "web/templates/dashboard.html").read_text()
+    base = (root / "web/templates/base.html").read_text()
+    for gone in ("machine-detail", "machineTick", "machine-chart",
+                 "machineHist", "startMachinePoll"):
+        assert gone not in dash, f"the machine panel left {gone!r} behind"
+    assert 'id="reslights"' in base and "rl-ram" in base and "rl-disk" in base
+    assert "/api/metrics" in base, "the lights ride the cached metrics snapshot"
+    for thr in ("RAM_WARN = 12", "RAM_CRIT = 6", "DISK_WARN = 85", "DISK_CRIT = 92"):
+        assert thr in base, f"threshold {thr} must stay a named constant"
+    assert "aria-live" in base, "lighting up must also announce, not just glow"
+
+
 def test_the_chart_row_is_only_the_chart():
     """The generating number must not live beside the sparkline: its digit
     width shifting the canvas is exactly what kills the sense of motion, so

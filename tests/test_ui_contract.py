@@ -212,9 +212,11 @@ def test_dashboard_does_not_link_a_page_that_no_longer_exists(pages):
     html = pages["/"]
     assert 'href="/metrics"' not in html, (
         "the dashboard still links /metrics — the merge left a dead link behind")
-    assert 'id="machine-detail"' in html, (
-        "the dashboard has no machine detail section, so the merge left disk, GPU "
-        "and the chart with nowhere to live")
+    # 2026-10-28: the owner retired the Machine detail panel; its live role is
+    # the nav's resource lights (tests/test_hero.py pins the pair). The dead
+    # /metrics link guard above is the part of this contract that outlived it.
+    assert 'id="reslights"' in html, (
+        "the machine-detail panel is gone and no resource lights replaced it")
 
 
 def test_sdk_inventory_lives_in_the_gpu_tab():
@@ -467,21 +469,20 @@ def test_provider_accessors_are_typed_and_do_not_shadow_their_submodules():
     assert providers.get("nope") is None
 
 
-def test_the_static_metric_cards_say_when_they_were_sampled(pages):
-    """Disk and GPU in the dashboard's machine detail are rendered once, at page load.
-
-    A page headed "Live metrics" invites the reader to treat every number on it as
-    current. The polled cells prove their own freshness by moving; the two cards that
-    never move have no such cue, so a 20-minute-old disk figure and a wrong one are the
-    same sight. The fix is the sample time, printed with them.
-    """
+def test_the_dashboard_carries_no_unlabeled_static_metrics(pages):
+    """The old contract ("rendered-once numbers must print their sample time")
+    is satisfied by removing the rendered-once numbers: the machine detail
+    panel (disk/GPU cards at page load) was retired by the owner on
+    2026-10-28, and every resource number left on the page is polled - the
+    nav's lights by a 20 s loop, the heroes by their own. A page may not show
+    a fixed number that reads as live; a page showing no such number passes
+    by construction."""
     html = pages["/"]
-    stamps = re.findall(r"sampled\s*(\d{1,2}:\d{2}:\d{2})", html)
-    assert len(stamps) >= 2, (
-        "the Disk and GPU cards carry no sample time — a rendered-once number is "
-        "indistinguishable from a live one")
-    # The polled line labels itself as polled, so the two kinds of number read apart.
-    assert 'id="machine-polled"' in html, "the chart line does not report its poll time"
+    assert "sampled " not in html, (
+        "a rendered-once metric is back on the dashboard without a sample time "
+        "- label it, poll it, or take it out")
+    assert 'id="reslights"' in html, (
+        "the resource lights are the freshness-bearing replacement; they must exist")
 
 # ------------------------------------------------- what the polls are allowed to cost
 # Measured on this box (docs/PORTAL_PLAN.md sec 6.13): the router snapshot is 0.6 ms,
@@ -513,9 +514,15 @@ def test_the_dashboard_polls_only_what_moves_and_only_while_you_are_looking():
         "the huggingface-cli panel has no Check button, so its data is unreachable "
         "without a page reload")
     # The machine detail is the panel with a time signal; its poll is gated on the panel.
-    assert "d.open && !document.hidden" in tpl, (
-        "the machine-detail poll runs while the panel is closed — it is the only "
-        "reason the panel can say 'polled 12:03:11'")
+    # 2026-10-28: the machine detail panel (the one dashboard poll gated on an
+    # open panel) was retired by the owner. The dashboard must not poll
+    # /api/metrics again; the nav's resource lights poll it globally at a
+    # patient 20 s, visibility-guarded like every other loop on the portal.
+    assert "machineTick" not in tpl, "the retired machine panel's poll is back"
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert "setInterval(run, 20000)" in base, (
+        "the resource lights' global poll should stay patient (20 s), not per-second")
+    assert "document.hidden" in base, "the global strip must not poll background tabs"
 
 # --------------------------------------------------- locked before it has data
 def test_update_buttons_ship_locked_in_the_markup():

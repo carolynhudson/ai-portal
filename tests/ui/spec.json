@@ -67,10 +67,7 @@
         "#model-loaded",
         "#pulse-sub",
         "#tps-now",
-        "#machine-detail",
-        "#machine-cpu",
-        "#disk-sampled",
-        "#machine-chart",
+        "#reslights",
         "#router-census",
         "#census-state",
         "#census-workers",
@@ -377,6 +374,10 @@
         },
         {
           "selector": "#tps-now",
+          "matches": "\\d"
+        },
+        {
+          "selector": "#reslights",
           "matches": "\\d"
         },
         {

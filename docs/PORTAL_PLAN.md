@@ -6626,3 +6626,34 @@ verified against what it claims to touch:
   delete-then-add survives a custom name).
 * The `copy_from_halo` sources were confirmed on this box at the
   manifest's sizes (12.3 / 5.2 / 0.33 GB).
+
+##### 6.14.1q The Machine detail panel is gone; the nav gained resource lights (2026-10-28)
+
+Owner: retire the collapsed Machine detail panel, but the portal must
+*throw* a visible warning when the box nears running out of RAM or disk —
+visible without taking any action. The design follows the panel's flaw:
+it hid the machine's condition behind a click and painted its disk/GPU
+cards once at page load (the "sampled HH:MM:SS" contract tests existed to
+apologize for exactly that). The replacement needs no apology:
+
+* **The lights live in the nav** (base.html) — every page, visible on
+  load, no panel to open. Two items: `RAM n G free` (MemAvailable, the
+  same metric the fit gate uses) and `DISK n%` (the *worst* of root and
+  the ai filesystem).
+* **Healthy is quiet grey; the light is the alarm.** Warn: amber dot
+  glowing, RAM under 12% free / disk over 85% used. Critical: red glow,
+  RAM under 6% / disk over 92%. No green "all is well" noise — the eye
+  learns to ignore a light that always says fine. `aria-live` announces
+  state changes, the tooltip carries the arithmetic.
+* **It rides `/api/metrics`** (server cache 10 s) on a patient 20 s
+  global loop, visibility-guarded like every other loop on the portal.
+  Zero server changes — `memory()` was already MemAvailable-based and
+  `disk()` already covered both filesystems; the panel just never let
+  them speak.
+* The panel's JS, markup, and spec pins are gone; three contract tests
+  that pinned panel-era promises were re-homed honestly (the dead-`/metrics`-link
+  guard survives; "rendered-once numbers need sample times" now passes by
+  the numbers' absence; the poll-budget test asserts the dashboard never
+  re-acquires a metrics poll and the global strip stays at 20 s). A
+  mutation pair pins that the lights *keep* updating (a frozen alert is
+  the one that fails exactly when needed).
