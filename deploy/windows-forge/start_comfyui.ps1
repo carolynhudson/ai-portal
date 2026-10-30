@@ -1,5 +1,5 @@
 # start_comfyui.ps1 - the forge engine launcher (RainbowBlock.local)
-# Flags come from the portal's memory-efficiency contract (IMAGE_FORGE_PROPOSAL ?1):
+# Flags come from the portal's memory-efficiency contract (IMAGE_FORGE_PROPOSAL sec 1):
 #   --listen 0.0.0.0      LAN-reachable; the Windows firewall rule scopes 8188
 #                         INBOUND TO THE PORTAL BOX ONLY (firewall_forge.ps1) -
 #                         ComfyUI answers unauthenticated, the rule is the gate.

@@ -1,26 +1,8 @@
-At C:\forge\kit\install_forge.ps1:121 char:100
-+ ... d for " + $row.file + " (exit " + $LASTEXITCODE + "). If the repo is"
-+                                                                          ~
-Missing closing ')' in expression.
-At C:\forge\kit\install_forge.ps1:120 char:30
-+     if ($LASTEXITCODE -ne 0) {
-+                              ~
-Missing closing '}' in statement block or type definition.
-At C:\forge\kit\install_forge.ps1:108 char:23
-+ function Get-Hf($row) {
-+                       ~
-Missing closing '}' in statement block or type definition.
-At C:\forge\kit\install_forge.ps1:123 char:119
-+ ... ath $RootDir "venv\Scripts\hf.exe") + "`" auth login  - and re-run.")
-+                                                                         ~
-Unexpected token ')' in expression or statement.
-At C:\forge\kit\install_forge.ps1:124 char:5
-+     }
-+     ~
-Unexpected token '}' in expression or statement.
-At C:\forge\kit\install_forge.ps1:131 char:1
-+ }
-+ ~
-Unexpected token '}' in expression or statement.
-    + CategoryInfo          : ParserError: (:) [], ParseException
-    + FullyQualifiedErrorId : MissingEndParenthesisInExpression
+parse preflight: PowerShell System.Collections.Hashtable
+folder: C:\forge\kit
+Method invocation failed because [System.Management.Automation.PSParser] does not contain a method named 'ParseInput'.
+At C:\forge\kit\parse_check.ps1:47 char:5
++     [void][System.Management.Automation.PSParser]::ParseInput(
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MethodNotFound

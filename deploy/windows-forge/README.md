@@ -11,6 +11,7 @@ and run the scripts in order.
 | file | what |
 |---|---|
 | `model_files.json` | the single model inventory: `hf` rows (installer downloads), `hf_optional_gguf` (the ~4.6 GB Q4 RAM tier, `--IncludeGGUF`), `copy_from_halo` (SFTP them, don't re-download) |
+| `parse_check.ps1` | **run first.** Parses every `.ps1` in the folder with the real PowerShell parser, executing nothing; prints per-line parse errors and flags non-ASCII bytes. All three parse failures this kit died with on the target box (ANSI mojibake, a PS7 ternary, a multi-line `throw`) are visible here before an installer touches the disk |
 | `install_forge.ps1` | git, Python ≥3.10 (winget if missing), ComfyUI clone, ComfyUI-GGUF node, venv + CUDA torch, model downloads. Idempotent; normal user; internet required (~35 GB) |
 | `start_comfyui.ps1` | launches ComfyUI `--listen 0.0.0.0 --disable-smart-memory --preview-method none` (the portal's memory contract; `-LowVram` if needed) |
 | `firewall_forge.ps1` | **admin** (self-elevates): inbound 8188 allowed ONLY from the portal box `192.168.1.228` — ComfyUI has no auth, the rule is the gate |
@@ -33,6 +34,7 @@ and run the scripts in order.
    ```powershell
    cd C:\forge\kit
    Set-ExecutionPolicy -Scope Process Bypass -Force
+   .\parse_check.ps1                   # preflight: every file must say PARSE OK
    .\install_forge.ps1                 # add -IncludeGGUF for the Q4 RAM tier
    ```
    If it installs git or Python via winget, it stops — re-run to continue.

@@ -6719,3 +6719,76 @@ dense hero panes. The fix is borrowed recognition, honestly framed:
   the portal's Chromium with the real assets and the real head CSS,
   three phrasing variants plus the bare control — the owner chose
   "image forge" from the render.
+
+##### 6.14.1p+ The parse preflight ships in the kit (2026-10-29)
+
+The owner asked for the parse-check one-liner as a real file:
+`parse_check.ps1` now ships first in the kit's step list. It parses
+every `.ps1` beside it through the PowerShell parser
+(`PSParser::ParseInput`, reflection-only — executes nothing, works even
+on a box whose PowerShell install is sick), prints per-line parse
+errors, flags non-ASCII bytes, and exits with the count of failed
+files. All three parse deaths the kit suffered on RainbowBlock.local
+(ANSI mojibake, PS7 ternary, multi-line throw) are visible in seconds,
+before an installer touches the disk.
+
+A repo-side contract (`tests/test_windows_forge.py`) now keeps the
+kit's hard rules true for every future edit: pure-ASCII bytes, no
+PS7-only constructs, and the preflight present + wired into the README
+steps. The contract earned its keep on day one: it flagged a
+`IMAGE_FORGE_PROPOSAL ?1` fossil in `start_comfyui.ps1`'s header —
+a `§` an earlier ASCII pass had scrubbed to a bare `?`, legal ASCII
+that reads as mojibake. Fixed to `sec 1`. (README.md keeps typographic
+prose — UTF-8, viewed in browsers; the kit's byte rule governs the
+`.ps1` files 5.1 parses.)
+
+##### 6.14.1p++ The preflight's own first run failed (2026-10-29)
+
+The owner ran `parse_check.ps1` on RainbowBlock.local and it died:
+"PSParser does not contain a method named 'ParseInput'". True — the
+modern parse surface is
+`System.Management.Automation.Language.Parser::ParseInput` (v3+, so
+5.1); the legacy `PSParser` class has `Tokenize` only. Fixed, plus the
+two property-shape traps that ride along: `ParseError` carries
+`Extent.StartLineNumber`/`StartColumnNumber` (the legacy exception's
+`Token.StartLine` does not exist), and interpolating the whole
+`$PSVersionTable` in a string prints "System.Collections.Hashtable" —
+print `$($PSVersionTable.PSVersion)`. The script now calls the modern
+parser first with a `Tokenize` fallback in `catch`, and the contract
+test pins the exact API surface (the lesson lives in a test, not in
+folklore). Kit rule made explicit: `.ps1` files carry no `?`
+characters at all — that is what makes the fossil-net (a `§` scrubbed
+to `?` by an ASCII pass) safe to grep for.
+
+##### 6.14.1t The Windows box gets its own agent (2026-10-29)
+
+Owner's idea, and the right one: instead of the owner being the parse
+loop, opencode runs ON RainbowBlock and thinks with the Halo router
+over the LAN. Built as `deploy/windows-agent/`:
+
+* **The provider is declared, not predefined.** opencode ships no
+  llama.cpp provider and needs none — the router speaks the OpenAI
+  wire. `opencode.json` declares `llamarouter`
+  (`@ai-sdk/openai-compatible`, `baseURL http://192.168.1.228:8080/v1`,
+  placeholder apiKey — the router is unauthenticated LAN infrastructure
+  and carries no secret). The portal harness's own config on this box
+  is the template, retargeted from loopback to the static lease IP.
+* **The model list is a machine-safety artifact.** The agent gets the
+  small coders (Qwopus 3.5-4B default, DeepSeek-Coder-V2-Lite,
+  ThinkingCap-27B) that coexist with the resident model; the 84 GB
+  IQ3_S MoE — the controller's own brain — is absent from the config,
+  pinned by test: requesting it evicts the portal harness.
+* **`AGENTS.md` is the session/instructions**: mission (bring up the
+  forge, keep it up), kit steps, the hard rules earned by four failed
+  runs (ASCII, 5.1 syntax, one-line throw, Language.Parser, run
+  parse_check after every edit, never delete weights), and a
+  definition of done (`verify_forge.ps1` all PASS + `/system_stats`
+  answering).
+* **The router is already LAN-bound** (`ss`: `0.0.0.0:8080`; LAN
+  `/v1/models` answers 200) — no new exposure was created; the portal's
+  amber hero pill has said "open to LAN" all along. `check_agent_link.ps1`
+  proves reachability from Windows (TCP + model list) before any session.
+* Honest trade-offs: the agent's brain is a small coder (fast, and it
+  causes visible router model loads); deep reasoning stays in the
+  portal with the resident MoE. The kit lane stays alive in parallel:
+  tonight's install is one re-copy + the fixed preflight away.
