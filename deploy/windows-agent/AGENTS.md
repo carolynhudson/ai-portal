@@ -21,9 +21,16 @@ this GPU over HTTP.
    (the legacy `PSParser` class has `Tokenize` only).
 5. Run `.\parse_check.ps1` (in this folder) after EVERY edit to any `.ps1`,
    before running that file. It must print PARSE OK for every file.
-6. **Do not request the model** `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S`
-   - it is the 84 GB resident model of the portal's own harness; loading it
-   evicts the controller. The models in `opencode.json` are the safe ones.
+6. **The model physics of the router.** The router runs
+   `--models-max 1`: exactly ONE model is resident. The model in
+   `opencode.json` is that resident model - the same brain the portal
+   harness runs on - so your session costs no load and no swap. Any
+   OTHER catalog id you request forces the router to swap: unload the
+   resident (the portal controller's brain), load the request, minutes
+   of downtime for the portal. So: use the configured model, never
+   `/model` to anything else. The config is GENERATED (by
+   `tools/sync_agent_models.py` on the portal box) - if the owner swaps
+   the resident model, they regenerate it; you never edit it.
 7. **Never delete model weights** under `C:\forge\ComfyUI\models`. Disk is
    cheap here; deletion is the owner's call.
 8. Run scripts as `powershell -ExecutionPolicy Bypass -File .\<name>.ps1`.

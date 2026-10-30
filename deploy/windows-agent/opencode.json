@@ -9,34 +9,19 @@
         "apiKey": "local"
       },
       "models": {
-        "Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0": {
-          "name": "Qwopus 3.5 4B Coder (default: fast, coexists with the portal)",
+        "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S": {
+          "name": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S (resident: zero load)",
           "tool_call": true,
           "temperature": true,
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF:Q8_0": {
-          "name": "Qwopus 3.5 4B Coder MTP",
-          "tool_call": true,
-          "temperature": true,
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF:Q8_0": {
-          "name": "DeepSeek Coder V2 Lite (stronger, still coexists)",
-          "tool_call": true,
-          "temperature": true,
-          "limit": { "context": 32768, "output": 8192 }
-        },
-        "bottlecapai/ThinkingCap-Qwen3.8-27B-GGUF:Q4_K_M": {
-          "name": "ThinkingCap 27B (reasoner, heavier load)",
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          },
           "reasoning": true,
-          "interleaved": "reasoning_content",
-          "tool_call": true,
-          "temperature": true,
-          "limit": { "context": 32768, "output": 8192 }
+          "interleaved": "reasoning_content"
         }
       }
     }
   },
-  "model": "llamarouter/Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0"
+  "model": "llamarouter/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S"
 }

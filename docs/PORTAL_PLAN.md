@@ -6792,3 +6792,36 @@ over the LAN. Built as `deploy/windows-agent/`:
   causes visible router model loads); deep reasoning stays in the
   portal with the resident MoE. The kit lane stays alive in parallel:
   tonight's install is one re-copy + the fixed preflight away.
+
+##### 6.14.1t+ The owner overruled the model picks, correctly (2026-10-29)
+
+Two challenges to the agent kit, both right:
+
+* **"Why cap the context?"** The 32k limits were my guesses - and a
+  cap is not cosmetic: opencode compacts the agent's context when it
+  nears the declared limit, so an invented cap degrades the agent on a
+  model with a native 262k window.
+* **"Why not the model you run on?"** My eviction story was inverted:
+  the resident model is already loaded - requesting it costs *zero*
+  switching. The router report settled the physics: `--models-max 1`,
+  one worker, `/props` `max_instances: 1`. Any NON-resident id is a
+  swap (unload the portal controller's brain, load the request, minutes
+  of recovery) - so the small coders I hand-picked were not "safe
+  fallbacks", they were loaded swap-triggers. The owner's workflow
+  closes the last objection (KV contention): the agent runs while the
+  portal chat is idle, and the owner returns with the report.
+
+The fix is structural, not editorial: `tools/sync_agent_models.py`
+GENERATES `opencode.json` from the live router - resident id (the
+worker's `--hf-repo`), context (presets.ini, then the worker's
+`--ctx-size`, then native for the Swift family), capability flags,
+aliases - and refuses to guess when the router is down. The config now
+lists exactly one model (the resident 262k Swift, generated at
+2026-10-29T19:06), and the contract tests pin the physics: one model
+only, context native-scale, no hand-listed favorites
+(IQ1_M/Qwopus/DeepSeek/ThinkingCap), and the config must equal what is
+actually resident in `ps`. AGENTS.md rule 6 and the README trade-offs
+were rewritten to the same truth: opencode does not auto-discover
+(docs confirm the explicit `models` block is the contract for custom
+providers), so the list is generated, never hand-typed - "regenerate,
+never hand-edit".
