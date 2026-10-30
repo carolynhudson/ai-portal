@@ -6825,3 +6825,24 @@ were rewritten to the same truth: opencode does not auto-discover
 (docs confirm the explicit `models` block is the contract for custom
 providers), so the list is generated, never hand-typed - "regenerate,
 never hand-edit".
+
+##### 6.14.1u The image forge is live (2026-10-30)
+
+The Windows agent finished its mission; the portal verified from its own
+side (`~/ai/logs/forge-verify-20261030.txt`): ComfyUI 0.43.0 on
+`RainbowBlock.local:8188`, **RTX 2080 Ti (11 GiB, cudaMallocAsync)**,
+pytorch 2.14.1+cu130 — the whole install arc that began with three
+PowerShell parse deaths is now a running CUDA engine. Inventory as
+specified: the bring-up trio (z-image-turbo bf16 + qwen3vl-4B fp8 TE +
+ae VAE) copied from the Halo box, plus the int8_convrot fast tier
+(qwen-image-2.1 base + turbo, qwen3vl-8B int8 TE, qwen VAE). One gap:
+the ComfyUI-GGUF custom node is absent (1025 node types, zero GGUF) —
+so the Q4_K_M RAM tier is not loadable; a one-command agent follow-up
+(clone city96's pinned repo into `custom_nodes`, pip install its
+requirements, restart) closes it. Not blocking: the installed int8 tier
+is the fast path the proposal favored for this card.
+
+Next: forge MCP P0 (the portal drives generation over HTTP — the
+proposal's §5 slice), now unblocked; its workflow builder gets seeded
+from the box's own z-image-turbo template JSON, so the graph is the
+official one, not invented.
