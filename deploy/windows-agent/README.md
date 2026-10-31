@@ -70,6 +70,38 @@ absent, see below). The Desktop app and the TUI read the same config.
   `opencode.json`. A hand-typed model id in this config is a
   future swap.
 
+## Reading what the Halo box learned (the KB door)
+
+The portal serves its knowledge base as an MCP door over HTTP
+(`docs/MESH_PROPOSAL.md`). The Windows box is the second machine to hold a
+key, and the first one to be able to skip lessons already paid for.
+
+1. On the **Halo box**, issue an identity for this one:
+   ```bash
+   python3 tools/issue_agent_token.py rainbowblock-forge --machine RainbowBlock.local
+   ```
+   The token is printed **once** (the portal stores its hash); the command
+   prints the `mcp` block ready to paste, token included.
+2. Paste that block into `opencode.json` — `opencode.json` in this folder
+   is the shape, with the token left as a placeholder because **secrets
+   never live in kit files**:
+   ```json
+   "mcp": {
+     "halo-kb": {
+       "type": "remote",
+       "url": "http://192.168.1.228:8090/mcp",
+       "headers": { "Authorization": "Bearer <token from the command above>" }
+     }
+   }
+   ```
+3. `AGENTS.md`'s boot etiquette then applies: `kb_search` before
+   improvising, cite refs, record one durable fact per fix, never write a
+   secret. A read identity sees four tools; `memory_remove` is on no token.
+
+Rotate by revoking (`python3 -c "from app.core.agents import revoke; print(revoke('rainbowblock-forge'))"`)
+and re-issuing; `last_seen` on the portal shows when the identity last
+passed through the door.
+
 ## Files
 
 | file | what |

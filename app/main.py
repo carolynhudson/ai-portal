@@ -39,6 +39,7 @@ from .core import (
     harnessupd,
     health,
     kb,
+    kb_http,
     llamakey,
     logsetup,
     model_config,
@@ -1065,6 +1066,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no documented section {ref!r}")
         return {"id": s["id"], "doc": s["doc"], "title": s["title"], "level": s["level"],
                 "html": kb.render_markdown(s["body"])}
+
+    # The mesh door (docs/MESH_PROPOSAL.md, phase P0): the portal's memory MCP
+    # over HTTP, so a machine that is not this one can read what this one
+    # learned. Identities are app/core/agents.py, the policy is
+    # app/core/kb_http.py, and the protocol is kb_mcp.handle - the same
+    # handler the stdio server runs, so the two doors cannot drift.
+    @app.api_route("/mcp", methods=["GET", "POST"])
+    async def mcp_door(request: Request):
+        return kb_http.handle_request(request, await request.body())
 
     @app.get("/api/status")
     def api_status(_=Depends(_require_auth)):

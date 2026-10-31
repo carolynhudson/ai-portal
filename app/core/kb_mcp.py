@@ -148,8 +148,12 @@ def call_tool(name: str, args: dict) -> dict:
     """One tool call, portal-side. Raises on unknown names; tool refusals return isError."""
     if name == "kb_search":
         rows = kb.search(str(args.get("query") or ""), limit=int(args.get("limit") or 8))
-        return _result([{"ref": r.get("ref"), "title": r.get("title"),
-                         "excerpt": r.get("excerpt")} for r in rows])
+        # The address a section is cited by is its `id` (kb.find accepts it). The
+        # row has no "ref" key: mapping one here used to hand every agent a
+        # citation of null while the tool text said "cite the ref" - found by
+        # the mesh door's acceptance test, 2026-10-30.
+        return _result([{"ref": r.get("id"), "title": r.get("title"),
+                         "doc": r.get("doc"), "excerpt": r.get("excerpt")} for r in rows])
     if name == "kb_read":
         sec = kb.find(str(args.get("ref") or ""))
         if sec is None:

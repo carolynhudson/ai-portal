@@ -35,6 +35,28 @@ this GPU over HTTP.
    cheap here; deletion is the owner's call.
 8. Run scripts as `powershell -ExecutionPolicy Bypass -File .\<name>.ps1`.
 
+## Boot etiquette (do this before touching anything)
+
+You are not the first machine to work on this system, and the Halo portal
+remembers what it learned. Start from that memory, and add to it:
+
+1. **Search before you invent.** `kb_search` for the task's nouns
+   (for a PowerShell problem: `powershell ASCII parser`), and
+   `memory_recent` for what the last sessions recorded. The lessons that
+   cost four install runs are in there; citing a ref beats rediscovering it.
+2. **Cite, don't paraphrase.** KB answers arrive with a `ref`;
+   `kb_read` it before acting on a summary.
+3. **Write one durable fact, not a transcript.** After a fix that a future
+   machine would otherwise re-derive, `memory_add` it: what broke, the
+   cause, the fix, the tag. Say which machine you are on in the `source`.
+4. **Never write a secret.** Tokens, passwords, key-file contents. The door
+   refuses them; do not test it.
+
+The door is the portal's MCP over HTTP (`halo-kb` in your `opencode.json`,
+issued on the portal's Settings page as an identity for this box). A read
+identity can search and read; a write identity can also record.
+`memory_remove` is on no token — forgetting is the portal's job.
+
 ## Steps (the kit is in this folder; its README.md has the full detail)
 
 1. `.\parse_check.ps1` - all files must PARSE OK. If a file fails to

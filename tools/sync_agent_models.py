@@ -52,7 +52,14 @@ def preset_ctx(model_id: str) -> int | None:
 
 
 def build_config(models: dict[str, dict]) -> dict:
-    """The opencode.json payload from built model entries {catalog_id: entry}."""
+    """The opencode.json payload from built model entries {catalog_id: entry}.
+
+    The `mcp` block is generated too, with the token left as a placeholder:
+    secrets never live in kit files, and a hand-added block would vanish on
+    the next regeneration. The owner pastes the real token from
+    tools/issue_agent_token.py; opencode tolerates a placeholder MCP server
+    (it shows as failed) and the README says to paste it.
+    """
     first = sorted(models)[0]
     return {
         "$schema": "https://opencode.ai/config.json",
@@ -63,6 +70,13 @@ def build_config(models: dict[str, dict]) -> dict:
                 "options": {"baseURL": "http://192.168.1.228:8080/v1",
                             "apiKey": "local"},
                 "models": models,
+            }
+        },
+        "mcp": {
+            "halo-kb": {
+                "type": "remote",
+                "url": "http://192.168.1.228:8090/mcp",
+                "headers": {"Authorization": "Bearer PASTE-TOKEN-FROM-Settings-Agents"},
             }
         },
         "model": "llamarouter/" + first,

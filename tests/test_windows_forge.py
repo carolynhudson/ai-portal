@@ -183,3 +183,18 @@ def test_the_link_checker_is_5_1_safe():
         assert not m, f"link checker: PS7-only construct {m.group(0)!r}"
     assert "${portal}" in text, "bare '$portal:' in a string is the drive-qualifier trap"
     assert "Test-NetConnection" in text and "Invoke-RestMethod" in text
+
+
+def test_the_agent_config_carries_the_kb_door_and_no_secret():
+    """The generated config must include the mesh door (so regeneration never
+    silently drops it) with the token left as the literal placeholder: a real
+    token in a kit file is a credential in the repo, and the kit is copied
+    around by hand."""
+    cfg = json.loads((AGENT / "opencode.json").read_text())
+    door = cfg["mcp"]["halo-kb"]
+    assert door["type"] == "remote"
+    assert door["url"] == "http://192.168.1.228:8090/mcp"
+    auth = door["headers"]["Authorization"]
+    assert auth.startswith("Bearer ")
+    assert auth == "Bearer PASTE-TOKEN-FROM-Settings-Agents", (
+        "a kit config carries a placeholder, never a live token")

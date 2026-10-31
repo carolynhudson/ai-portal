@@ -101,6 +101,13 @@ CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN
   INSERT INTO memory_fts(memory_fts, rowid, text, tags) VALUES ('delete', old.id, old.text, old.tags);
   INSERT INTO memory_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
 END;
+-- Mesh identities (MESH_PROPOSAL.md P0): the name behind a KB request. The token
+-- is stored hashed and shown once (app/core/agents.py); `scopes` is the door's
+-- policy, and a revoked row is kept for the audit trail rather than deleted.
+CREATE TABLE IF NOT EXISTS agents (
+  name TEXT PRIMARY KEY, machine TEXT, scopes TEXT, token_hash TEXT UNIQUE,
+  status TEXT, created_at REAL, last_seen REAL
+);
 """
 
 
