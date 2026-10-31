@@ -46,6 +46,7 @@ DOC_ORDER = [
     ("PORTAL_POLISH.md", "Design and workflow debt — the operator's list, measured, with proposed shapes"),
     ("IMAGE_FORGE_PROPOSAL.md", "Image forge — the agent-facing image toolbox proposal, measured ground and design"),
     ("REMOTE_COMPUTE_PROPOSAL.md", "Remote compute — borrowed machines as protected model backends (relay contract, etiquette, tournaments)"),
+    ("MESH_PROPOSAL.md", "The HALO mesh — shared knowledge for every connected machine (KB door, identities, quarantine, visibility)"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")

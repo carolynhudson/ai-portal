@@ -6846,3 +6846,45 @@ Next: forge MCP P0 (the portal drives generation over HTTP — the
 proposal's §5 slice), now unblocked; its workflow builder gets seeded
 from the box's own z-image-turbo template JSON, so the graph is the
 official one, not invented.
+
+##### 6.14.1v The mesh proposal: HALO as shared knowledge for every machine (2026-10-30)
+
+Owner asked whether HALO should be the shared repository and knowledge
+base for all connected machines, and how agents can see each other's
+work. Answer: **yes for knowledge, git for code** — `docs/MESH_PROPOSAL.md`,
+registered in the KB corpus so the agents it governs can search it.
+
+The case study that decides it: the Windows agent paid **four install runs**
+re-deriving the PowerShell parse lessons (Language.Parser, ASCII, 5.1
+syntax) that the KB recorded the day they were learned. The store, the
+FTS, the audit, the search tools all exist (`kb_mcp.py`, `memory.py`,
+events) — what is missing is a **door** (the MCP server is stdio, a child
+of this box's harness, so a second machine cannot reach it) and
+**identities** (`memory.source` is a string an agent types about itself).
+
+Design, in four layers, with the phases to match:
+
+* **The door** — MCP over HTTP at `/mcp`, loopback-bound behind the
+  portal's own auth, reusing the LAN-pin discipline proven on `8188` and
+  `4096`. `kb_mcp.py` stays stdio: the harness's child must stay
+  dependency-free. One transport, two policies (reads free, writes gated).
+* **Identity** — an `agent` table: issued tokens shown once, stored hashed,
+  scoped `read`/`write`, revocable, with `last_seen`. Provenance stops
+  being self-reported text.
+* **Trust — the quarantine tier.** An agent that can write into the store
+  that grounds my answers can poison me, so remote writes land `pending`:
+  searchable, flagged, promoted by a portal session or the owner, with the
+  promotion itself audited. Credentials stay a hard red line — writes are
+  scanned for the shapes this box already protects and refused with a
+  reason. The journal remains curated: agents propose, portal sessions write.
+* **Visibility** — no new recording, only new reading: a Status-page feed
+  (memories by agent, journal sections, sessions per machine, liveness) and
+  a machine-ownership column on the Projects page.
+
+Owner chose the full-collaboration scope. Five decisions (read-scope
+default, auto-promotion, feed placement, MacBook timing, fleet size) are
+listed in the proposal for the owner to rule on; the partner MacBook is
+deliberately sequenced **after** the relay proposal's consent checklist —
+consent before connectivity. Phase P0 (door + identities, read-only) is the
+first build: acceptance is the Windows agent answering a `.ps1` question
+from the KB, citing a ref, having written nothing.
