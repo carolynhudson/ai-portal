@@ -7006,3 +7006,18 @@ Round 2 (same day, the owner's eye at work): three findings, all shipped.
   panel tone). Shipped amplitudes: light .04 (11.5, cap 12), dark .09 (3.2),
   average drift 1.7 — packed texture, one banner. The hero radials stay
   pending the owner's look.
+
+Round 3 (same day): the hero panels. The 150x80 mark-corner radial was dead
+art — it rendered under the visible threshold, and the owner's honest report
+was "I don't see anything, so I have no opinion." It is replaced by the
+banner's moiré at **strictly lower amplitude** (light .03 → tone 8.6, dark
+.07 → 2.5; the banner is .04/.09), anchored to the panel's top and bottom
+edges so the arcs run gentlest there and the dense mid-band sees slow,
+near-straight fringes — the owner's caution ("highest density of
+information") honored by amplitude *and* geometry. CI pins the hierarchy:
+hero alphas strictly under the banner's, tone cap 12, drift under 30% of
+the gap, and the dead radial banned from returning. Legibility witnessed at
+device scale: mono numerals, sparkline labels and attention text crisp over
+the fringes. The dead-radial lesson generalizes: **an effect below the
+visible threshold cannot be judged — ship it visible enough to have an
+opinion about, bounded by measurement.**
