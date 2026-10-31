@@ -6988,3 +6988,21 @@ The round-trip that made it honest:
 
 Witness: `~/ai/logs/portal-backgrounds-20261030/shipped-live.png` (the
 deployed service, no injection).
+
+Round 2 (same day, the owner's eye at work): three findings, all shipped.
+
+* **The clipped corner circle.** A halo centered on ONE tile corner renders
+  only its in-tile quadrant; the rest falls off the tile, so tiling left
+  quarter-arcs that never close. The tile now draws the corner halo at all
+  four corners, and CI pins the rule (`test_a_corner_halo_is_drawn_at_all_four_corners`).
+* **The banner is opaque.** `nav` paints --panel, so the canvas tile never
+  reached it — that is why "the shared top menu banner" showed nothing.
+  The owner supplied the design: two sets of sinusoidal light/dark rings,
+  offset, beating a packed moiré. Shipped as two `repeating-radial-gradient`
+  layers (one centered on the brand, one off the right end; 26px period,
+  half-period light/dark offset).
+* **The tone rule referees the moiré too** — and caught my arithmetic on
+  its first run (122−23 = 99, not 88: .08 alpha composited 23.0 from the
+  panel tone). Shipped amplitudes: light .04 (11.5, cap 12), dark .09 (3.2),
+  average drift 1.7 — packed texture, one banner. The hero radials stay
+  pending the owner's look.
