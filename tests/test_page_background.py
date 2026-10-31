@@ -105,6 +105,30 @@ def test_the_served_tile_exists_and_tiles_square():
         "a non-square tile shows its seams"
 
 
+def test_a_corner_halo_is_drawn_at_all_four_corners():
+    """A circle centered on ONE tile corner renders only its in-tile
+    quadrant; the other three quadrants fall off the tile and tiling leaves
+    quarter-arcs that never close (the owner saw "a clipped circle in one
+    corner"). The seam-free form: draw the circle at every corner, so the
+    four quadrants meet at each tiling junction and close the circle."""
+    svg = TILE.read_text()
+    W = H = float(re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg).group(1))
+    corners = {(0.0, 0.0), (W, 0.0), (0.0, H), (W, H)}
+    at_corner: dict[tuple, set] = {}
+    for tag in re.finditer(r"<circle\b[^>]*/?>", svg):
+        t = tag.group(0)
+        g = lambda k, d="0": re.search(k + r'="([^"]+)"', t).group(1) if re.search(k + r'="([^"]+)"', t) else d
+        cx, cy, r = float(g("cx")), float(g("cy")), float(g("r"))
+        if (cx, cy) not in corners:
+            continue
+        key = (r, g("stroke").lower(), g("opacity"), g("stroke-width"))
+        at_corner.setdefault(key, set()).add((cx, cy))
+    for key, spots in at_corner.items():
+        assert spots == corners, (
+            f"corner halo r={key[0]} is drawn at {sorted(spots)} - a corner "
+            "circle needs all four corner copies to tile into a full circle")
+
+
 def test_the_tile_average_tone_stays_in_the_canvases_space():
     """The owner's rule as arithmetic: hue free, the tile's average tone
     close enough to the canvas that it never falls into the panel's space."""
@@ -143,3 +167,40 @@ def test_base_wires_the_background_and_the_picked_treatments():
     assert "nav .brand::before" in BASE_HTML, "the owner picked the brand halo"
     assert ".router-hero{background-image:radial-gradient" in BASE_HTML, \
         "the owner picked the hero radial"
+
+
+def test_the_banner_moire_stays_in_the_banners_tone_space():
+    """The owner's moiré (two ring sets, light + dark, offset) is amplitude-
+    bounded by the same tone rule that governs the tile, measured from the
+    panel tone the banner is painted on:
+
+      * each ring stop composites within AMAX of the panel tone (light rings
+        brighten, dark rings darken; nothing lands on the canvas tone, which
+        would read as a hole punched in the banner);
+      * the sets' average drift stays under 30% of the canvas->panel gap, so
+        the packed pattern beats a texture, not a tinted banner.
+    """
+    m = re.search(r"nav\{[^}]*background-image:(.*?)\}\s*\n", BASE_HTML, re.S)
+    assert m, "the banner moiré is the owner's design; without it the nav is flat"
+    css = m.group(1)
+    assert css.count("repeating-radial-gradient") == 2, \
+        "moiré needs TWO ring sets - one set is rings, not interference"
+    amax = 12.0
+    stops = []
+    for rgba in re.finditer(r"rgba\((\d+),(\d+),(\d+),([0-9.]+)\)", css):
+        col = tuple(int(rgba.group(i)) for i in (1, 2, 3))
+        a = float(rgba.group(4))
+        comp = tuple(c * a + p * (1 - a) for c, p in zip(col, PANEL))
+        stops.append((col, a, comp))
+    assert len(stops) >= 4, "each set needs a light and a dark stop"
+    for col, a, comp in stops:
+        d = math.dist(comp, PANEL)
+        assert d <= amax, f"stop rgba{col} a={a} composites {d:.1f} from the panel tone"
+        assert math.dist(comp, BG) > 3.0, \
+            f"stop rgba{col} a={a} lands on the canvas tone: a hole in the banner"
+    avg = tuple(sum(c[i] for _col, _a, c in stops) / len(stops) for i in range(3))
+    drift = math.dist(avg, PANEL)
+    assert drift <= 0.30 * GAP, (
+        f"the rings' average tone drifts {drift:.1f} from the panel tone; the "
+        "banner stops reading as one banner past "
+        f"{0.30 * GAP:.1f}")

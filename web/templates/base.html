@@ -26,6 +26,22 @@ nav .brand{position:relative}
 nav .brand::before{content:"";position:absolute;left:-13px;top:50%;transform:translateY(-50%);
   width:52px;height:52px;border-radius:50%;
   background:radial-gradient(circle,rgba(90,169,255,.18),transparent 70%)}
+/* The banner moiré (owner's design, 2026-10-31): two sets of sinusoidal
+   rings - light (#acc) and dark (shadow) - one centered on the brand, one
+   riding off the right end, half-period offsets so light meets dark and
+   the two sets beat a packed, slow fringe pattern across the strip. The
+   nav is opaque --panel and the canvas tile never reaches it, so the
+   banner gets its own texture. Amplitude is tone-bounded in CI
+   (tests/test_page_background.py): light ~11.5 (cap) / dark ~3.2 from the panel
+   tone, average drift ~2 - the banner keeps reading as one banner. */
+nav{background-color:var(--panel);background-repeat:no-repeat;
+  background-image:
+    repeating-radial-gradient(circle at 28px 50%,
+      rgba(122,185,255,.04) 0 2px, transparent 2px 13px,
+      rgba(4,8,14,.09) 13px 15px, transparent 15px 26px),
+    repeating-radial-gradient(circle at calc(100% + 60px) 50%,
+      rgba(122,185,255,.04) 0 2px, transparent 2px 13px,
+      rgba(4,8,14,.09) 13px 15px, transparent 15px 26px)}
 /* Hero cards open with a faint halo at the mark corner. The tile geometry and
    this gradient are tone-checked in tests/test_page_background.py: the owner's
    rule is hue free, average tone close to the surface it covers, so surfaces
