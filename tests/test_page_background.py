@@ -165,8 +165,15 @@ def test_base_wires_the_background_and_the_picked_treatments():
     assert "url(/static/portal-bg.svg) fixed" in BASE_HTML, (
         "the tile must ride the viewport (fixed), not scroll across the gutters")
     assert "nav .brand::before" in BASE_HTML, "the owner picked the brand halo"
-    assert ".router-hero{background-image:radial-gradient" in BASE_HTML, \
-        "the owner picked the hero radial"
+
+
+def _css_stops(css: str):
+    out = []
+    for rgba in re.finditer(r"rgba\((\d+),(\d+),(\d+),([0-9.]+)\)", css):
+        col = tuple(int(rgba.group(i)) for i in (1, 2, 3))
+        a = float(rgba.group(4))
+        out.append((col, a))
+    return out
 
 
 def test_the_banner_moire_stays_in_the_banners_tone_space():
@@ -187,9 +194,7 @@ def test_the_banner_moire_stays_in_the_banners_tone_space():
         "moiré needs TWO ring sets - one set is rings, not interference"
     amax = 12.0
     stops = []
-    for rgba in re.finditer(r"rgba\((\d+),(\d+),(\d+),([0-9.]+)\)", css):
-        col = tuple(int(rgba.group(i)) for i in (1, 2, 3))
-        a = float(rgba.group(4))
+    for col, a in _css_stops(css):
         comp = tuple(c * a + p * (1 - a) for c, p in zip(col, PANEL))
         stops.append((col, a, comp))
     assert len(stops) >= 4, "each set needs a light and a dark stop"
@@ -204,3 +209,32 @@ def test_the_banner_moire_stays_in_the_banners_tone_space():
         f"the rings' average tone drifts {drift:.1f} from the panel tone; the "
         "banner stops reading as one banner past "
         f"{0.30 * GAP:.1f}")
+
+
+def test_the_hero_panels_carry_the_moire_quietly():
+    """The hero panels are the densest information on the site (owner,
+    2026-10-31), so their texture is the banner's moiré at STRICTLY lower
+    amplitude, anchored to the panel edges so the arcs stay gentle across
+    the text band, and measured by the same tone rule."""
+    m = re.search(r"\.router-hero\{background-image:(.*?)\}\s*\n", BASE_HTML, re.S)
+    assert m, "the hero panels carry the moiré (the dead 150x80 radial is gone)"
+    css = m.group(1)
+    assert css.count("repeating-radial-gradient") == 2, "moire = two ring sets"
+    assert "radial-gradient(150px" not in BASE_HTML, \
+        "the dead radial must not come back: it rendered below the visible threshold"
+    stops = []
+    for col, a in _css_stops(css):
+        comp = tuple(c * a + p * (1 - a) for c, p in zip(col, PANEL))
+        stops.append((col, a, comp))
+    assert len(stops) == 4, "light + dark per set"
+    for col, a, comp in stops:
+        assert math.dist(comp, PANEL) <= 12.0, f"stop rgba{col} a={a} over the tone cap"
+    hero_alphas = {col: a for col, a, _c in stops}
+    nav = re.search(r"nav\{[^}]*background-image:(.*?)\}\s*\n", BASE_HTML, re.S).group(1)
+    nav_alphas = {col: a for col, a in _css_stops(nav)}
+    for col, a in hero_alphas.items():
+        assert a < nav_alphas[col], (
+            f"rgba{col} a={a}: the hero band is denser than the banner - its "
+            "texture must stay quieter than the banner's")
+    avg = tuple(sum(c[i] for _c, _a, c in stops) / len(stops) for i in range(3))
+    assert math.dist(avg, PANEL) <= 0.30 * GAP, "hero texture drifts the panel tone"
