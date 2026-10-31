@@ -14,12 +14,23 @@
 <style>
 :root{--bg:#0e1116;--panel:#171c24;--fg:#e6e9ef;--mut:#8b95a7;--acc:#5aa9ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--line:#232a35}
 *{box-sizing:border-box}
-body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg) url(/static/portal-bg.svg) fixed;color:var(--fg)}
 a{color:var(--acc);text-decoration:none}
 nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
 nav .brand{font-weight:700;margin-right:auto;display:flex;align-items:center;gap:9px;letter-spacing:.06em}
 nav a{color:var(--fg)}
 nav a:hover{color:var(--acc)}
+/* The brand halo: a soft opening behind the HALO mark, rhyming with the
+   mark's own ring. It sits behind the mark glyph, never under the links. */
+nav .brand{position:relative}
+nav .brand::before{content:"";position:absolute;left:-13px;top:50%;transform:translateY(-50%);
+  width:52px;height:52px;border-radius:50%;
+  background:radial-gradient(circle,rgba(90,169,255,.18),transparent 70%)}
+/* Hero cards open with a faint halo at the mark corner. The tile geometry and
+   this gradient are tone-checked in tests/test_page_background.py: the owner's
+   rule is hue free, average tone close to the surface it covers, so surfaces
+   never visually merge and text edges stay crisp. */
+.router-hero{background-image:radial-gradient(150px 80px at 28px 24px,rgba(90,169,255,.10),transparent 70%)}
 /* Resource lights: healthy is QUIET grey - the light is the alarm, not a
    decoration. RAM and DISK live in the nav so they are visible on every page
    without opening anything; they light up only when the value is low. */
