@@ -1,7 +1,8 @@
 # The HALO mesh — shared knowledge for every connected machine
 
-Status: **proposal, owner-approved in direction (2026-10-30, "full collaboration")**.
-No code shipped for this slice yet. Measured ground below is current.
+Status: **owner-approved in direction (2026-10-30, "full collaboration");
+P0 shipped and live 2026-10-30 (§6.14.1w)** — door + identities, read-only.
+P1–P3 not built. Measured ground below is current.
 
 ## 1. The ask
 
@@ -96,10 +97,20 @@ Knowledge stays in the portal; code stays git. Pushes to `ai-portal`'s own
 
 ## 4. Phases
 
-* **P0 — the door + identities.** `/mcp` endpoint, `agent` table, Settings
-  issuance UI, Windows `opencode.json` gains the `mcp` block, read tools
-  only. Acceptance: the Windows agent answers "how do I patch a .ps1 here"
-  from the KB, citing a ref, with zero writes.
+* **P0 — the door + identities. SHIPPED 2026-10-30 (§6.14.1w), read-only,
+  live.** The door is `/api/mcp` (a JSON API, so it lives in the `/api/`
+  family; the page census caught `/mcp` and the census won). `agent` table +
+  `app/core/agents.py`: tokens shown once, hashed, scoped, revocable,
+  `last_seen`. Issuance runs as `tools/issue_agent_token.py`, which prints
+  the paste-ready `mcp` block; the generated `opencode.json` carries that
+  block with a literal placeholder token (secrets never live in kit files)
+  — a Settings issuance UI is a nicer skin over the same table, still open.
+  Measured: read token → four tools, citable `kb_search` refs, `memory_add`
+  refused naming the scope, zero writes. The Windows agent's own run of the
+  acceptance (it asks, cites, writes nothing) is the remaining witness.
+  Side effect: the acceptance test found a shipped defect — `kb_search`
+  handed every agent `ref: null` because it mapped a key `kb.search` never
+  emitted; citations now carry the section id.
 * **P1 — quarantine writes.** `status` column, write scope, secret-shape
   refusal, promote/reject in the UI. Acceptance: a remote write is visible
   as pending, searchable, flagged, and promoting it is an audited event.
@@ -112,7 +123,8 @@ Knowledge stays in the portal; code stays git. Pushes to `ai-portal`'s own
 ## 5. Decisions for the owner
 
 1. **Read scope default**: any issued token gets `read` (documents are
-   non-secret) — yes/no?
+   non-secret) — yes/no? *P0 shipped with this behavior (`--scopes` defaults
+   to `read`); rule to confirm or change.*
 2. **Auto-promotion**: portal-session writes self-promote; remote-agent
    writes always land `pending` — yes/no?
 3. **Feed placement**: Status page card (always visible, costs a poll) vs a

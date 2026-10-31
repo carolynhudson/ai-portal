@@ -6888,3 +6888,66 @@ deliberately sequenced **after** the relay proposal's consent checklist —
 consent before connectivity. Phase P0 (door + identities, read-only) is the
 first build: acceptance is the Windows agent answering a `.ps1` question
 from the KB, citing a ref, having written nothing.
+
+##### 6.14.1w Mesh P0 ships: the KB grows an HTTP door and identities (2026-10-30)
+
+The door and the names, read-only, live. Four pieces:
+
+* **`app/core/agents.py`** — an identity is a slug (`rainbowblock-forge`),
+  a token, scopes, a status. The token is `secrets.token_urlsafe(32)`,
+  printed **once** by `tools/issue_agent_token.py`, stored sha256-hashed:
+  a stolen database cannot be replayed as an agent, and no code path prints
+  a live token back out (`list_agents()` drops the hash column entirely).
+  `write` implies `read` — a writer that cannot search cannot check whether
+  the fact is already there. Revocation is a status flip; the row stays for
+  the audit trail, and a revoked name is reusable (the row is *reused*, so
+  one name is one row, and `UNIQUE(name)` stays honest). `last_seen` is
+  written at most once per 30 s per identity: a liveness signal, not a metric.
+* **`app/core/kb_http.py`** — the door: transport plus policy, nothing else.
+  Transport is `kb_mcp.handle`, the same protocol handler the stdio server
+  runs, so the two doors can never drift on semantics. Policy is the
+  identity's scopes: `tools/list` is filtered, so a read agent is not teased
+  by a write tool it cannot use; a scope refusal is a *tool result* naming
+  the scope (`X-Mesh-Scope` header carries what was allowed), not a transport
+  error. `memory_remove` and `memory_reindex` ride **no token at all** —
+  forgetting and reindexing are the portal's own jobs. The audit records
+  actor, tool, and the byte-size of the arguments, never their text: the KB
+  is a place where secrets must not be written, and the audit is not a place
+  where they get copied. Two identities reach the door: a bearer token
+  (scoped) and the portal's own session cookie (full scope; `SameSite=lax`
+  keeps cookie POSTs CSRF-safe).
+* **The route is `/api/mcp`, not `/mcp`.** The page census
+  (`test_ui_integration`: every served GET page must be in `spec.json`)
+  flagged the new served path — correctly. The census rule is good and the
+  door is a JSON API, not a page, so the door joined the `/api/` family
+  instead of the census growing an exclusion. The old path is a 404, not a
+  redirect: nothing was ever pointed at it except my own test curl.
+* **The kit carries the etiquette.** `AGENTS.md` gained a *Boot etiquette*
+  section (search before you invent, cite refs, one durable fact per fix,
+  never write a secret), the README documents issuing and pasting, and
+  `sync_agent_models.py` now **generates** the `mcp` block with a literal
+  placeholder token — a hand-added block would vanish on the next
+  regeneration, and a real token in a kit file is a credential in the repo.
+
+**A shipped defect, found by the acceptance test.** `kb_mcp.kb_search`
+mapped `r.get("ref")` — a key `kb.search` does not emit. Every agent that
+ever called it received `ref: null` while the tool's own text said *"cite
+the ref"*. The stdio tests never asserted the citation; the mesh acceptance
+test ("the remote machine gets citable section refs") asserted exactly that,
+and the KB's most valuable affordance for a remote machine turned out to
+have been broken since it shipped. Fixed: the hit carries the section `id`
+(`kb.find` accepts it) plus `doc`.
+
+Measured live, via the LAN address, with a read token issued by the CLI
+(token never printed): `tools/list` → the four read tools; `kb_search
+"powershell ASCII ParseInput parser"` → citable refs (§6.14.1p+, §6.14.1p++,
+Measured ground); `memory_add` → refused, naming the scope, zero rows
+written; anonymous POST → 401 naming what is missing; GET → 405 with a
+pointer. The verify identity was revoked after the run. Suite: 1240
+passing (8 new in `tests/test_agents.py`), census intact.
+
+My own process error, recorded because the deploy ate it: the first deploy
+showed `/mcp` 404 because `install.sh` exports the **committed** tree to
+`~/ai/ai-portal` — the service runs that copy, uncommitted code is not
+live, and the house rule is *commit first, then deploy*. I inverted it,
+saw a mystery 404, and the fix was the rule.
