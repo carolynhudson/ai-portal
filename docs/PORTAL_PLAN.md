@@ -6951,3 +6951,40 @@ showed `/mcp` 404 because `install.sh` exports the **committed** tree to
 `~/ai/ai-portal` — the service runs that copy, uncommitted code is not
 live, and the house rule is *commit first, then deploy*. I inverted it,
 saw a mystery 404, and the fix was the rule.
+
+##### 6.14.1x The page background ships: invisible art is decoration in the source tree (2026-10-31)
+
+The background work paused at "owner picks" (6.14.1v-era) resumed and
+shipped: the **A2 halo-field tile** on the page canvas, the **brand halo**
+in the nav, the **hero radial** at the mark corner.
+
+The round-trip that made it honest:
+
+* **Invisible is a failure state.** The first pass (alpha .05-.09) rendered
+  at the threshold and the owner's verdict was *"I said subtle, not
+  invisible."* Strengthened 2× for the ship.
+* **The tone rule, as arithmetic.** Owner: keep the texture's *average tone*
+  close enough to the surface it covers that it never "falls into the space
+  of the other background colors." `tests/test_page_background.py` computes
+  the tile's area-weighted average tone composited over `--bg`: shipped
+  tile = **0.47** units from the canvas (limit 6.0; the panel — the nearest
+  other background — is 14 away), and no paint may land on the panel's
+  tone, so card boundaries keep their edge over the texture. Hue is free,
+  tone is bounded, and CI measures it.
+* **The test caught a real trap while being written:** an SVG `fill`
+  unspecified on a stroked circle **defaults to black** — the first tile
+  painted dark discs inside every halo ring at full alpha (measured tone
+  distance 31/38). Invisible in the source, loud in the parser. The tile
+  now states `fill="none"` everywhere it means none.
+* **Geometry lesson:** the portal is card-dominated — at 1280px the canvas
+  is two ~90px gutters — so the canvas tile alone can never be the whole
+  effect; the treatments that live *on* the panels (nav halo, hero radial)
+  carry it inside. Tile rides the viewport (`background-attachment:fixed`)
+  so scrolling never slides a pattern across the gutters.
+* **Process lesson, repeated:** the owner "saw no changes" because every
+  render so far had been a headless browser with injected styles — the
+  portal itself was untouched. Screenshots are evidence, not deployment;
+  ship, then render the served page.
+
+Witness: `~/ai/logs/portal-backgrounds-20261030/shipped-live.png` (the
+deployed service, no injection).
