@@ -75,7 +75,7 @@ def build_config(models: dict[str, dict]) -> dict:
         "mcp": {
             "halo-kb": {
                 "type": "remote",
-                "url": "http://192.168.1.228:8090/mcp",
+                "url": "http://192.168.1.228:8090/api/mcp",
                 "headers": {"Authorization": "Bearer PASTE-TOKEN-FROM-Settings-Agents"},
             }
         },

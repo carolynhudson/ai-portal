@@ -1072,7 +1072,9 @@ def create_app() -> FastAPI:
     # learned. Identities are app/core/agents.py, the policy is
     # app/core/kb_http.py, and the protocol is kb_mcp.handle - the same
     # handler the stdio server runs, so the two doors cannot drift.
-    @app.api_route("/mcp", methods=["GET", "POST"])
+    # Under /api/ on purpose: it is a JSON API, not a page, and the page
+    # census (test_ui_integration) keeps its rule intact because of it.
+    @app.api_route("/api/mcp", methods=["GET", "POST"])
     async def mcp_door(request: Request):
         return kb_http.handle_request(request, await request.body())
 

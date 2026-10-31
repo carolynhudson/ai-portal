@@ -89,7 +89,7 @@ key, and the first one to be able to skip lessons already paid for.
    "mcp": {
      "halo-kb": {
        "type": "remote",
-       "url": "http://192.168.1.228:8090/mcp",
+       "url": "http://192.168.1.228:8090/api/mcp",
        "headers": { "Authorization": "Bearer <token from the command above>" }
      }
    }

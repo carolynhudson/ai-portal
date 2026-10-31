@@ -193,7 +193,7 @@ def test_the_agent_config_carries_the_kb_door_and_no_secret():
     cfg = json.loads((AGENT / "opencode.json").read_text())
     door = cfg["mcp"]["halo-kb"]
     assert door["type"] == "remote"
-    assert door["url"] == "http://192.168.1.228:8090/mcp"
+    assert door["url"] == "http://192.168.1.228:8090/api/mcp"
     auth = door["headers"]["Authorization"]
     assert auth.startswith("Bearer ")
     assert auth == "Bearer PASTE-TOKEN-FROM-Settings-Agents", (

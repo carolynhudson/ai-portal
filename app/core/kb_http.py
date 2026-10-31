@@ -73,7 +73,7 @@ def handle_request(request, raw: bytes) -> JSONResponse:
     """One HTTP request, one JSON answer. A plain function of (request, body
     bytes) so the route, the tests, and any future mount share one path."""
     if request.method == "GET":
-        return JSONResponse({"error": "this is an MCP door: POST JSON-RPC to /mcp. "
+        return JSONResponse({"error": "this is an MCP door: POST JSON-RPC to /api/mcp. "
                                       "Agent tokens are issued on the portal's "
                                       "Settings page."}, status_code=405)
 

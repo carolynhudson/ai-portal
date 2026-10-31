@@ -20,7 +20,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.core import agents  # noqa: E402
 
-URL = "http://192.168.1.228:8090/mcp"
+URL = "http://192.168.1.228:8090/api/mcp"
 
 
 def main(argv: list[str] | None = None) -> int:
