@@ -182,3 +182,67 @@ def test_a_malformed_body_is_refused_loudly_and_cheaply(mesh_db):
     assert body_of(kb_http.handle_request(req, b"not json{"))["error"]["code"] == -32600
     resp = call(req, [{"jsonrpc": "2.0", "method": "initialize"}])
     assert body_of(resp)["error"]["code"] == -32600, "one JSON-RPC object per POST"
+
+
+# ------------------------------------------------------- the Settings endpoints
+# Same doors, driven as HTTP: the page's contract is that a token arrives only
+# through an explicit confirm, the list never carries a credential, and scope
+# refusals answer as data (the page shows them), not as 422s.
+
+def _authed_client():
+    from fastapi.testclient import TestClient
+
+    from app.core import config as cfg
+    from app.main import app
+    c = TestClient(app)
+    c.cookies.set(cfg.COOKIE_NAME, cfg.make_token(cfg.load()))
+    return c
+
+
+def test_the_agent_endpoints_require_auth():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    c = TestClient(app)
+    assert c.get("/api/settings/agents", follow_redirects=False).status_code == 401
+    assert c.post("/api/settings/agents/issue", json={"name": "x", "confirm": True},
+                  follow_redirects=False).status_code == 401
+    assert c.post("/api/settings/agents/revoke", json={"name": "x", "confirm": True},
+                  follow_redirects=False).status_code == 401
+
+
+def test_issue_over_http_shows_the_token_once_and_needs_confirm(mesh_db):
+    c = _authed_client()
+    r = c.post("/api/settings/agents/issue",
+               json={"name": "rainbowblock-forge", "machine": "RainbowBlock.local",
+                     "scopes": "read", "confirm": False})
+    assert r.status_code == 409, "a credential needs the page's gate"
+    assert "confirm" in r.json()["detail"]
+
+    r = c.post("/api/settings/agents/issue",
+               json={"name": "rainbowblock-forge", "machine": "RainbowBlock.local",
+                     "scopes": "read", "confirm": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    token = body["token"]
+    assert token and len(token) >= 32
+    assert "PASTE" not in token and body["agent"]["scopes"] == ["read"]
+    assert token in body["snippet"], "the snippet is the whole point of issuing here"
+
+    # the list carries identities, never the credential
+    g = c.get("/api/settings/agents").json()
+    assert g["door"] == "/api/mcp"
+    assert [a["name"] for a in g["agents"]] == ["rainbowblock-forge"]
+    assert token not in c.get("/api/settings/agents").text
+
+    # a refusal is data: a bad scope string answers 409 with the sentence
+    r = c.post("/api/settings/agents/issue",
+               json={"name": "second", "scopes": "sudo", "confirm": True})
+    assert r.status_code == 409 and "scope" in r.json()["detail"]
+
+    r = c.post("/api/settings/agents/revoke",
+               json={"name": "rainbowblock-forge", "confirm": True})
+    assert r.status_code == 200
+    assert c.get("/api/settings/agents").json()["agents"][0]["status"] == "revoked"
+    assert c.post("/api/settings/agents/revoke",
+                  json={"name": "rainbowblock-forge", "confirm": True}).status_code == 404

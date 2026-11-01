@@ -49,9 +49,23 @@ _VITALS_DEFAULTS = _vitals_defaults()
 PORTAL_SETTINGS: dict[str, dict[str, Any]] = {
     "projects_root": {
         "kind": "text",
+        "shape": "path",
         "default": "~/ai-projects",
         "help": "The folder that holds the coding projects the harness works on. Projects are "
                 "sub-folders of it, and the harness is launched inside one.",
+    },
+    # The mesh's remote image forge (docs/MESH_PROPOSAL.md): the Windows box's
+    # ComfyUI, which the portal probes and links to. It is a portal setting
+    # because it is a fact about the network this portal serves, it changes
+    # when the box is re-named, and the Settings page's forge card is its
+    # editor. No credentials: a URL with a user:pass is refused for the same
+    # reason the knowledge base refuses secrets.
+    "remote_forge_url": {
+        "kind": "text",
+        "shape": "url",
+        "default": "http://RainbowBlock.local:8188",
+        "help": "Base URL of the remote ComfyUI image forge (the Windows box). "
+                "The portal probes it and links to it; no credentials in the URL.",
     },
     # The dashboard's vitals thresholds (queue 41). Registered here, in the registry the settings
     # page reads, because the operator's rule is that a threshold they cannot change is a threshold
@@ -302,6 +316,52 @@ def stored_thresholds() -> tuple[dict[str, Any], str | None]:
     return out, None
 
 
+def validate_remote_forge_url(value: Any) -> dict[str, Any]:
+    """Is this a safe base URL for the remote forge? Refusals name the fact.
+
+    The URL is where the portal points a browser and aims a probe, so the
+    refusals are the shapes that break those: a missing host, a foreign
+    scheme (an `ftp:` forge is a typo reaching a different service), a
+    malformed port, and a `user:pass@` in the URL - credentials never live
+    in settings, links, or the knowledge base.
+    """
+    from urllib.parse import urlsplit
+    out: dict[str, Any] = {"ok": False, "value": value if isinstance(value, str) else None}
+    if not isinstance(value, str) or not value.strip():
+        out["error"] = "the forge URL must be a non-empty string"
+        return out
+    v = value.strip()
+    try:
+        u = urlsplit(v)
+    except ValueError as e:
+        out["error"] = f"not a parseable URL: {e}"
+        return out
+    if u.scheme not in ("http", "https"):
+        out["error"] = f"scheme must be http or https (got {u.scheme or 'none'!r})"
+        return out
+    if not u.hostname:
+        out["error"] = "the URL needs a host, e.g. http://RainbowBlock.local:8188"
+        return out
+    if u.username or u.password:
+        out["error"] = ("credentials do not go in the URL - ComfyUI has no auth; "
+                        "a user:pass here is a secret in a setting, and a setting is read")
+        return out
+    try:
+        port = u.port
+    except ValueError:
+        out["error"] = "the port is outside 0-65535"
+        return out
+    if port is None:
+        out["port"] = 8188          # the shape's default; stored as given
+    elif not (1 <= port <= 65535):
+        out["error"] = f"port {port} is outside 1-65535"
+        return out
+    out["ok"] = True
+    out["value"] = v
+    out["host"] = u.hostname
+    return out
+
+
 def set_value(key: str, value: Any) -> dict[str, Any]:
     """Validate and store one portal setting. Refusals never reach the database."""
     if key not in PORTAL_SETTINGS:
@@ -323,6 +383,13 @@ def set_value(key: str, value: Any) -> dict[str, Any]:
         db.set_setting(key, str(value).strip())
         return {"ok": True, "key": key, "value": str(value).strip(), "path": v["path"]}
 
+    if key == "remote_forge_url":
+        v = validate_remote_forge_url(value)
+        if not v["ok"]:
+            return {"ok": False, "key": key, "error": v["error"]}
+        db.set_setting(key, v["value"])
+        return {"ok": True, "key": key, "value": v["value"], "host": v["host"]}
+
     return {"ok": False, "key": key, "error": f"{key} has no validation rule, so the portal will not write it"}
 
 
@@ -337,8 +404,9 @@ def view() -> dict[str, Any]:
             "help": spec["help"],
             "value": effective,
         }
-        # `path`/`exists` describe a folder; a number has no path to resolve.
-        if spec["kind"] == "text":
+        # `path`/`exists` describe a folder; a number has no path, and a URL
+        # is not a path (shape says which text setting is which).
+        if spec["kind"] == "text" and spec.get("shape") == "path":
             row["path"] = _resolve(str(effective))
             row["exists"] = os.path.isdir(row["path"])
         out[key] = row

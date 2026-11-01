@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from . import __version__, metrics, providers
 from . import router as router_mod
 from .core import (
+    agents,
     agentconfig,
     db,
     harnessctl,
@@ -194,6 +195,27 @@ class PortalSettingBody(BaseModel):
     value: Any = None
 
 
+class AgentIssueBody(BaseModel):
+    """Issue a mesh identity. `confirm` because the response carries a live
+    token; scopes is the door's policy string ("read" | "read,write")."""
+    name: str
+    machine: str = ""
+    scopes: str = "read"
+    confirm: bool = False
+
+
+class AgentRevokeBody(BaseModel):
+    name: str
+    confirm: bool = False
+
+
+class ForgeTestBody(BaseModel):
+    """Probe a forge URL from this box. `confirm` because the page is the
+    owner's hands: a request leaves the machine on purpose."""
+    url: str
+    confirm: bool = False
+
+
 class ProjectCreateBody(BaseModel):
     """A project to create: a name and the init boxes that were ticked (§6.14.1n). The steps are
     raw strings because an unknown step id is a refusal the page should read, not a 422.
@@ -351,6 +373,11 @@ _status_cache: tuple[float, dict] = (0.0, {})
 _STATUS_TTL = 10.0
 _behind_cache: tuple[float, dict] = (0.0, {})
 _BEHIND_TTL = 300.0
+
+# The remote forge probe is a LAN request to a peer that is often asleep;
+# page loads share one answer for the TTL (the Test button bypasses it).
+_forge_cache: tuple[str, float, dict] = ("", 0.0, {})
+_FORGE_TTL = 30.0
 
 
 def _settings() -> cfg.Settings:
@@ -938,7 +965,10 @@ def create_app() -> FastAPI:
 
     @app.get("/settings")
     def settings_page(request: Request, _=Depends(_require_auth)):
-        return templates.TemplateResponse(request, "settings.html", {})
+        # The saved forge URL is rendered into the field (the page shows the
+        # truth at first paint; the GET endpoint carries the probe separately).
+        return templates.TemplateResponse(request, "settings.html",
+                                          {"forge_url": portalsettings.get_value("remote_forge_url")})
 
     @app.get("/help")
     def help_page(request: Request, q: str = "", _=Depends(_require_auth)):
@@ -1664,6 +1694,84 @@ def create_app() -> FastAPI:
         db.event("portal", "portal-setting", f"key={body.key} ok={out.get('ok')}")
         if not out.get("ok"):
             raise HTTPException(status_code=409, detail=out.get("error") or "the setting was refused")
+        return out
+
+    # ------------------------------------------- mesh identities (Settings page)
+    # The door is /api/mcp (app/core/kb_http.py); these routes are its face on
+    # the Settings page: the identity list, issuance, revocation. The cleartext
+    # token exists only in the issue response - the page shows it once, by
+    # design, and the store keeps only its hash (app/core/agents.py).
+    @app.get("/api/settings/agents")
+    def api_settings_agents(_=Depends(_require_auth)):
+        return {"door": "/api/mcp", "agents": agents.list_agents()}
+
+    @app.post("/api/settings/agents/issue")
+    def api_settings_agents_issue(body: AgentIssueBody, _=Depends(_require_auth)):
+        """Issue an identity. Token shown once; `confirm` is the page's gate,
+        and the scope rules (write implies read, slugs only) are the module's."""
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="issuing an identity needs confirm=true: "
+                                       "a token is a credential")
+        scopes = tuple(s.strip() for s in (body.scopes or "read").split(",") if s.strip())
+        try:
+            row, token = agents.issue(body.name, body.machine or "", scopes)
+        except agents.AgentsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"agent": row, "token": token,
+                "snippet": json.dumps({
+                    "type": "remote", "url": "http://192.168.1.228:8090/api/mcp",
+                    "headers": {"Authorization": f"Bearer {token}"}}, indent=2)}
+
+    @app.post("/api/settings/agents/revoke")
+    def api_settings_agents_revoke(body: AgentRevokeBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="revoking an identity needs confirm=true")
+        if not agents.revoke(body.name):
+            raise HTTPException(status_code=404,
+                                detail=f"no active identity named {body.name!r}")
+        return {"ok": True, "name": body.name}
+
+    # --------------------------------------- remote image forge (Settings page)
+    # The Windows box's ComfyUI is not a local unit: it has no systemd row and
+    # no bind to manage here, so it is a portal setting (remote_forge_url) with
+    # a live probe - the same /system_stats call the ComfyUI hero uses, aimed
+    # at a peer. Test is POST + confirm because it sends a request from this
+    # box to a machine the owner named.
+    def _forge_probe(url: str, use_cache: bool = True) -> dict:
+        base = portalsettings.validate_remote_forge_url(url)
+        if not base.get("ok"):
+            return {"ok": False, "url": url, "error": base["error"]}
+        url = base["value"]
+        global _forge_cache
+        if use_cache and _forge_cache[0] == url and time.time() - _forge_cache[1] < _FORGE_TTL:
+            return _forge_cache[2]
+        try:
+            r = httpx.get(f"{url.rstrip('/')}/system_stats", timeout=3.0)
+            if r.status_code != 200:
+                out = {"ok": False, "url": url,
+                       "error": f"HTTP {r.status_code} from /system_stats"}
+            else:
+                ver = (r.json().get("system") or {}).get("comfyui_version")
+                out = {"ok": True, "url": url, "version": ver}
+        except Exception as e:  # noqa: BLE001 - the answer is "unreachable", with the reason
+            out = {"ok": False, "url": url, "error": f"{type(e).__name__}: {e}"}
+        _forge_cache = (url, time.time(), out)
+        return out
+
+    @app.get("/api/settings/forge")
+    def api_settings_forge(_=Depends(_require_auth)):
+        url = portalsettings.get_value("remote_forge_url")
+        return {"url": url, "probe": _forge_probe(url)}
+
+    @app.post("/api/settings/forge/test")
+    def api_settings_forge_test(body: ForgeTestBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="testing the forge link needs confirm=true")
+        out = _forge_probe(body.url, use_cache=False)
+        db.event("portal", "forge.test", f"ok={out.get('ok')} url={out.get('url')}")
         return out
 
     # ------------------------------------------------------ projects (§6.14.1n)

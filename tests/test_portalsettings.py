@@ -297,3 +297,65 @@ def test_a_stored_threshold_set_that_cannot_be_read_is_said_by_the_strip():
     out = vitals.strip(snap)
     assert out["thresholds_error"], out
     assert "pool_watch" in out["thresholds_error"]
+
+
+# --- the remote forge URL (§6.14.1x: the settings page's forge card) -----------------------
+
+def test_the_forge_url_accepts_the_shape_the_owner_pastes():
+    ok = portalsettings.validate_remote_forge_url("http://RainbowBlock.local:8188")
+    assert ok["ok"] and ok["host"] == "rainbowblock.local"
+    # loopback and LAN addresses are the same shape; a bare host is valid
+    assert portalsettings.validate_remote_forge_url("http://192.168.1.30:8188")["ok"]
+    assert portalsettings.validate_remote_forge_url("http://localhost")["ok"]  # port 8188 default
+
+
+def test_the_forge_url_refusals_name_the_fact():
+    v = portalsettings.validate_remote_forge_url("http://user:pass@host:8188")
+    assert not v["ok"] and "credentials" in v["error"]
+    v = portalsettings.validate_remote_forge_url("ftp://host:21")
+    assert not v["ok"] and "scheme" in v["error"]
+    v = portalsettings.validate_remote_forge_url("RainbowBlock.local:8188")
+    assert not v["ok"]
+    v = portalsettings.validate_remote_forge_url("")
+    assert not v["ok"]
+    v = portalsettings.validate_remote_forge_url("http://host:99999")
+    assert not v["ok"] and "port" in v["error"]
+
+
+def test_the_forge_url_saves_and_the_view_sees_it_as_a_url_not_a_path(sandbox, monkeypatch):
+    monkeypatch.setenv("HOME", str(sandbox))
+    out = portalsettings.set_value("remote_forge_url", "http://rainbowbox.local:8188")
+    assert out["ok"] and out["host"] == "rainbowbox.local"
+    row = portalsettings.view()["remote_forge_url"]
+    assert row["value"] == "http://rainbowbox.local:8188"
+    assert "path" not in row, "a URL is not a folder: view() must not resolve it as a path"
+
+
+def test_the_forge_endpoints_answer_the_card(sandbox, monkeypatch):
+    monkeypatch.setenv("HOME", str(sandbox))
+    c = _client()
+    g = c.get("/api/settings/forge")
+    assert g.status_code == 200, g.text
+    body = g.json()
+    assert set(body) == {"url", "probe"} and "ok" in body["probe"]
+
+    # the page's contract: Test needs confirm, and the probe answers with a reason
+    t = c.post("/api/settings/forge/test", json={"url": "http://127.0.0.1:1/", "confirm": False})
+    assert t.status_code == 409
+    t = c.post("/api/settings/forge/test", json={"url": "http://127.0.0.1:1/", "confirm": True})
+    assert t.status_code == 200 and t.json()["ok"] is False and t.json()["error"]
+
+    # a refused URL is refused by the setting, not stored
+    r = c.post("/api/settings/portal", json={"key": "remote_forge_url",
+                                             "value": "http://u:p@x:8188"})
+    assert r.status_code == 409 and "credentials" in r.json()["detail"]
+
+
+def test_the_forge_endpoints_require_auth():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    c = TestClient(app)
+    assert c.get("/api/settings/forge", follow_redirects=False).status_code == 401
+    assert c.post("/api/settings/forge/test", json={"url": "http://x", "confirm": True},
+                  follow_redirects=False).status_code == 401

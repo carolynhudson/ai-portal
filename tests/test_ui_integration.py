@@ -388,6 +388,8 @@ def test_destructive_requests_carry_what_the_backend_needs(ui_server):
         "settings": [
             (r"^/api/settings/services/[^/]+/bind$", {"bind", "address"}),
             (r"^/api/settings/llamacpp/apikey$", {"action"}),
+            (r"^/api/settings/agents/issue$", {"name", "confirm"}),
+            (r"^/api/settings/forge/test$", {"url", "confirm"}),
         ],
         "models": [
             (r"^/api/models/search$", {"query", "service", "model_type", "limit"}),

@@ -788,7 +788,9 @@
       "expectTitle": "Settings",
       "expectRequests": [
         "/api/settings/services",
-        "/api/network"
+        "/api/network",
+        "/api/settings/agents",
+        "/api/settings/forge"
       ],
       "expectVisible": [
         "#ld-lib-path",
@@ -808,7 +810,12 @@
         "#key-body",
         "#bind-harness",
         "#port-harness",
-        "#save-harness"
+        "#save-harness",
+        "#agents-table",
+        "#agent-issue-btn",
+        "#forge-url",
+        "#forge-save-btn",
+        "#forge-test-btn"
       ],
       "expectEnabled": [
         "#save-llamacpp",
@@ -819,11 +826,38 @@
         "^/api/services/",
         "^/api/updates/",
         "^/api/models/",
-        "^/api/portal/"
+        "^/api/portal/",
+        "^/api/settings/agents/issue$",
+        "^/api/settings/agents/revoke$",
+        "^/api/settings/forge/test$"
       ],
       "requireConfirmFor": [
         "^/api/services/",
-        "^/api/settings/llamacpp/apikey$"
+        "^/api/settings/llamacpp/apikey$",
+        "^/api/settings/agents/issue$",
+        "^/api/settings/agents/revoke$",
+        "^/api/settings/forge/test$"
+      ],
+      "selectCases": [
+        {
+          "select": "#agent-scopes",
+          "choose": {"value": "read,write"},
+          "note": "scopes",
+          "then_fill": [
+            {"id": "agent-name", "value": "ui-contract-agent"},
+            {"id": "agent-machine", "value": "ui-contract-box"}
+          ],
+          "then_click": ["#agent-issue-btn"]
+        },
+        {
+          "select": "#agent-scopes",
+          "choose": {"value": "read"},
+          "note": "forge",
+          "then_fill": [
+            {"id": "forge-url", "value": "http://127.0.0.1:8188"}
+          ],
+          "then_click": ["#forge-test-btn"]
+        }
       ],
       "requireConfirmUnlessBodyContains": {
         "^/api/settings/llamacpp/apikey$": "generate"

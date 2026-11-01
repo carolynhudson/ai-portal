@@ -44,32 +44,20 @@
 
 <div class="card">
   <p class="mut" style="font-size:13px;margin-top:-2px">
-    <em>Bind</em> decides who can connect. <span class="mono">loopback</span>
-    (<span class="mono">127.0.0.1</span>) is this machine only;
-    <span class="mono">lan</span> binds one interface address;
-    <span class="mono">all</span> (<span class="mono">0.0.0.0</span>) answers on
-    every interface — the "other systems on our network can reach it" setting.
-    Ports are validated live (numeric range, not assigned to another managed
-    service, not already bound here). The right-hand column probes the LAN
-    address, which is what proves a daemon is <em>not</em> loopback-only.
-  </p>
-  <p class="mut" style="font-size:12px;margin-top:-6px">
-    <span class="mono">all</span> means every <strong>IPv4</strong> interface
-    (<span class="mono">0.0.0.0</span>): an IPv6-only client would not reach it,
-    and these daemons would need <span class="mono">::</span> for that.
+    <em>Bind</em> decides who can connect: <span class="mono">loopback</span>
+    = this machine only, <span class="mono">lan</span> = one interface address,
+    <span class="mono">all</span> = every interface. Ports are validated live;
+    the reachability probe answers for the LAN address. Details in Help →
+    <span class="mono">DEBUGGING.md</span> (bind, firewall, probes).
   </p>
   <table id="svc-ports">
     <thead><tr>
-      <th>service</th><th>current</th><th>bind</th><th>port</th>
-      <th style="width:26%">change</th><th></th><th style="width:26%">live reachability</th>
+      <th style="width:17%">service</th><th style="width:15%">current</th>
+      <th style="width:17%">bind</th><th style="width:8%">port</th>
+      <th style="width:14%">change</th><th></th><th style="width:4%">live</th>
     </tr></thead>
     <tbody></tbody>
   </table>
-  <div class="mut" style="font-size:12px;margin-top:10px">
-    Nothing here is firewall-managed: the portal has no root, so if
-    <span class="mono">ufw</span> is enabled it prints the
-    <span class="mono">ufw allow</span> command you would run instead.
-  </div>
 </div>
 
 {# ------------------------ llama.cpp router authentication ---------------- #}
@@ -85,11 +73,58 @@
   <div id="key-body" class="mut">loading…</div>
 </div>
 
+{# ------------------------------ mesh door (Settings → Agents) ------------- #}
+<div class="card">
+  <h3>Mesh identities <span class="pill mut" id="agents-count">…</span></h3>
+  <p class="mut" style="font-size:13px;margin-top:-2px">
+    Names allowed through the portal's knowledge door
+    (<span class="mono">/api/mcp</span>): an issued token is shown
+    <strong>once</strong>, stored hashed, scoped, revocable.
+    <span class="mono">read</span> = search/read; <span class="mono">write</span>
+    adds recording. Forgetting is the portal's job — no token carries it.
+  </p>
+  <div id="agents-issue" style="display:none;margin:8px 0">
+    <pre class="mono" style="margin:0;padding:10px;background:var(--field);border:1px solid var(--field-line);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all"></pre>
+    <div class="mut" style="font-size:12px;margin-top:4px">Shown once. The portal stores only the hash — losing it means revoke + re-issue.</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
+    <input id="agent-name" placeholder="name, e.g. rainbowblock-forge" style="width:210px">
+    <input id="agent-machine" placeholder="machine (optional)" style="width:150px">
+    <select id="agent-scopes"><option value="read">read</option><option value="read,write">read,write</option></select>
+    <button id="agent-issue-btn" onclick="issueAgent()" style="padding:6px 14px">Issue</button>
+    <span id="agent-msg" class="mut" style="font-size:12px"></span>
+  </div>
+  <table id="agents-table">
+    <thead><tr><th style="width:22%">name</th><th style="width:18%">machine</th>
+      <th style="width:16%">scopes</th><th style="width:12%">status</th>
+      <th style="width:18%">last seen</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+{# ------------------------------ remote image forge ------------------------ #}
+<div class="card">
+  <h3>Remote image forge <span class="pill mut" id="forge-state">…</span></h3>
+  <p class="mut" style="font-size:13px;margin-top:-2px">
+    The Windows box's ComfyUI (the mesh's GPU peer). It is not a local unit —
+    the portal probes this URL and links to it. No credentials in the URL.
+  </p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
+    <input id="forge-url" class="mono" placeholder="http://RainbowBlock.local:8188" value="{{ forge_url }}" style="width:320px">
+    <button id="forge-save-btn" onclick="saveForge()" style="padding:6px 14px">Save</button>
+    <button id="forge-test-btn" class="ghost" onclick="testForge()" style="padding:6px 14px">Test link</button>
+    <span id="forge-msg" class="mut" style="font-size:12px"></span>
+  </div>
+</div>
+
 <script>
 const ORDER = ['llamacpp', 'comfyui', 'portal', 'harness'];
 const MODE_LABEL = {loopback: 'loopback only', lan: 'this LAN address', all: 'all interfaces (LAN)'};
 let DATA = null;      // /api/settings/services
 let NET = null;       // /api/network
+let AGENTS = null;    // /api/settings/agents
+let FORGE = null;     // /api/settings/forge
+let FORGE_SAVED = false;   // a fresh save outranks the load's payload
 const timers = {};
 
 async function j(url, opts){
@@ -101,9 +136,13 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&l
 function sh(p){ return String(p).replace(/^\/home\/[^/]+/, '~'); }
 
 async function load(){
-  const [a, b] = await Promise.all([j('/api/settings/services'), j('/api/network')]);
+  const [a, b, ag, fg] = await Promise.all([
+    j('/api/settings/services'), j('/api/network'),
+    j('/api/settings/agents'), j('/api/settings/forge')]);
   if(a.ok && a.d) DATA = a.d;
   if(b.ok && b.d) NET = b.d;
+  if(ag.ok && ag.d) AGENTS = ag.d;
+  if(fg.ok && fg.d && !FORGE_SAVED) FORGE = fg.d;
   if(!DATA) return;
   document.getElementById('ld-lib-path').value =
     (DATA.shared_env && DATA.shared_env.LD_LIBRARY_PATH) || '';
@@ -115,6 +154,8 @@ async function load(){
   renderNet();
   renderRows();
   renderKey();
+  renderAgents();
+  renderForge();
 }
 
 /* ---------------------------------------------------------- network summary */
@@ -157,28 +198,42 @@ function bindSelectHtml(key, s){
   return sel + addr;
 }
 
-function liveHtml(key){
+/* The row states "reachable?" with one dot; the prose moves to a detail row
+   spanning the table (owner, 2026-11: the two prose columns overfilled and
+   word-wrapped into small print). One <li> per fact, at reading size. */
+function liveDot(key){
   const e = NET && NET.services && NET.services[key];
-  if(!e) return '<span class="mut">—</span>';
-  let out = '';
-  for(const u of (e.urls || [])){
+  if(!e) return '<span class="mut">◌</span>';
+  if(e.pending_restart) return '<span style="color:var(--warn)">●</span>';
+  const ls = (e.urls || []).map(u => u.listening);
+  if(ls.includes(true)) return '<span style="color:var(--ok)">●</span>';
+  if(ls.includes(false)) return '<span style="color:var(--bad)">○</span>';
+  return '<span class="mut">◌</span>';
+}
+
+function reachBullets(key, s){
+  const e = NET && NET.services && NET.services[key];
+  const li = [];
+  for(const u of ((e && e.urls) || [])){
     const dot = u.listening === true ? '<span style="color:var(--ok)">●</span>'
               : u.listening === false ? '<span style="color:var(--bad)">○</span>'
               : '<span class="mut">◌</span>';
-    out += `<div style="font-size:12px">${dot} <a class="mono" href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> <span class="mut">${esc(u.label)}</span></div>`;
+    li.push(`<li>${dot} <a class="mono" href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> <span class="mut">— ${esc(u.label)}</span></li>`);
   }
-  if(e.this_host_url)
+  if(e && e.this_host_url)
     // The portal's own jump-off rule: the address THIS browser can reach.
-    out += `<div style="font-size:12px">→ <a class="mono" href="${esc(e.this_host_url)}" target="_blank" rel="noopener">${esc(e.this_host_url)}</a> <span class="mut">from this browser</span></div>`;
-  if(e.pending_restart)
-    out += `<div style="font-size:12px;color:var(--warn)">⚠ configured open, still not reachable — restart required</div>`;
-  if(e.auth && e.auth.warning && e.mode !== 'loopback')
-    out += `<div style="font-size:12px;color:var(--bad)">⚠ ${esc(e.auth.warning)}</div>`;
-  if(e.allow_command)
-    out += `<div class="mut mono" style="font-size:11px;margin-top:4px">${esc(e.allow_command)}</div>`;
-  if(key === 'llamacpp' && NET.router_auth && NET.router_auth.configured)
-    out += `<div style="font-size:12px;margin-top:4px">key: ${NET.router_auth.live && NET.router_auth.live.enforced ? '<span style="color:var(--ok)">enforced</span>' : '<span style="color:var(--warn)">configured, not enforced (restart)</span>'}</div>`;
-  return out || '<span class="mut">no endpoint</span>';
+    li.push(`<li>→ <a class="mono" href="${esc(e.this_host_url)}" target="_blank" rel="noopener">${esc(e.this_host_url)}</a> <span class="mut">— from this browser</span></li>`);
+  li.push(`<li><span class="mut">unit</span> <span class="mono">${esc(s.unit)}</span></li>`);
+  if(s.auth) li.push(`<li>${esc(s.auth)}</li>`);
+  if(e && e.pending_restart)
+    li.push(`<li style="color:var(--warn)">⚠ configured open, still not reachable — restart required</li>`);
+  if(e && e.auth && e.auth.warning && s.mode !== 'loopback')
+    li.push(`<li style="color:var(--bad)">⚠ ${esc(e.auth.warning)}</li>`);
+  if(key === 'llamacpp' && NET && NET.router_auth && NET.router_auth.configured)
+    li.push(`<li>api key: ${NET.router_auth.live && NET.router_auth.live.enforced ? '<span style="color:var(--ok)">enforced</span>' : '<span style="color:var(--warn)">configured, not enforced (restart)</span>'}</li>`);
+  if(e && e.allow_command)
+    li.push(`<li><span class="mut">firewall</span> <span class="mono">${esc(e.allow_command)}</span></li>`);
+  return li.join('');
 }
 
 function renderRows(){
@@ -189,9 +244,7 @@ function renderRows(){
     const tr = document.createElement('tr');
     const openStyle = s.mode !== 'loopback' ? 'background:rgba(210,153,34,.15);color:var(--warn)' : '';
     tr.innerHTML = `
-      <td><strong>${esc(s.label)}</strong>
-          <div class="mut mono" style="font-size:11px">${esc(s.unit)} · ${esc(sh(s.env_file))}</div>
-          <div class="mut" style="font-size:11px">${esc(s.auth || '')}</div></td>
+      <td><strong>${esc(s.label)}</strong></td>
       <td class="mono">${esc(s.host)}:${s.port}
         <span class="pill" style="${openStyle}">${esc(s.mode)}</span></td>
       <td>${bindSelectHtml(key, s)}</td>
@@ -200,8 +253,13 @@ function renderRows(){
             oninput="onPortInput('${key}')"></td>
       <td><div id="msg-${key}" style="font-size:12px"></div></td>
       <td style="white-space:nowrap"><button id="save-${key}" onclick="saveRow('${key}')" style="padding:6px 14px">Save</button></td>
-      <td>${liveHtml(key)}</td>`;
+      <td style="text-align:center" title="live reachability — see the list under the row">${liveDot(key)}</td>`;
     tb.appendChild(tr);
+    const d = document.createElement('tr');
+    d.id = `detail-${key}`;
+    d.innerHTML = `<td colspan="7" style="padding:2px 8px 10px 26px">
+      <ul class="mut" style="margin:0;padding-left:18px;font-size:13px;line-height:1.75;list-style:square">${reachBullets(key, s)}</ul></td>`;
+    tb.appendChild(d);
     onBindChange(key);
   }
 }
@@ -356,6 +414,141 @@ async function keyAction(action){
     const el = document.getElementById('key-msg');
     if(el) el.innerHTML = `<span style="color:var(--bad)">failed: ${esc((d && d.detail) || 'error')}</span>`;
   }
+}
+
+/* ------------------------------------------------------- mesh identities */
+function relTime(t){
+  if(!t) return 'never';
+  const s = (Date.now()/1000 - t) / 1000;
+  if(s < 90) return 'just now';
+  if(s < 5400) return Math.round(s/60) + ' min ago';
+  if(s < 129600) return Math.round(s/3600) + ' h ago';
+  return Math.round(s/86400) + ' d ago';
+}
+
+function renderAgents(){
+  const tb = document.querySelector('#agents-table tbody');
+  const count = document.getElementById('agents-count');
+  tb.innerHTML = '';
+  const rows = (AGENTS && AGENTS.agents) || [];
+  const active = rows.filter(a => a.status === 'active');
+  count.textContent = active.length + ' active';
+  for(const a of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${esc(a.name)}</strong></td>
+      <td class="mut">${esc(a.machine || '—')}</td>
+      <td class="mono">${esc((a.scopes || []).join(','))}</td>
+      <td>${a.status === 'active' ? '<span class="pill ok">active</span>'
+                                   : '<span class="pill mut">revoked</span>'}</td>
+      <td class="mut">${esc(relTime(a.last_seen))}</td>
+      <td>${a.status === 'active'
+        ? `<button id="revoke-${esc(a.name)}" onclick="revokeAgent('${esc(a.name)}')"
+             style="padding:4px 12px;background:#2a3340;color:var(--fg)">Revoke</button>` : ''}</td>`;
+    tb.appendChild(tr);
+  }
+  if(!rows.length)
+    tb.innerHTML = '<tr><td colspan="6" class="mut">no identities yet — issue one for a peer machine</td></tr>';
+}
+
+async function issueAgent(){
+  const msg = document.getElementById('agent-msg');
+  const btn = document.getElementById('agent-issue-btn');
+  msg.textContent = '';
+  const name = document.getElementById('agent-name').value;
+  if(!name){ alert('the identity needs a name, e.g. rainbowblock-forge'); return; }
+  if(!confirm(`Issue a token for "${name}"?\n\nThe token is shown ONCE, here and nowhere else.`)) return;
+  btn.disabled = true;
+  const body = {name,
+                machine: document.getElementById('agent-machine').value,
+                scopes: document.getElementById('agent-scopes').value,
+                confirm: true};
+  const {ok, d} = await j('/api/settings/agents/issue',
+    {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+  btn.disabled = false;
+  if(!ok){ msg.innerHTML = `<span style="color:var(--bad)">${esc((d && d.detail) || 'refused')}</span>`; return; }
+  document.getElementById('agent-name').value = '';
+  document.getElementById('agent-machine').value = '';
+  const box = document.getElementById('agents-issue');
+  box.style.display = '';
+  box.querySelector('pre').textContent =
+    'token: ' + d.token + '\n\nmcp snippet for the peer\'s opencode.json:\n' + d.snippet;
+  const a = await j('/api/settings/agents');
+  if(a.ok) AGENTS = a.d;
+  renderAgents();
+}
+
+async function revokeAgent(name){
+  const msg = document.getElementById('agent-msg');
+  msg.textContent = '';
+  const {ok, d} = await j('/api/settings/agents/revoke',
+    {method:'POST', headers:{'content-type':'application/json'},
+     body: JSON.stringify({name, confirm: true})});
+  if(!ok){ msg.innerHTML = `<span style="color:var(--bad)">${esc((d && d.detail) || 'refused')}</span>`; return; }
+  const a = await j('/api/settings/agents');
+  if(a.ok) AGENTS = a.d;
+  renderAgents();
+}
+
+/* --------------------------------------------------------- remote forge */
+function renderForge(){
+  const st = document.getElementById('forge-state');
+  const url = document.getElementById('forge-url');
+  if(url.value === '') url.value = (FORGE && FORGE.url) || '';
+  const p = FORGE && FORGE.probe;
+  if(!p){ st.textContent = '…'; return; }
+  st.innerHTML = p.ok
+    ? `<span style="color:var(--ok)">● live${p.version ? ' · v' + esc(p.version) : ''}</span>`
+    : '<span style="color:var(--bad)">○ unreachable</span>';
+}
+
+/* The page refuses a non-URL locally, with the same shape rule the server
+   enforces: an invalid string never becomes a request. The server stays the
+   authority; the guard is the first line, and the harness's sweep (which
+   fills inputs with test junk) proves the page cannot elicit an endpoint
+   error it should have caught itself. */
+function forgeUrlShapeOk(v){ return /^https?:\/\/[^\s/]+(?::\d{1,5})?(?:\/\S*)?$/i.test(v); }
+
+async function saveForge(){
+  const msg = document.getElementById('forge-msg');
+  msg.textContent = '';
+  const url = document.getElementById('forge-url').value.trim();
+  if(!url){ alert('the forge card saves a URL — empty is not one'); return; }
+  if(!forgeUrlShapeOk(url)){
+    msg.innerHTML = '<span style="color:var(--bad)">that is not a URL: use http://host:port</span>';
+    return;
+  }
+  const {ok, d} = await j('/api/settings/portal',
+    {method:'POST', headers:{'content-type':'application/json'},
+     body: JSON.stringify({key: 'remote_forge_url', value: url})});
+  if(!ok){ msg.innerHTML = `<span style="color:var(--bad)">${esc((d && d.detail) || 'refused')}</span>`; return; }
+  FORGE = {url: d.value, probe: FORGE && FORGE.probe};
+  FORGE_SAVED = true;
+  msg.innerHTML = '<span style="color:var(--ok)">saved</span>';
+  renderForge();
+}
+
+async function testForge(){
+  const msg = document.getElementById('forge-msg');
+  msg.textContent = '';
+  const url = document.getElementById('forge-url').value.trim();
+  if(!url){ alert('there is nothing to probe without a URL'); return; }
+  if(!forgeUrlShapeOk(url)){
+    msg.innerHTML = '<span style="color:var(--bad)">not a URL — nothing to probe</span>';
+    return;
+  }
+  if(!confirm(`Probe ${url} from this box?`)) return;
+  document.getElementById('forge-test-btn').disabled = true;
+  const {ok, d} = await j('/api/settings/forge/test',
+    {method:'POST', headers:{'content-type':'application/json'},
+     body: JSON.stringify({url, confirm: true})});
+  document.getElementById('forge-test-btn').disabled = false;
+  if(!ok){ msg.innerHTML = `<span style="color:var(--bad)">${esc((d && d.detail) || 'failed')}</span>`; return; }
+  FORGE = {url: d.url, probe: d};
+  msg.innerHTML = d.ok
+    ? `<span style="color:var(--ok)">reachable${d.version ? ' · ComfyUI v' + esc(d.version) : ''}</span>`
+    : `<span style="color:var(--bad)">${esc(d.error || 'unreachable')}</span>`;
+  renderForge();
 }
 
 load();
