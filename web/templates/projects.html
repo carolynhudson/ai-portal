@@ -25,6 +25,8 @@
 .proj-field{display:block;margin:8px 0;font-size:.95em}
 .proj-field textarea,.proj-field input[type=text]{width:100%;box-sizing:border-box;font-family:inherit;margin-top:4px}
 .proj-check{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:.95em}
+.proj-ghost{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:6px 12px;cursor:pointer}
+.proj-ghost:hover{color:var(--fg)}
 .proj-step{display:flex;gap:9px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);
   border-radius:7px;background:var(--panel)}
 .proj-step[data-unavailable="yes"]{border-style:dashed;opacity:.72}
@@ -83,9 +85,20 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 </style>
 
 <h2>Projects</h2>
-<p class="proj-mut">Projects live in the projects root — the folder the portal is allowed to create
-  projects in. Change it on <a href="/settings">Settings</a>. Forgetting a project here removes it
-  from the registry and never deletes the folder on disk.</p>
+<p class="proj-mut">Forgetting a project removes it from the registry and never deletes the folder.</p>
+
+<div class="card" id="proj-root-card">
+  <h3>Projects root</h3>
+  <p class="proj-mut">Where projects live; every project is a sub-folder of it.
+    Saved paths are validated (absolute, inside your home, usable).</p>
+  <p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 0">
+    <input id="proj-root" type="text" autocomplete="off" spellcheck="false"
+           style="flex:1;min-width:280px;box-sizing:border-box">
+    <button id="proj-root-save">Save</button>
+    <button id="proj-root-test" class="proj-ghost">Test path</button>
+  </p>
+  <p class="proj-mut" id="proj-root-status"></p>
+</div>
 
 <!-- The inactive mode: create, adopt, launch. One container, because the page has
      two states and a reader should be able to tell which one it is from one element. -->
@@ -94,21 +107,23 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 
 <p class="proj-mut" id="proj-host">host: reading…</p>
 
-<p class="proj-mut">Launch a project with
+<p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">
+  <span class="proj-mut">Launch with</span>
   <select id="proj-personality" title="the personality the session runs with"></select>
-  on <select id="proj-model" title="the model the session runs on"><option value="">host default</option></select>
-  as <select id="proj-agent" title="the host agent the session runs as">
+  <span class="proj-mut">on</span>
+  <select id="proj-model" title="the model the session runs on"><option value="">host default</option></select>
+  <span class="proj-mut">as</span>
+  <select id="proj-agent" title="the host agent the session runs as">
     <option value="">host default</option>
     <option value="build">build</option>
     <option value="plan">plan</option>
     <option value="explore">explore</option>
     <option value="general">general</option>
   </select>
-  — the session is opened inside the project and recorded on it, so the row below shows it as
-  served. Both halves of the personality-to-project link are recorded by the launch (§6.14.1n):
-  the row carries the personality, and the personality carries the project. The model binds to
-  the session at creation, so a personality can run a model of its own without changing the
-  host's default.</p>
+</p>
+<p class="proj-mut">Launch opens a session inside the project and records it on the row.
+  The model binds to the session at creation, so a personality can run a model of its
+  own without changing the host's default.</p>
 
 <div class="proj-grid">
   <div class="card">
@@ -119,35 +134,28 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
     <p class="proj-mut" id="proj-namerule">Lowercase letters, digits and single hyphens, 2 to 64
       characters, starting and ending with a letter or digit. <code>my-app</code> is fine;
       <code>My-App</code>, <code>-app</code>, <code>app--1</code> and <code>app/x</code> are not.</p>
-    <p class="proj-mut">Tick the boxes a new project starts with. The shortlist is fixed: the
-      portal's own best practices, not a place to type commands. A box whose toolchain is not on
-      this machine is refused by name, with the install statement, and the boxes that can run still
-      run.</p>
-    <p class="proj-mut" id="proj-gitignore"><code>.gitignore</code> is not a box: it is written with
-      the boxes you picked. The base ignores are always there, and each stack you tick — Python, Node, C++ —
-      adds its own section. A project that ticks nothing still gets the base, because a folder
-      that gets a repository later is the folder this file exists for. A
-      <code>.gitignore</code> the project already has is left exactly as it is.</p>
+    <p class="proj-mut" id="proj-gitignore">Tick the stacks to initialize. A stack whose toolchain
+      is missing is refused by name; the rest run. <code>.gitignore</code> is not a box: it is
+      written with the boxes, base ignores plus a section per stack.</p>
     <div id="proj-steps" class="proj-steps"></div>
-    <details class="proj-more" id="proj-more">
-      <summary>Opening text and a git remote</summary>
-      <p class="proj-mut">Your words go in the files as written; empty means the portal's own
-        template. A remote is added as <code>origin</code>. <b>Pull from the remote first</b>
-        fetches that repository's own default branch before the init files are written, so its
-        README is kept and the templates fill only the gaps.</p>
+    <div id="proj-git-block" hidden>
       <label class="proj-field">README.md — opening text
-        <textarea id="proj-readme" rows="4" placeholder="empty = the portal's template"></textarea>
+        <textarea id="proj-readme" rows="3" placeholder="empty = the portal's template"></textarea>
       </label>
       <label class="proj-field">AGENTS.md — what the agent reads on entry
-        <textarea id="proj-agents" rows="4" placeholder="empty = the portal's template"></textarea>
+        <textarea id="proj-agents" rows="3" placeholder="empty = the portal's template"></textarea>
       </label>
-      <label class="proj-field">Git remote (becomes origin)
+      <label class="proj-field">Git remote path (becomes origin)
         <input id="proj-remote" type="text" autocomplete="off" spellcheck="false"
                placeholder="git@github.com:you/your-repo.git">
       </label>
       <label class="proj-check"><input id="proj-pull" type="checkbox">
         <span>Pull from the remote first</span></label>
-    </details>
+      <p class="proj-mut">Files you leave empty get the portal's template.
+        <b>Pull from the remote first</b> fetches the repository's default branch
+        before the init files are written, so its README is kept and the templates
+        fill only the gaps.</p>
+    </div>
     <p style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0">
       <button id="proj-plan">Plan</button>
       <button id="proj-create" class="primary">Create project</button>
@@ -521,6 +529,7 @@ async function refresh() {
   renderPersonalities(PERSONALITIES, d.summary && d.summary.personalities_named);
   STATE = d;
   renderSummary(d.summary);
+  renderRootCard(d.summary);
   renderRows(d.projects);
   renderUnadopted(d.scan);
 
@@ -943,7 +952,71 @@ $('#proj-rows').addEventListener('click', async (e) => {
   await showSession(e.target.dataset.session);
 });
 
+/* ------------------------------------------------ the projects root card
+   The page points at its own root and edits it: the setting lives in the portal
+   settings store (the same one Settings will read), validated there. The page's
+   guard mirrors the server's first rule (absolute, `~`-rooted) so an invalid
+   string never becomes a request; the server stays the authority. */
+function rootShapeOk(v){ return v.startsWith('/') || v === '~' || v.startsWith('~/'); }
+
+function renderRootCard(s) {
+  const inp = $('#proj-root');
+  if (document.activeElement !== inp) inp.value = s.root || '';
+  const st = $('#proj-root-status');
+  if (s.root_ok) {
+    st.textContent = 'Usable: projects are created under this folder.';
+    st.style.color = '';
+  } else {
+    st.textContent = `Refused: ${s.root_error}`;
+    st.style.color = 'var(--bad)';
+  }
+}
+
+$('#proj-root-save').addEventListener('click', async () => {
+  const st = $('#proj-root-status');
+  const v = $('#proj-root').value.trim();
+  if (!v) { st.textContent = 'The root needs a path.'; st.style.color = 'var(--bad)'; return; }
+  if (!rootShapeOk(v)) {
+    st.textContent = 'The path must be absolute (start with / or ~/).';
+    st.style.color = 'var(--bad)';
+    return;
+  }
+  const d = await req('POST', '/api/settings/portal', {key: 'projects_root', value: v});
+  if (d.detail) { st.textContent = `Refused: ${d.detail}`; st.style.color = 'var(--bad)'; return; }
+  st.style.color = '';
+  st.textContent = 'Saved.';
+  await refresh();
+});
+
+$('#proj-root-test').addEventListener('click', async () => {
+  const st = $('#proj-root-status');
+  const v = $('#proj-root').value.trim();
+  if (!v) { st.textContent = 'Type a path first.'; st.style.color = 'var(--bad)'; return; }
+  const d = await req('POST', '/api/settings/portal/validate', {key: 'projects_root', value: v});
+  if (d.detail) { st.textContent = `Refused: ${d.detail}`; st.style.color = 'var(--bad)'; return; }
+  if (d.ok) {
+    st.style.color = '';
+    st.textContent = `Resolves to ${d.path}${d.exists ? ' — it exists.' : ' — it does not exist yet; the first project created here will make it.'}`;
+  } else {
+    st.style.color = 'var(--bad)';
+    st.textContent = `Refused: ${d.error}`;
+  }
+});
+
+/* ------------------------------------------------ the git-box gate
+   The README.md / AGENTS.md / remote fields belong to the Git repository box:
+   they appear when it is ticked and disappear when it is not (owner, 2026-11:
+   hidden behind a collapsed tag is not an offer). The values survive hiding —
+   the inputs keep their text, the create call reads what is on the page. */
+function gateGitBlock() {
+  const on = !!document.querySelector('#proj-steps input[value="git"]:checked');
+  $('#proj-git-block').hidden = !on;
+}
+$('#proj-steps').addEventListener('change', gateGitBlock);
+gateGitBlock();
+
 renderSteps();
+gateGitBlock();
 (async () => {
   loadLaunchModels().catch(() => {});   // the model select is an offer, not a requirement:
   await refresh();                       // a host that will not list models leaves "host default"

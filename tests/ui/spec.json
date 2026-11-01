@@ -6,7 +6,7 @@
     "for every page automatically; this file only adds what cannot be derived:",
     "which endpoints a page must have called, which tabs form a group, which",
     "controls must not be stuck disabled, and what a destructive request must",
-    "look like. Add a page here when you add one to the app — test_ui_integration",
+    "look like. Add a page here when you add one to the app \u2014 test_ui_integration",
     "fails if the app serves an HTML page with no spec."
   ],
   "blockMutations": [
@@ -354,7 +354,7 @@
         },
         {
           "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok · \\d+\\.\\d t/s"
+          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
         },
         {
           "selector": "#pulse-lanes .lane",
@@ -390,7 +390,7 @@
         },
         {
           "_comment": [
-            "§6.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
+            "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
             "MainPID=0 (so no router process, and every server found is outside the unit) and the",
             "fixture seeds a llama-server the portal does not control. So these are the panel's",
             "branch-specific sentences, not a shape that both branches happen to share."
@@ -519,7 +519,7 @@
       "_disabled_comment": [
         "These three are enabled by the dashboard's own fixtures and locked only",
         "by the bar: this is the bar's doing, not the page's. The restore path is",
-        "asserted by mutation \"job bar never unlocks the controls again\" — a",
+        "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
         "static spec cannot see a lock that was never released, so it has to be",
         "broken in the template to know it is tested."
       ],
@@ -543,7 +543,7 @@
     {
       "_comment": [
         "The other half of the bar: the job finished, possibly while you were",
-        "elsewhere, and said it failed. The bar must still say so — and the",
+        "elsewhere, and said it failed. The bar must still say so \u2014 and the",
         "controls must be usable again."
       ],
       "name": "jobbar-finished",
@@ -746,7 +746,7 @@
           "contains": "amdrocm-base9.9"
         },
         {
-          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) —' is the shape of the fact, not the fact."
+          "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
         },
         {
           "selector": "#gpu-stack .kv",
@@ -841,22 +841,39 @@
       "selectCases": [
         {
           "select": "#agent-scopes",
-          "choose": {"value": "read,write"},
+          "choose": {
+            "value": "read,write"
+          },
           "note": "scopes",
           "then_fill": [
-            {"id": "agent-name", "value": "ui-contract-agent"},
-            {"id": "agent-machine", "value": "ui-contract-box"}
+            {
+              "id": "agent-name",
+              "value": "ui-contract-agent"
+            },
+            {
+              "id": "agent-machine",
+              "value": "ui-contract-box"
+            }
           ],
-          "then_click": ["#agent-issue-btn"]
+          "then_click": [
+            "#agent-issue-btn"
+          ]
         },
         {
           "select": "#agent-scopes",
-          "choose": {"value": "read"},
+          "choose": {
+            "value": "read"
+          },
           "note": "forge",
           "then_fill": [
-            {"id": "forge-url", "value": "http://127.0.0.1:8188"}
+            {
+              "id": "forge-url",
+              "value": "http://127.0.0.1:8188"
+            }
           ],
-          "then_click": ["#forge-test-btn"]
+          "then_click": [
+            "#forge-test-btn"
+          ]
         }
       ],
       "requireConfirmUnlessBodyContains": {
@@ -906,7 +923,7 @@
                 "pids": [],
                 "proc_read": true,
                 "purgeable": false,
-                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) — this build is what the router is configured to run"
+                "why_not": "~/ai/bin still links into it (llama-cli (broken link)) \u2014 this build is what the router is configured to run"
               },
               {
                 "name": "llama.cpp-b10796",
@@ -1010,7 +1027,7 @@
       "_expectInert_comment": [
         "a[nth=3] is the sidebar's own Personalities link: inert by definition on the page it points at.",
         "",
-        "mp-attach-1 (ui-test-model) and mp-attach-3 (Jackrong/…) in the page's load state (persona 'safe',",
+        "mp-attach-1 (ui-test-model) and mp-attach-3 (Jackrong/\u2026) in the page's load state (persona 'safe',",
         "no card open): the page opens on the whole library, no model personality is attached to these",
         "cards, and the sweep drives them with no card open: the attach select offers only its current",
         "'none' -- selecting the current value is not a state change in a browser. The attach transition",
@@ -1293,9 +1310,9 @@
         "/api/model-configs/delete"
       ],
       "_expectAbsent_comment": [
-        "§6.14.1q / queue 33 state 4: the settings reference moved off this page to Help.",
+        "\u00a76.14.1q / queue 33 state 4: the settings reference moved off this page to Help.",
         "A 420 px table of key definitions between the deck and the editor was reference",
-        "material in the middle of a working page (docs/PORTAL_POLISH.md §7, measured 6,800 px).",
+        "material in the middle of a working page (docs/PORTAL_POLISH.md \u00a77, measured 6,800 px).",
         "Its content is generated from the same settingrows rows and published per key on /help;",
         "the guards that read its rows moved to tests/test_settingsdoc.py and the page test reads",
         "the link instead."
@@ -1371,7 +1388,7 @@
         },
         {
           "_comment": [
-            "Queue 33 (plan §6.14.1t): the reason, on the line the verdict is on.",
+            "Queue 33 (plan \u00a76.14.1t): the reason, on the line the verdict is on.",
             "A strip that reads 'does not fit' has told the operator the bad half and stopped;",
             "the reason (which of the two ceilings, by how much, or which models are unpriceable)",
             "was computed and carried in the payload and printed nowhere. In this sandbox every",
@@ -1505,7 +1522,7 @@
             "EDITABLE card (UI-Test-Work), and its own sentence must arrive at load."
           ],
           "selector": "#ed-summary",
-          "contains": "no changes — these are UI-Test-Work's current settings: 2 value(s) in [*], 0 model section(s) set"
+          "contains": "no changes \u2014 these are UI-Test-Work's current settings: 2 value(s) in [*], 0 model section(s) set"
         },
         {
           "_comment": [
@@ -1527,7 +1544,7 @@
         },
         {
           "_comment": [
-            "the deck (plan §6.14.1f): one strip per personality, so ten personalities is ten",
+            "the deck (plan \u00a76.14.1f): one strip per personality, so ten personalities is ten",
             "lines and choosing between them needs no scrolling"
           ],
           "selector": "#pers-deck .pers-strip",
@@ -1574,7 +1591,7 @@
         },
         {
           "_comment": [
-            "The reference moved to Help, and the page hands it over as one named link (§6.14.1q).",
+            "The reference moved to Help, and the page hands it over as one named link (\u00a76.14.1q).",
             "The anchor is computed server-side by kb.anchor_of() and passed as a template field --",
             "the same rule the row links use, so the template names a field and never a key."
           ],
@@ -1584,7 +1601,7 @@
         {
           "_comment": [
             "The editor is where a setting gets typed, so both grids carry the route to the",
-            "measurement: 12 global rows plus 14 per-model rows. §6.14.1q moved the keys",
+            "measurement: 12 global rows plus 14 per-model rows. \u00a76.14.1q moved the keys",
             "table's 32 links to the reference document (tests/test_settingsdoc.py proves the",
             "count there); the 26 that remain are the rows a decision is made on."
           ],
@@ -1593,7 +1610,7 @@
         },
         {
           "_comment": [
-            "Queue 33 (§6.14.1q): the editor's `used by` line. The sandbox host never runs, so the",
+            "Queue 33 (\u00a76.14.1q): the editor's `used by` line. The sandbox host never runs, so the",
             "payload's answer is the unconfirmed state -- and the line has to carry the payload's reason",
             "instead of reading as 'checked, nothing uses it'. A line that invents the host's answer is",
             "how a personality gets edited blind."
@@ -1603,9 +1620,9 @@
         },
         {
           "_comment": [
-            "Queue 33 §6.14.1q state 1: the Now strip in the sandbox, where no router runs.",
+            "Queue 33 \u00a76.14.1q state 1: the Now strip in the sandbox, where no router runs.",
             "The strip's model and slot come from the router's own account, so the sandbox state is the",
-            "state where it must NOT claim a model or a port — it names the state and points at the deck."
+            "state where it must NOT claim a model or a port \u2014 it names the state and points at the deck."
           ],
           "selector": "#pers-now",
           "contains": "nothing is active"
@@ -1676,7 +1693,7 @@
       "name": "projects-active",
       "path": "/projects",
       "_comment": [
-        "Queue 32 §6.14.1x — the ACTIVE scenario, in the operator's own words:",
+        "Queue 32 \u00a76.14.1x \u2014 the ACTIVE scenario, in the operator's own words:",
         "'the projects page must detect that running session and take you to it rather than showing the",
         "inactive launchpad', and the session 'should remain a durable active agentic task even if the",
         "user closes their browser session or changes pages on the portal'.",
@@ -1848,7 +1865,7 @@
         "These are the page's real ids and the runner's real visibility keys. An assertion on a",
         "selector the page never had is vacuous in the opposite direction from an unimplemented",
         "key: it passes because nothing matches, and teaches everyone to trust a green bar.",
-        "expectShown is the half expectVisible lacks — 'in the document' is true of a panel",
+        "expectShown is the half expectVisible lacks \u2014 'in the document' is true of a panel",
         "nobody can see, which is exactly the launchpad-versus-session distinction being asserted."
       ],
       "expectShown": [
@@ -1882,7 +1899,7 @@
           "contains": "ses_ui_1"
         },
         {
-          "_comment": "The meter's denominator is the context the personality is served at, read from the personality — the number the operator asked for, and the reason a bar with no ceiling is refused.",
+          "_comment": "The meter's denominator is the context the personality is served at, read from the personality \u2014 the number the operator asked for, and the reason a bar with no ceiling is refused.",
           "selector": "#proj-ctx-text",
           "contains": "262k"
         }
@@ -1923,7 +1940,7 @@
         {
           "_comment": [
             "Quit leaves the operational state and returns to the list, with the session id in the",
-            "sentence — the session stays open on the host, so the page to go to next is the harness",
+            "sentence \u2014 the session stays open on the host, so the page to go to next is the harness",
             "page. Quit is confirm-gated, so the sweep's dialog-refused pass must leave the view up and",
             "the accepted pass must land the exit.",
             "Quit is asserted before the send case, because it leaves the view: the list's summary line",
@@ -1961,7 +1978,7 @@
           "_comment": [
             "The send box is the page's own verb, aimed at the session the page is showing: it names the",
             "project, not a session id the operator copied. Text typed into it, then Send, must reach the",
-            "agent — read below as the host's answer and the transcript that grows."
+            "agent \u2014 read below as the host's answer and the transcript that grows."
           ],
           "select": "#proj-personality",
           "choose": {
@@ -1984,7 +2001,7 @@
         "by name, a plan creates nothing, forgetting deletes nothing. Launch is the harness page's",
         "session view (sec 6.14.1m); queue 33 gave this page a launch verb of its own, so Launch acts:",
         "it posts to /api/projects/launch, records the session with the personality it runs with, and",
-        "is disabled by the host's answer read off the payload — not by a literal, so it flips when the",
+        "is disabled by the host's answer read off the payload \u2014 not by a literal, so it flips when the",
         "host does. The sweep drives the fields and the buttons; the assertions below are the outcomes",
         "the operator reads. Launch needs no confirm() from the sweep: it opens a session, deletes",
         "nothing, and the endpoint carries its own confirm field.",
@@ -2018,7 +2035,6 @@
         "#proj-name",
         "#proj-namerule",
         "#proj-steps",
-        "#proj-gitignore",
         "#proj-plan",
         "#proj-create",
         "#proj-plan-out",
@@ -2029,7 +2045,6 @@
         "#proj-agents",
         "#proj-remote",
         "#proj-pull",
-        "#proj-more",
         "#proj-op",
         "#proj-op-name",
         "#proj-op-meta",
@@ -2043,7 +2058,13 @@
         "#proj-question",
         "#proj-question-reply",
         "#proj-question-reject",
-        ".proj-web"
+        ".proj-web",
+        "#proj-root-card",
+        "#proj-root",
+        "#proj-root-save",
+        "#proj-root-test",
+        "#proj-root-status",
+        "#proj-git-block"
       ],
       "expectText": [
         {
@@ -2053,7 +2074,7 @@
             "with empty strings, which expectVisible cannot see."
           ],
           "selector": "#proj-summary",
-          "matches": "Projects root \\S+ · Registered \\d+ · Folders not in the registry \\d+"
+          "matches": "Projects root \\S+ \u00b7 Registered \\d+ \u00b7 Folders not in the registry \\d+"
         },
         {
           "_comment": [
@@ -2064,7 +2085,7 @@
         },
         {
           "_comment": [
-            "the operator's rule (§6.14.1o, queue 18): .gitignore is a consequence of the",
+            "the operator's rule (\u00a76.14.1o, queue 18): .gitignore is a consequence of the",
             "boxes, not a box. The page states it beside the boxes, so the operator is not",
             "left to wonder where the file in `git status` came from. The sweep ticks every",
             "box, so this sentence is read on the surface that makes it."
@@ -2076,8 +2097,8 @@
           "_comment": [
             "the shortlist is rendered from the server's step list, not hardcoded markup.",
             "Six boxes, not seven: .gitignore dropped out of the shortlist when it became a",
-            "consequence of them (§6.14.1o), so this count is the shape of the operator's",
-            "rule — a count of 7 means a box came back."
+            "consequence of them (\u00a76.14.1o), so this count is the shape of the operator's",
+            "rule \u2014 a count of 7 means a box came back."
           ],
           "selector": "#proj-steps .proj-step",
           "matches": "Git repository",
@@ -2089,7 +2110,7 @@
             "The registry is seeded with one project in the UI sandbox, so this is read on a",
             "real row: 'not served' is the host's answer, not a string the page spelled.",
             "The host is not running in the sandbox, so the honest answers are 'not served'",
-            "and 'serving state unknown' — both are accepted, because a page that printed",
+            "and 'serving state unknown' \u2014 both are accepted, because a page that printed",
             "'is being served' for a project with no host would pass a fixture-only test."
           ],
           "selector": "#proj-rows .proj-serve",
@@ -2102,7 +2123,7 @@
             "the host never runs in the sandbox. So the sweep's surface is the payload's launch state,",
             "supplied here: the page reads `launch.available` off the payload and enables the row's",
             "button from it, then posts to the endpoint the payload names. The fixture is the host's",
-            "answer, not a convenience — a page that ignored it would leave the button disabled here",
+            "answer, not a convenience \u2014 a page that ignored it would leave the button disabled here",
             "and the sweep would report the control as dead."
           ],
           "path": "^/api/projects$",
@@ -2117,24 +2138,29 @@
         },
         {
           "_comment": [
-            "the opening text and the remote are the operator's additions to the create card;",
-            "the copy states the pull order, which is what the tests prove"
+            "the opening text and the remote fields live in the block that the",
+            "Git repository box opens (owner: not behind a collapsed tag); the",
+            "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-more",
+          "selector": "#proj-git-block",
           "contains": "Pull from the remote first"
         },
         {
           "_comment": [
-            "the sentence is matched up to its line break: textContent keeps the newline the"
+            "the opening text and the remote fields live in the block that the",
+            "Git repository box opens (owner: not behind a collapsed tag); the",
+            "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-more",
-          "contains": "empty means the portal's own"
+          "selector": "#proj-git-block",
+          "contains": "get the portal's template"
         },
         {
           "_comment": [
-            "a remote is named where the operator types it"
+            "the opening text and the remote fields live in the block that the",
+            "Git repository box opens (owner: not behind a collapsed tag); the",
+            "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-more",
+          "selector": "#proj-git-block",
           "contains": "origin"
         },
         {
@@ -2150,7 +2176,7 @@
         },
         {
           "_comment": [
-            "tokens over the ceiling the serving personality's models are served at — the portal's own",
+            "tokens over the ceiling the serving personality's models are served at \u2014 the portal's own",
             "fact, 600 of 4096 printed as 600 of 4k. A meter without a denominator is refused by the",
             "core, so these numbers are the rule, not decoration."
           ],
@@ -2172,7 +2198,7 @@
         {
           "_comment": [
             "the send box is not decorative: the text reaches the session and the answer is the host's own",
-            "words — the message id it created. A send box that goes quiet is this queue's named failure,",
+            "words \u2014 the message id it created. A send box that goes quiet is this queue's named failure,",
             "so it is asserted as visible text."
           ],
           "selector": "#proj-op-out",

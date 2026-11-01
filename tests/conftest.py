@@ -90,6 +90,18 @@ def _never_the_real_home():
                     f"a fixture that clears a library must not be able to reach a real one",
                     returncode=1)
 
+    # The DB must live in that home too. `paths` freezing a temp home is not enough:
+    # the audit trail caught test runs writing `projects_root` and a `stacks` project
+    # into the OPERATOR's portal.db (Oct 15 and Oct 29 - visible on the Projects page
+    # as a root in /tmp and a project nobody created). A suite whose writes land in
+    # the live database is not a sandbox, whatever paths.HOME says.
+    from app.core import db as _db
+    dbp = Path(_db.DB).resolve()
+    if not str(dbp).startswith(str(resolved)):
+        pytest.exit(f"the suite's database is outside the suite home ({dbp} not under "
+                    f"{resolved}): writes would land in the operator's state",
+                    returncode=1)
+
     yield
     # Only ever remove a directory this run made. An operator pointing the suite at a home of their
     # own is a debugging affordance, and cleaning up after them is not mine to do.

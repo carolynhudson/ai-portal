@@ -7062,3 +7062,51 @@ What the harness taught (each is now a pinned test):
   the sweep judges dead controls.
 
 Suite 1255; UI gate 100.
+
+##### 6.14.1z Projects page: the page owns its root; the test-leak is sealed (2026-11-01)
+
+Owner's audit of /projects: verbose obvious prose; a projects root pointing at
+`/tmp/tmpeatv7c6i/...`; a project ("stacks") nobody created; a pointer to
+Settings that had no projects-root control; README/AGENTS/remote fields hidden
+behind a collapsed `<details>`.
+
+**The root and "stacks" were mine, and the audit trail named the crime.**
+Events show `projects_root` test-sandbox paths written into the OPERATOR's
+portal.db on Oct 15 and Oct 29 — writes made while `app.core.paths` had
+resolved to the real home. The suite's home guard (since 2026-09-28) covers
+`pytest` runs; the entries are the shape of ad-hoc debug scripts, where the
+env var is set after the first import (`paths` freezes at import, so
+everything downstream — including `db.DB` — uses the real home). Cleaned with
+an audited `maintenance` event; the registry now shows only the four real
+folders as adoptable. Sealing: the conftest guard now also requires the
+suite's DB to live inside the suite home — `paths.HOME` in temp is not enough
+if `db.DB` resolves elsewhere. The standing rule for debug scripts: set
+`AI_PORTAL_HOME` **before importing anything from `app/`**, and print
+`db.DB` before writing anything.
+
+**Shipped on the page** (owner's layout, kept brief):
+* **Projects root card on /projects** — the path displayed, editable, with
+  Save and Test path; the status line carries the server's refusal sentence
+  verbatim. The page no longer points at a Settings control that does not
+  exist. Save writes the portal setting (`projects_root`) through the same
+  validated endpoint; the client guard mirrors the server's first rule
+  (absolute / `~`-rooted) so junk never becomes a request (the harness sweep
+  fills inputs with `ui-test-value-N` — lesson from 6.14.1y, applied here
+  first try).
+* **The git fields live with the git box**: README.md, AGENTS.md, Git remote
+  path and pull-first sit under the stack ticks and appear only when **Git
+  repository** is ticked (`#proj-git-block` gated on the steps' change event).
+  No `<details>`, no collapsed anything. Labels per the owner: README.md,
+  AGENTS.md, Git remote path.
+* **Prose trimmed** to brief-and-clear: the .gitignore paragraph is one
+  sentence ("not a box: it is written with the boxes, base ignores plus a
+  section per stack"), the launch paragraph is two, the root explanation two.
+
+Pinned: two new contract tests (gate mechanics — `hidden`, the git-box change
+listener, fields inside the block; root card — ids, no "Change it on", the
+validate endpoint, `rootShapeOk`), and the sweep-driven contract that
+`/api/settings/portal/validate` arrives with `{key, value}`. Spec text probes
+moved from `#proj-more` to `#proj-git-block`; `#proj-gitignore` stays as the
+id of the consequence sentence.
+
+Suite: see commit (1258 target). Witness: ~/ai/logs/projects-rework-20261101/.

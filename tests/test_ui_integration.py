@@ -395,6 +395,9 @@ def test_destructive_requests_carry_what_the_backend_needs(ui_server):
             (r"^/api/models/search$", {"query", "service", "model_type", "limit"}),
             (r"^/api/models/add$", {"filename", "model_dir", "category"}),
         ],
+        "projects": [
+            (r"^/api/settings/portal/validate$", {"key", "value"}),
+        ],
     }
     seen = set()
     problems = []

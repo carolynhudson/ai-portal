@@ -1492,6 +1492,43 @@ def test_the_projects_page_says_the_gitignore_arrives_with_the_boxes_not_as_one(
     assert "not a box" in intro, "the page does not say the file is a consequence, not a choice"
 
 
+def test_the_git_fields_live_with_the_git_box_not_behind_a_tag():
+    """Owner, 2026-11: the README/AGENTS/remote fields belong to the Git repository
+    option and appear when it is ticked - `hidden` in the markup, toggled on the
+    steps' change event - not behind a collapsed <details>."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    assert '<details class="proj-more"' not in tpl, \
+        "the create card hides the opening-text fields behind a collapsed tag again"
+    assert 'id="proj-git-block" hidden' in tpl, \
+        "the git fields are not gated on the git box"
+    assert 'input[value="git"]:checked' in script, \
+        "nothing reads the git box to open the fields"
+    assert "addEventListener('change', gateGitBlock)" in script, \
+        "the gate does not follow ticking"
+    for label, el in (("README.md", "proj-readme"), ("AGENTS.md", "proj-agents"),
+                      ("Git remote path", "proj-remote")):
+        block = tpl[tpl.index('id="proj-git-block"'):]
+        assert label in block and f'id="{el}"' in block, f"{label} field is not inside the gated block"
+
+
+def test_the_projects_page_edits_its_own_root_and_says_why_a_path_is_refused():
+    """The page pointed at Settings for the projects root; Settings had no such
+    control. The card is now on the page: input, Save, Test, and a status line
+    that carries the server's refusal sentence."""
+    tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
+    script = _script_of(tpl, "projects")
+
+    for el in ("proj-root-card", "proj-root", "proj-root-save", "proj-root-test",
+               "proj-root-status"):
+        assert f'id="{el}"' in tpl, f"the root card is missing {el}"
+    assert "Change it on" not in tpl, "the page still sends the reader to a Settings page that cannot set it"
+    assert "key: 'projects_root'" in script, "Save does not write the portal setting"
+    assert "/api/settings/portal/validate" in script, "Test path does not use the validate endpoint"
+    assert "rootShapeOk" in script, "an invalid path would be sent to the server instead of refused locally"
+
+
 def test_the_projects_page_reports_the_ignores_it_wrote_after_a_create():
     """The plan and the create result both name the file: the plan so the operator sees it
     before creating, the result so the operator sees what actually happened."""
