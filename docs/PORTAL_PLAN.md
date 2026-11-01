@@ -7021,3 +7021,44 @@ device scale: mono numerals, sparkline labels and attention text crisp over
 the fringes. The dead-radial lesson generalizes: **an effect below the
 visible threshold cannot be judged — ship it visible enough to have an
 opinion about, bounded by measurement.**
+
+##### 6.14.1y Settings page: the table breathes, the mesh gets its face (2026-11-01)
+
+Owner's read of the network-access table: two prose columns overfilled,
+word-wrapped, 11-12px — "needlessly difficult to read"; "a settings table,
+not a help document." Shipped:
+
+* **Two-row layout per service**: the row keeps label / current / bind /
+  port / change / Save and one **status dot**; the endpoint URLs, unit,
+  auth summary, firewall command, and warnings move to a **full-width
+  detail row** beneath, a bulleted list at reading size. Intro prose
+  trimmed; the long form is `DEBUGGING.md`, cited.
+* **Mesh identities** (Settings card): issue (confirm twice — the browser
+  dialog and the endpoint), the token shown **once** with the paste-ready
+  `mcp` snippet, scope selector, revoke, last-seen liveness.
+  `GET /api/settings/agents`, `POST issue|revoke`; audit-clean (the token
+  never enters the audit).
+* **Remote image forge** card: the Windows box's ComfyUI is not a local
+  unit, so it is a portal setting — `remote_forge_url`, validated (scheme,
+  host, port range; **credentials in the URL are refused** — same red line
+  as the KB), a 30s-cached `/system_stats` probe, and a confirm-gated
+  Test. It rendered live at **v0.43.0** on first load.
+* **view() shape rule**: portal settings are `path` or `url`; a URL is
+  never resolved as a folder.
+
+What the harness taught (each is now a pinned test):
+
+* the sweep **fills inputs with junk** (`ui-test-value-N`) — a page must
+  refuse locally (client-side shape guard mirroring the server rule), not
+  elicit a 409 it should have caught itself;
+* **sweep identity drift**: confirm-gated buttons get consumed by the
+  denied pass and skipped by the accepted pass when their sibling-suffix
+  identity (`#2`) shifts between passes — the sanctioned exercise is
+  `selectCases` + `then_click`, which drove issue and forge/test in both
+  passes;
+* deleting a helper (`sh()`) that one renderer still calls passes every
+  python test and is named precisely in the **node harness's stderr**;
+* an empty-field guard must alert (visible effect), not return silently —
+  the sweep judges dead controls.
+
+Suite 1255; UI gate 100.
