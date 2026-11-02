@@ -27,6 +27,7 @@
 .proj-check{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:.95em}
 .proj-ghost{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:6px 12px;cursor:pointer}
 .proj-ghost:hover{color:var(--fg)}
+.proj-fields{margin:2px 0 8px 24px;padding:6px 12px;border-left:2px solid var(--line)}
 .proj-step{display:flex;gap:9px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);
   border-radius:7px;background:var(--panel)}
 .proj-step[data-unavailable="yes"]{border-style:dashed;opacity:.72}
@@ -138,23 +139,32 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
       is missing is refused by name; the rest run. <code>.gitignore</code> is not a box: it is
       written with the boxes, base ignores plus a section per stack.</p>
     <div id="proj-steps" class="proj-steps"></div>
-    <div id="proj-git-block" hidden>
-      <label class="proj-field">README.md — opening text
-        <textarea id="proj-readme" rows="3" placeholder="empty = the portal's template"></textarea>
-      </label>
-      <label class="proj-field">AGENTS.md — what the agent reads on entry
-        <textarea id="proj-agents" rows="3" placeholder="empty = the portal's template"></textarea>
-      </label>
+    {# Each field belongs to the box that enables it (owner, 2026-11): remote under
+       Git repository, the README text under README.md, the agent text under AGENTS.md.
+       renderSteps moves these under their rows; the gate shows each only when its
+       box is ticked. #}
+    <div id="proj-git-fields" class="proj-fields" hidden>
       <label class="proj-field">Git remote path (becomes origin)
         <input id="proj-remote" type="text" autocomplete="off" spellcheck="false"
                placeholder="git@github.com:you/your-repo.git">
       </label>
       <label class="proj-check"><input id="proj-pull" type="checkbox">
         <span>Pull from the remote first</span></label>
-      <p class="proj-mut">Files you leave empty get the portal's template.
-        <b>Pull from the remote first</b> fetches the repository's default branch
-        before the init files are written, so its README is kept and the templates
-        fill only the gaps.</p>
+      <p class="proj-mut">The remote is added as <code>origin</code>. <b>Pull from the
+        remote first</b> fetches its default branch before the init files are written,
+        so the repository's own README is kept and the templates fill only the gaps.</p>
+    </div>
+    <div id="proj-readme-fields" class="proj-fields" hidden>
+      <label class="proj-field">README.md — opening text
+        <textarea id="proj-readme" rows="3" placeholder="empty = the portal's template"></textarea>
+        <span class="proj-mut">Leave empty and the project gets the portal's template.</span>
+      </label>
+    </div>
+    <div id="proj-agents-fields" class="proj-fields" hidden>
+      <label class="proj-field">AGENTS.md — what the agent reads on entry
+        <textarea id="proj-agents" rows="3" placeholder="empty = the portal's template"></textarea>
+        <span class="proj-mut">Leave empty and the project gets the portal's template.</span>
+      </label>
     </div>
     <p style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0">
       <button id="proj-plan">Plan</button>
@@ -306,7 +316,11 @@ function renderSteps() {
       : spec.does;
     row.append(cb, name, does);
     box.append(row);
+    // The boxes that own a field get it rendered directly under their row.
+    const host = FIELD_FOR_STEP[id];
+    if (host) box.append($('#' + host));
   }
+  gateFields();
 }
 
 const ticked = () => Array.from(document.querySelectorAll('#proj-steps input:checked')).map(i => i.value);
@@ -1003,20 +1017,25 @@ $('#proj-root-test').addEventListener('click', async () => {
   }
 });
 
-/* ------------------------------------------------ the git-box gate
-   The README.md / AGENTS.md / remote fields belong to the Git repository box:
-   they appear when it is ticked and disappear when it is not (owner, 2026-11:
-   hidden behind a collapsed tag is not an offer). The values survive hiding —
-   the inputs keep their text, the create call reads what is on the page. */
-function gateGitBlock() {
-  const on = !!document.querySelector('#proj-steps input[value="git"]:checked');
-  $('#proj-git-block').hidden = !on;
+/* ------------------------------------------------ the per-box field gate
+   Each optional field belongs to the box that enables it (owner, 2026-11):
+   Git remote path under **Git repository**, the opening text under **README.md**,
+   the agent text under **AGENTS.md** - visible only while that box is ticked.
+   renderSteps renders each field container directly under its row; the gate
+   reads the row's own checkbox. The inputs keep their text while hidden - the
+   create call reads what is on the page. */
+const FIELD_FOR_STEP = {git: 'proj-git-fields', readme: 'proj-readme-fields',
+                        agents: 'proj-agents-fields'};
+
+function gateFields() {
+  for (const id of Object.keys(FIELD_FOR_STEP)) {
+    const on = !!document.querySelector(`#proj-steps input[value="${id}"]:checked`);
+    document.getElementById(FIELD_FOR_STEP[id]).hidden = !on;
+  }
 }
-$('#proj-steps').addEventListener('change', gateGitBlock);
-gateGitBlock();
+$('#proj-steps').addEventListener('change', gateFields);
 
 renderSteps();
-gateGitBlock();
 (async () => {
   loadLaunchModels().catch(() => {});   // the model select is an offer, not a requirement:
   await refresh();                       // a host that will not list models leaves "host default"

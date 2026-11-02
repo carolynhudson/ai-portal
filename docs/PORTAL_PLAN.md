@@ -7109,4 +7109,17 @@ validate endpoint, `rootShapeOk`), and the sweep-driven contract that
 moved from `#proj-more` to `#proj-git-block`; `#proj-gitignore` stays as the
 id of the consequence sentence.
 
-Suite: see commit (1258 target). Witness: ~/ai/logs/projects-rework-20261101/.
+Suite: 1257/4. Witness: ~/ai/logs/projects-rework-20261101/.
+
+**Amendment, same day (the owner's second pass on the create card).** The
+first shipping gated the README/AGENTS/remote fields as one block under the
+**Git repository** tick. The owner's ruling: each field is associated with
+*its own* box — **Git repository → Git remote path**, **README.md → opening
+text**, **AGENTS.md → what the agent reads on entry** — and each belongs
+directly below the control that enables it, visible only while that box is
+ticked. Shipped: three `#proj-*-fields` containers, hidden in the markup,
+rendered by `renderSteps` directly under their rows (`FIELD_FOR_STEP`),
+gated per-checkbox by `gateFields()`. The contract test now pins the
+per-box placement (field inside its container, container keyed in the
+render map, gate reads the box's own checkbox) so a future "shared block"
+regression fails on its own.

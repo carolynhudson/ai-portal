@@ -2064,7 +2064,9 @@
         "#proj-root-save",
         "#proj-root-test",
         "#proj-root-status",
-        "#proj-git-block"
+        "#proj-git-fields",
+        "#proj-readme-fields",
+        "#proj-agents-fields"
       ],
       "expectText": [
         {
@@ -2142,7 +2144,7 @@
             "Git repository box opens (owner: not behind a collapsed tag); the",
             "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-git-block",
+          "selector": "#proj-git-fields",
           "contains": "Pull from the remote first"
         },
         {
@@ -2151,8 +2153,8 @@
             "Git repository box opens (owner: not behind a collapsed tag); the",
             "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-git-block",
-          "contains": "get the portal's template"
+          "selector": "#proj-readme-fields",
+          "contains": "the portal's template"
         },
         {
           "_comment": [
@@ -2160,7 +2162,7 @@
             "Git repository box opens (owner: not behind a collapsed tag); the",
             "copy states the pull order, which is what the tests prove"
           ],
-          "selector": "#proj-git-block",
+          "selector": "#proj-git-fields",
           "contains": "origin"
         },
         {

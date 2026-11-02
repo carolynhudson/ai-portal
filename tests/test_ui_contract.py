@@ -1492,27 +1492,36 @@ def test_the_projects_page_says_the_gitignore_arrives_with_the_boxes_not_as_one(
     assert "not a box" in intro, "the page does not say the file is a consequence, not a choice"
 
 
-def test_the_git_fields_live_with_the_git_box_not_behind_a_tag():
-    """Owner, 2026-11: the README/AGENTS/remote fields belong to the Git repository
-    option and appear when it is ticked - `hidden` in the markup, toggled on the
-    steps' change event - not behind a collapsed <details>."""
+def test_each_new_project_field_lives_under_the_box_that_enables_it():
+    """Owner, 2026-11 (twice): the fields belong to their boxes, not to a shared
+    block and not behind a collapsed tag. Git remote path renders under the
+    Git repository row, the opening text under README.md, the agent text under
+    AGENTS.md - each visible only while its own box is ticked."""
     tpl = (ROOT / "web" / "templates" / "projects.html").read_text()
     script = _script_of(tpl, "projects")
 
     assert '<details class="proj-more"' not in tpl, \
         "the create card hides the opening-text fields behind a collapsed tag again"
-    assert 'id="proj-git-block" hidden' in tpl, \
-        "the git fields are not gated on the git box"
-    assert 'input[value="git"]:checked' in script, \
-        "nothing reads the git box to open the fields"
-    assert "addEventListener('change', gateGitBlock)" in script, \
-        "the gate does not follow ticking"
-    for label, el in (("README.md", "proj-readme"), ("AGENTS.md", "proj-agents"),
-                      ("Git remote path", "proj-remote")):
-        block = tpl[tpl.index('id="proj-git-block"'):]
-        assert label in block and f'id="{el}"' in block, f"{label} field is not inside the gated block"
 
+    # Each field is in its own container, hidden in the markup, and the
+    # container is keyed to its box in the script's render map.
+    for host, field, label in (("proj-git-fields", "proj-remote", "Git remote path"),
+                               ("proj-readme-fields", "proj-readme", "README.md"),
+                               ("proj-agents-fields", "proj-agents", "AGENTS.md")):
+        assert f'id="{host}" class="proj-fields" hidden' in tpl, \
+            f"{host} is missing or not gated in the markup"
+        block = tpl[tpl.index(f'id="{host}"'):]
+        block = block[:block.index("</div>")]
+        assert f'id="{field}"' in block, f"{field} is not inside {host}"
+        assert label in block, f"{host} does not label {field} as the owner named it"
+        assert f"{host}" in script, f"the render map never places {host} under a row"
 
+    # The gate reads each box's own checkbox, and renderSteps places the
+    # containers under their rows (not in a block after the list).
+    assert "FIELD_FOR_STEP" in script, "no per-box field map exists"
+    assert "box.append($('#' + host))" in script, \
+        "renderSteps does not render a box's field under its row"
+    assert "gateFields()" in script, "no per-box gate runs on ticking"
 def test_the_projects_page_edits_its_own_root_and_says_why_a_path_is_refused():
     """The page pointed at Settings for the projects root; Settings had no such
     control. The card is now on the page: input, Save, Test, and a status line
