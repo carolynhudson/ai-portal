@@ -7123,3 +7123,67 @@ gated per-checkbox by `gateFields()`. The contract test now pins the
 per-box placement (field inside its container, container keyed in the
 render map, gate reads the box's own checkbox) so a future "shared block"
 regression fails on its own.
+
+##### 6.14.1za Phone feasibility: the probe, the findings, two inert modules (2026-11-02)
+
+The partner's read: the portal is dense and desktop-tuned; suggestion on the
+table: burger menu from the logo, page-splitting at logical breaks (status:
+services | updates; models: download | llama.cpp | ComfyUI). The owner's
+rules: no desktop/mobile twin sites (no double maintenance), adaptive CSS by
+viewport, **measure before design** — build the test that can enumerate
+what breaks on a modern iPhone portrait, and only then change things.
+
+**`tools/viewport_probe.py`** (read-only Chromium; the layout_measure
+discipline): every census page at 390x844, 320x568, 844x390, measuring
+document overflow, elements past the right edge, tables without scroll
+shells, tap targets vs the 44px HIG, computed text sizes, form fields under
+16px (iPhone Safari **zooms on focus** — invisible from desktop), and
+clipped long-token boxes. Report md+json+screenshots per run.
+
+Measured findings (2026-11-02, `~/ai/logs/viewport-20261102/`):
+
+* **the nav is the site-wide break**: brand + 7 links + resource lights +
+  logout is an 886px flex row that never wraps — 496px of sideways overflow
+  at 390px, 566px at 320px, 42px even in landscape. One shared component,
+  one fix for every page. (The partner's complaint, in numbers.)
+* nav links measure **23px tall** (HIG minimum 44): dense becomes
+  untappable;
+* **every form field is 14-15px** — focusing one on iPhone zooms the page;
+* `/settings` `svc-ports` and `agents-table` need sideways scroll with no
+  scroll shell; `/models` has 19 spans at 11px;
+* the hero's loaded-model name wraps into an unreadable three-line monster
+  — the reducer case, photographed in the wild.
+
+**`tests/test_viewport.py`** pins what passes (viewport meta everywhere;
+landscape overflow ≤ the measured 42px floor — a design round may lower it,
+growing it fails; census coverage) and pins the findings as *current
+findings* (retiring one requires retiring it in the journal).
+
+**`app/core/modelshort.py`** (inert — nothing imports it): the owner's
+reduction as a spec, and the collision law as the guarantee.
+`ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S` →
+`Swift-Qwen3.8-FN:IQ3_S`, with rules the owner named: org prefix gone,
+family lead kept, architecture (`Qwen3.8`) never eaten, `Flash-Next→FN` via
+an explicit phrase map, container format (`GGUF`) gone, quant always kept;
+redundancy = **shared within the family group**, judged across the library.
+Live-library run: **18 names, 0 collisions** — and the run taught the
+safety rule the first version lacked: a group of one shares with nobody, so
+`L3-8B-Stheno-v3.2` keeps its name instead of compressing to `L3`. Space-
+style index names pass through untouched; the reducer is for hyphen-token
+GGUF names.
+
+**`app/core/svc_actions.py`** (inert): the owner's state→verbs lookup —
+active/activating → stop+restart; inactive/failed/deactivating → start
+only; missing/disabled/masked → nothing; **unknown → all** (absence of
+knowledge never becomes absence of control). Pure, total, tested; the hero
+wiring is its own round, because the buttons moving means the UI contract
+(spec fixtures, confirm exercise) moves with them. A style-injected
+prototype (`svc-buttons-prototype-phone.png`) shows the icon/color sketch —
+red square stop, blue ring restart, row fits 390px — evidence for the
+design round, not deployment.
+
+Feasibility answer for the partner: no twin sites needed. The measured
+breaks concentrate in ONE shared component (nav), one CSS class of bug
+(sub-16px inputs), and two unshelled tables — all addressable by viewport
+CSS in the existing templates. The burger question is a design round the
+probe can now referee: it will show overflow going to 0 at 390px.
