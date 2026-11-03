@@ -7303,3 +7303,13 @@ between ear-base and muzzle, the neck thick with a slight throat concave.
 Redrawn to that; reads as a camelid at 26px. Lesson for any subject icon:
 get an EXISTING rendering of the animal/thing first (photo, line art, forge)
 -- an anatomy reference beats inventing a silhouette.
+
+v6/v7 shading (owner): two visual notes from the reference -- (a) the
+reference llama was DRAWN with a light spot on its crown; that spot is a
+property of the drawing/animal, not of llamas, so it must not be baked into
+the icon (I made exactly that error with a "crown tuft" and removed it);
+(b) a darkened shadow on the neck under the jaw is what makes the head
+shape and jawline read against the neck mass -- added as a #0e1116 wedge at
+.42, kept at every size. Shading law for subject icons: reproduce the
+shadow structure (relational), not the subject's individual features
+(contingent).
