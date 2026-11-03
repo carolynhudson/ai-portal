@@ -7271,3 +7271,12 @@ service buttons and the warning lamps. Applied: Health's heart carries ok-green
 (wrench, gear core, llama's mode bands, model sparks); the status trace and
 help glyph went back to pure mark gradient; **red is never a nav icon** —
 bad is a state, not a destination.
+
+Owner's eye on the v1 set: gear lopsided, llama unrecognizable, brain
+cloud-like. v2: the gear is a computed symmetric 8-tooth polygon (hand-drawn
+paths drift; generated geometry doesn't), the brain is two bumpy hemispheres
+with fissure + sulci (lucide anatomy, sparks kept), the llama is a true
+profile -- two ear tips, snout, dark eye dot, neck carrying the amber band.
+Verification standard recorded: silhouette checked **at 26px** (real phone
+bar size), not just at showcase size -- a shape that only reads at 34px is
+not an icon.
