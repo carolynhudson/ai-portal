@@ -7294,3 +7294,12 @@ forehead into a blunt muzzle with an upturned mouth, throat curve into a
 long slender neck, almond eye just behind the muzzle start (the owner's
 placement note, confirmed by the render). Witness:
 forge-llama-ref.png + nav-icons-v4*.png.
+
+v5 (owner supplied a line-art llama photo-trace as the authority): my v4 ear
+was an UPRIGHT bunny-ear -- wrong species. The truth: the ear is a
+spear-shaped blade swept BACK off the skull, the head is big, the muzzle is
+a heavy blunt block with a jutting chin, the eye a large slanted almond high
+between ear-base and muzzle, the neck thick with a slight throat concave.
+Redrawn to that; reads as a camelid at 26px. Lesson for any subject icon:
+get an EXISTING rendering of the animal/thing first (photo, line art, forge)
+-- an anatomy reference beats inventing a silhouette.
