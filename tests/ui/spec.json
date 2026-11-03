@@ -2066,7 +2066,11 @@
         "#proj-root-status",
         "#proj-git-fields",
         "#proj-readme-fields",
-        "#proj-agents-fields"
+        "#proj-agents-fields",
+        "#proj-tab-new",
+        "#proj-tab-open",
+        "#proj-panel-new",
+        "#proj-panel-open"
       ],
       "expectText": [
         {
@@ -2484,6 +2488,14 @@
             "session": "ses_ui_launch",
             "detail": null
           }
+        }
+      ],
+      "tabGroups": [
+        {
+          "tabs": ".proj-tab",
+          "panels": ".proj-tab-content",
+          "expectTabs": 2,
+          "expectPanels": 2
         }
       ]
     }

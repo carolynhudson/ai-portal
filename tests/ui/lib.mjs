@@ -72,7 +72,7 @@ function isVisible(el) {
   for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
     if (n.hasAttribute("hidden")) return false;
     if (/display\s*:\s*none/i.test(n.getAttribute("style") || "")) return false;
-    if (n.matches && n.matches(".update-tab-content:not(.active), .model-tab-content:not(.active)")) return false;
+    if (n.matches && n.matches(".update-tab-content:not(.active), .model-tab-content:not(.active), .proj-tab-content:not(.active)")) return false;
     if (n.tagName === "NOSCRIPT") return false;
   }
   return true;

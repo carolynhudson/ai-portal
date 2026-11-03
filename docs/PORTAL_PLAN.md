@@ -7187,3 +7187,33 @@ breaks concentrate in ONE shared component (nav), one CSS class of bug
 (sub-16px inputs), and two unshelled tables — all addressable by viewport
 CSS in the existing templates. The burger question is a design round the
 probe can now referee: it will show overflow going to 0 at 390px.
+
+##### 6.14.1zb Projects tabs and Scheme B verbs (2026-11-02)
+
+Owner chose, from the prototypes (6.14.1za round): the projects page becomes
+**tabs** - "New project" / "Open project" - and the hero service buttons
+become **Scheme B glyphs**, with the visibility rules enforced.
+
+* **Tabs**: `.proj-tabs` joins the shared tab component (the enumerated
+  selector lists in `tabs.css`, the harness's `isVisible` panel-class list,
+  and the spec's `tabGroups` bijection - the convention is that a new tab
+  group joins every list, in all three places at once). Create card = New
+  tab; launch controls, registry and adoption = Open tab; the projects root
+  and summary lines stay shared above. **The handoff**: a successful create
+  switches to the Open tab and the new row arrives lit
+  (`.proj-flash`, one render). The tab law: the geometry lives in
+  `tabs.css`, the page defines none of its own (pinned test).
+* **Scheme B hero verbs**: the llama.cpp and ComfyUI heroes render
+  glyph buttons - green play-triangle **start**, red square **stop**, blue
+  ring-arrow **restart**, dark glyph on hue-shifted backgrounds at the old
+  buttons' saturation/lightness - gated by
+  `svc_actions.actions_for(state)` as a template global. So: active
+  services show no start; a stopped unit shows only start; a missing unit
+  shows nothing; an unknown state shows all three. The words left the
+  heroes; `svcAction` (confirm + POST + the census consultation) is
+  unchanged. The UI sandbox's systemctl shim reports `active`, so
+  stop/restart remain exercised through the confirm-gated contract.
+* The harness lesson, recorded: `isVisible` (tests/ui/lib.mjs) enumerates
+  the known tab-panel classes; a new tab group that joins `tabs.css` and
+  the spec but not `isVisible` shows "2 panels visible" in jsdom while
+  looking perfect in a browser.

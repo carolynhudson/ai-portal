@@ -35,7 +35,8 @@
  * width, including past the last tab.
  * ------------------------------------------------------------------------- */
 .update-tabs,
-.model-tabs{
+.model-tabs,
+.proj-tabs{
   display:flex;
   gap:0;
   margin:0;
@@ -48,7 +49,8 @@
  * Inactive tabs draw that bottom edge in --line, keeping the baseline whole.
  * ------------------------------------------------------------------------- */
 .update-tab,
-.model-tab{
+.model-tab,
+.proj-tab{
   padding:9px 16px;
   cursor:pointer;
   user-select:none;
@@ -61,33 +63,39 @@
 
 /* one hairline between neighbours, not two */
 .update-tab + .update-tab,
-.model-tab + .model-tab{ border-left:none }
+.model-tab + .model-tab,
+.proj-tab + .proj-tab{ border-left:none }
 
 .update-tab:hover,
-.model-tab:hover{ color:var(--fg) }
+.model-tab:hover,
+.proj-tab:hover{ color:var(--fg) }
 
 /* ---------------------------------------------------------------------------
  * Rule 3 — the selected tab becomes the panel: same fill, and its bottom
  * border turns into the panel's surface, opening the baseline under it.
  * ------------------------------------------------------------------------- */
 .update-tab.active,
-.model-tab.active{
+.model-tab.active,
+.proj-tab.active{
   background:var(--panel);
   color:var(--fg);
   border-bottom:1px solid var(--panel);
 }
 
 .update-tab-content,
-.model-tab-content{ display:none }
+.model-tab-content,
+.proj-tab-content{ display:none }
 .update-tab-content.active,
-.model-tab-content.active{ display:block }
+.model-tab-content.active,
+.proj-tab-content.active{ display:block }
 
 /* ---------------------------------------------------------------------------
  * Rule 4 — the panel sits flush on the baseline: no gap, no top border, and
  * square top corners to match the tabs standing on it.
  * ------------------------------------------------------------------------- */
 .update-tab-content > .card,
-.model-tab-content > .card{
+.model-tab-content > .card,
+.proj-tab-content > .card{
   margin-top:0;
   border-top:none;
   border-top-left-radius:0;
@@ -96,7 +104,8 @@
 
 /* a second card in the same panel is just another card again */
 .update-tab-content > .card ~ .card,
-.model-tab-content > .card ~ .card{
+.model-tab-content > .card ~ .card,
+.proj-tab-content > .card ~ .card{
   margin-top:14px;
   border-top:1px solid var(--line);
   border-radius:10px;
@@ -104,5 +113,6 @@
 
 @media (max-width:640px){
   .update-tab,
-  .model-tab{ padding:8px 10px; font-size:13px }
+  .model-tab,
+  .proj-tab{ padding:8px 10px; font-size:13px }
 }

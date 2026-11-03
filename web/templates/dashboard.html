@@ -17,6 +17,18 @@
 .hero-head h3 img.hero-icon{width:22px;height:22px;border-radius:5px;display:block}
 .hero-head h3 .hero-sub{font-weight:400;font-size:12px;color:var(--mut);letter-spacing:.02em}
 .hero-controls{margin-left:auto;display:flex;gap:6px;align-items:center}
+/* Scheme B verb glyphs (owner, 2026-11-02): dark icon on a hue-shifted
+   background - green start, red stop, blue restart - at the saturation and
+   lightness of the current button. The hue says the verb and the glyph shape
+   backs it up: two redundant cues, which is also the accessible form. The
+   buttons a state can honestly offer come from app/core/svc_actions.py:
+   an active service shows no start; a missing unit shows none at all; an
+   unknown state shows all three. */
+.svc-verb{display:inline-flex;align-items:center;justify-content:center;min-width:40px;height:34px;
+  padding:0 10px;border-radius:6px;border:1px solid transparent;cursor:pointer}
+.svc-verb.start{background:hsl(130 100% 68%);color:#0e1116}
+.svc-verb.stop{background:hsl(0 100% 68%);color:#0e1116}
+.svc-verb.restart{background:hsl(212 100% 68%);color:#0e1116}
 .hero-cols{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
 @media(max-width:640px){.hero-cols{grid-template-columns:1fr}}
 .light-row{display:flex;align-items:center;gap:9px;padding:3px 0;font-size:14px}
@@ -143,6 +155,21 @@
 .btn-sm:hover{border-color:var(--acc);background:var(--bg)}
 </style>
 
+{# Verb glyphs for one service, gated by the state's honest offer
+   (app/core/svc_actions.py). The confirm + POST live in svcAction. #}
+{% macro svc_verbs(service, state) %}
+  {% set acts = svc_actions(state) %}
+  {% if acts.start %}<button class="svc-verb start" data-needs-machine title="start"
+    aria-label="start {{ service }}" onclick="svcAction('{{ service }}', 'start')">
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5l10 5.5-10 5.5z" fill="currentColor"/></svg></button>{% endif %}
+  {% if acts.stop %}<button class="svc-verb stop" data-needs-machine title="stop"
+    aria-label="stop {{ service }}" onclick="svcAction('{{ service }}', 'stop')">
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="currentColor"/></svg></button>{% endif %}
+  {% if acts.restart %}<button class="svc-verb restart" data-needs-machine title="restart"
+    aria-label="restart {{ service }}" onclick="svcAction('{{ service }}', 'restart')">
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2a6 6 0 1 0 5.7 4.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M14.5 1.5v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>{% endif %}
+{% endmacro %}
+
 {# ---- live router: the reason to open the portal ---- #}
 <div class="card router-hero">
   <div class="hero-head">
@@ -160,9 +187,7 @@
          request); r.web_ui/r.host are the service's own loopback view. #}
       <a class="btn btn-sm" href="{{ router_web }}" target="_blank" rel="noopener">Web UI ↗</a>
       <a class="btn btn-sm" href="{{ router_web }}v1/models" target="_blank" rel="noopener">API ↗</a>
-      <button data-needs-machine onclick="svcAction('llamacpp', 'start')">start</button>
-      <button data-needs-machine onclick="svcAction('llamacpp', 'stop')">stop</button>
-      <button data-needs-machine onclick="svcAction('llamacpp', 'restart')">restart</button>
+      {{ svc_verbs('llamacpp', r.service.state) }}
     </div>
   </div>
 
@@ -359,9 +384,7 @@
       {% if cb.mode == 'loopback' %}loopback only{% elif cb.mode == 'all' %}open to LAN :{{ cb.port }}{% else %}{{ cb.host }}:{{ cb.port }}{% endif %}</a>
     <div class="hero-controls">
       <a class="btn btn-sm" href="{{ comfy.link or comfy.host }}" target="_blank" rel="noopener">Web UI ↗</a>
-      <button data-needs-machine onclick="svcAction('comfyui', 'start')">start</button>
-      <button data-needs-machine onclick="svcAction('comfyui', 'stop')">stop</button>
-      <button data-needs-machine onclick="svcAction('comfyui', 'restart')">restart</button>
+      {{ svc_verbs('comfyui', comfy.service.state) }}
     </div>
   </div>
   <div class="hero-cols">

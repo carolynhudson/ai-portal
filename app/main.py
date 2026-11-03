@@ -35,6 +35,7 @@ from . import router as router_mod
 from .core import (
     agents,
     agentconfig,
+    svc_actions,
     db,
     harnessctl,
     harnessupd,
@@ -676,6 +677,11 @@ def create_app() -> FastAPI:
         return f"http://{host}:{port}{path}"
 
     templates.env.globals["_link"] = _link
+    # The service-verb law (app/core/svc_actions.py): which start/stop/restart
+    # glyphs a unit's state can honestly offer. The hero renders from this, so
+    # "a service that cannot be stopped shows no stop button" is the same rule
+    # every caller reads, not a template's opinion.
+    templates.env.globals["svc_actions"] = svc_actions.actions_for
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     log.info("AI Portal %s: home=%s ai_root=%s state=%s",
              app.version, paths.HOME, paths.AI_ROOT, paths.PORTAL_STATE)

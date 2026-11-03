@@ -15,8 +15,6 @@
 {% block body %}
 <style>
 /* page-local only. No tab geometry here — that lives in web/static/tabs.css. */
-.proj-grid{display:grid;gap:14px;grid-template-columns:minmax(320px,1fr) minmax(320px,1fr)}
-@media (max-width:900px){.proj-grid{grid-template-columns:1fr}}
 .proj-line{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;font-size:.85rem;margin:0 0 10px}
 .proj-line b{font-weight:600}
 .proj-mut{color:var(--mut);font-size:.85rem;margin:0 0 10px}
@@ -28,6 +26,7 @@
 .proj-ghost{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:6px 12px;cursor:pointer}
 .proj-ghost:hover{color:var(--fg)}
 .proj-fields{margin:2px 0 8px 24px;padding:6px 12px;border-left:2px solid var(--line)}
+.proj-flash{box-shadow:0 0 0 2px var(--acc)}
 .proj-step{display:flex;gap:9px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);
   border-radius:7px;background:var(--panel)}
 .proj-step[data-unavailable="yes"]{border-style:dashed;opacity:.72}
@@ -108,25 +107,16 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
 
 <p class="proj-mut" id="proj-host">host: reading…</p>
 
-<p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">
-  <span class="proj-mut">Launch with</span>
-  <select id="proj-personality" title="the personality the session runs with"></select>
-  <span class="proj-mut">on</span>
-  <select id="proj-model" title="the model the session runs on"><option value="">host default</option></select>
-  <span class="proj-mut">as</span>
-  <select id="proj-agent" title="the host agent the session runs as">
-    <option value="">host default</option>
-    <option value="build">build</option>
-    <option value="plan">plan</option>
-    <option value="explore">explore</option>
-    <option value="general">general</option>
-  </select>
-</p>
-<p class="proj-mut">Launch opens a session inside the project and records it on the row.
-  The model binds to the session at creation, so a personality can run a model of its
-  own without changing the host's default.</p>
+<div class="proj-tabs">
+  {# Narrow screens carry one column at a time (owner, 2026-11-02): the create
+     column and the open-project column become tabs on the same page. The
+     create-success handoff lights the Open tab with the new row highlighted,
+     which is why this tab has an id. #}
+  <div id="proj-tab-new" class="proj-tab active" onclick="switchProjTab('new', this)">New project</div>
+  <div id="proj-tab-open" class="proj-tab" onclick="switchProjTab('open', this)">Open project</div>
+</div>
 
-<div class="proj-grid">
+<div id="proj-panel-new" class="proj-tab-content active">
   <div class="card">
     <h3>New project</h3>
     <label class="proj-mut" for="proj-name">Name</label>
@@ -173,7 +163,28 @@ button[data-inert="yes"]{opacity:.45;cursor:not-allowed}
     <div class="proj-plan" id="proj-plan-out" hidden></div>
     <p class="proj-result" id="proj-create-out"></p>
   </div>
+</div>
 
+<div id="proj-panel-open" class="proj-tab-content">
+  {# The Open tab: launch controls, the registry, and adoption - everything
+     you do with a project that exists. #}
+  <p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0">
+    <span class="proj-mut">Launch with</span>
+    <select id="proj-personality" title="the personality the session runs with"></select>
+    <span class="proj-mut">on</span>
+    <select id="proj-model" title="the model the session runs on"><option value="">host default</option></select>
+    <span class="proj-mut">as</span>
+    <select id="proj-agent" title="the host agent the session runs as">
+      <option value="">host default</option>
+      <option value="build">build</option>
+      <option value="plan">plan</option>
+      <option value="explore">explore</option>
+      <option value="general">general</option>
+    </select>
+  </p>
+  <p class="proj-mut">Launch opens a session inside the project and records it on the row.
+    The model binds to the session at creation, so a personality can run a model of its
+    own without changing the host's default.</p>
   <div class="card">
     <h3>Registry</h3>
     <p class="proj-mut" id="proj-empty" hidden>No projects yet. Create one, adopt a folder that is
@@ -429,6 +440,12 @@ function renderRows(rows) {
   for (const p of rows) {
     const row = el('div', 'proj-row');
     row.dataset.path = p.path;
+    if (window.__flashProject === p.name) {
+      // the create handoff: this row just arrived; it lights up for the
+      // reader on the Open tab. One render only.
+      row.classList.add('proj-flash');
+      delete window.__flashProject;
+    }
     const name = el('span', 'proj-name');
     name.textContent = p.name + (p.exists ? '' : '  (folder missing)');
     const verbs = el('div', 'proj-verbs');
@@ -533,6 +550,19 @@ function renderUnadopted(items) {
   }
 }
 
+/* Tabs: New project / Open project (owner, 2026-11-02). Mirrors
+   switchModelTab: the clicked tab lights itself (passing `el` in: reading the
+   global event breaks when a tab gains an icon), the named panel activates.
+   Geometry is tabs.css's job; this page defines none of its own. */
+function switchProjTab(name, el) {
+  document.querySelectorAll('.proj-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.proj-tab-content').forEach(c => c.classList.remove('active'));
+  (el || null) && el.classList.add('active');
+  const panel = document.getElementById('proj-panel-' + name);
+  if (!panel) { console.error('switchProjTab: no panel #proj-panel-' + name); return; }
+  panel.classList.add('active');
+}
+
 async function refresh() {
   const d = await req('GET', '/api/projects');
   if (d.detail) {
@@ -601,6 +631,14 @@ $('#proj-create').addEventListener('click', async () => {
       (d.gitignore ? `. ${d.gitignore.kept ? '.gitignore left as the project had it'
         : '.gitignore written'}` : '')
     : d.warning;
+  if (d.ok) {
+    // The handoff (owner, 2026-11-02): a created project is an existing
+    // project - the page switches to the Open tab and the new row arrives
+    // lit up, Launch in reach. The create tab stays exactly where the
+    // operator left it for the next project.
+    window.__flashProject = d.name;
+    switchProjTab('open', document.getElementById('proj-tab-open'));
+  }
   await refresh();
 });
 
