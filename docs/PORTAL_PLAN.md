@@ -7313,3 +7313,14 @@ shape and jawline read against the neck mass -- added as a #0e1116 wedge at
 .42, kept at every size. Shading law for subject icons: reproduce the
 shadow structure (relational), not the subject's individual features
 (contingent).
+
+v8 (owner's anatomy pass): v7's straight ear spear -> the CURVED blade
+(concave front edge, convex back edge, pointed tip); the flattened skull ->
+a rounded dome that leaves room for the ocular structures (and the crown
+highlight returns at low opacity -- the owner's note was "be careful", not
+"remove": the spot is how the reference's head shape is FOLLOWED, it marks
+where the skull's volume lives); the oval eye -> a true almond of two arcs
+joined at their endpoints, along the reference axis; and the jaw shadow
+built to the owner's recipe: a triangular cut, one side riding the jawline
+to the neck junction, apex dropping just down the neck as negative-space
+shadow. Reads camelid at 26px.
