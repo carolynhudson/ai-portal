@@ -996,14 +996,13 @@
       "+requireConfirmFor": [
         "^/api/updates/llamacpp/purge$"
       ],
-      "expectHidden": [
-        "#stray-hint"
-      ],
+      "expectHidden": [],
       "+expectShown": [
         "#stray-row",
         "#stray-select",
         "#purge-stray-btn"
-      ]
+      ],
+      "_expectHidden_comment": "Replaces the dashboard's ['#stray-row','#stray-hint'] for this fixture: with strays present the row shows (that is the fixture), and the hint shows its selection prompt - silence beside a greyed button read to the owner as a broken control (6.14.1zc). The zero-strays state stays pinned by the base dashboard page."
     },
     {
       "_comment": [

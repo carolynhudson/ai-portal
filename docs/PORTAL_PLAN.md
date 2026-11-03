@@ -7217,3 +7217,30 @@ become **Scheme B glyphs**, with the visibility rules enforced.
   the known tab-panel classes; a new tab group that joins `tabs.css` and
   the spec but not `isVisible` shows "2 panels visible" in jsdom while
   looking perfect in a browser.
+
+##### 6.14.1zc The [hidden] law: a page lie witnessed from the browser (2026-11-02)
+
+The owner's eye on the update tab: under the working Stored-builds dropdown,
+a *second* set of controls - an empty dropdown, a greyed purge button, and
+the text "Select a stored build to switch to or delete." above them. That
+second row is the **stray-builds row**: it shows only when unregistered
+build directories exist. The live payload carried **zero strays** - the row
+was wearing `hidden` and showing anyway.
+
+**Why**: an author CSS rule on the element's class (`.builds-row{display:flex}`)
+beats the UA stylesheet's `[hidden]{display:none}` - the attribute becomes
+decorative. The trap had fired before and been band-aided per class:
+`.switch-line[hidden]{display:none}` (dashboard), plus three more patches in
+`models.html` and three in `personalities.html`. **Why the suite never saw
+it**: jsdom's visibility reads the ATTRIBUTE; Chromium reads computed CSS.
+Attribute-visible and CSS-visible are different judges, and the browser is
+the real one - the screenshot is the instrument.
+
+Shipped: `base.html` declares the law, `[hidden]{display:none !important}`,
+and all seven per-class patches are retired (a contract test pins the law
+and bans re-declaring patches). The stray row's copy gets the honesty pass
+the owner's confusion deserved: the blank option now says *select an
+unregistered build* (not "— 2 directories —"), an empty selection on a
+visible row says what the row is for, and a failed census reports
+`stray_error` as words near the row instead of silence.
+The `builds-strays` fixture page redeclares `expectHidden`: with strays present, the hint is the prompt, not silence; the base page keeps the zero-strays assertion. Suite 1279/4.

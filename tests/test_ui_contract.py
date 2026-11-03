@@ -330,6 +330,29 @@ def test_switch_build_locks_the_running_build():
 TAB_CLASS_RE = re.compile(r"\.(?:update|model)-tabs?[\w-]*(?:\s*,|\s*\{)")
 
 
+def test_the_hidden_law_stands_behind_every_hidden_attribute():
+    """A class with a CSS display rule beats the UA stylesheet's
+    [hidden]{display:none}, so the attribute is silently decorative. The
+    update tab shipped this live: the stray row (.builds-row{display:flex})
+    displayed its empty select and disabled purge button with zero strays
+    (owner report, 2026-11-02). base.html's [hidden]{display:none !important}
+    is the law; a page re-declaring per-class patches is how the drift starts."""
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert "[hidden]{display:none !important}" in base, \
+        "base.html lost the [hidden] law: every hidden attribute is decorative again"
+
+    offenders = []
+    for tpl in sorted((ROOT / "web" / "templates").glob("*.html")):
+        if tpl.name == "base.html":
+            continue
+        for m in re.finditer(r"\[[^\]]*\bhidden\b[^\]]*\]\s*\{[^}]*display\s*:\s*none",
+                             tpl.read_text()):
+            line = tpl.read_text()[: m.start()].count("\n") + 1
+            offenders.append(f"{tpl.name}:{line}: {m.group(0)[:60]}")
+    assert not offenders, \
+        "per-class [hidden] patches returned; the base law covers them:\n" + "\n".join(offenders)
+
+
 def test_tab_geometry_is_defined_in_one_place():
     """Tab styling used to be copy-pasted into both tab pages and they drifted.
     The component lives in /static/tabs.css; a page re-declaring it can put the

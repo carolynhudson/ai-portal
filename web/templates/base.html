@@ -14,6 +14,14 @@
 <style>
 :root{--bg:#0e1116;--panel:#171c24;--fg:#e6e9ef;--mut:#8b95a7;--acc:#5aa9ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--line:#232a35}
 *{box-sizing:border-box}
+/* The [hidden] law: an author CSS display rule on an element's class beats
+   the UA stylesheet's [hidden]{display:none}, so every `hidden` attribute in
+   the portal is a lie unless this rule stands behind it. It fired live: the
+   update tab's stray row (.builds-row{display:flex}) showed its empty select
+   and disabled purge button to the owner with zero strays on the box. The
+   jsdom harness reads the ATTRIBUTE and never saw it: attribute-visible and
+   CSS-visible are different judges, and the browser is the real one. */
+[hidden]{display:none !important}
 body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg) url(/static/portal-bg.svg) fixed;color:var(--fg)}
 a{color:var(--acc);text-decoration:none}
 nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
