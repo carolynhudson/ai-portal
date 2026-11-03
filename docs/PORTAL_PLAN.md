@@ -7333,3 +7333,11 @@ accent, the fluff is the mark gradient, and the FAR LEGS carry the depth
 the owner's shading law requires (mark fill at .55 over the dark page). The
 profile-head era is closed; the silhouette (long neck + round tail + four
 legs + amber face) reads at 26px where the head profile never fully did.
+
+v10 (owner's stance pass): neck pinched where its spline met the body --
+the neck edge now BOWS OUT through the attachment; the front near leg was
+hanging off the chest front -- it tucks behind the chest curve (draw order:
+legs first, body paints the tops); legs got the reference's stance -- the
+far legs ANGLE (far front tilts back, far rear tilts forward) and the
+foreground legs clip a bit of them, which buys the leg zone room at small
+size. Far legs stay .55-shaded per the owner's depth law.
