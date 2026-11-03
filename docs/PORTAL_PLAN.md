@@ -7341,3 +7341,12 @@ legs first, body paints the tops); legs got the reference's stance -- the
 far legs ANGLE (far front tilts back, far rear tilts forward) and the
 foreground legs clip a bit of them, which buys the leg zone room at small
 size. Far legs stay .55-shaded per the owner's depth law.
+
+The owner then supplied the reference ITSELF as SVG (docs/mockups/
+llama-reference.svg: 5 paths, lavender fluff / darker far legs / tan face
++ hooves / dark eye+nose). Validated and themed into docs/mockups/
+llama-halo.svg by the palette law: fluff -> mark gradient, far legs ->
+mark gradient at .55, face + hooves -> amber, eye/nose -> page dark.
+This artwork -- not my hand-drawn v10 -- is the nav-round source: it is
+the full iconic llama (curved ear blade, chest curve, angled far legs,
+round tail) at 26px with every owner note already baked in.
