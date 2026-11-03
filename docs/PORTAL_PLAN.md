@@ -7324,3 +7324,12 @@ joined at their endpoints, along the reference axis; and the jaw shadow
 built to the owner's recipe: a triangular cut, one side riding the jawline
 to the neck junction, apex dropping just down the neck as negative-space
 shadow. Reads camelid at 26px.
+
+v9 (owner broke the generation trap): six head-only iterations kept missing
+anatomy; the owner supplied a CLEAN FULL-BODY reference and told me to build
+from that. The full-body form is also the better fit for the palette law --
+the reference's tan zones (exposed face + hooves) map 1:1 onto our amber
+accent, the fluff is the mark gradient, and the FAR LEGS carry the depth
+the owner's shading law requires (mark fill at .55 over the dark page). The
+profile-head era is closed; the silhouette (long neck + round tail + four
+legs + amber face) reads at 26px where the head profile never fully did.
