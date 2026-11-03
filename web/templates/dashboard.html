@@ -452,6 +452,10 @@
         <span class="switch-version-current" id="current-build">—</span>
         <span class="mut" id="build-count"></span>
       </div>
+      {# The line above the controls says what they do (owner, 2026-11-02: a
+         label belongs above the thing it labels); after a selection it carries
+         the state's words - why a button is locked, what a switch costs. #}
+      <div class="mut builds-hint" id="build-hint" style="margin:10px 0 4px"></div>
       <div class="builds-row">
         <label class="builds-label" for="build-select">Stored builds:</label>
         <select id="build-select" class="builds-select">
@@ -464,10 +468,11 @@
                 onclick="deleteBuild()"
                 title="select a build that is not the current one">Delete build</button>
       </div>
-      <div class="mut builds-hint" id="build-hint"></div>
       <!-- Build directories the registry never recorded: no build list contains
            them, so this row is the only way to see one, and Purge the only way to
-           remove it. Hidden when there are none, which is the normal state. -->
+           remove it. Hidden when there are none, which is the normal state.
+           The line above the row labels it, same rule as the stored builds. -->
+      <div class="mut builds-hint" id="stray-hint" hidden></div>
       <div class="builds-row" id="stray-row" hidden>
         <label class="builds-label" for="stray-select" id="stray-label">Unregistered:</label>
         <select id="stray-select" class="builds-select" onchange="syncStray()"></select>
@@ -475,7 +480,6 @@
                 onclick="purgeStray()"
                 title="select an unregistered build">Purge build</button>
       </div>
-      <div class="mut builds-hint" id="stray-hint" hidden></div>
     </div>
     <div id="upd-job"></div>
   </div>
