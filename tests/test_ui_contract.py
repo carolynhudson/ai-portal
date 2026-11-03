@@ -330,7 +330,44 @@ def test_switch_build_locks_the_running_build():
 TAB_CLASS_RE = re.compile(r"\.(?:update|model)-tabs?[\w-]*(?:\s*,|\s*\{)")
 
 
-def test_the_hidden_law_stands_behind_every_hidden_attribute():
+def test_the_nav_sprite_serves_every_icon_it_promises():
+    """The nav is icon-first: base.html references symbols in
+    web/static/icons.svg. A use that points at a missing symbol renders an
+    invisible hole in the bar on every page at once. And per the owner's
+    icon law (6.14.1zd/1ze): no words inside glyphs, red is never a nav
+    icon, and every nav target carries an aria-label so the words survive
+    the phone bar where they hide visually."""
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    sprite = (ROOT / "web" / "static" / "icons.svg").read_text()
+
+    # the nav renders from a template list of (href, label, icon) tuples;
+    # the icon names and the static logout reference are the contract
+    refs = set(re.findall(r"'(i-[\w-]+)'", base)) \
+        | set(re.findall(r"icons\.svg#([\w-]+)", base))
+    symbols = set(re.findall(r'<symbol id="([\w-]+)"', sprite))
+    assert refs, "base.html references no sprite icons"
+    missing = refs - symbols
+    assert not missing, f"nav references sprite symbols that do not exist: {missing}"
+    unused = symbols - refs
+    assert not unused, f"sprite symbols no nav surface uses: {unused}"
+
+    # every nav link carries aria-label (words for readers, not glyphs).
+    # The links render from the navlinks tuple list; the loop is the one
+    # markup, so its aria-label covers every rendered link.
+    nav = base[base.index("<nav>"): base.index("</nav>")]
+    tuples = re.findall(r"\('[\w/-]+',\s*'[\w ]+',\s*'i-[\w-]+'\)", nav)
+    assert len(tuples) >= 7, f"nav lost links: {len(tuples)} tuple entries"
+    assert 'aria-label="{{ label }}"' in nav, "the nav loop renders links without aria-label"
+    assert 'aria-label="Logout"' in nav, "logout lost its aria-label"
+
+    # palette law inside the sprite: no red, gradients are the mark pair
+    assert "#f85149" not in sprite, "red is never a nav icon (bad is a state)"
+    for m in re.finditer(r'url\(#([\w-]+)\)', sprite):
+        assert f'id="{m.group(1)}"' in sprite, f"fill url(#{m.group(1)}) has no gradient"
+    assert "#5aa9ff" in sprite and "#bc8cff" in sprite, "the mark gradient left the sprite"
+
+
+
     """A class with a CSS display rule beats the UA stylesheet's
     [hidden]{display:none}, so the attribute is silently decorative. The
     update tab shipped this live: the stray row (.builds-row{display:flex})
@@ -1400,7 +1437,9 @@ def test_the_projects_page_reads_every_number_it_shows():
 
 def test_the_projects_page_is_linked_and_routed():
     base = (ROOT / "web" / "templates" / "base.html").read_text()
-    assert 'href="/projects"' in base, "the Projects page is not in the nav"
+    compact = re.sub(r"\s+", " ", base)
+    assert "('/projects', 'Projects', 'i-projects')" in compact, \
+        "the Projects page is not in the nav"
     main = (ROOT / "app" / "main.py").read_text()
     assert '@app.get("/projects")' in main, "the nav links a page that has no route"
     assert "projects.html" in main, "the route renders a template that is not the projects page"

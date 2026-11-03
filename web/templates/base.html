@@ -28,6 +28,28 @@ nav{display:flex;gap:18px;align-items:center;padding:14px 20px;background:var(--
 nav .brand{font-weight:700;margin-right:auto;display:flex;align-items:center;gap:9px;letter-spacing:.06em}
 nav a{color:var(--fg)}
 nav a:hover{color:var(--acc)}
+/* Nav icons (owner-approved set, 2026-11-03, 6.14.1ze): on desktop the
+   glyph rides beside the word; below 900px the bar becomes the phone bar --
+   words hidden, 26px icons, 44px targets, active plate kept. The words
+   never disappear from the machine: every target carries aria-label, and
+   the word spans are display:none'd, not deleted. The nav is the page-wide
+   icon surface; per the palette law red is never a nav icon. */
+nav a{display:inline-flex;align-items:center;gap:8px}
+.nav-i{width:20px;height:20px;flex:none}
+nav a.on{background:rgba(90,169,255,.12);border-radius:8px;padding:4px 8px}
+@media (max-width:900px){
+  nav{gap:0;padding:4px 2px;flex-wrap:nowrap}
+  nav .brand{font-size:0;gap:0;margin-right:2px}
+  nav .brand::before{display:none}
+  .nav-w{display:none}
+  .nav-i{width:26px;height:26px}
+  nav a{min-width:44px;min-height:44px;justify-content:center;padding:6px;gap:0}
+  nav a.on{padding:6px}
+  nav .reslights{display:none}
+  nav form{margin:0 !important}
+  nav button{min-width:44px;min-height:44px;padding:6px;display:inline-flex;
+    align-items:center;justify-content:center;gap:0}
+}
 /* The brand halo: a soft opening behind the HALO mark, rhyming with the
    mark's own ring. It sits behind the mark glyph, never under the links. */
 nav .brand{position:relative}
@@ -149,19 +171,23 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
 <body>
 <nav>
   <span class="brand"><img src="/static/portal-mark.svg" alt="" width="26" height="26">HALO</span>
-  <a href="/">Status</a>
-  <a href="/models">Models</a>
-  <a href="/health">Health</a>
-  <a href="/personalities">Personalities</a>
-  <a href="/projects">Projects</a>
-  <a href="/settings">Settings</a>
-  <a href="/help">Help</a>
+  {% set navlinks = [('/', 'Status', 'i-status'), ('/models', 'Models', 'i-models'),
+                     ('/health', 'Health', 'i-health'),
+                     ('/personalities', 'Personalities', 'i-personalities'),
+                     ('/projects', 'Projects', 'i-projects'),
+                     ('/settings', 'Settings', 'i-settings'),
+                     ('/help', 'Help', 'i-help')] %}
+  {% set ap = request.path %}
+  {% for href, label, icon in navlinks %}
+  {% set active = (href == '/' and ap == '/') or (href != '/' and ap.startswith(href)) %}
+  <a href="{{ href }}" aria-label="{{ label }}"{% if active %} class="on"{% endif %}><svg class="nav-i" aria-hidden="true"><use href="/static/icons.svg#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span></a>
+  {% endfor %}
   <span class="reslights" id="reslights" role="status" aria-live="polite">
     <span class="rl" id="rl-ram"><i></i><span>RAM —</span></span>
     <span class="rl" id="rl-disk"><i></i><span>DISK —</span></span>
   </span>
   <form method="post" action="/logout" style="margin:0">
-    <button type="submit" class="ghost">Logout</button>
+    <button type="submit" class="ghost" aria-label="Logout"><svg class="nav-i" aria-hidden="true"><use href="/static/icons.svg#i-logout"/></svg><span class="nav-w">Logout</span></button>
   </form>
 </nav>
 <main>

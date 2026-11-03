@@ -136,9 +136,27 @@ MEASURE = """(vw) => {
   }
   clipped.sort((a, b) => (b.content - b.box) - (a.content - a.box));
 
+  // 7. nav bar: the phone-bar contract (nav icons round, 6.14.1ze): the
+  //    nav row itself must not overflow, and every nav target must be
+  //    tappable at the 44px HIG minimum.
+  const nav = document.querySelector('nav');
+  let navm = null;
+  if (nav) {
+    const targets = [];
+    for (const el of nav.querySelectorAll('a, button')) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      targets.push({sel: (el.getAttribute('aria-label') || el.textContent.trim()).slice(0, 20),
+                    w: abs(r.width), h: abs(r.height)});
+    }
+    navm = {overflowX: nav.scrollWidth - nav.clientWidth,
+            rightEdge: abs(nav.getBoundingClientRect().right) - vw,
+            targets};
+  }
+
   return {viewport: vw, overflowX, offenders: offenders.slice(0, 12),
           tables, tap, sizes, zoom: zoom.slice(0, 12), zoomCount: zoom.length,
-          clipped: clipped.slice(0, 10),
+          clipped: clipped.slice(0, 10), nav: navm,
           hasViewportMeta: !!document.querySelector('meta[name=viewport]')};
 }"""
 

@@ -7350,3 +7350,34 @@ mark gradient at .55, face + hooves -> amber, eye/nose -> page dark.
 This artwork -- not my hand-drawn v10 -- is the nav-round source: it is
 the full iconic llama (curved ear blade, chest curve, angled far legs,
 round tail) at 26px with every owner note already baked in.
+
+##### 6.14.1ze The icon nav goes live (2026-11-03)
+
+The owner's eye passed the icon set ("those icons get a pass") and ordered
+it into the portal. Shipped:
+
+* **`web/static/icons.svg`** -- the sprite: 8 symbols (7 pages + logout)
+  with the two mark gradients in defs; the Personalities glyph is the
+  owner's llama artwork themed by the palette law (fluff = mark gradient,
+  far legs .55, face/hooves amber). Words never live inside glyphs;
+  red is never a nav icon.
+* **base.html nav** -- renders from one `(href, label, icon)` list: glyph
+  beside the word on desktop, active page on a tinted plate. Below 900px
+  the bar becomes the phone bar: words `display:none` (aria-labels carry
+  them), 26px icons, **44px targets**, brand text and the RAM/DISK lights
+  hide (they live in the status hero; the landscape overflow the probe
+  pinned at 42px was this row's logout form -- with the bar compact it is
+  now **0**, and the floor dropped to 0).
+* **The acceptance gates are the probe's**, as pinned in the mobile round:
+  `test_nav_is_a_phone_bar_everywhere` -- every page, 390px portrait: nav
+  overflow **0**, nav right edge inside the viewport, every nav target
+  >= 44px. The 2026-11-02 findings "portrait overflow ~496 (the nav row)"
+  and "nav links 23px tall" are **retired** through this entry.
+* **Contract pins**: every sprite symbol referenced exists and every
+  symbol is used (a missing `use` target is an invisible hole on every
+  page at once); the loop renders aria-labels; no red in the sprite;
+  every `url(#…)` fill has its gradient.
+
+Two string-search tests noticed the nav becoming a loop (the Projects link
+census, the sprite census) and were updated to read the tuple list -- the
+loop is now the single source, which is the point.

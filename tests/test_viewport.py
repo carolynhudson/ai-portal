@@ -14,14 +14,19 @@ pins the floor and names the ceiling is a map.
 Pinned today (they pass):
   * every page declares `width=device-width` (without it a phone renders a
     980px desktop canvas - the site is genuinely viewport-aware);
-  * landscape 844px overflow has not grown past its measured 42px (the nav
-    logout form; a design round owns it, and regressions past the floor fail);
-  * the probe covers every authed page of the UI census.
+  * landscape 844px overflow has not grown past its measured floor (the nav
+    logout form caused the original 42px; the icon-nav round lowered the
+    floor to 0, and growing it is a regression);
+  * the probe covers every authed page of the UI census;
+  * the nav is phone-ready on EVERY page (nav icons round, 6.14.1ze): the
+    nav row overflows 0 at 390px portrait and every nav target (7 links +
+    logout) measures >= 44px -- the acceptance gates the owner pinned.
 
 Enumerated, not pinned (the 2026-11-02 findings, from ~/ai/logs/viewport-20261102):
-  * portrait horizontal overflow ~496px at 390px - the nav (brand + 7 links
-    + resource lights + logout) is a 886px flex row that never wraps;
-  * nav links measure 23px tall (Apple HIG minimum is 44);
+  * [RETIRED 2026-11-03, 6.14.1ze: portrait ~496px overflow - the nav's
+    886px flex row; the icon nav fits at 0. The page-level portrait
+    overflow finding stays open for the remaining offenders below.];
+  * [RETIRED 2026-11-03, 6.14.1ze: 23px nav links; pinned >= 44px above];
   * form fields are 14-15px - iPhone Safari zooms the page on focus;
   * /settings svc-ports and agents-table need sideways scroll with no shell;
   * /models has 19 spans at 11px.
@@ -35,9 +40,10 @@ from tests.test_ui_integration import SPEC, ui_server  # noqa: F401
 
 PORT_PORTRAIT = 390
 LANDSCAPE = 844
-# the measured 2026-11-02 landscape overflow (nav logout form). A design
-# round may lower it; growing it is a regression and fails.
-LANDSCAPE_OVERFLOW_FLOOR = 42
+# the measured 2026-11-02 landscape overflow (nav logout form) was 42px;
+# the nav icons round (6.14.1ze) brought it to 0, which is the new floor.
+# A design round may lower it; growing it is a regression and fails.
+LANDSCAPE_OVERFLOW_FLOOR = 0
 
 
 def _probe(ui_server):  # noqa: C901 - the probe's plumbing, not branch logic
@@ -91,6 +97,22 @@ def test_probe_covers_every_page_of_the_census(probe):
     assert set(probe) == pages
 
 
+def test_nav_is_a_phone_bar_everywhere(probe):
+    """The nav icons round's acceptance gates (owner, 6.14.1ze): at 390px
+    portrait the nav row itself must overflow 0, stay inside the viewport,
+    and every nav target -- all seven links and logout -- must meet the
+    44px Apple HIG tap minimum. The words hide below 900px; the glyph and
+    aria-label carry the page, and the plate marks the active one."""
+    for path, per in probe.items():
+        navm = per["phone-portrait"]["nav"]
+        assert navm, f"{path}: probe found no nav"
+        assert navm["overflowX"] <= 0, f"{path}: nav overflows by {navm['overflowX']}"
+        assert navm["rightEdge"] <= 0, f"{path}: nav right edge passes the viewport"
+        for tgt in navm["targets"]:
+            assert min(tgt["w"], tgt["h"]) >= 44, \
+                f"{path}: nav target {tgt['sel']} measures {tgt['w']}x{tgt['h']}"
+
+
 def test_probe_report_is_readable_facts(tmp_path, probe):
     """The report is the deliverable: numbers per page per viewport, in a
     form the owner and partner can read on a phone."""
@@ -109,7 +131,11 @@ def test_documented_findings_2026_11_02_are_current_findings(probe):
     nav-overflow, tap-target, and iOS-zoom classes; these assertions keep
     the enumerated list honest, not the page frozen)."""
     home = probe["/"]["phone-portrait"]
-    assert home["overflowX"] >= 400, \
-        "portrait nav overflow measured fixed: retire the finding in the journal"
+    # The 2026-11-02 nav findings are retired (journal 6.14.1ze): the icon
+    # nav fits portrait with zero nav overflow and its targets are pinned
+    # >= 44px by test_nav_is_a_phone_bar_everywhere. Page-level portrait
+    # overflow and sub-24 targets remain open findings below.
+    assert home["nav"]["overflowX"] <= 0, \
+        "the nav icons round regressed: nav overflows portrait again"
     assert home["tap"]["under24"], \
         "sub-24px tap targets measured gone: retire the finding in the journal"
