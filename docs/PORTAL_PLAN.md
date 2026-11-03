@@ -7244,3 +7244,30 @@ unregistered build* (not "— 2 directories —"), an empty selection on a
 visible row says what the row is for, and a failed census reports
 `stray_error` as words near the row instead of silence.
 The `builds-strays` fixture page redeclares `expectHidden`: with strays present, the hint is the prompt, not silence; the base page keeps the zero-strays assertion. Suite 1279/4.
+
+##### 6.14.1zd Nav icon mockup + the sparing-accent palette law (2026-11-03)
+
+Owner asked for a **mockup before any portal change**: an icon-per-page nav
+(burger's alternative), full-color SVG in the halo-mark colors, **no words
+inside the glyphs**, and future sub-menus under each icon (Models → HF Search /
+Llama.cpp Models / ComfyUI Models; Personalities → select / edit).
+
+Mockup lives at `docs/mockups/nav-icons-20261103.html` (self-contained, no
+portal code touched): icon set, 390px phone bar with tappable bottom-sheets,
+desktop bar keeping words beside icons, and the touch-practice rules that shape
+it — **no nested submenus** (hover doesn't exist; a tap opens a single-level
+bottom sheet, deeper navigation = new sheet + back row), **44px targets** with
+real gaps, **sheets end on screen**, burger only past ~5–7 top targets (that's
+the "More" slot, not the whole nav), icons-without-words mitigated by strong
+silhouettes + tinted active plate + `aria-label` words. Sub-sheets land on
+existing routes/tabs (`/models?tab=search`) — no new machinery; the viewport
+probe's overflow-0-at-390px is the acceptance gate.
+
+**Palette law (owner)**: the mark's blue→violet is the base for every icon;
+colors outside the mark (ok/warn) enter *sparingly* — small area, only to
+differentiate or draw attention, same discipline as the hero's Scheme B
+service buttons and the warning lamps. Applied: Health's heart carries ok-green
+(it is the page with a status light); amber stays on the workbench voices
+(wrench, gear core, llama's mode bands, model sparks); the status trace and
+help glyph went back to pure mark gradient; **red is never a nav icon** —
+bad is a state, not a destination.

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HALO nav mockup — icons + sub-sheets (2026-11-03)</title>
+<style>
+:root{--bg:#0e1116;--panel:#171c24;--line:#232a35;--fg:#e6e9ef;--mut:#8b95a7;
+      --acc:#5aa9ff;--vio:#bc8cff;--amb:#d29922}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:34px 0 10px;color:var(--acc)}
+p.lead{color:var(--mut);margin:0 0 8px;font-size:14px}
+.cols{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.frame{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+.cap{color:var(--mut);font-size:12px;margin:6px 2px}
+
+/* the phone nav bar: 7 icons, no words, 44px+ targets */
+.navbar{display:flex;justify-content:space-between;align-items:center;background:var(--panel);
+        border-bottom:1px solid var(--line);padding:6px 10px}
+.navbar .brand{width:34px;height:34px;flex:none}
+.navbar a{display:flex;flex-direction:column;align-items:center;gap:0;padding:6px 6px;
+          border-radius:8px;min-width:44px;min-height:44px;justify-content:center}
+.navbar a:active,.navbar a.on{background:rgba(90,169,255,.12)}
+svg.icon{width:26px;height:26px;display:block}
+
+/* bottom sheet: single level, generous rows, ends on screen */
+.sheet{background:var(--panel);border-top:1px solid var(--line);border-radius:14px 14px 0 0;
+       padding:10px 12px 14px}
+.sheet .head{display:flex;align-items:center;color:var(--mut);font-size:13px;padding:4px 6px 8px}
+.sheet .head b{color:var(--fg);font-size:15px;margin-right:auto}
+.sheet .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 6px;
+            border-radius:10px;color:var(--fg);text-decoration:none}
+.sheet .row:active{background:rgba(90,169,255,.12)}
+.sheet .row svg{width:24px;height:24px;flex:none}
+.sheet .row .lab{flex:1;font-size:15px}
+.sheet .row .chev{color:var(--mut)}
+.sheet .sep{height:1px;background:var(--line);margin:8px 4px}
+
+.phone{width:390px}
+.phone .body{padding:16px;color:var(--mut);font-size:13px}
+.iconlist{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:12px}
+.iconlist .cell{display:flex;align-items:center;gap:12px;background:var(--panel);
+                border:1px solid var(--line);border-radius:10px;padding:12px}
+.iconlist svg{width:34px;height:34px;flex:none}
+.iconlist .n{font-size:14px}
+.iconlist .s{color:var(--mut);font-size:12px}
+.rules{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:14px}
+.rules li{margin:7px 0}
+.rules b{color:var(--fg)}
+.desk .navbar{padding:10px 16px;gap:4px;justify-content:flex-start}
+.desk .navbar a{flex-direction:row;gap:8px;padding:8px 12px;min-height:0;min-width:0}
+.desk .navbar .spacer{margin-left:auto}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:fixed">
+ <defs>
+  <linearGradient id="hv" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#5aa9ff"/><stop offset="1" stop-color="#bc8cff"/>
+  </linearGradient>
+  <linearGradient id="va" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#bc8cff"/><stop offset="1" stop-color="#d29922"/>
+  </linearGradient>
+  <linearGradient id="ba" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#5aa9ff"/><stop offset="1" stop-color="#d29922"/>
+  </linearGradient>
+  <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#3fb950"/><stop offset="1" stop-color="#5aa9ff"/>
+  </linearGradient>
+  <linearGradient id="band" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#5aa9ff"/><stop offset=".5" stop-color="#bc8cff"/><stop offset="1" stop-color="#d29922"/>
+  </linearGradient>
+ </defs>
+</svg>
+
+<div class="wrap">
+<h1>HALO nav — icons and sub-sheets</h1>
+<p class="lead">Mockup only (2026-11-03). Halo-mark colors — blue <span class="mut">#5aa9ff</span> →
+violet <span class="mut">#bc8cff</span> ring gradient, amber <span class="mut">#d29922</span> as the
+third voice. No words in any icon; labels live beside/below icons, never inside.
+<b>Color law (owner):</b> the mark's blue→violet is the base for every icon. Colors
+outside the mark — ok <span class="mut">#3fb950</span>, warn
+<span class="mut">#d29922</span> — enter <b>sparingly</b>, small area, only to
+differentiate or draw attention: the green in Health's heart (it is the page with a
+status light), amber only on the workbench voices (wrench, gear core, llama's band,
+the model sparks). Same discipline as the hero's start/stop/restart buttons and the
+warning lamps: the accent means something, so it must stay rare. Red is never a nav
+icon — bad is a state, not a destination.</p>
+
+<h2>The icon set</h2>
+<div class="iconlist">
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <rect x="2" y="4" width="20" height="16" rx="3" stroke="url(#hv)" stroke-width="1.8"/>
+      <path d="M5 13h3l1.6-4 2.6 7 1.8-5 1.2 2h4" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span><span class="n">Status</span><br><span class="s">framed heartbeat trace</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <path d="M12 20.5S3.5 15 3.5 8.9C3.5 6 5.7 4 8.2 4c1.7 0 3 .9 3.8 2.2C12.8 4.9 14.1 4 15.8 4c2.5 0 4.7 2 4.7 4.9 0 6.1-8.5 11.6-8.5 11.6z" fill="url(#hg)" opacity=".92"/>
+      <path d="M7.2 9.4c.4-1.6 1.9-2.6 3.3-2.4" stroke="#0e1116" stroke-width="1.4" stroke-linecap="round" opacity=".55"/>
+    </svg>
+    <span><span class="n">Health</span><br><span class="s">heart, ok-green vitality tint</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <path d="M12 4.5c-1.2-1.3-3.4-1.3-4.6.2-1.9.2-3.2 1.8-3 3.7-1.3 1.1-1.5 3.1-.3 4.4-.7 1.9.4 3.9 2.4 4.4.6 1.7 2.6 2.5 4.2 1.7.6.9 1.7 1.3 2.7.9 2.9-.3 4.9-3.3 3.9-6.2 1.2-1.5.9-3.7-.7-4.9-.4-2.5-2.9-4.1-5.3-3.5-.4-.4-.8-.6-1.3-.7z" stroke="url(#hv)" stroke-width="1.7"/>
+      <path d="M12 5.5v13.8" stroke="url(#hv)" stroke-width="1.4"/>
+      <circle cx="8.4" cy="9.4" r="1.15" fill="#d29922"/>
+      <circle cx="15.4" cy="13.6" r="1.15" fill="#5aa9ff"/>
+      <circle cx="9.6" cy="15" r=".9" fill="#bc8cff"/>
+    </svg>
+    <span><span class="n">Models</span><br><span class="s">brain, model sparks</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24">
+      <clipPath id="llama"><path d="M8 21c-.2-3.2.3-6.4 1.5-9.3-.9.1-1.7-.2-2.3-.9-.8-1-.8-2.3-.1-3.3l-.6-2.2c-.1-.5.4-.9.8-.6l1.7 1.2c1.6-.5 3.4-.2 4.7.8 2 1.5 3.4 3.7 4.6 6.2 1.3 2.7 2.1 5.4 2.4 8.1H8z"/></clipPath>
+      <g clip-path="url(#llama)">
+        <rect x="0" y="0" width="24" height="8" fill="#5aa9ff"/>
+        <rect x="0" y="8" width="24" height="7" fill="#bc8cff"/>
+        <rect x="0" y="15" width="24" height="9" fill="#d29922"/>
+      </g>
+      <path d="M9.5 11.7c.5 0 .9-.4.9-.9s-.4-.9-.9-.9" stroke="#0e1116" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+    </svg>
+    <span><span class="n">Personalities</span><br><span class="s">llama head, mode-band fill</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <path d="M14.7 6.3a4.5 4.5 0 0 0-5.9 5.9L4 17l3 3 4.8-4.8a4.5 4.5 0 0 0 5.9-5.9l-2.6 2.6-2.4-.6-.6-2.4 2.6-2.6z" fill="url(#va)" opacity=".95"/>
+      <circle cx="17.4" cy="17.4" r="2.3" fill="none" stroke="url(#ba)" stroke-width="1.7"/>
+      <path d="M17.4 15.1v-2.4M19.7 17.4h2.4" stroke="#d29922" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    <span><span class="n">Projects</span><br><span class="s">wrench + work surface</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24">
+      <g fill="url(#hv)">
+        <path d="M10.6 2h2.8l.5 2.7 1.8.9 2.3-1.4 2 2-1.4 2.3.9 1.8 2.7.5v2.8l-2.7.5-1.8.9 1.4 2.3-2 2-2.3-1.4-1.8.9L13.4 22h-2.8l-.5-2.7-1.8-.9-2.3 1.4-2-2 1.4-2.3-.9-1.8H2v-2.8l2.7-.5 1.8-.9L5.1 8.2l2-2 2.3 1.4 1.8-.9L10.6 2z"/>
+      </g>
+      <circle cx="12" cy="12" r="3.1" fill="#0e1116"/>
+      <circle cx="12" cy="12" r="1.5" fill="#d29922"/>
+    </svg>
+    <span><span class="n">Settings</span><br><span class="s">gear, amber core</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="8.4" stroke="url(#hv)" stroke-width="1.8"/>
+      <path d="M9.4 9.4c.2-1.5 1.4-2.5 2.9-2.4 1.5.1 2.6 1.1 2.6 2.5 0 1.9-2.6 2.1-2.8 4.1" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/>
+      <circle cx="12" cy="16.6" r="1.15" fill="#bc8cff"/>
+    </svg>
+    <span><span class="n">Help</span><br><span class="s">question in a halo ring</span></span>
+  </div>
+  <div class="cell">
+    <svg class="icon" viewBox="0 0 24 24">
+      <circle cx="5.5" cy="12" r="1.8" fill="#5aa9ff"/>
+      <circle cx="12" cy="12" r="1.8" fill="#bc8cff"/>
+      <circle cx="18.5" cy="12" r="1.8" fill="#d29922"/>
+    </svg>
+    <span><span class="n">More</span><br><span class="s">overflow, future sections</span></span>
+  </div>
+</div>
+
+<h2>On a phone (390px): the whole nav fits, no words, 44px targets</h2>
+<div class="cols">
+  <div>
+    <div class="frame phone">
+      <div class="navbar">
+        <svg class="brand" viewBox="0 0 128 128"><circle cx="64" cy="64" r="46" fill="none" stroke="url(#hv)" stroke-width="9"/><circle cx="64" cy="64" r="17" fill="#5aa9ff" opacity=".85"/></svg>
+        <a class="on" href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="3" stroke="url(#hv)" stroke-width="1.8"/><path d="M5 13h3l1.6-4 2.6 7 1.8-5 1.2 2h4" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M12 20.5S3.5 15 3.5 8.9C3.5 6 5.7 4 8.2 4c1.7 0 3 .9 3.8 2.2C12.8 4.9 14.1 4 15.8 4c2.5 0 4.7 2 4.7 4.9 0 6.1-8.5 11.6-8.5 11.6z" fill="url(#hg)" opacity=".92"/></svg></a>
+        <a href="#" onclick="document.getElementById('sheet-models').style.display='block';return false"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M12 4.5c-1.2-1.3-3.4-1.3-4.6.2-1.9.2-3.2 1.8-3 3.7-1.3 1.1-1.5 3.1-.3 4.4-.7 1.9.4 3.9 2.4 4.4.6 1.7 2.6 2.5 4.2 1.7.6.9 1.7 1.3 2.7.9 2.9-.3 4.9-3.3 3.9-6.2 1.2-1.5.9-3.7-.7-4.9-.4-2.5-2.9-4.1-5.3-3.5-.4-.4-.8-.6-1.3-.7z" stroke="url(#hv)" stroke-width="1.7"/><path d="M12 5.5v13.8" stroke="url(#hv)" stroke-width="1.4"/><circle cx="8.4" cy="9.4" r="1.15" fill="#d29922"/><circle cx="15.4" cy="13.6" r="1.15" fill="#5aa9ff"/></svg></a>
+        <a href="#" onclick="document.getElementById('sheet-personalities').style.display='block';return false"><svg class="icon" viewBox="0 0 24 24"><clipPath id="llama2"><path d="M8 21c-.2-3.2.3-6.4 1.5-9.3-.9.1-1.7-.2-2.3-.9-.8-1-.8-2.3-.1-3.3l-.6-2.2c-.1-.5.4-.9.8-.6l1.7 1.2c1.6-.5 3.4-.2 4.7.8 2 1.5 3.4 3.7 4.6 6.2 1.3 2.7 2.1 5.4 2.4 8.1H8z"/></clipPath><g clip-path="url(#llama2)"><rect x="0" y="0" width="24" height="8" fill="#5aa9ff"/><rect x="0" y="8" width="24" height="7" fill="#bc8cff"/><rect x="0" y="15" width="24" height="9" fill="#d29922"/></g></svg></a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a4.5 4.5 0 0 0-5.9 5.9L4 17l3 3 4.8-4.8a4.5 4.5 0 0 0 5.9-5.9l-2.6 2.6-2.4-.6-.6-2.4 2.6-2.6z" fill="url(#va)" opacity=".95"/></svg></a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24"><g fill="url(#hv)"><path d="M10.6 2h2.8l.5 2.7 1.8.9 2.3-1.4 2 2-1.4 2.3.9 1.8 2.7.5v2.8l-2.7.5-1.8.9 1.4 2.3-2 2-2.3-1.4-1.8.9L13.4 22h-2.8l-.5-2.7-1.8-.9-2.3 1.4-2-2 1.4-2.3-.9-1.8H2v-2.8l2.7-.5 1.8-.9L5.1 8.2l2-2 2.3 1.4 1.8-.9L10.6 2z"/></g><circle cx="12" cy="12" r="3.1" fill="#0e1116"/><circle cx="12" cy="12" r="1.5" fill="#d29922"/></svg></a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.4" stroke="url(#hv)" stroke-width="1.8"/><path d="M9.4 9.4c.2-1.5 1.4-2.5 2.9-2.4 1.5.1 2.6 1.1 2.6 2.5 0 1.9-2.6 2.1-2.8 4.1" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="16.6" r="1.15" fill="#bc8cff"/></svg></a>
+      </div>
+      <div class="body">Status page body (hero cards)…</div>
+      <div class="sheet" id="sheet-models" style="display:none;position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:auto">
+        <div class="head"><b>Models</b><a href="#" onclick="document.getElementById('sheet-models').style.display='none';return false" style="color:var(--mut)">close</a></div>
+        <a class="row" href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="url(#hv)" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="#5aa9ff" stroke-width="1.8" stroke-linecap="round"/></svg><span class="lab">HF Search</span><span class="chev">›</span></a>
+        <div class="sep"></div>
+        <a class="row" href="#"><svg class="icon" viewBox="0 0 24 24"><path d="M6 20c0-6 2-11 6-15 3.5 3 5.4 7.6 5.9 12 .1.7.2 2 .2 3H6z" fill="url(#ba)" opacity=".85"/></svg><span class="lab">Llama.cpp Models</span><span class="chev">›</span></a>
+        <div class="sep"></div>
+        <a class="row" href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="4" stroke="url(#va)" stroke-width="1.8"/><path d="M9 14.5c.8-3 2-4.5 3-4.5s2.2 1.5 3 4.5" stroke="#d29922" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="8" r="1.4" fill="#bc8cff"/></svg><span class="lab">ComfyUI Models</span><span class="chev">›</span></a>
+      </div>
+      <div class="sheet" id="sheet-personalities" style="display:none;position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:auto">
+        <div class="head"><b>Personalities</b><a href="#" onclick="document.getElementById('sheet-personalities').style.display='none';return false" style="color:var(--mut)">close</a></div>
+        <a class="row" href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="url(#hv)" stroke-width="1.8"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8" stroke="#5aa9ff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lab">Select personality</span><span class="chev">›</span></a>
+        <div class="sep"></div>
+        <a class="row" href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M4 20l1.2-4.4L15 6l3 3-9.6 9.6L4 20z" fill="url(#va)" opacity=".9"/><path d="M13.5 7.5l3 3" stroke="#5aa9ff" stroke-width="1.6"/></svg><span class="lab">Edit personalities</span><span class="chev">›</span></a>
+      </div>
+    </div>
+    <div class="cap">Tap the brain → the Models sheet opens: <b>one level</b>, 52px rows, ends on screen. Tap the llama → Personalities sheet. (Click the icons in this mockup.)</div>
+  </div>
+  <div class="phone" style="width:400px">
+    <div class="rules">
+      <b>Touch-nav practice, in one page:</b>
+      <li><b>Nested submenus are the touch sin.</b> Hover doesn't exist on a phone; flyout children miss under the thumb. Accepted pattern: a tap opens a <b>single-level sheet</b>; deeper navigation is a new sheet with a back row, never a child list.</li>
+      <li><b>44×44px minimum target</b> (Apple HIG) with real gaps between — this bar uses 44px+ targets and 8px+ spacing.</li>
+      <li><b>The sheet must end on screen</b> — no scrolling menu. Seven top icons and three sheet rows both fit at 390px.</li>
+      <li><b>Recognition beats recall</b>: an icon row shows the whole site; a burger hides it behind a memory test. The burger earns its place only past ~5–7 top targets — that's the "More" (three dots) slot, not the whole nav.</li>
+      <li><b>Icons without words cost legibility</b> (yours: "harder to make understandable at a glance") — mitigated by strong silhouettes, the active icon lit with a tinted backing, and the page title below. Ship the icon bar <b>with</b> words on desktop, icons-only (or icon+micro-label) on phone.</li>
+      <li>Sheets are bottom-anchored: the thumb's natural arc. Top-drawer menus are for the thumb's reach limit.</li>
+    </div>
+  </div>
+</div>
+
+<h2>Desktop keeps words (icons join, not replace)</h2>
+<div class="frame desk" style="max-width:1180px">
+  <div class="navbar">
+    <svg class="brand" viewBox="0 0 128 128"><circle cx="64" cy="64" r="46" fill="none" stroke="url(#hv)" stroke-width="9"/><circle cx="64" cy="64" r="17" fill="#5aa9ff" opacity=".85"/></svg>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="3" stroke="url(#hv)" stroke-width="1.8"/><path d="M5 13h3l1.6-4 2.6 7 1.8-5 1.2 2h4" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Status</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M12 20.5S3.5 15 3.5 8.9C3.5 6 5.7 4 8.2 4c1.7 0 3 .9 3.8 2.2C12.8 4.9 14.1 4 15.8 4c2.5 0 4.7 2 4.7 4.9 0 6.1-8.5 11.6-8.5 11.6z" fill="url(#hg)" opacity=".92"/></svg>Health</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M12 4.5c-1.2-1.3-3.4-1.3-4.6.2-1.9.2-3.2 1.8-3 3.7-1.3 1.1-1.5 3.1-.3 4.4-.7 1.9.4 3.9 2.4 4.4.6 1.7 2.6 2.5 4.2 1.7.6.9 1.7 1.3 2.7.9 2.9-.3 4.9-3.3 3.9-6.2 1.2-1.5.9-3.7-.7-4.9-.4-2.5-2.9-4.1-5.3-3.5-.4-.4-.8-.6-1.3-.7z" stroke="url(#hv)" stroke-width="1.7"/><circle cx="8.4" cy="9.4" r="1.15" fill="#d29922"/></svg>Models</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24"><clipPath id="llama3"><path d="M8 21c-.2-3.2.3-6.4 1.5-9.3-.9.1-1.7-.2-2.3-.9-.8-1-.8-2.3-.1-3.3l-.6-2.2c-.1-.5.4-.9.8-.6l1.7 1.2c1.6-.5 3.4-.2 4.7.8 2 1.5 3.4 3.7 4.6 6.2 1.3 2.7 2.1 5.4 2.4 8.1H8z"/></clipPath><g clip-path="url(#llama3)"><rect x="0" y="0" width="24" height="8" fill="#5aa9ff"/><rect x="0" y="8" width="24" height="7" fill="#bc8cff"/><rect x="0" y="15" width="24" height="9" fill="#d29922"/></g></svg>Personalities</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a4.5 4.5 0 0 0-5.9 5.9L4 17l3 3 4.8-4.8a4.5 4.5 0 0 0 5.9-5.9l-2.6 2.6-2.4-.6-.6-2.4 2.6-2.6z" fill="url(#va)" opacity=".95"/></svg>Projects</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24"><g fill="url(#hv)"><path d="M10.6 2h2.8l.5 2.7 1.8.9 2.3-1.4 2 2-1.4 2.3.9 1.8 2.7.5v2.8l-2.7.5-1.8.9 1.4 2.3-2 2-2.3-1.4-1.8.9L13.4 22h-2.8l-.5-2.7-1.8-.9-2.3 1.4-2-2 1.4-2.3-.9-1.8H2v-2.8l2.7-.5 1.8-.9L5.1 8.2l2-2 2.3 1.4 1.8-.9L10.6 2z"/></g><circle cx="12" cy="12" r="3.1" fill="#0e1116"/><circle cx="12" cy="12" r="1.5" fill="#d29922"/></svg>Settings</a>
+    <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.4" stroke="url(#hv)" stroke-width="1.8"/><path d="M9.4 9.4c.2-1.5 1.4-2.5 2.9-2.4 1.5.1 2.6 1.1 2.6 2.5 0 1.9-2.6 2.1-2.8 4.1" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="16.6" r="1.15" fill="#bc8cff"/></svg>Help</a>
+    <span class="spacer mut">RAM 38 G free · DISK 55% · Logout</span>
+  </div>
+</div>
+
+<h2>Notes for the real round</h2>
+<div class="rules" style="max-width:1180px">
+<li><b>Icons are static SVGs</b> (no animation, no glow beyond the theme gradients) so they inherit the portal's quiet tone; the active page's icon gets the tinted backing plate, which is a state, not decoration.</li>
+<li><b>Accessibility</b>: every icon is an <code>&lt;a&gt;</code> with <code>aria-label</code> + <code>title</code> (the words exist for readers/screen readers, they just don't render inside the glyph). The probe's tap-target check (≥44px) is the acceptance gate.</li>
+<li><b>Sub-sheets replace today's in-page tabs as entry points</b> — the Models page keeps its tabs; the sheet just lands you on the right tab (<code>/models?tab=search</code>). Personalities sheet = two existing routes. No new machinery; the viewport probe's "overflow 0 at 390px" is the acceptance test the nav round must pass.</li>
+<li>Overflow slot ("More") exists in the bar for future sections so the bar never needs a burger for one new page.</li>
+</div>
+</div>
+</body>
+</html>
