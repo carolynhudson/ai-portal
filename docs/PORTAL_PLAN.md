@@ -7280,3 +7280,17 @@ profile -- two ear tips, snout, dark eye dot, neck carrying the amber band.
 Verification standard recorded: silhouette checked **at 26px** (real phone
 bar size), not just at showcase size -- a shape that only reads at 34px is
 not an icon.
+
+v3/v4 (owner's round-2 eye): **Projects = classic flowchart** (box, decision
+diamond, two branch boxes, amber arrowheads) -- the wrench sat next to the
+settings gear and both mean "settings" in desktop apps; a project IS a flow.
+**The forge drew the llama reference**: RainbowBlock's ComfyUI ran
+Qwen-Image-2.1-Turbo int8 (first generation from this box via direct
+:8188 API -- prompt -> poll -> /view; lesson: the FIRST job cold-loads the
+20B int8 and the poll window must be generous, 7 min was far too short, the
+image completed ~45 min later and was fetched from /history after). Anatomy
+the reference gave us: ONE tall curved upright ear (not two spikes), sloped
+forehead into a blunt muzzle with an upturned mouth, throat curve into a
+long slender neck, almond eye just behind the muzzle start (the owner's
+placement note, confirmed by the render). Witness:
+forge-llama-ref.png + nav-icons-v4*.png.
