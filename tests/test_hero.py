@@ -507,7 +507,46 @@ def test_the_pane_leads_with_curated_lines_and_offers_the_raw_tail():
 def test_service_state_and_controls_survive_the_redesign():
     install(pulse_of(FIXTURE.read_text().splitlines()))
     body = hero(client().get("/").text)
-    for needle in ('id="router-state"', "svcAction('llamacpp', 'start')",
-                   "svcAction('llamacpp', 'stop')", "svcAction('llamacpp', 'restart')",
-                   "svc: ai-llama-router", "loopback only", "Web UI ↗", "/v1/models"):
+    # Scheme B + the svc_actions law (owner, 2026-11-02): the fixture's
+    # service is ACTIVE, so the hero offers stop and restart as glyph
+    # buttons - and must NOT offer start. The state pill and the jump-off
+    # links are the pane's other reasons to exist.
+    for needle in ('id="router-state"', "svcAction('llamacpp', 'stop')",
+                   "svcAction('llamacpp', 'restart')", "svc-verb stop",
+                   "svc-verb restart", "svc: ai-llama-router",
+                   "loopback only", "Web UI ↗", "/v1/models"):
         assert needle in body, f"hero lost {needle}"
+    assert "svcAction('llamacpp', 'start')" not in body, \
+        "an active service offered a start button: the svc_actions law broke"
+
+
+def test_the_verb_law_governs_the_hero_buttons():
+    """app/core/svc_actions.py rendered into the hero (owner, 2026-11-02):
+    stopped -> only start; missing -> nothing at all; unknown -> all three.
+    The pill tells the state; the buttons tell the reachable verbs."""
+    pulse = pulse_of(FIXTURE.read_text().splitlines())
+
+    def svc(state):
+        # the shape base.install uses; only the state varies
+        return {"name": "ai-llama-router", "state": state, "sub": "running",
+                "since": None, "main_pid": 0, "load_state": "loaded"}
+
+    body = hero(client().get("/").text)  # active: pinned by the test above
+
+    install(pulse, service=svc("inactive"))
+    body = hero(client().get("/").text)
+    assert "svcAction('llamacpp', 'start')" in body
+    assert "svcAction('llamacpp', 'stop')" not in body
+    assert "svcAction('llamacpp', 'restart')" not in body
+
+    install(pulse, service=svc("missing"))
+    body = hero(client().get("/").text)
+    for verb in ("start", "stop", "restart"):
+        assert f"svcAction('llamacpp', '{verb}')" not in body, \
+            f"a missing unit offered {verb}"
+
+    install(pulse, service=svc("unknown"))
+    body = hero(client().get("/").text)
+    for verb in ("start", "stop", "restart"):
+        assert f"svcAction('llamacpp', '{verb}')" in body, \
+            f"unknown state hid {verb}: absence of knowledge is not absence of control"
