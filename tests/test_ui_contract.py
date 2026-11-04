@@ -346,6 +346,10 @@ screenshot 2026-11-03; headless-Chromium witnesses cannot see this)"
     assert '{% include "_icons.svg" %}' in base, "base.html stopped inlining the sprite"
     assert "/static/icons.svg" not in base, "base.html references an external sprite again"
     sprite = sprite_path.read_text()
+    assert 'width="0" height="0"' in sprite and "position:absolute" in sprite, \
+        "the inlined sprite root needs a zero box: an un-dimensioned inline " \
+        "<svg> lays out as a 300x150 block (owner: an invisible inch above " \
+        "the nav, 2026-11-03)"
 
     # the nav renders from a template list of (href, label, icon) tuples;
     # the icon names and the static logout reference are the contract
