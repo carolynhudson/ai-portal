@@ -44,13 +44,12 @@
 @keyframes addflash{0%{box-shadow:0 0 0 4px rgba(90,169,255,.55)}100%{box-shadow:0 0 0 0 transparent}}
 </style>
 
-{# Phone control scheme (owner ruling, 6.14.1zf): below 900px the nav menu
-   sheet is the section navigator -- the in-page tab strip duplicates it
-   exactly and its height/width/framing is the budget the phone spends on
-   navigation twice. The strip stays where it earns its keep: desktop.
-   Section state on phones is carried by the panel h2s + the sheet's
-   aria-current mark. #}
-<h2>Models</h2>
+{# Menu-only (owner rulings 6.14.1zg/1zh): the nav menu is the section
+   navigator at every width (sheet on phones, dropdown on desktop), so the
+   tab strip is retired (tabs.css) and the page-level "Models" header goes
+   with it -- a title floating above a control that duplicates the nav read
+   as orphaned furniture. Each panel names its own section (h2) and the
+   sheet marks the standing one. #}
 {# Three-way split (owner menu-bar pilot, 6.14.1zf): the tools (HF search +
    download/add) are one section; the llama.cpp library and the ComfyUI
    library are the other two. The nav menu bar lands here by deep link:

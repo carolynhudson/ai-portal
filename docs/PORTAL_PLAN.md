@@ -7477,3 +7477,16 @@ sheet marks the current section via `aria-current="page"` (rendered from
 plate. Pinned: contract asserts the media rule, the get-panel heading, and
 the current mark's style; the probe asserts the strip is invisible at 390
 and the sheet marks the section you stand on.
+
+**1zh (same day, owner's desktop eye):** the strip + the page-level
+"Models" header read as orphaned furniture even at 1280px -- a control
+duplicating the nav, under a title duplicating the panels' own headings.
+The ruling widened: **the menu is the navigator at EVERY width** (sheet on
+phones, dropdown on desktop); `.model-tabs{display:none}` retires the
+strip globally (tabs.css, single source) and the `<h2>Models</h2>` page
+header retires with it. Section state everywhere = panel h2 + sheet
+`aria-current`. The jsdom rotation keeps exercising the tab machinery
+(jsdom judges the attributes, not the CSS), so the panels stay tested even
+with the strip unseen -- the browser witness, as ever, is the visibility
+judge. Pinned: contract bans the strip's return and the orphaned header;
+the probe measures the strip 0x0 at BOTH 390 and 1280.

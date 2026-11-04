@@ -117,9 +117,10 @@
   .proj-tab{ padding:8px 10px; font-size:13px }
 }
 
-/* The phone control-scheme ruling (owner, 6.14.1zg): below the phone-bar
- * breakpoint the nav menu sheet IS the section navigator, so the models
- * strip -- which duplicates it exactly -- hides. Strips are desktop-only;
- * the models group pays for phones with its panel headings + the sheet's
- * aria-current mark. Geometry lives here, in one place, per the law. */
-@media (max-width:900px){.model-tabs{display:none}}
+/* The menu-only ruling (owner, 6.14.1zg/1zh): the models sections navigate
+ * through the nav menu (sheet on phones, dropdown on desktop) -- the strip
+ * duplicated that hierarchy at every width and sat orphaned under its own
+ * page header. Retired everywhere; the models group carries section state
+ * in its panel headings + the sheet's aria-current mark. Geometry lives
+ * here, in one place, per the law. */
+.model-tabs{display:none}

@@ -378,11 +378,13 @@ def test_the_nav_menu_bar_is_single_level_and_closed_by_default():
     # current section via aria-current (rendered from ?tab=).
     m = (ROOT / "web" / "templates" / "models.html").read_text()
     css_geo = (ROOT / "web" / "static" / "tabs.css").read_text()
-    assert "@media (max-width:900px){.model-tabs{display:none}}" in css_geo, \
-        "the phone menu-only rule for the models strip is gone from tabs.css"
-    assert "@media (max-width:900px){.model-tabs" not in m, \
+    assert ".model-tabs{display:none}" in css_geo, \
+        "the menu-only ruling (strip retired at every width) is gone from tabs.css"
+    assert ".model-tabs" not in m, \
         "the page re-declared tab geometry: geometry lives in tabs.css"
-    assert "<h2>Get Models</h2>" in m, "the get panel lost its section heading (phone state)"
+    assert "<h2>Models</h2>" not in m, \
+        "the orphaned page header returned (panels name their own sections)"
+    assert "<h2>Get Models</h2>" in m, "the get panel lost its section heading (state)"
     assert 'aria-current="page"' in nav, "the sheet stopped marking the current section"
     css = base[base.index("<style>"):]
     assert '.nav-sub a[aria-current="page"]' in css, "the current-section mark has no style"

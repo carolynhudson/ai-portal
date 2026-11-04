@@ -135,8 +135,9 @@ def test_the_models_menu_is_a_phone_sheet(ui_server):
             assert row["min"] >= 44, f"menu row under 44px: {row}"
             assert row["right"] <= m["vw"], f"menu row passes the viewport edge: {row}"
             assert row["bottom"] <= 844, f"menu row runs off the bottom of the screen: {row}"
-        # the phone scheme ruling (6.14.1zf): the in-page tab strip is gone
-        # at phone width -- the sheet is the navigator, not a strip + sheet
+        # the menu-only ruling (6.14.1zg/1zh): the in-page tab strip is
+        # gone at phone width AND at desktop width -- the menu is the
+        # navigator everywhere
         page.goto(f"{base}/models", wait_until="networkidle")
         page.wait_for_timeout(400)
         strip = page.evaluate("""() => {
@@ -145,7 +146,15 @@ def test_the_models_menu_is_a_phone_sheet(ui_server):
           return {w: Math.round(r.width), h: Math.round(r.height)};
         }""")
         assert strip["h"] < 2 and strip["w"] < 2, \
-            f"the models tab strip is showing at 390px: {strip} -- menu-only on phones"
+            f"the models tab strip is showing at 390px: {strip} -- menu-only"
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.wait_for_timeout(250)
+        strip = page.evaluate("""() => {
+          const r = document.querySelector('.model-tabs').getBoundingClientRect();
+          return {w: Math.round(r.width), h: Math.round(r.height)};
+        }""")
+        assert strip["h"] < 2 and strip["w"] < 2, \
+            f"the models tab strip is showing at 1280px: {strip} -- menu-only at every width"
         # and the sheet marks the section you are standing on
         page.goto(f"{base}/models?tab=comfy", wait_until="networkidle")
         page.wait_for_timeout(400)
