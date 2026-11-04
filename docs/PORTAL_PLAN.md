@@ -7394,3 +7394,9 @@ implements. Fix: the sprite moved to `web/templates/_icons.svg` and is
 `{% include %}`d into base.html, so gradients share the document (the
 bulletproof cross-browser pattern); use hrefs are same-document `#ids`; a
 contract test pins the include and bans external-sprite references.
+
+Second owner catch the same day: an inlined `<svg>` root with no width/height
+lays out as a 300x150 block -- an invisible inch of scroll above the nav.
+The sprite root now carries `width=0 height=0 position:absolute` (symbols
+and gradients resolve from a zero box), and the contract pins it. The page
+probe measures navTop == 0 live.
