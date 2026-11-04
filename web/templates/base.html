@@ -38,6 +38,21 @@ nav a{display:inline-flex;align-items:center;gap:8px}
 .nav-i{width:20px;height:20px;flex:none}
 nav a.on{background:rgba(90,169,255,.12);border-radius:8px;padding:4px 8px}
 nav button{display:inline-flex;align-items:center;gap:8px}
+/* The menu bar (6.14.1zf): items with children open a SINGLE-LEVEL panel
+   (owner's touch law: no nested flyouts, generous rows, panel ends on
+   screen). Desktop: dropdown under the item. Phone: the panel is a sheet
+   spanning the bar, absolutely positioned -- the nav row's overflow-0
+   gate cannot be moved by it. */
+nav{position:relative}
+.nav-menu{position:relative;display:inline-flex}
+.nav-caret{color:var(--mut);font-size:11px;margin-left:2px}
+.nav-sub{position:absolute;top:calc(100% + 6px);left:0;z-index:60;
+  display:flex;flex-direction:column;gap:4px;min-width:180px;padding:6px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 10px 26px rgba(0,0,0,.45)}
+.nav-sub a{min-height:44px;display:flex;align-items:center;padding:8px 12px;
+  border-radius:8px;color:var(--fg);gap:8px}
+.nav-sub a:hover{background:rgba(90,169,255,.12);color:var(--acc)}
 @media (max-width:900px){
   nav{gap:0;padding:4px 2px;flex-wrap:nowrap}
   nav .brand{font-size:0;gap:0;margin-right:2px}
@@ -50,6 +65,10 @@ nav button{display:inline-flex;align-items:center;gap:8px}
   nav form{margin:0 !important}
   nav button{min-width:44px;min-height:44px;padding:6px;display:inline-flex;
     align-items:center;justify-content:center;gap:0}
+  .nav-menu{position:static}
+  .nav-caret{display:none}
+  .nav-sub{left:2px;right:2px;top:100%;min-width:0}
+  .nav-sub a{min-height:52px}
 }
 /* The brand halo: a soft opening behind the HALO mark, rhyming with the
    mark's own ring. It sits behind the mark glyph, never under the links. */
@@ -177,16 +196,36 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
 {% include "_icons.svg" %}
 <nav>
   <span class="brand"><img src="/static/portal-mark.svg" alt="" width="26" height="26">HALO</span>
-  {% set navlinks = [('/', 'Status', 'i-status'), ('/models', 'Models', 'i-models'),
+  {# navlinks: (href, label, icon[, children]) -- an entry with children
+     renders as a menu bar button: the click OPENS the panel, the children
+     navigate (owner's menu-bar pilot, 6.14.1zf; single level only, per the
+     touch law in the icon mockup). #}
+  {% set navlinks = [('/', 'Status', 'i-status'),
+                     ('/models', 'Models', 'i-models', [('/models?tab=get', 'Get Models'),
+                                                        ('/models?tab=llama', 'Llama Models'),
+                                                        ('/models?tab=comfy', 'ComfyUI Models')]),
                      ('/health', 'Health', 'i-health'),
                      ('/personalities', 'Personalities', 'i-personalities'),
                      ('/projects', 'Projects', 'i-projects'),
                      ('/settings', 'Settings', 'i-settings'),
                      ('/help', 'Help', 'i-help')] %}
   {% set ap = request.path %}
-  {% for href, label, icon in navlinks %}
+  {% for entry in navlinks %}
+  {% set href = entry[0] %}{% set label = entry[1] %}{% set icon = entry[2] %}
+  {% set kids = entry[3] if entry|length > 3 else [] %}
   {% set active = (href == '/' and ap == '/') or (href != '/' and ap.startswith(href)) %}
+  {% if kids %}
+  <span class="nav-menu">
+    <a href="{{ href }}" class="nav-menu-btn{% if active %} on{% endif %}" aria-label="{{ label }}"
+       aria-haspopup="true" aria-expanded="false" data-menu="{{ href }}"
+       ><svg class="nav-i" aria-hidden="true"><use href="#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span><span class="nav-caret" aria-hidden="true">▾</span></a>
+    <span class="nav-sub" id="nav-sub-{{ label|lower }}" role="menu" hidden>
+      {% for chref, clabel in kids %}<a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}">{{ clabel }}</a>{% endfor %}
+    </span>
+  </span>
+  {% else %}
   <a href="{{ href }}" aria-label="{{ label }}"{% if active %} class="on"{% endif %}><svg class="nav-i" aria-hidden="true"><use href="#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span></a>
+  {% endif %}
   {% endfor %}
   <span class="reslights" id="reslights" role="status" aria-live="polite">
     <span class="rl" id="rl-ram"><i></i><span>RAM —</span></span>
@@ -419,6 +458,36 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   run();
   setInterval(run, 20000);
   document.addEventListener('visibilitychange', run);
+})();
+</script>
+<script>
+/* The menu bar (6.14.1zf): the button opens its panel (never navigates --
+   the children carry the destinations); outside click and Escape close;
+   aria-expanded rides the state for readers. The panel is [hidden] by
+   default, and the [hidden] law keeps it invisible in every browser. */
+(function(){
+  function closeAll(){
+    document.querySelectorAll('.nav-sub').forEach(function(s){ s.hidden = true; });
+    document.querySelectorAll('.nav-menu-btn').forEach(function(b){
+      b.setAttribute('aria-expanded', 'false');
+    });
+  }
+  document.querySelectorAll('.nav-menu-btn').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      var sub = btn.nextElementSibling;
+      var wasOpen = !sub.hidden;
+      closeAll();
+      sub.hidden = wasOpen;
+      btn.setAttribute('aria-expanded', String(!wasOpen));
+    });
+  });
+  document.addEventListener('click', function(e){
+    if (!e.target.closest('.nav-menu')) closeAll();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeAll();
+  });
 })();
 </script>
 </body>

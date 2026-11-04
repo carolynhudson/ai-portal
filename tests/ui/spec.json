@@ -433,14 +433,17 @@
       ],
       "expectHidden": [
         "#stray-row",
-        "#stray-hint"
+        "#stray-hint",
+        "#nav-sub-models"
       ],
       "_census_comment": [
         "Starting the router is confirm-gated in the harness because the page now confirms it when the",
         "census names a llama-server outside the unit -- a hand-started server on the router's port makes",
         "`systemctl start` succeed while every client is talking to the other process. The denied pass",
         "proves the page requested nothing before the confirm."
-      ]
+      ],
+      "noopSelfLinks": true,
+      "_noopSelfLinks_comment": "The nav bar carries a link to every page, including the one you stand on; clicking it changes nothing in a browser (jsdom counts it as nothing since the menu-bar round's document click listener lands on the same page). href-matched: links to OTHER pages that change nothing stay loud."
     },
     {
       "_comment": [
@@ -538,7 +541,8 @@
       ],
       "expectBodyAttr": {
         "data-jobbusy": "1"
-      }
+      },
+      "noopSelfLinks": true
     },
     {
       "_comment": [
@@ -599,7 +603,8 @@
       "expectBodyAttr": {
         "data-jobbusy": ""
       },
-      "expectDisabled": []
+      "expectDisabled": [],
+      "noopSelfLinks": true
     },
     {
       "name": "models",
@@ -607,18 +612,16 @@
       "expectTitle": "Models",
       "expectRequests": [],
       "expectVisible": [
-        "#tab-search",
-        "#tab-download",
-        "#model-tab-download",
+        "#model-tab-get",
+        "#model-tab-llama",
+        "#model-tab-comfy",
+        "#tab-get",
         "#search-query",
         "#search-model-type",
         "#add-src",
         "#add-name",
         "#add-dir",
-        "#add-cat",
-        "#mv-filter",
-        "#mv-tree",
-        ".mv-quant"
+        "#add-cat"
       ],
       "expectStylesheets": [
         "/static/tabs.css"
@@ -627,8 +630,8 @@
         {
           "tabs": ".model-tab",
           "panels": ".model-tab-content",
-          "expectTabs": 2,
-          "expectPanels": 2
+          "expectTabs": 3,
+          "expectPanels": 3
         }
       ],
       "fixtures": [
@@ -711,7 +714,12 @@
       ],
       "expectInert": [
         "selectModel\\('evil/Injected-Model"
-      ]
+      ],
+      "expectHidden": [
+        "#nav-sub-models"
+      ],
+      "_split_comment": "Three-way split (6.14.1zf): tab-get = HF search + download/add tools; tab-llama = the llama.cpp library; tab-comfy = the ComfyUI library. Panel visibility belongs to the tabGroup rotation (expectTabs/expectPanels), not static hidden lists. The nav menu bar deep-links ?tab=get|llama|comfy; #nav-sub-models is the closed menu panel (statically hidden).",
+      "noopSelfLinks": true
     },
     {
       "name": "health",
@@ -780,7 +788,8 @@
           "contains": "invisible to llama.cpp"
         }
       ],
-      "tabGroups": []
+      "tabGroups": [],
+      "noopSelfLinks": true
     },
     {
       "name": "settings",
@@ -878,7 +887,8 @@
       ],
       "requireConfirmUnlessBodyContains": {
         "^/api/settings/llamacpp/apikey$": "generate"
-      }
+      },
+      "noopSelfLinks": true
     },
     {
       "name": "login",
@@ -1002,7 +1012,8 @@
         "#stray-select",
         "#purge-stray-btn"
       ],
-      "_expectHidden_comment": "Replaces the dashboard's ['#stray-row','#stray-hint'] for this fixture: with strays present the row shows (that is the fixture), and the hint shows its selection prompt - silence beside a greyed button read to the owner as a broken control (6.14.1zc). The zero-strays state stays pinned by the base dashboard page."
+      "_expectHidden_comment": "Replaces the dashboard's ['#stray-row','#stray-hint'] for this fixture: with strays present the row shows (that is the fixture), and the hint shows its selection prompt - silence beside a greyed button read to the owner as a broken control (6.14.1zc). The zero-strays state stays pinned by the base dashboard page.",
+      "noopSelfLinks": true
     },
     {
       "_comment": [
@@ -1663,7 +1674,8 @@
         }
       ],
       "tabGroups": [],
-      "_expectVisible_comment": "Oct-18 card surface: the stepper (#ed-steps, #ed-steps-list) retired; the regions (#ed-identity, #ed-surface, #ed-review) and the pinned Global card (#ed-card-global, #ed-global-meta) are asserted present together, which is the whole point: nothing swaps the editor away underneath you. #ed-global/#ed-clear-global are NOT in this list: the cards open collapsed (the Oct-15 height lesson -- an open grid measured 5,002 px in one block), and their fields are asserted by the after_select expectValues, which is the stronger claim: the values arrive, not just the markup."
+      "_expectVisible_comment": "Oct-18 card surface: the stepper (#ed-steps, #ed-steps-list) retired; the regions (#ed-identity, #ed-surface, #ed-review) and the pinned Global card (#ed-card-global, #ed-global-meta) are asserted present together, which is the whole point: nothing swaps the editor away underneath you. #ed-global/#ed-clear-global are NOT in this list: the cards open collapsed (the Oct-15 height lesson -- an open grid measured 5,002 px in one block), and their fields are asserted by the after_select expectValues, which is the stronger claim: the values arrive, not just the markup.",
+      "noopSelfLinks": true
     },
     {
       "name": "help",
@@ -1686,7 +1698,8 @@
       "expectHidden": [
         "#kb-section"
       ],
-      "note": "two-pane docs browser (owner Oct-26). XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses."
+      "note": "two-pane docs browser (owner Oct-26). XSS probe for the section fetch is a follow-up: the page inserts fetched doc text, so it needs a hostile fixture on ^/api/help/section/ plus a click trigger, the shape the models page probe uses.",
+      "noopSelfLinks": true
     },
     {
       "name": "projects-active",
@@ -1912,7 +1925,8 @@
       ],
       "requireConfirmFor": [
         "/api/projects/quit"
-      ]
+      ],
+      "noopSelfLinks": true
     },
     {
       "selectCases": [

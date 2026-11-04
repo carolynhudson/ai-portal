@@ -97,6 +97,52 @@ def test_probe_covers_every_page_of_the_census(probe):
     assert set(probe) == pages
 
 
+def test_the_models_menu_is_a_phone_sheet(ui_server):
+    """The menu-bar pilot's acceptance (owner, 6.14.1zf): at 390px the
+    Models button opens a sheet -- rows >= 44px, the panel inside the
+    viewport (it ENDS ON SCREEN, the owner's sheet law), and the nav row's
+    overflow-0 gate is untouched while the panel is open. Chromium is the
+    judge: the panel's visibility is computed CSS, and this harness's own
+    opening proves the JS."""
+    from playwright.sync_api import sync_playwright
+    base, cookie = ui_server["base"], ui_server["cookie"]
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844})
+        name, value = cookie.split("=", 1)
+        ctx.add_cookies([{"name": name, "value": value, "url": base}])
+        page = ctx.new_page()
+        page.goto(f"{base}/", wait_until="networkidle")
+        page.wait_for_timeout(400)
+        page.click('.nav-menu-btn[data-menu="/models"]')
+        page.wait_for_timeout(200)
+        m = page.evaluate("""() => {
+          const sub = document.querySelector('#nav-sub-models');
+          const rows = [...sub.querySelectorAll('a')].map(a => {
+            const r = a.getBoundingClientRect();
+            return {min: Math.round(Math.min(r.width, r.height)),
+                    right: Math.round(r.right), bottom: Math.round(r.bottom)};
+          });
+          const nav = document.querySelector('nav');
+          return {hidden: sub.hidden,
+                  expanded: document.querySelector('.nav-menu-btn').getAttribute('aria-expanded'),
+                  rows, navOverflow: nav.scrollWidth - nav.clientWidth, vw: innerWidth};
+        }""")
+        assert not m["hidden"], "the menu did not open on tap"
+        assert m["expanded"] == "true", "aria-expanded did not follow the open state"
+        assert m["navOverflow"] <= 0, "the open menu pushed the nav row past its gate"
+        for row in m["rows"]:
+            assert row["min"] >= 44, f"menu row under 44px: {row}"
+            assert row["right"] <= m["vw"], f"menu row passes the viewport edge: {row}"
+            assert row["bottom"] <= 844, f"menu row runs off the bottom of the screen: {row}"
+        # Escape closes it (the owner's law: the user always owns the exit)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+        assert page.evaluate("() => document.querySelector('#nav-sub-models').hidden"), \
+            "Escape did not close the menu"
+        b.close()
+
+
 def test_nav_is_a_phone_bar_everywhere(probe):
     """The nav icons round's acceptance gates (owner, 6.14.1ze): at 390px
     portrait the nav row itself must overflow 0, stay inside the viewport,

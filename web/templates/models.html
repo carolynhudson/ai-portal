@@ -39,17 +39,24 @@
   justify-content:space-between;gap:14px}
 .mv-fields .kv .mono{word-break:break-all;text-align:right}
 .mv-fields .mv-wide{grid-column:1/-1}
+/* where did my click go? the add-src field pulses once when a search result fills it */
+#add-src.add-flash{animation:addflash 1.2s ease-out}
+@keyframes addflash{0%{box-shadow:0 0 0 4px rgba(90,169,255,.55)}100%{box-shadow:0 0 0 0 transparent}}
 </style>
 
 <h2>Models</h2>
+{# Three-way split (owner menu-bar pilot, 6.14.1zf): the tools (HF search +
+   download/add) are one section; the llama.cpp library and the ComfyUI
+   library are the other two. The nav menu bar lands here by deep link:
+   /models?tab=get|llama|comfy -- the tabs are the page switcher, the menu
+   is the entry point (single-level, owner's touch law). #}
 <div class="model-tabs">
-  <div class="model-tab active" onclick="switchModelTab('search', this)">Search Hugging Face</div>
-  {# id: selectModel() has to light this tab up from the other one, and an
-     id is sturdier than "the second .model-tab" #}
-  <div id="model-tab-download" class="model-tab" onclick="switchModelTab('download', this)">Download / Add Model</div>
+  <div id="model-tab-get" class="model-tab active" onclick="switchModelTab('get', this)">Get Models</div>
+  <div id="model-tab-llama" class="model-tab" onclick="switchModelTab('llama', this)">Llama Models</div>
+  <div id="model-tab-comfy" class="model-tab" onclick="switchModelTab('comfy', this)">ComfyUI Models</div>
 </div>
 
-<div id="tab-search" class="model-tab-content active">
+<div id="tab-get" class="model-tab-content active">
   <div class="card">
     <h3>Search Hugging Face Models</h3>
     <p class="mut">Search for AI models on Hugging Face. Select the service you want to run the model on, then search by name or description.</p>
@@ -69,9 +76,6 @@
     <div id="search-job" style="margin-top:12px"></div>
     <div id="search-results" class="search-results"></div>
   </div>
-</div>
-
-<div id="tab-download" class="model-tab-content">
   <div class="card" style="margin-bottom:16px">
     <h3>Download / Add Model</h3>
     <p class="mut">Paste a <code>huggingface-cli download …</code> command, an HF repo
@@ -100,6 +104,7 @@
   </div>
 </div>
 
+<div id="tab-llama" class="model-tab-content">
 <h2>llama.cpp models</h2>
 
 {# The Router live list used to be its own table beside this one, listing ids the
@@ -256,7 +261,9 @@
   </table>
   {% endif %}
 </div>
+</div>
 
+<div id="tab-comfy" class="model-tab-content">
 <h2>ComfyUI models</h2>
 {# These cards used to sit directly under the llama.cpp library table with no heading
    of their own, so the page read as one long list and the safetensors categories
@@ -284,6 +291,7 @@
 {% else %}
 <div class="card"><span class="mut">no ComfyUI models found under {{ comfyroot }}</span></div>
 {% endif %}
+</div>
 
 <script>
 function esc(s){ return String(s).replace(/[&<"'">']/g, c =>
@@ -351,6 +359,9 @@ function switchModelTab(tab, el){
   const panel = document.getElementById('tab-' + tab);
   if (!panel) { console.error('switchModelTab: no panel #tab-' + tab); return; }
   panel.classList.add('active');
+  // the address stays honest: the nav menu bar deep-links by ?tab=, and a
+  // reload/copy of what you are looking at must land on the same section
+  try { history.replaceState(null, '', '?tab=' + tab); } catch (e) { /* jsdom et al */ }
 }
 
 // Model type options for each service
@@ -438,10 +449,31 @@ function renderSearchResults(results, service){
 }
 
 function selectModel(repoId){
-  // Jump to the download tab with this repo pre-filled
-  switchModelTab('download', document.getElementById('model-tab-download'));
-  document.getElementById('add-src').value = 'huggingface-cli download ' + repoId;
+  // Jump to the Get Models tab with this repo pre-filled.
+  // The fill must be SEEN: the Get tab is usually already the visible one,
+  // so a bare value assignment is a silent no-op (the UI harness calls that
+  // dead, and so would a user hunting where the click went). Flash + focus
+  // point at the field that filled.
+  switchModelTab('get', document.getElementById('model-tab-get'));
+  const src = document.getElementById('add-src');
+  src.value = 'huggingface-cli download ' + repoId;
+  // the trace rides the attribute so every pick is a visible DOM fact (the
+  // UI harness watches serialized DOM: value properties and repeat-click
+  // idempotence are invisible to it, and to a user watching the field)
+  src.dataset.picked = repoId;
+  src.dataset.pickedAt = String(Date.now());
+  src.classList.remove('add-flash'); void src.offsetWidth;
+  src.classList.add('add-flash');
+  src.focus();
 }
+
+// Deep link (nav menu bar pilot, 6.14.1zf): /models?tab=get|llama|comfy
+(function(){
+  const tabs = {get: 'model-tab-get', llama: 'model-tab-llama', comfy: 'model-tab-comfy'};
+  let q = null;
+  try { q = new URLSearchParams(window.location.search).get('tab'); } catch (e) {}
+  if (q && tabs[q]) switchModelTab(q, document.getElementById(tabs[q]));
+})();
 
 // Smart add-model: the pasted source can be an HF CLI command, an HF repo
 // name, a direct URL, or a local path — sniff which, then let the backend do

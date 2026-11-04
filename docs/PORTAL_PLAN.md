@@ -7400,3 +7400,53 @@ lays out as a 300x150 block -- an invisible inch of scroll above the nav.
 The sprite root now carries `width=0 height=0 position:absolute` (symbols
 and gradients resolve from a zero box), and the contract pins it. The page
 probe measures navTop == 0 live.
+
+##### 6.14.1zf The menu-bar pilot: Models splits three ways (2026-11-04)
+
+Owner's phone plan, first cut: make the nav **Models** button behave like a
+menu bar with **Get Models / Llama Models / ComfyUI Models**, and split the
+Models page to match. Chosen shape (owner invited better ideas):
+**menu = entry point, tabs = page switcher** -- the lightest structure that
+gives the phone a sheet, keeps desktop unchanged in spirit, and deep-links
+honestly:
+
+* **Models page** is now three tab sections: **Get Models** (the HF search
+  card + the download/add card -- the tools, one home), **Llama Models**
+  (the library + live-not-in-library), **ComfyUI Models**. The old
+  search/download tabs are fully retired (a contract test bans the ghost
+  ids).
+* **Deep links**: `/models?tab=get|llama|comfy`; `switchModelTab` syncs the
+  address (`history.replaceState`) so a reload/copy lands where you were,
+  and the page honors `?tab=` on load.
+* **Nav**: `navlinks` entries now carry an optional children list; Models
+  renders a menu button (caret, `aria-haspopup/expanded`) whose click
+  OPENS a **single-level** panel (never navigates -- the children carry the
+  destinations; outside-click and Escape close; `[hidden]` law keeps it
+  shut by default). Desktop: dropdown under the item. Phone: the panel is
+  a **sheet spanning the bar** with 52px rows -- the owner's touch law from
+  the icon mockup, now as a mechanism.
+* **Acceptance**: the probe judges the sheet in Chromium -- rows >= 44px,
+  panel inside the viewport (ends on screen), nav overflow-0 gate intact
+  while open, Escape closes. The census: models tabGroups 3/3, rotation
+  covers the three panels, `#nav-sub-models` pinned closed on dashboard.
+* **A dead control the owner's design revealed**: `selectModel` (click a
+  search hit -> fills the add field) became a *silent no-op* the moment the
+  Get tab became the default -- the tab switch it relied on as visible
+  feedback stopped changing anything. The harness called it dead, and a
+  user would have called it broken. Fixed honestly: the fill now flashes
+  the field, focuses it, and stamps `data-picked`/`data-picked-at` --
+  every pick is a serialized DOM fact, and the field visibly answers.
+
+Why this is the lowest-risk pilot: no routes moved, no panels left the
+page, the tab machinery (tabs.css/spec/rotation -- the three-list
+convention) already exists, and the menu is pure navigation (zero machine
+controls). If the phone sheet earns its place, the same mechanism extends
+to Personalities (Select / Edit) with one tuple edit.
+
+Harness lesson from the pilot: the sweep clicks the nav link of the page
+you're standing on, and that self-link is a true no-op -- jsdom counted it
+as a navigation for months, and the menu bar's document-click listener
+made it visible as "nothing". The harness's own escape valve exists for
+exactly this (`noopSelfLinks`, declared per page, href-matched): projects
+had it; now every nav-bearing page declares it. Links to OTHER pages that
+change nothing stay loud -- the check that matters is untouched.

@@ -330,6 +330,56 @@ def test_switch_build_locks_the_running_build():
 TAB_CLASS_RE = re.compile(r"\.(?:update|model)-tabs?[\w-]*(?:\s*,|\s*\{)")
 
 
+def test_the_models_page_is_split_three_ways_and_deep_links():
+    """The menu-bar pilot's page side (owner, 6.14.1zf): the Models page is
+    three tab sections -- Get Models (HF search + download/add tools), Llama
+    Models, ComfyUI Models -- and every section is reachable by URL
+    (/models?tab=get|llama|comfy) so the nav menu is a set of honest links.
+    selectModel (a search hit) must land in the tool that consumes it."""
+    m = (ROOT / "web" / "templates" / "models.html").read_text()
+    for tid in ("model-tab-get", "model-tab-llama", "model-tab-comfy"):
+        assert f'id="{tid}"' in m, f"models tab {tid} missing"
+    for pid in ("tab-get", "tab-llama", "tab-comfy"):
+        assert f'id="{pid}"' in m, f"models panel {pid} missing"
+    assert m.count('class="model-tab-content') == 3, "panels drifted from three"
+    # deep link: parse ?tab=, and the switch keeps the address honest
+    assert "URLSearchParams" in m and "switchModelTab(q," in m, "deep link init gone"
+    assert "history.replaceState(null, '', '?tab=' + tab)" in m, \
+        "switchModelTab stopped syncing the address"
+    assert "switchModelTab('get', document.getElementById('model-tab-get'))" in m, \
+        "selectModel no longer lands in the Get Models tab"
+    # the old tab names must be fully retired (no ghost references)
+    for ghost in ("tab-search", "tab-download", "model-tab-download"):
+        assert f'id="{ghost}"' not in m, f"retired id {ghost} still in models.html"
+
+
+def test_the_nav_menu_bar_is_single_level_and_closed_by_default():
+    """The menu-bar pilot (6.14.1zf), nav side: a nav entry with children
+    renders a button that OPENS a single-level panel (owner's touch law: no
+    nested flyouts, generous rows). The panel is hidden until opened (the
+    [hidden] law enforces it in every browser); the children are the only
+    destinations; Escape and outside-click close it; aria-expanded rides
+    the state. The dashboard spec asserts #nav-sub-models hidden, so the
+    harness judges the closed default from the census page."""
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    nav = base[base.index("<nav>"): base.index("</nav>")]
+    assert re.search(r"\('/models', 'Models', 'i-models',\s*\[", nav), \
+        "Models lost its menu children"
+    for href in ("/models?tab=get", "/models?tab=llama", "/models?tab=comfy"):
+        assert href in nav, f"menu child {href} missing"
+    assert 'class="nav-sub" id="nav-sub-{{ label|lower }}" role="menu" hidden' in nav, \
+        "the menu panel is not role=menu and closed by default"
+    assert 'role="menuitem"' in nav, "menu children lost menuitem semantics"
+    assert 'aria-haspopup="true"' in nav and 'aria-expanded="false"' in nav, \
+        "the menu button lost its open-state semantics"
+    # one level only: no nav-sub inside a nav-sub
+    assert nav.count('class="nav-sub"') == 1, "the menu bar grew a second panel -- keep the pilot single-level"
+    # JS: the button opens/closes, outside click + Escape close
+    assert "e.preventDefault()" in base, "the menu button must not navigate on click"
+    assert "e.key === 'Escape'" in base, "Escape no longer closes the menu"
+    assert "closest('.nav-menu')" in base, "outside click no longer closes the menu"
+
+
 def test_the_nav_sprite_serves_every_icon_it_promises():
     """The nav is icon-first: base.html references symbols in
     web/static/icons.svg. A use that points at a missing symbol renders an
@@ -366,7 +416,7 @@ screenshot 2026-11-03; headless-Chromium witnesses cannot see this)"
     # The links render from the navlinks tuple list; the loop is the one
     # markup, so its aria-label covers every rendered link.
     nav = base[base.index("<nav>"): base.index("</nav>")]
-    tuples = re.findall(r"\('[\w/-]+',\s*'[\w ]+',\s*'i-[\w-]+'\)", nav)
+    tuples = re.findall(r"\('[\w/-]+',\s*'[\w ]+',\s*'i-[\w-]+'", nav)
     assert len(tuples) >= 7, f"nav lost links: {len(tuples)} tuple entries"
     assert 'aria-label="{{ label }}"' in nav, "the nav loop renders links without aria-label"
     assert 'aria-label="Logout"' in nav, "logout lost its aria-label"
