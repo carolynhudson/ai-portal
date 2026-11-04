@@ -170,6 +170,11 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
 </style>
 </head>
 <body>
+{# The icon sprite, inlined so every fill url(#hv) resolves in
+   the SAME document. An external sprite file renders fine in Chromium
+   and loses all gradient art in Firefox/WebKit (owner screenshot,
+   2026-11-03): external url(#id) is not reliably resolved. #}
+{% include "_icons.svg" %}
 <nav>
   <span class="brand"><img src="/static/portal-mark.svg" alt="" width="26" height="26">HALO</span>
   {% set navlinks = [('/', 'Status', 'i-status'), ('/models', 'Models', 'i-models'),
@@ -181,14 +186,14 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   {% set ap = request.path %}
   {% for href, label, icon in navlinks %}
   {% set active = (href == '/' and ap == '/') or (href != '/' and ap.startswith(href)) %}
-  <a href="{{ href }}" aria-label="{{ label }}"{% if active %} class="on"{% endif %}><svg class="nav-i" aria-hidden="true"><use href="/static/icons.svg#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span></a>
+  <a href="{{ href }}" aria-label="{{ label }}"{% if active %} class="on"{% endif %}><svg class="nav-i" aria-hidden="true"><use href="#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span></a>
   {% endfor %}
   <span class="reslights" id="reslights" role="status" aria-live="polite">
     <span class="rl" id="rl-ram"><i></i><span>RAM —</span></span>
     <span class="rl" id="rl-disk"><i></i><span>DISK —</span></span>
   </span>
   <form method="post" action="/logout" style="margin:0">
-    <button type="submit" class="ghost" aria-label="Logout"><svg class="nav-i" aria-hidden="true"><use href="/static/icons.svg#i-logout"/></svg><span class="nav-w">Logout</span></button>
+    <button type="submit" class="ghost" aria-label="Logout"><svg class="nav-i" aria-hidden="true"><use href="#i-logout"/></svg><span class="nav-w">Logout</span></button>
   </form>
 </nav>
 <main>

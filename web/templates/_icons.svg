@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg">
-<!-- The nav icon sprite (owner-approved set, 2026-11-03, PORTAL_PLAN 6.14.1ze).
+<!-- The nav icon sprite (INLINED into base.html by Jinja -- never served;
+     the gradients must live in the SAME document as the use references) -->
+  <!-- (owner-approved set, 2026-11-03, PORTAL_PLAN 6.14.1ze).
      Palette law: the mark's blue->violet gradient is the base voice for every
      icon; colors outside the mark enter SPARINGLY, small area, only where they
      mean something (ok-green in Health, amber on the workbench/llama voices);

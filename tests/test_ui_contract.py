@@ -338,12 +338,19 @@ def test_the_nav_sprite_serves_every_icon_it_promises():
     icon, and every nav target carries an aria-label so the words survive
     the phone bar where they hide visually."""
     base = (ROOT / "web" / "templates" / "base.html").read_text()
-    sprite = (ROOT / "web" / "static" / "icons.svg").read_text()
+    sprite_path = ROOT / "web" / "templates" / "_icons.svg"
+    assert sprite_path.exists(), \
+        "the sprite must be a TEMPLATE inlined by base.html: external-file \
+use-references lose all url(#gradient) art in Firefox/WebKit (owner \
+screenshot 2026-11-03; headless-Chromium witnesses cannot see this)"
+    assert '{% include "_icons.svg" %}' in base, "base.html stopped inlining the sprite"
+    assert "/static/icons.svg" not in base, "base.html references an external sprite again"
+    sprite = sprite_path.read_text()
 
     # the nav renders from a template list of (href, label, icon) tuples;
     # the icon names and the static logout reference are the contract
     refs = set(re.findall(r"'(i-[\w-]+)'", base)) \
-        | set(re.findall(r"icons\.svg#([\w-]+)", base))
+        | set(re.findall(r'<use href="#([\w-]+)"', base))
     symbols = set(re.findall(r'<symbol id="([\w-]+)"', sprite))
     assert refs, "base.html references no sprite icons"
     missing = refs - symbols
