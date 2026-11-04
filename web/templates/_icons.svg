@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute">
+  <!-- size zero + absolute: an inlined svg with no dimensions is a
+       300x150 block in the flow -- it shipped an invisible inch above
+       the nav (owner, 2026-11-03). Symbols/defs render from a
+       zero-box exactly as from a visible one. -->
 <!-- The nav icon sprite (INLINED into base.html by Jinja -- never served;
      the gradients must live in the SAME document as the use references) -->
   <!-- (owner-approved set, 2026-11-03, PORTAL_PLAN 6.14.1ze).
