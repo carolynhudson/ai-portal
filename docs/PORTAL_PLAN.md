@@ -7381,3 +7381,16 @@ it into the portal. Shipped:
 Two string-search tests noticed the nav becoming a loop (the Projects link
 census, the sprite census) and were updated to read the tuple list -- the
 loop is now the single source, which is the point.
+
+**Day-one regression, owner-caught: the sprite was an external file.** The
+owner's browser showed the nav with every GRADIENT stroke/fill missing --
+only flat-color dots survived (the brain's sparks, the llama's eye, gear
+core). Cause: `<use href="/static/icons.svg#…">` references do not
+reliably resolve `url(#gradient)` fills declared in the external file --
+Chromium resolves them, Firefox/WebKit drop them. **The headless-Chromium
+witness passed a page that was visibly broken in the owner's browser** --
+the same class as the jsdom/[hidden] lesson: the instrument sees what it
+implements. Fix: the sprite moved to `web/templates/_icons.svg` and is
+`{% include %}`d into base.html, so gradients share the document (the
+bulletproof cross-browser pattern); use hrefs are same-document `#ids`; a
+contract test pins the include and bans external-sprite references.
