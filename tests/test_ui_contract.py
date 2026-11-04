@@ -372,6 +372,21 @@ def test_the_nav_menu_bar_is_single_level_and_closed_by_default():
     assert 'role="menuitem"' in nav, "menu children lost menuitem semantics"
     assert 'aria-haspopup="true"' in nav and 'aria-expanded="false"' in nav, \
         "the menu button lost its open-state semantics"
+    # phone scheme (owner ruling): on phones the sheet IS the section
+    # navigator -- the in-page models tab strip hides below 900px, each
+    # panel carries its own heading for state, and the sheet marks the
+    # current section via aria-current (rendered from ?tab=).
+    m = (ROOT / "web" / "templates" / "models.html").read_text()
+    css_geo = (ROOT / "web" / "static" / "tabs.css").read_text()
+    assert "@media (max-width:900px){.model-tabs{display:none}}" in css_geo, \
+        "the phone menu-only rule for the models strip is gone from tabs.css"
+    assert "@media (max-width:900px){.model-tabs" not in m, \
+        "the page re-declared tab geometry: geometry lives in tabs.css"
+    assert "<h2>Get Models</h2>" in m, "the get panel lost its section heading (phone state)"
+    assert 'aria-current="page"' in nav, "the sheet stopped marking the current section"
+    css = base[base.index("<style>"):]
+    assert '.nav-sub a[aria-current="page"]' in css, "the current-section mark has no style"
+
     # one level only: no nav-sub inside a nav-sub
     assert nav.count('class="nav-sub"') == 1, "the menu bar grew a second panel -- keep the pilot single-level"
     # JS: the button opens/closes, outside click + Escape close

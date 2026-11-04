@@ -53,6 +53,7 @@ nav{position:relative}
 .nav-sub a{min-height:44px;display:flex;align-items:center;padding:8px 12px;
   border-radius:8px;color:var(--fg);gap:8px}
 .nav-sub a:hover{background:rgba(90,169,255,.12);color:var(--acc)}
+.nav-sub a[aria-current="page"]{background:rgba(90,169,255,.10);color:var(--acc)}
 @media (max-width:900px){
   nav{gap:0;padding:4px 2px;flex-wrap:nowrap}
   nav .brand{font-size:0;gap:0;margin-right:2px}
@@ -220,7 +221,8 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
        aria-haspopup="true" aria-expanded="false" data-menu="{{ href }}"
        ><svg class="nav-i" aria-hidden="true"><use href="#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span><span class="nav-caret" aria-hidden="true">▾</span></a>
     <span class="nav-sub" id="nav-sub-{{ label|lower }}" role="menu" hidden>
-      {% for chref, clabel in kids %}<a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}">{{ clabel }}</a>{% endfor %}
+      {% set cur = request.path ~ ('?tab=' ~ request.query_params['tab'] if request.query_params.get('tab') else '') %}
+      {% for chref, clabel in kids %}<a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}"{% if chref == cur %} aria-current="page"{% endif %}>{{ clabel }}</a>{% endfor %}
     </span>
   </span>
   {% else %}

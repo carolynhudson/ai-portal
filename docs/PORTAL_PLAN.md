@@ -7450,3 +7450,30 @@ made it visible as "nothing". The harness's own escape valve exists for
 exactly this (`noopSelfLinks`, declared per page, href-matched): projects
 had it; now every nav-bearing page declares it. Links to OTHER pages that
 change nothing stay loud -- the check that matters is untouched.
+
+##### 6.14.1zg The phone control-scheme ruling: menu-only, strips are desktop-only (2026-11-04)
+
+The owner's eye on the shipped pilot: the in-page tab strip duplicated the
+nav sheet exactly and sat visually disconnected from the panels it
+controlled -- an eyesore that spends the phone's scarce budget twice. The
+ask: an honest analysis of tab-strip vs menu-sheet on a phone, and a
+commitment.
+
+Analysis (390/320px budget): the strip costs ~40-48px of ALWAYS-ON height,
+~330px of width for three labels ("ComfyUI Models" gets tight at 320), and
+framing/margins to look connected -- while the sheet costs ZERO when
+closed. The strip's advantages -- 1-tap switching and visible section
+state -- are worth most where width is free (desktop) and least on phones,
+where it duplicates the nav hierarchy the phone is built around. The
+switch needs no strip: deep links already activate panels on load.
+
+Committed law: **on phones (<=900px, the phone-bar breakpoint) in-page
+section navigation lives in the nav menu; tab strips are desktop-only, and
+any future phone strip must justify its height.** Shipped as the models
+proof: `@media (max-width:900px){.model-tabs{display:none}}`; each panel
+carries its own `<h2>` section heading (the phone's state signal); the
+sheet marks the current section via `aria-current="page"` (rendered from
+`request.query_params['tab']` -- Starlette, not Flask) with an accented
+plate. Pinned: contract asserts the media rule, the get-panel heading, and
+the current mark's style; the probe asserts the strip is invisible at 390
+and the sheet marks the section you stand on.

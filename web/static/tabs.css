@@ -116,3 +116,10 @@
   .model-tab,
   .proj-tab{ padding:8px 10px; font-size:13px }
 }
+
+/* The phone control-scheme ruling (owner, 6.14.1zg): below the phone-bar
+ * breakpoint the nav menu sheet IS the section navigator, so the models
+ * strip -- which duplicates it exactly -- hides. Strips are desktop-only;
+ * the models group pays for phones with its panel headings + the sheet's
+ * aria-current mark. Geometry lives here, in one place, per the law. */
+@media (max-width:900px){.model-tabs{display:none}}

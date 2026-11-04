@@ -135,6 +135,27 @@ def test_the_models_menu_is_a_phone_sheet(ui_server):
             assert row["min"] >= 44, f"menu row under 44px: {row}"
             assert row["right"] <= m["vw"], f"menu row passes the viewport edge: {row}"
             assert row["bottom"] <= 844, f"menu row runs off the bottom of the screen: {row}"
+        # the phone scheme ruling (6.14.1zf): the in-page tab strip is gone
+        # at phone width -- the sheet is the navigator, not a strip + sheet
+        page.goto(f"{base}/models", wait_until="networkidle")
+        page.wait_for_timeout(400)
+        strip = page.evaluate("""() => {
+          const s = document.querySelector('.model-tabs');
+          const r = s.getBoundingClientRect();
+          return {w: Math.round(r.width), h: Math.round(r.height)};
+        }""")
+        assert strip["h"] < 2 and strip["w"] < 2, \
+            f"the models tab strip is showing at 390px: {strip} -- menu-only on phones"
+        # and the sheet marks the section you are standing on
+        page.goto(f"{base}/models?tab=comfy", wait_until="networkidle")
+        page.wait_for_timeout(400)
+        page.click('.nav-menu-btn[data-menu="/models"]')
+        page.wait_for_timeout(150)
+        assert page.evaluate("""() => {
+          const a = document.querySelector('#nav-sub-models a[href=\"/models?tab=comfy\"]');
+          return a.getAttribute('aria-current') === 'page';
+        }"""), "the sheet did not mark the current section"
+
         # Escape closes it (the owner's law: the user always owns the exit)
         page.keyboard.press("Escape")
         page.wait_for_timeout(150)

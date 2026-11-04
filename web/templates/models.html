@@ -44,6 +44,12 @@
 @keyframes addflash{0%{box-shadow:0 0 0 4px rgba(90,169,255,.55)}100%{box-shadow:0 0 0 0 transparent}}
 </style>
 
+{# Phone control scheme (owner ruling, 6.14.1zf): below 900px the nav menu
+   sheet is the section navigator -- the in-page tab strip duplicates it
+   exactly and its height/width/framing is the budget the phone spends on
+   navigation twice. The strip stays where it earns its keep: desktop.
+   Section state on phones is carried by the panel h2s + the sheet's
+   aria-current mark. #}
 <h2>Models</h2>
 {# Three-way split (owner menu-bar pilot, 6.14.1zf): the tools (HF search +
    download/add) are one section; the llama.cpp library and the ComfyUI
@@ -57,6 +63,7 @@
 </div>
 
 <div id="tab-get" class="model-tab-content active">
+  <h2>Get Models</h2>
   <div class="card">
     <h3>Search Hugging Face Models</h3>
     <p class="mut">Search for AI models on Hugging Face. Select the service you want to run the model on, then search by name or description.</p>
