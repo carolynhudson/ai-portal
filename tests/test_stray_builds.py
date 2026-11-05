@@ -302,7 +302,7 @@ def test_advisory_names_the_build_and_where_to_act(home):
     adv = [a for a in health.advisories(builds=llamacpp.stray_releases())
            if "llama.cpp-b1052" in a["text"]]
     assert len(adv) == 1 and adv[0]["level"] == "warn"
-    assert adv[0]["where"] == "/#update-llamacpp"
+    assert adv[0]["where"] == "/updates?tab=llamacpp"
     assert "newer than the running build" in adv[0]["text"]
 
 

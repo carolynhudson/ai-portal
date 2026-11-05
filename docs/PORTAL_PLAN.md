@@ -7537,3 +7537,9 @@ where they open first.
 Redundancies removed on the way: the "Rebuilding llama.cpp ... on the Status
 page" pointer now lands on the llama.cpp tab of its own page, and the
 dashboard stopped being a place that fetched update state it no longer shows.
+
+Witness follow-up: the advisories themselves carried stale deep links --
+the hero's "llama.cpp update pane" / "ComfyUI update pane" pointed at the
+dashboard's retired `#update-*` tabs. The advisory registry (health.py)
+now emits /updates?tab=llamacpp|comfyui, and the stray-builds pin follows.
+A merged page is only honest if every pointer into it lands.

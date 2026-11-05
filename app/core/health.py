@@ -670,7 +670,7 @@ def advisories(release: dict | None = None, service: dict | None = None,
                         f"{', '.join(gpu_pkgs[:5])}. "
                         "The portal never applies apt updates. After applying them, "
                         "rebuild llama.cpp if the ROCm series moved.",
-                where="/#update-llamacpp", label="llama.cpp update pane")
+                where="/updates?tab=llamacpp", label="llama.cpp update pane")
         if a.get("pending"):
             add("info", f"{a['pending']} package update(s) pending "
                         f"(apt; lists {a.get('lists_age_h')}h old)" if a.get("lists_age_h") is not None
@@ -735,7 +735,7 @@ def advisories(release: dict | None = None, service: dict | None = None,
                 f"runs ROCm {r['installed']}. torch ships its own ROCm libraries, so this "
                 "works and is not urgent; aligning them means reinstalling torch "
                 "(several GB).",
-                where="/#update-comfyui", label="ComfyUI update pane")
+                where="/updates?tab=comfyui", label="ComfyUI update pane")
 
     v = vulkan()
     if v.get("latest_known") and v.get("newest") and \
@@ -743,14 +743,14 @@ def advisories(release: dict | None = None, service: dict | None = None,
         add("info", f"Vulkan SDK {v['latest_known']} is out and {v['newest']} is installed. "
                     "This only matters for a fresh build directory — glslc is pinned into "
                     "the CMake cache at configure time — so it is a note for the next build.",
-            where="/#update-llamacpp", label="llama.cpp update pane")
+            where="/updates?tab=llamacpp", label="llama.cpp update pane")
     if v.get("newest") and v.get("used_by_current_build"):
         used = str(v["used_by_current_build"]).rstrip("/").split("/")[-1]
         if _vers(used) < _vers(v["newest"]):
             add("info", f"The deployed llama.cpp was built with Vulkan SDK {used}, but "
                         f"{v['newest']} is installed. Not a problem until you rebuild — "
                         "a newer glslc can produce better shader code.",
-                where="/#update-llamacpp", label="llama.cpp update pane")
+                where="/updates?tab=llamacpp", label="llama.cpp update pane")
     if release is not None and not release.get("rocm"):
         add("info", "The deployed build does not record which ROCm it was compiled "
                     "against, so version drift can only be checked from the runtime "
@@ -771,24 +771,24 @@ def advisories(release: dict | None = None, service: dict | None = None,
                         f"not in the registry, so it appears in no build list. "
                         f"{len(strays)} such director{'y' if len(strays) == 1 else 'ies'}"
                         f", {gib:.1f} GiB: {names}.",
-                where="/#update-llamacpp", label="Builds panel")
+                where="/updates?tab=llamacpp", label="Builds panel")
         else:
             add("warn", f"{len(strays)} build director{'y' if len(strays) == 1 else 'ies'} "
                         f"on disk that the registry never recorded — {gib:.1f} GiB "
                         f"({names}). Nothing lists them, so nothing offers to remove "
                         f"them; purge from the Builds panel.",
-                where="/#update-llamacpp", label="Builds panel")
+                where="/updates?tab=llamacpp", label="Builds panel")
     for u in (b.get("unexpected") or [])[:1]:
         add("info", f"{u['name']} sits in ~/ai/releases but is not a build the portal "
                     "names (expected llama.cpp-b<N>), so it is reported and never "
                     "offered for deletion.",
-            where="/#update-llamacpp", label="Builds panel")
+            where="/updates?tab=llamacpp", label="Builds panel")
 
     d = disk()
     if d.get("free_bytes") is not None and d["free_bytes"] < 50 * 1024 ** 3:
         add("warn", f"Only {_human_gb(d['free_bytes'])} free on the AI filesystem. "
                     "Stored builds and cmake build trees are the usual place to start.",
-            where="/#update-llamacpp", label="llama.cpp update pane")
+            where="/updates?tab=llamacpp", label="llama.cpp update pane")
 
     m = model_store()
     idx = m.get("index") or {}
@@ -800,7 +800,7 @@ def advisories(release: dict | None = None, service: dict | None = None,
     if m.get("broken_links"):
         add("bad", f"Broken links in the bin farm: {', '.join(m['broken_links'][:5])} — "
                    "those commands will fail until they are relinked.",
-            where="/#update-llamacpp", label="llama.cpp update pane")
+            where="/updates?tab=llamacpp", label="llama.cpp update pane")
     if m.get("invisible_models"):
         add("warn", f"{len(m['invisible_models'])} model folder(s) hold model files in a "
                     f"sub-subdirectory ({', '.join(m['invisible_models'][:3])}) — llama.cpp "
