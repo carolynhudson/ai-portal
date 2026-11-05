@@ -28,12 +28,9 @@
 .gone{color:var(--bad)}
 </style>
 
-<div class="card" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
-  <h2 style="margin:0">Health</h2>
-  <span class="mut">{{ host.hostname }} · {{ host.os }} · kernel {{ host.kernel }} · up
-    {{ host.uptime_s|dur }} · python {{ host.python }}</span>
-  <a href="/health?refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
-</div>
+{# The old orphaned "Health" header card retires (owner, 6.14.1zj): each
+   section card names its own section, icon first, and carries the facts that
+   belong to it -- OS stats on System, service stats on Portal. #}
 
 {# The menu-only split (owner, 6.14.1zi): the nav Health menu is the section
    navigator at every width -- System (the machine: OS context, GPU stack, NPU,
@@ -48,7 +45,12 @@
 </div>
 
 <div id="tab-system" class="health-tab-content active">
-  <h2>System</h2>
+<div class="card" id="sys-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+  <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-system"/></svg>System</h2>
+  <span class="mut">{{ host.hostname }} · {{ host.os }} · kernel {{ host.kernel }} · up
+    {{ host.uptime_s|dur }} · python {{ host.python }}</span>
+  <a href="/health?refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
+</div>
 <div class="grid" style="margin-bottom:14px">
   <div class="card" id="gpu-stack">
     <h3>GPU stack</h3>
@@ -109,7 +111,18 @@
 </div>
 
 <div id="tab-portal" class="health-tab-content">
-  <h2>Portal</h2>
+<div class="card" id="por-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+  <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-portal"/></svg>Portal</h2>
+  {# Portal's own vitals, OS-line style (owner, 6.14.1zj): the services, the
+     deployed build, the store -- facts the Portal section is about. #}
+  <span class="mut">router {{ service.ActiveState if service else '—' }} · comfyui
+    {{ comfy.ActiveState if comfy else '—' }} · deployed {{ deployed.name or '—' }}
+    ({{ deployed.built_ago or deployed.built_at or '—' }}){% if deployed.behind_master %} ·
+    {{ deployed.behind_master }} behind origin{% endif %} ·
+    {{ model_store.index.files_on_disk if model_store.index.files_on_disk is not none else 0 }}
+    model files · {{ model_store.model_dirs }} model dirs</span>
+  <a href="/health?tab=portal&refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
+</div>
   <div class="card" id="deployed">
     <h3>llama.cpp deployed</h3>
     <div class="kv"><span class="k">release</span><b class="mono">{{ deployed.name or "—" }}</b></div>

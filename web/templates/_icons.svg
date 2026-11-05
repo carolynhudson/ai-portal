@@ -15,6 +15,30 @@
 <linearGradient id="hv" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5aa9ff"/><stop offset="1" stop-color="#bc8cff"/></linearGradient>
 <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fb950"/><stop offset="1" stop-color="#5aa9ff"/></linearGradient>
 </defs>
+<symbol id="i-system" viewBox="0 0 24 24">
+<rect x="2.5" y="4" width="19" height="12.5" rx="2.5" fill="none" stroke="url(#hv)" stroke-width="1.8"/>
+<path d="M8.5 20.5h7M12 16.5v4" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="18.2" cy="7.2" r="1" fill="#d29922"/>
+</symbol>
+<symbol id="i-portal" viewBox="0 0 24 24">
+{# the Halo Aperture (web/static/portal-mark.svg) at title size: dashed iris
+   ring, hexagon, amber core - proportional, our own mark #}
+<circle cx="12" cy="12" r="9" fill="none" stroke="url(#hv)" stroke-width="2.2"
+        stroke-linecap="round" stroke-dasharray="7.9 1.5" transform="rotate(18 12 12)"/>
+<polygon points="12,7.4 15.9,9.7 15.9,14.3 12,16.6 8.1,14.3 8.1,9.7"
+         fill="none" stroke="url(#hv)" stroke-width="1.3" opacity=".85"/>
+<circle cx="12" cy="12" r="1.5" fill="#d29922"/>
+</symbol>
+<symbol id="i-upgrades" viewBox="0 0 24 24">
+<path d="M12 3.2v4.6M9.7 5.5h4.6" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/>
+<path d="M12 9.7v4.6M9.7 12h4.6" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/>
+<path d="M12 16.2v4.6M9.7 18.5h4.6" stroke="url(#hv)" stroke-width="1.9" stroke-linecap="round"/>
+</symbol>
+<symbol id="i-attention" viewBox="0 0 24 24">
+<path d="M12 4 21 19.5H3z" fill="none" stroke="url(#hv)" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M12 9.6v4.3" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="12" cy="16.6" r="1" fill="#d29922"/>
+</symbol>
 <symbol id="i-status" viewBox="0 0 24 24">
 <rect x="2" y="4" width="20" height="16" rx="3" fill="none" stroke="url(#hv)" stroke-width="1.8"/>
 <path d="M5 13h3l1.6-4 2.6 7 1.8-5 1.2 2h4" fill="none" stroke="url(#hv)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>

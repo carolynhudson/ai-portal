@@ -172,7 +172,7 @@
     {
       "name": "updates",
       "path": "/updates",
-      "expectTitle": "Updates",
+      "expectTitle": "Upgrades",
       "_comment": "Unified Updates page (owner, 6.14.1zi): the dashboard's tool-repository machinery moved whole + the Health page's apt card as the System tab. The gates below moved with the machinery (fixtures, selectCases, confirm-locks): the suite follows the code, not the other way around.",
       "expectRequests": [
         "/api/updates/llamacpp",

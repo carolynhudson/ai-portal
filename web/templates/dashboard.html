@@ -7,6 +7,12 @@
 <script>window.PORTAL_SETTINGS = {router_poll_ms: {{ settings.router_poll_ms }}, metrics_poll_ms: {{ settings.metrics_poll_ms }}, router_metrics: {{ 'true' if settings.router_metrics else 'false' }}};</script>
 <style>
 .router-hero{border-color:var(--acc)}
+/* owner's eye (6.14.1zj): the Needs attention hero joins the accent-bordered
+   hero family, and the two hero cards get the same 14px rhythm the attention
+   card keeps -- measured, the router/comfy gap was 0px, attention/router 14px,
+   and the 14px reads right. */
+#attention{border-color:var(--acc)}
+.router-hero + .router-hero{margin-top:14px}
 .hero-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .hero-head h3{margin:0}
 /* Hero titles carry the service's own official mark (served unmodified, see
@@ -14,7 +20,7 @@
    it are ours - "ComfyUI" alone repeats "UI", so the subtitle says what the
    pane is. The gap keeps the mark clear of the text (trademark hygiene). */
 .hero-head h3{display:flex;align-items:center;gap:9px}
-.hero-head h3 img.hero-icon{width:22px;height:22px;border-radius:5px;display:block}
+.hero-head h3 .hero-icon{width:22px;height:22px;border-radius:5px;display:block}
 .hero-head h3 .hero-sub{font-weight:400;font-size:12px;color:var(--mut);letter-spacing:.02em}
 .hero-controls{margin-left:auto;display:flex;gap:6px;align-items:center}
 /* Scheme B verb glyphs (owner, 2026-11-02): dark icon on a hue-shifted
@@ -173,7 +179,7 @@
    moved from /health to the top of the page an operator opens first. Advisory
    objects carry level/text/where/cmd; the portal never acts on them itself. #}
 <div class="card" id="attention" style="margin-bottom:14px">
-  <h3>Needs attention <span class="mut">({{ advisories|length }})</span></h3>
+  <div class="hero-head"><h3><svg class="hero-icon" aria-hidden="true"><use href="#i-attention"/></svg>Needs attention <span class="mut">({{ advisories|length }})</span></h3></div>
   {% if advisories %}
   <ul class="adv">
     {% for a in advisories %}

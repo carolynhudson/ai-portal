@@ -334,6 +334,51 @@ def test_switch_build_locks_the_running_build():
 TAB_CLASS_RE = re.compile(r"\.(?:update|model|health)-tabs?[\w-]*(?:\s*,|\s*\{)")
 
 
+def test_title_panels_and_the_status_hero_family():
+    """The owner's post-merge look (6.14.1zj): every section opens with a
+    title panel -- icon first, the mark gradient, words in the header not in
+    the glyph. Pinned: /health's two panels carry their own titled header
+    cards (System keeps the OS line, Portal carries the service vitals) and
+    the orphaned global 'Health' header and the duplicated panel h2s are
+    gone; /updates is named for what it offers (Upgrades) with a title panel
+    whose live tally is fed by the loaders, not guessed from DOM text; the
+    Status page's Needs attention card joins the accent-bordered hero family,
+    keeps the 14px rhythm against the router hero (the router/comfy pair got
+    the same rhythm -- it measured 0px), and carries the attention glyph."""
+    h = (ROOT / "web" / "templates" / "health.html").read_text()
+    assert '<div class="card" id="sys-head"' in h and "<use href=\"#i-system\"/>" in h, \
+        "the System title card (icon + OS line) is gone"
+    assert '<div class="card" id="por-head"' in h and "<use href=\"#i-portal\"/>" in h, \
+        "the Portal title card (icon + service vitals) is gone"
+    assert "model files" in h and "behind origin" in h, "the Portal vitals line lost its facts"
+    assert 'href="/health?tab=portal&refresh=1"' in h, \
+        "the Portal re-check must keep the reader on the Portal tab"
+    assert ">Health</h2>" not in h, "the orphaned 'Health' header card is back"
+    assert "<h2>System</h2>" not in h and "<h2>Portal</h2>" not in h, \
+        "the redundant panel h2s returned next to the title cards"
+    upd = (ROOT / "web" / "templates" / "updates.html").read_text()
+    assert 'id="upg-head"' in upd and "<use href=\"#i-upgrades\"/>" in upd, \
+        "the Upgrades title panel is gone"
+    assert "Upgrades · AI Portal" in upd, "the page stopped naming itself Upgrades"
+    assert "const UPG = {};" in upd and "function upgTick()" in upd, \
+        "the live tally machinery is gone"
+    for hook in ("UPG['llama.cpp']", "UPG['ComfyUI']", "UPG['huggingface-cli']",
+                 "UPG['opencode']", "UPG['GPU stack']"):
+        assert hook in upd, f"the loader hook for {hook} is gone -- the tally would lie"
+    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    assert "#attention{border-color:var(--acc)}" in dash, \
+        "the Needs attention card left the accent-bordered hero family"
+    assert ".router-hero + .router-hero{margin-top:14px}" in dash, \
+        "the hero pair lost the 14px rhythm (it measured 0px before the ruling)"
+    assert "<use href=\"#i-attention\"/>" in dash, "the attention glyph is gone"
+    # the title glyphs ride the mark gradient (the icon law's base palette)
+    for sym, grad in (("i-system", "hv"), ("i-portal", "hv"), ("i-upgrades", "hv"),
+                      ("i-attention", "hv")):
+        body = re.search(r'<symbol id="%s".*?</symbol>' % sym,
+                         (ROOT / "web" / "templates" / "_icons.svg").read_text(), re.S)
+        assert body and f"url(#{grad})" in body.group(0), f"{sym} left the mark gradient"
+
+
 def test_the_health_page_is_split_system_and_portal_and_deep_links():
     """The owner's health restructure (6.14.1zi): the Health page is two menu
     sections -- System (the machine: GPU stack, NPU, disk) and Portal (the
@@ -351,7 +396,8 @@ def test_the_health_page_is_split_system_and_portal_and_deep_links():
         assert f'id="{tid}"' in h, f"health tab {tid} missing (rotation needs the strip markup)"
     for card in ("gpu-stack", "npu", "disk", "deployed", "vulkan", "model-store"):
         assert f'id="{card}"' in h, f"the {card} card left the health page"
-    assert "<h2>System</h2>" in h and "<h2>Portal</h2>" in h, "panel section headings gone"
+    # 6.14.1zj: the section name lives in the panel's title card (icon +
+    # title), not in a bare h2 next to it -- the title panel IS the heading.
     assert "URLSearchParams(window.location.search).get('tab')" in h, "?tab= deep link init gone"
     assert "history.replaceState(null, '', '?tab=' + tab)" in h, "switchHealthTab stopped syncing the address"
     assert ".health-tabs{display:none}" in css_geo, "the health strip is not CSS-retired (menu-only ruling)"
@@ -467,15 +513,22 @@ screenshot 2026-11-03; headless-Chromium witnesses cannot see this)"
         "the nav, 2026-11-03)"
 
     # the nav renders from a template list of (href, label, icon) tuples;
-    # the icon names and the static logout reference are the contract
+    # the icon names and the static logout reference are the contract.
+    # The title-panel icons (6.14.1zj) are part of the same contract: pages
+    # reference sprite symbols (<use>) for their section headers, so the
+    # symbol census covers nav + page references -- every symbol used, no
+    # dead symbols, the palette law applies to all of them.
     refs = set(re.findall(r"'(i-[\w-]+)'", base)) \
         | set(re.findall(r'<use href="#([\w-]+)"', base))
+    for tpl in sorted((ROOT / "web" / "templates").glob("*.html")):
+        if tpl.name != "base.html":
+            refs |= set(re.findall(r'<use href="#(i-[\w-]+)"', tpl.read_text()))
     symbols = set(re.findall(r'<symbol id="([\w-]+)"', sprite))
     assert refs, "base.html references no sprite icons"
     missing = refs - symbols
-    assert not missing, f"nav references sprite symbols that do not exist: {missing}"
+    assert not missing, f"icons reference sprite symbols that do not exist: {missing}"
     unused = symbols - refs
-    assert not unused, f"sprite symbols no nav surface uses: {unused}"
+    assert not unused, f"sprite symbols no icon surface (nav or titles) uses: {unused}"
 
     # every nav link carries aria-label (words for readers, not glyphs).
     # The links render from the navlinks tuple list; the loop is the one

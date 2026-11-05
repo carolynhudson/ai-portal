@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Updates · AI Portal{% endblock %}
+{% block title %}Upgrades · AI Portal{% endblock %}
 {% block body %}
 {# The unified Updates page (owner, 6.14.1zi): the dashboard's tool-repository
    update machinery moved WHOLE (markup, styles, JS -- the owner's rule for the
@@ -9,6 +9,20 @@
 
 {# ---- Tool Repository Update Status ---- #}
 <h2>Tool Repository Update Status</h2>
+{# The Upgrades title panel (owner, 6.14.1zj): the page is named for what it
+   offers, the header names it (icon first, the family look), and the line
+   answers "what is behind?" -- apt is server facts, the tabs fill the live
+   checks in as they load. #}
+<div class="card" id="upg-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+  <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-upgrades"/></svg>Upgrades</h2>
+  <span class="mut">apt: {{ apt.pending if apt.available else '—' }} pending
+    {%- if apt.available and apt.gpu_pending %} ({{ apt.gpu_pending|length }} gpu/kernel){% endif %}
+    {%- if apt.available and apt.lists_age_h is not none %} · lists {{ apt.lists_age_h|ago }} old{% endif %}
+    · llama.cpp deployed {{ deployed.name or '—' }}
+    {%- if deployed.behind_master %} ({{ deployed.behind_master }} behind origin){% endif %}</span>
+  <span class="mut" id="upg-live">tab checks land here as they load</span>
+</div>
+
 <div class="update-tabs">
   <div class="update-tab active" onclick="switchUpdateTab('llamacpp', this)">llama.cpp</div>
   <div class="update-tab" onclick="switchUpdateTab('comfyui', this)">ComfyUI</div>
@@ -321,6 +335,19 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
 function setText(id, txt){ const el = document.getElementById(id); if (el) el.textContent = txt; }
 function setTextTip(id, txt, tip){ const el = document.getElementById(id); if (!el) return;
   el.textContent = txt; if (tip) { el.title = tip; el.style.cursor = 'help'; } }
+// the title panel's live tally (6.14.1zj): each tab's loader reports what its
+// check found; the header answers "which tabs show something behind?". Flags
+// are set by the loaders that own the data -- never guessed from DOM text.
+const UPG = {};
+function upgTick(){
+  const el = document.getElementById('upg-live');
+  if (!el) return;
+  const behind = Object.keys(UPG).filter(k => UPG[k]);
+  el.textContent = behind.length
+    ? ('behind: ' + behind.join(' · '))
+    : (Object.keys(UPG).length ? 'checks so far: nothing behind' : 'tab checks land here as they load');
+}
+
 function setPendingList(id, list){
   // A 34-package pending list must not render as one giant joined string:
   // show a readable head, put the full list in the tooltip.
@@ -420,6 +447,8 @@ function renderUpdRemote(rem){
     document.getElementById('upd-notes-link').href = rem.release_url;
     notes.style.display = '';
   } else if (notes) { notes.style.display = 'none'; }
+  UPG['llama.cpp'] = !!rem.update_available || (rem.behind_master > 0);
+  upgTick();
   if (rem.update_available) {
     // a newer tagged release wins over raw master (stable first)
     btn.dataset.tag = (rem.behind_release > 0) ? rem.latest_release : 'HEAD';
@@ -745,6 +774,8 @@ async function loadComfyUpd(){
       setText('comfy-remote', (rem.remote_head ? rem.remote_head.slice(0, 12) + ' · ' : '') +
         (rem.behind != null ? ('behind master ' + rem.behind) : 'up to date'));
     }
+    UPG['ComfyUI'] = !!rem.update_available || (rem.behind > 0);
+    upgTick();
     const venv = d.venv || {};
     setText('comfy-venv-python', venv.python_bin || venv.python ||
             (venv.error ? 'error: ' + venv.error : '—'));
@@ -848,6 +879,8 @@ async function loadHfUpd(force){
       const sizeGb = d.cache_size != null ? (d.cache_size / 1073741824).toFixed(1) + ' G' : '—';
       safeSet(box, '<span class="mut">cache: ' + esc(d.cache || '—') + ' · ' + sizeGb + ' · ' + repos + ' repo(s)</span>' +
         (d.update_available ? '<div style="margin-top:6px"><span class="pill bad">update available</span></div>' : ''));
+    UPG['huggingface-cli'] = !!d.update_available;
+    upgTick();
     }
     const btn = document.getElementById('hf-upd-btn');
     if (btn) {
@@ -958,6 +991,8 @@ async function loadGpuApply(){
     if (!r.ok) return;
     const d = await r.json();
     GPU_UPD.pending = d.gpu_pending || [];
+  UPG['GPU stack'] = (GPU_UPD.pending || []).length > 0;
+  upgTick();
     setText('gpu-lists-age', d.lists_age_h == null ? 'unknown' : d.lists_age_h + ' h');
     setPendingList('gpu-pending', GPU_UPD.pending);
     setPendingList('gpu-kernel-pending', d.kernel_pending || []);
@@ -1065,6 +1100,8 @@ function renderOpencode(d){
   if (o.restart_needed) flags.push('disk moved under the running host: restart applies it');
   const ups = (d.plugins || []).filter(p => p.update_available);
   if (ups.length) flags.push(ups.length + ' plugin pin(s) behind');
+  UPG['opencode'] = flags.length > 0;
+  upgTick();
   ocSetPill(flags.length ? flags.join(' · ') : (d.cached ? 'up to date (cached check)' : 'up to date'),
             flags.length ? 'warn' : 'good');
   const box = document.getElementById('oc-plugins');

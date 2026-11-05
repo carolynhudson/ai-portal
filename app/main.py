@@ -1043,6 +1043,10 @@ def create_app() -> FastAPI:
         body["deployed"] = prov
         body["builds"] = builds
         body["host"] = health.host()
+        # the Portal header line (owner, 6.14.1zj) names the services the
+        # operator runs; the advisories already weigh these states.
+        body["service"] = router_u
+        body["comfy"] = comfy_u
         return body
 
     @app.get("/health")

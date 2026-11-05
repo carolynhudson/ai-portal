@@ -7543,3 +7543,32 @@ the hero's "llama.cpp update pane" / "ComfyUI update pane" pointed at the
 dashboard's retired `#update-*` tabs. The advisory registry (health.py)
 now emits /updates?tab=llamacpp|comfyui, and the stray-builds pin follows.
 A merged page is only honest if every pointer into it lands.
+
+##### 6.14.1zj The owner's post-merge look: title panels, the hero family, Upgrades (2026-11-05)
+
+Post-deployment notes, all shipped:
+
+* **Status page:** the Needs attention card joined the hero family --
+  accent border like the router/ComfyUI cards, and the attention glyph
+  (mark-gradient triangle, amber dot) in a hero-head. The card rhythm was
+  measured, not guessed: attention→router 14px, router→ComfyUI **0px**; the
+  hero pair now shares the 14px gap the owner's eye preferred.
+* **Health:** the orphaned "Health" header card retires. Each panel opens
+  with its own title card, icon first: **System** (monitor glyph) keeps the
+  OS line (hostname · os · kernel · up · python); **Portal** (the Halo
+  Aperture at title size) carries the portal's own vitals in the same
+  dialect: router/comfyui states, deployed build (age, behind origin),
+  model files and dirs. The redundant panel h2s retire with the header --
+  the title panel IS the heading. The Portal's Re-check keeps the reader on
+  the tab (`?tab=portal&refresh=1`).
+* **Updates → Upgrades:** the page is named for what it offers (menu child,
+  `<title>`, header). The title panel answers "what is behind?" in two
+  honest layers: apt count + deployed-build standing are server facts at
+  render; the live tally (`behind: llama.cpp · ComfyUI …`) is fed by
+  `UPG` flags the loaders set from their own payloads -- never guessed from
+  DOM text.
+* **Icon law, extended:** four title glyphs join the sprite (System monitor,
+  Portal aperture, Upgrades stacked pluses, attention triangle) on the mark
+  gradient. The sprite contract's census widened: symbols are referenced by
+  the nav **and** by page title cards -- every symbol used, no dead symbols,
+  the no-red/gradient law covers all.
