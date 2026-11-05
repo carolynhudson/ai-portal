@@ -350,7 +350,7 @@ def test_title_panels_and_the_status_hero_family():
         "the System title card (icon + OS line) is gone"
     assert '<div class="card" id="por-head"' in h and "<use href=\"#i-portal\"/>" in h, \
         "the Portal title card (icon + service vitals) is gone"
-    assert "model files" in h and "behind origin" in h, "the Portal vitals line lost its facts"
+    assert "model file{{" in h and "behind origin" in h, "the Portal vitals line lost its facts"
     assert 'href="/health?tab=portal&refresh=1"' in h, \
         "the Portal re-check must keep the reader on the Portal tab"
     assert ">Health</h2>" not in h, "the orphaned 'Health' header card is back"
@@ -360,6 +360,8 @@ def test_title_panels_and_the_status_hero_family():
     assert 'id="upg-head"' in upd and "<use href=\"#i-upgrades\"/>" in upd, \
         "the Upgrades title panel is gone"
     assert "Upgrades · AI Portal" in upd, "the page stopped naming itself Upgrades"
+    assert "<h2>Tool Repository Update Status</h2>" not in upd, \
+        "the old section h2 returned -- the title panel IS the heading"
     assert "const UPG = {};" in upd and "function upgTick()" in upd, \
         "the live tally machinery is gone"
     for hook in ("UPG['llama.cpp']", "UPG['ComfyUI']", "UPG['huggingface-cli']",

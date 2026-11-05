@@ -119,8 +119,9 @@
     {{ comfy.ActiveState if comfy else '—' }} · deployed {{ deployed.name or '—' }}
     ({{ deployed.built_ago or deployed.built_at or '—' }}){% if deployed.behind_master %} ·
     {{ deployed.behind_master }} behind origin{% endif %} ·
-    {{ model_store.index.files_on_disk if model_store.index.files_on_disk is not none else 0 }}
-    model files · {{ model_store.model_dirs }} model dirs</span>
+    {{ model_store.index.files_on_disk|default(0, true) }}
+    model file{{ '' if model_store.index.files_on_disk == 1 else 's' }} ·
+    {{ model_store.model_dirs }} model dir{{ '' if model_store.model_dirs == 1 else 's' }}</span>
   <a href="/health?tab=portal&refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
 </div>
   <div class="card" id="deployed">
