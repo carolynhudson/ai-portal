@@ -7572,3 +7572,10 @@ Post-deployment notes, all shipped:
   gradient. The sprite contract's census widened: symbols are referenced by
   the nav **and** by page title cards -- every symbol used, no dead symbols,
   the no-red/gradient law covers all.
+
+Witness follow-up: the moved section's old "Tool Repository Update Status"
+h2 was caught by the owner's own rule -- a title stacked under the nav
+entry is orphaned furniture; the title panel IS the heading (pinned). The
+Portal vitals got plural agreement ("1 model dir") and default(0, true)
+for the never-built index -- Jinja's Undefined is not None, and
+`is not none` let the empty index render as half a fact.
