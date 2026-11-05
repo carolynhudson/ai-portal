@@ -35,22 +35,20 @@
   <a href="/health?refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
 </div>
 
-<div class="card" id="attention" style="margin-bottom:14px">
-  <h3>Needs attention <span class="mut">({{ advisories|length }})</span></h3>
-  {% if advisories %}
-  <ul class="adv">
-    {% for a in advisories %}
-    <li><span class="tag {{ a.level }}">{{ a.level }}</span> <span>{{ a.text }}
-      {% if a.where %} — <a href="{{ a.where }}">{{ a.where_label or "open" }}</a>{% endif %}
-      {% if a.cmd %} <code class="mono">{{ a.cmd }}</code>{% endif %}
-    </span></li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="mut">Nothing needs attention.</p>
-  {% endif %}
+{# The menu-only split (owner, 6.14.1zi): the nav Health menu is the section
+   navigator at every width -- System (the machine: OS context, GPU stack, NPU,
+   disk) and Portal (the software we run: llama.cpp deployed, Vulkan SDK, model
+   store). The strip markup exists for the harness rotation and is retired in
+   CSS (tabs.css), per the models-page ruling; section state = panel h2 + the
+   sheet's aria-current. "Needs attention" moved to the Status page (the hero
+   is where an operator starts), and the apt card to /updates. #}
+<div class="health-tabs">
+  <div id="health-tab-system" class="health-tab active" onclick="switchHealthTab('system', this)">System</div>
+  <div id="health-tab-portal" class="health-tab" onclick="switchHealthTab('portal', this)">Portal</div>
 </div>
 
+<div id="tab-system" class="health-tab-content active">
+  <h2>System</h2>
 <div class="grid" style="margin-bottom:14px">
   <div class="card" id="gpu-stack">
     <h3>GPU stack</h3>
@@ -90,7 +88,28 @@
     <div class="kv"><span class="k">embed: CPU / NPU</span><b>{{ "8390 " }}{{ "up" if npu.embed_cpu else "down" }}
       &nbsp;·&nbsp; 8391 {{ "up" if npu.embed_npu else "down" }}</b></div>
   </div>
+</div>
 
+<h2>Disk</h2>
+<div class="card" id="disk" style="margin-bottom:14px">
+  <div class="kv"><span class="k">free</span><b>{{ disk.free_bytes|sz }} of {{ disk.total_bytes|sz }}
+    ({{ disk.used_pct }}% used)</b></div>
+  <div class="bar"><i style="width:{{ disk.used_pct or 0 }}%"></i></div>
+  <div class="scroll"><table>
+    <tr><th>tree</th><th>size</th><th></th></tr>
+    {% for t in disk.trees %}
+    <tr><td>{{ t.label }}</td><td class="mono">{{ t.bytes|sz }}</td>
+      <td class="mut">{{ t.note }}</td></tr>
+    {% endfor %}
+  </table></div>
+  <p class="mut" style="margin:12px 0 0">Models dominate, and that is the point of a 24 GB VRAM
+    box. The disposable trees are the cmake build directories and old stored builds; both are
+    listed so freeing space is a decision, not an excavation.</p>
+</div>
+</div>
+
+<div id="tab-portal" class="health-tab-content">
+  <h2>Portal</h2>
   <div class="card" id="deployed">
     <h3>llama.cpp deployed</h3>
     <div class="kv"><span class="k">release</span><b class="mono">{{ deployed.name or "—" }}</b></div>
@@ -121,58 +140,6 @@
       configure time, so a newer SDK only matters on a fresh build directory.</p>
     {% if vulkan.check_error %}<p class="mut">Version check: {{ vulkan.check_error }} (offline?)</p>{% endif %}
   </div>
-</div>
-
-<h2>Updates</h2>
-<div class="card" id="updates" style="margin-bottom:14px">
-  {% if apt.available %}
-  <div class="kv"><span class="k">pending (apt)</span><b>{{ apt.pending }}</b></div>
-  <div class="kv"><span class="k">of which GPU stack</span>
-    <b>{{ apt.gpu_pending|join(", ") or "none" }}</b></div>
-  <div class="kv"><span class="k">package lists</span>
-    <b class="{% if apt.lists_age_h and apt.lists_age_h > 72 %}old{% endif %}">{{ apt.lists_age_h|ago }} old</b></div>
-  {% if apt.error %}<p class="err">{{ apt.error }}</p>{% endif %}
-  {% if apt.packages %}
-  <div class="scroll"><table>
-    <tr><th>package</th><th>installed</th><th>candidate</th><th>suite</th></tr>
-    {% for p in apt.packages %}
-    <tr>
-      <td>{{ p.name }}{% if p.gpu %} <span class="tag warn">gpu</span>{% elif p.kernel %}
-        <span class="tag warn">kernel</span>{% endif %}</td>
-      <td class="mono">{{ p.from }}</td>
-      <td class="mono">{{ p.to }}</td>
-      <td class="mut">{{ p.suite }}</td>
-    </tr>
-    {% endfor %}
-  </table></div>
-  {% endif %}
-  <p class="mut" style="margin:12px 0 0">The portal never runs <code>apt upgrade</code> and never
-    reboots: applying these is
-    <code class="mono">sudo apt upgrade</code> then <code class="mono">sudo reboot</code> when the
-    running kernel or driver is behind. Rebuilding llama.cpp after a ROCm series change is on the
-    <a href="/#update-llamacpp">Status page</a>.</p>
-  {% else %}
-  <p class="err">{{ apt.error or "no package manager found" }}</p>
-  {% endif %}
-</div>
-
-<h2>Disk</h2>
-<div class="card" id="disk" style="margin-bottom:14px">
-  <div class="kv"><span class="k">free</span><b>{{ disk.free_bytes|sz }} of {{ disk.total_bytes|sz }}
-    ({{ disk.used_pct }}% used)</b></div>
-  <div class="bar"><i style="width:{{ disk.used_pct or 0 }}%"></i></div>
-  <div class="scroll"><table>
-    <tr><th>tree</th><th>size</th><th></th></tr>
-    {% for t in disk.trees %}
-    <tr><td>{{ t.label }}</td><td class="mono">{{ t.bytes|sz }}</td>
-      <td class="mut">{{ t.note }}</td></tr>
-    {% endfor %}
-  </table></div>
-  <p class="mut" style="margin:12px 0 0">Models dominate, and that is the point of a 24 GB VRAM
-    box. The disposable trees are the cmake build directories and old stored builds; both are
-    listed so freeing space is a decision, not an excavation.</p>
-</div>
-
 <h2>Model store</h2>
 <div class="card" id="model-store">
   <div class="kv"><span class="k">index (INDEX.json)</span>
@@ -207,4 +174,27 @@
     old, the Models page and any hash in a preset may not match the file on disk. Rebuild it with
     <code class="mono">gguf-indexer --scan</code>.</p>
 </div>
+</div>
+
+
+<script>
+/* Menu-only deep links (/health?tab=system|portal): the nav menu carries the
+   destinations, the panels answer, and the address stays honest (the models
+   precedent). */
+function switchHealthTab(tab, el){
+  document.querySelectorAll('.health-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.health-tab-content').forEach(c => c.classList.remove('active'));
+  (el || null)?.classList.add('active');
+  const panel = document.getElementById('tab-' + tab);
+  if (!panel) { console.error('switchHealthTab: no panel #tab-' + tab); return; }
+  panel.classList.add('active');
+  try { history.replaceState(null, '', '?tab=' + tab); } catch (e) { /* jsdom et al */ }
+}
+(function(){
+  const tabs = {system: 'health-tab-system', portal: 'health-tab-portal'};
+  let q = null;
+  try { q = new URLSearchParams(window.location.search).get('tab'); } catch (e) {}
+  if (q && tabs[q]) switchHealthTab(q, document.getElementById(tabs[q]));
+})();
+</script>
 {% endblock %}

@@ -48,7 +48,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
 # The old /metrics page is on the dashboard now (docs/PORTAL_PLAN.md sec 6.13), so the
 # monitored set is the pages that exist, not the pages that once did.
-PAGES = {"/": "dashboard", "/models": "models", "/settings": "settings"}
+PAGES = {"/": "dashboard", "/models": "models", "/settings": "settings",
+         "/updates": "updates", "/health": "health"}
 SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
 HANDLER_ATTR_RE = re.compile(r"\bon(?:click|change|submit|input)=\"\s*([A-Za-z_$][\w$]*)\s*\(")
 FUNC_DEF_RE = re.compile(r"(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|[a-z]+\s*=>)")
@@ -170,7 +171,9 @@ def test_fetch_targets_are_registered_routes(pages):
 
 
 @pytest.mark.parametrize("path,tab_class,prefix",
-                         [("/", "update-tab", "update"), ("/models", "model-tab", "tab")])
+                         [("/updates", "update-tab", "update"),
+                          ("/models", "model-tab", "tab"),
+                          ("/health", "health-tab", "tab")])
 def test_tab_groups_are_complete(path, tab_class, prefix, pages):
     """Every tab must have a panel and every panel a tab, derived from the
     click handlers themselves."""
@@ -270,9 +273,9 @@ def test_dashboard_does_not_link_a_page_that_no_longer_exists(pages):
 def test_sdk_inventory_lives_in_the_gpu_tab():
     """Asserted on the template, not the rendered page: the ComfyUI log tail is
     part of the page and can legitimately contain the word 'vulkan'."""
-    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
     head, sep, gpu = tpl.partition('id="update-gpu"')
-    assert sep, "the GPU Drivers / SDKs panel is gone from the dashboard"
+    assert sep, "the GPU Drivers / SDKs panel is gone from the Updates page"
     for word in ("vulkan", "rocm"):
         assert word not in head.lower(), (
             f"{word!r} is marked up outside the GPU Drivers / SDKs tab — the SDK "
@@ -283,8 +286,9 @@ def test_sdk_inventory_lives_in_the_gpu_tab():
 # ------------------------------------------------------- stored build controls
 def test_stored_builds_are_one_dropdown(pages):
     """A table of builds grows one row per build forever, and every row did one
-    thing: be picked. One dropdown, one count, two actions."""
-    html = pages["/"]
+    thing: be picked. One dropdown, one count, two actions.
+    (6.14.1zi: the machinery lives on the Updates page now.)"""
+    html = pages["/updates"]
     for sel in ('id="build-select"', 'id="build-count"', 'id="switch-build-btn"',
                 'id="delete-build-btn"'):
         assert sel in html, f"missing {sel}"
@@ -296,7 +300,7 @@ def test_delete_build_confirms_every_step_of_the_way():
     """An irreversible delete: client confirm carrying the build's details, a
     server that does not believe a request without `confirm: true`, and an audit
     event after it."""
-    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
     body = tpl[tpl.index("async function deleteBuild()"):
                tpl.index("const buildSelectEl")] if "async function deleteBuild()" in tpl else ""
     assert body, "deleteBuild() is missing"
@@ -317,7 +321,7 @@ def test_delete_build_confirms_every_step_of_the_way():
 def test_switch_build_locks_the_running_build():
     """The lockout is the safety story of both buttons; assert the JS that
     implements it, not just that a button exists."""
-    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
     sync = tpl[tpl.index("function syncBuildButtons()"):] if "function syncBuildButtons()" in tpl else ""
     assert sync, "syncBuildButtons() is missing"
     sync = sync[:sync.index("\nasync function")]
@@ -327,7 +331,51 @@ def test_switch_build_locks_the_running_build():
 
 
 # --------------------------------------------------------------------- tabs
-TAB_CLASS_RE = re.compile(r"\.(?:update|model)-tabs?[\w-]*(?:\s*,|\s*\{)")
+TAB_CLASS_RE = re.compile(r"\.(?:update|model|health)-tabs?[\w-]*(?:\s*,|\s*\{)")
+
+
+def test_the_health_page_is_split_system_and_portal_and_deep_links():
+    """The owner's health restructure (6.14.1zi): the Health page is two menu
+    sections -- System (the machine: GPU stack, NPU, disk) and Portal (the
+    software: llama.cpp deployed, Vulkan SDK, model store) -- reachable by
+    /health?tab=system|portal, strip CSS-retired per the menu-only ruling
+    (geometry in tabs.css, the single source). Section moves the owner ruled:
+    'Needs attention' answers on the Status page, apt answers on /updates --
+    neither may creep back, and the disk/model-store content stayed."""
+    h = (ROOT / "web" / "templates" / "health.html").read_text()
+    css_geo = (ROOT / "web" / "static" / "tabs.css").read_text()
+    for pid in ("tab-system", "tab-portal"):
+        assert f'id="{pid}"' in h, f"health panel {pid} missing"
+    assert h.count('class="health-tab-content') == 2, "health panels drifted from two"
+    for tid in ("health-tab-system", "health-tab-portal"):
+        assert f'id="{tid}"' in h, f"health tab {tid} missing (rotation needs the strip markup)"
+    for card in ("gpu-stack", "npu", "disk", "deployed", "vulkan", "model-store"):
+        assert f'id="{card}"' in h, f"the {card} card left the health page"
+    assert "<h2>System</h2>" in h and "<h2>Portal</h2>" in h, "panel section headings gone"
+    assert "URLSearchParams(window.location.search).get('tab')" in h, "?tab= deep link init gone"
+    assert "history.replaceState(null, '', '?tab=' + tab)" in h, "switchHealthTab stopped syncing the address"
+    assert ".health-tabs{display:none}" in css_geo, "the health strip is not CSS-retired (menu-only ruling)"
+    assert ".health-tab-content" in css_geo, "health tab geometry is not in tabs.css (single source)"
+    # the moved sections stay moved
+    assert 'id="attention"' not in h, "the Needs attention card crept back onto /health"
+    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    assert 'id="attention"' in dash, "the Needs attention hero is not on the Status page"
+    upd = (ROOT / "web" / "templates" / "updates.html").read_text()
+    assert 'id="update-system"' in upd, "the apt card has no home on /updates"
+
+
+def test_the_health_menu_is_a_sheet_of_sections():
+    """The menu bar's second tenant (6.14.1zi): the Health entry carries
+    System / Portal / Updates -- and Updates is a real route, not a tab, so
+    the nav marks the Health icon active while you read /updates (child
+    paths join the active rule)."""
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    nav = base[base.index("<nav>"): base.index("</nav>")]
+    assert re.search(r"\('/health', 'Health', 'i-health',\s*\[", nav), "Health lost its menu children"
+    for href in ("/health?tab=system", "/health?tab=portal", "/updates"):
+        assert href in nav, f"health menu child {href} missing"
+    assert "k[0].split('?')[0] == ap" in nav, \
+        "the child-path active rule is gone: /updates must light the Health icon"
 
 
 def test_the_models_page_is_split_three_ways_and_deep_links():
@@ -683,22 +731,6 @@ def test_the_dashboard_polls_only_what_moves_and_only_while_you_are_looking():
         "no visibility guard: an open background tab keeps polling the server")
     assert "setInterval(tick," not in tpl, "the router loop ignores page visibility"
     assert "setInterval(comfyTick," not in tpl, "the ComfyUI loop ignores page visibility"
-    # The tab panels are fetched when their tab opens, not paid at page load. The
-    # ComfyUI hero card is not a tab panel: it fills from loadComfyUpd() at page load,
-    # which costs 3.3 ms and shows a service state the operator watches.
-    for call in ("loadPythonInfo();", "loadGpuInfo();", "loadHfUpd();"):
-        assert f"\n{call}" not in tpl, (
-            f"{call} runs at page load: the tab that shows it is the place to fetch it")
-    assert "loadPanelOnce('llamacpp')" in tpl, (
-        "the llama.cpp tab is displayed at page load, so its fetch has to happen there")
-    # The huggingface-cli check is the most expensive call on the portal (219 ms,
-    # measured) and the panel it fills is inventory: button press only.
-    assert "setInterval(loadHfUpd" not in tpl, (
-        "the huggingface-cli panel has a polling timer; 219 ms a request is a "
-        "button press, not a loop")
-    assert "hfCheckUpdates" in tpl, (
-        "the huggingface-cli panel has no Check button, so its data is unreachable "
-        "without a page reload")
     # The machine detail is the panel with a time signal; its poll is gated on the panel.
     # 2026-10-28: the machine detail panel (the one dashboard poll gated on an
     # open panel) was retired by the owner. The dashboard must not poll
@@ -710,6 +742,55 @@ def test_the_dashboard_polls_only_what_moves_and_only_while_you_are_looking():
         "the resource lights' global poll should stay patient (20 s), not per-second")
     assert "document.hidden" in base, "the global strip must not poll background tabs"
 
+
+def test_the_updates_page_keeps_the_polling_discipline():
+    """The dashboard's polling law moved with the machinery (6.14.1zi): the tab
+    panels are fetched when their tab opens, not paid at page load; the
+    expensive huggingface-cli check stays a button press."""
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
+    for call in ("loadPythonInfo();", "loadGpuInfo();", "loadHfUpd();"):
+        assert f"\n{call}" not in tpl, (
+            f"{call} runs at page load: the tab that shows it is the place to fetch it")
+    assert "loadPanelOnce('llamacpp')" in tpl, (
+        "the llama.cpp tab is displayed at page load, so its fetch has to happen there")
+    assert "setInterval(loadHfUpd" not in tpl, (
+        "the huggingface-cli panel has a polling timer; 219 ms a request is a "
+        "button press, not a loop")
+    assert "hfCheckUpdates" in tpl, (
+        "the huggingface-cli panel has no Check button, so its data is unreachable "
+        "without a page reload")
+
+
+def test_the_updates_page_is_the_updates_machinerys_only_home():
+    """The owner's merge (6.14.1zi): ONE Updates page -- the dashboard's
+    tool-repository section moved WHOLE (the owner's rule for the highest-risk
+    machinery), plus the Health page's apt card as the System (apt) tab.
+    Pinned: the machinery answers on /updates; it is gone from the dashboard
+    and from /health (no second home for the apt table); the System tab is a
+    real tab with the apt table and the no-auto-upgrade law; the address
+    follows the tab (?tab=) and deep links land the reader on it."""
+    upd = (ROOT / "web" / "templates" / "updates.html").read_text()
+    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    health = (ROOT / "web" / "templates" / "health.html").read_text()
+    for pid in ("update-llamacpp", "update-comfyui", "update-huggingface",
+                "update-python", "update-gpu", "update-opencode", "update-system"):
+        assert f'id="{pid}"' in upd, f"Updates page lost the {pid} panel"
+    assert upd.count('class="update-tab ') + upd.count('class="update-tab"') >= 7, \
+        "the Updates strip lost tabs"
+    assert 'switchUpdateTab(\'system\'' in upd, "the System (apt) tab is not in the strip"
+    # the apt card came as it was: the table, the gpu/kernel tags, and the law
+    assert "sudo apt upgrade" in upd and "of which GPU stack" in upd, \
+        "the apt card lost its content in the move"
+    assert "The portal never runs <code>apt upgrade</code>" in upd, "the never-auto-apt law moved away"
+    # deep link machinery: ?tab= init + honest address
+    assert "URLSearchParams(window.location.search).get('tab')" in upd, "?tab= deep link init gone"
+    assert "history.replaceState(null, '', '?tab=' + tab)" in upd, "the address stopped following the tab"
+    # no second homes
+    for ghost in ("update-llamacpp", "switchUpdateTab", "checkUpdates", "updCheck("):
+        assert ghost not in dash, f"dashboard kept a copy of the machinery: {ghost}"
+    for ghost in ('id="updates"', "sudo apt upgrade", "apt.pending"):
+        assert ghost not in health, f"the Health page kept the apt card: {ghost}"
+
 # --------------------------------------------------- locked before it has data
 def test_update_buttons_ship_locked_in_the_markup():
     """A control that acts on machine data is disabled in the template, not enabled
@@ -720,12 +801,12 @@ def test_update_buttons_ship_locked_in_the_markup():
     that have nothing to do with the page. The template is the place where "locked
     until there is something to act on" is a fact, so it is asserted there.
     """
-    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
     for btn in ("upd-btn", "comfy-upd-btn", "hf-upd-btn", "switch-build-btn",
                 "delete-build-btn", "purge-stray-btn",
                 "oc-upgrade-btn", "oc-restart-btn", "oc-plugins-btn"):
         tag = next((ln for ln in tpl.splitlines() if f'id="{btn}"' in ln), None)
-        assert tag is not None, f"button {btn} is not on the dashboard"
+        assert tag is not None, f"button {btn} is not on the Updates page"
         assert "disabled" in tag, (
             f"{btn}: ships enabled, so it is clickable before the page knows the "
             "machine state; the attribute belongs on the button, not on a callback")
@@ -740,7 +821,7 @@ def test_panel_buttons_are_unlocked_by_the_panel_that_fills_them():
     fixture that changes the panel's data would change the button's state for reasons
     the page does not control.
     """
-    tpl = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    tpl = (ROOT / "web" / "templates" / "updates.html").read_text()
     pairs = {"#comfy-upd-btn": "loadComfyUpd", "#hf-upd-btn": "loadHfUpd",
              "#oc-upgrade-btn": "loadOpencodeUpd"}
     for sel, loader in pairs.items():
@@ -1374,7 +1455,7 @@ def test_the_opencode_tab_names_the_three_versions_and_keeps_the_key_out():
     the three versions (they are three facts: running / disk / latest-v2), the
     verbs must confirm, and the harness's Basic-auth password must never reach
     any page's markup — the pages name the key FILE, the server reads the key."""
-    dash = (ROOT / "web" / "templates" / "dashboard.html").read_text()
+    dash = (ROOT / "web" / "templates" / "updates.html").read_text()
     settings = (ROOT / "web" / "templates" / "settings.html").read_text()
     for marker in ("switchUpdateTab('opencode', this)", 'id="update-opencode"',
                    "oc-running", "oc-disk", "oc-latest", "oc-plugins",
@@ -1384,7 +1465,10 @@ def test_the_opencode_tab_names_the_three_versions_and_keeps_the_key_out():
         assert f"'{verb}'" in dash, f"verb button for {verb} missing"
     assert "window.confirm(confirmText)" in dash, "the verbs fire without a confirmation"
     assert "if (OC_BUSY) return;" in dash, "a verb mid-flight must not be clickable twice"
-    for page, name in ((dash, "dashboard"), (settings, "settings")):
+    health = (ROOT / "web" / "templates" / "health.html").read_text()
+    models = (ROOT / "web" / "templates" / "models.html").read_text()
+    for page, name in ((dash, "dashboard"), (settings, "settings"),
+                       (health, "health"), (models, "models")):
         assert "OPENCODE_SERVER_PASSWORD" not in page, \
             f"{name}: the harness password env var has no business in page markup"
     # Settings rows are payload-driven; the harness row's constraint (modes

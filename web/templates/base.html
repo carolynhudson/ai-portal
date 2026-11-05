@@ -205,7 +205,9 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
                      ('/models', 'Models', 'i-models', [('/models?tab=get', 'Get Models'),
                                                         ('/models?tab=llama', 'Llama Models'),
                                                         ('/models?tab=comfy', 'ComfyUI Models')]),
-                     ('/health', 'Health', 'i-health'),
+                     ('/health', 'Health', 'i-health', [('/health?tab=system', 'System'),
+                                                        ('/health?tab=portal', 'Portal'),
+                                                        ('/updates', 'Updates')]),
                      ('/personalities', 'Personalities', 'i-personalities'),
                      ('/projects', 'Projects', 'i-projects'),
                      ('/settings', 'Settings', 'i-settings'),
@@ -214,15 +216,24 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   {% for entry in navlinks %}
   {% set href = entry[0] %}{% set label = entry[1] %}{% set icon = entry[2] %}
   {% set kids = entry[3] if entry|length > 3 else [] %}
-  {% set active = (href == '/' and ap == '/') or (href != '/' and ap.startswith(href)) %}
+  {% set ns = namespace(active=(href == '/' and ap == '/') or (href != '/' and ap.startswith(href))) %}
+  {% for k in kids %}{% if k[0].split('?')[0] == ap %}{% set ns.active = true %}{% endif %}{% endfor %}
+  {% set active = ns.active %}
   {% if kids %}
   <span class="nav-menu">
     <a href="{{ href }}" class="nav-menu-btn{% if active %} on{% endif %}" aria-label="{{ label }}"
        aria-haspopup="true" aria-expanded="false" data-menu="{{ href }}"
        ><svg class="nav-i" aria-hidden="true"><use href="#{{ icon }}"/></svg><span class="nav-w">{{ label }}</span><span class="nav-caret" aria-hidden="true">▾</span></a>
     <span class="nav-sub" id="nav-sub-{{ label|lower }}" role="menu" hidden>
-      {% set cur = request.path ~ ('?tab=' ~ request.query_params['tab'] if request.query_params.get('tab') else '') %}
-      {% for chref, clabel in kids %}<a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}"{% if chref == cur %} aria-current="page"{% endif %}>{{ clabel }}</a>{% endfor %}
+      {# current-section: match path AND tab param; with no ?tab= on the
+         address, the FIRST child is the section the page opens on, so the
+         sheet marks it (/health -> System, /models -> Get Models). #}
+      {% set qtab = request.query_params.get('tab') or '' %}
+      {% set first = kids[0][0].split('tab=')[1] if kids and 'tab=' in kids[0][0] else '' %}
+      {% for chref, clabel in kids %}
+        {% set ctab = chref.split('tab=')[1] if 'tab=' in chref else '' %}
+        {% set cur = chref.split('?')[0] == request.path and (ctab == (qtab if qtab else first)) %}
+      <a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}"{% if cur %} aria-current="page"{% endif %}>{{ clabel }}</a>{% endfor %}
     </span>
   </span>
   {% else %}

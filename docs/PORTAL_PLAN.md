@@ -7490,3 +7490,50 @@ header retires with it. Section state everywhere = panel h2 + sheet
 with the strip unseen -- the browser witness, as ever, is the visibility
 judge. Pinned: contract bans the strip's return and the orphaned header;
 the probe measures the strip 0x0 at BOTH 390 and 1280.
+
+##### 6.14.1zi The restructure: unified Updates page, Health splits System/Portal, Needs attention goes to the hero (2026-11-05)
+
+The owner's plan, executed: break the dense Health page into menu sections,
+merge the update answers onto one page, and put the operator's "what needs me"
+where they open first.
+
+* **/updates — the unified Updates page.** The dashboard's "Tool Repository
+  Update Status" machinery moved **whole** (the owner's rule for the
+  highest-risk section): markup, styles, all JS (loaders, build dropdown,
+  strays, comfy/hf/python/gpu/opencode tabs, job bars) moved verbatim, with
+  only three additions: the `?tab=` deep-link init + address sync (the
+  models precedent), an appended **System (apt)** tab carrying the Health
+  page's apt card as it was (the portal-never-runs-apt-upgrade law included),
+  and page-local helpers (`esc`, `setText*`, `setPendingList`). That last
+  point is the move's one real lesson: the harness reported "panels never
+  fill" -- a silent `ReferenceError`, because function declarations hoist
+  per `<script>` block and the moved loaders call helpers the dashboard hero
+  block defined. Cross-block dependencies are invisible until a page runs.
+* **/health — System / Portal.** Menu-only ruling applied: the nav Health
+  sheet (System / Portal / Updates) is the navigator at every width, the
+  in-page strip is CSS-retired (tabs.css, the geometry law caught and placed
+  it), panels carry `aria-current` state. System = GPU stack, NPU, Disk;
+  Portal = llama.cpp deployed, Vulkan SDK, Model store. The harness rotation
+  keeps exercising both panels through the hidden strip (jsdom judges
+  attributes), and the geometry gate now covers `.health-tab-content .grid >
+  .card` (grid children count as panel cards).
+* **Needs attention → the Status hero.** The curated advisories card (with
+  its `.adv`/`.tag` styles) moved to the top of the dashboard -- the page an
+  operator opens first; the route reads advisories through the same
+  TTL-cached summary /health uses.
+* **Nav**: the menu tuple list now carries children for Health, and a child
+  path lights the parent icon (so /updates marks Health active).
+  aria-current marks the standing section, first-child = default when the
+  URL carries no `?tab=`.
+* **Suite follows the code**: the spec's fixtures, selectCases, confirm-locks,
+  text gates, and the destructive-request contracts all moved from the
+  dashboard page to the new `updates` page; the busy-gate (jobbar) retargeted
+  to the dashboard's own machine verbs; `builds-strays` now runs against
+  /updates. New pins: the machinery's only home (no second home for the apt
+  table on /health, none in the dashboard), the health split, the
+  health-menu phone sheet (rows >= 44, children land on the right sections,
+  /updates lights the Health icon).
+
+Redundancies removed on the way: the "Rebuilding llama.cpp ... on the Status
+page" pointer now lands on the llama.cpp tab of its own page, and the
+dashboard stopped being a place that fetched update state it no longer shows.

@@ -36,7 +36,8 @@
  * ------------------------------------------------------------------------- */
 .update-tabs,
 .model-tabs,
-.proj-tabs{
+.proj-tabs,
+.health-tabs{
   display:flex;
   gap:0;
   margin:0;
@@ -50,7 +51,8 @@
  * ------------------------------------------------------------------------- */
 .update-tab,
 .model-tab,
-.proj-tab{
+.proj-tab,
+.health-tab{
   padding:9px 16px;
   cursor:pointer;
   user-select:none;
@@ -64,11 +66,13 @@
 /* one hairline between neighbours, not two */
 .update-tab + .update-tab,
 .model-tab + .model-tab,
-.proj-tab + .proj-tab{ border-left:none }
+.proj-tab + .proj-tab,
+.health-tab + .health-tab{ border-left:none }
 
 .update-tab:hover,
 .model-tab:hover,
-.proj-tab:hover{ color:var(--fg) }
+.proj-tab:hover,
+.health-tab:hover{ color:var(--fg) }
 
 /* ---------------------------------------------------------------------------
  * Rule 3 — the selected tab becomes the panel: same fill, and its bottom
@@ -76,7 +80,8 @@
  * ------------------------------------------------------------------------- */
 .update-tab.active,
 .model-tab.active,
-.proj-tab.active{
+.proj-tab.active,
+.health-tab.active{
   background:var(--panel);
   color:var(--fg);
   border-bottom:1px solid var(--panel);
@@ -84,10 +89,12 @@
 
 .update-tab-content,
 .model-tab-content,
-.proj-tab-content{ display:none }
+.proj-tab-content,
+.health-tab-content{ display:none }
 .update-tab-content.active,
 .model-tab-content.active,
-.proj-tab-content.active{ display:block }
+.proj-tab-content.active,
+.health-tab-content.active{ display:block }
 
 /* ---------------------------------------------------------------------------
  * Rule 4 — the panel sits flush on the baseline: no gap, no top border, and
@@ -95,7 +102,9 @@
  * ------------------------------------------------------------------------- */
 .update-tab-content > .card,
 .model-tab-content > .card,
-.proj-tab-content > .card{
+.proj-tab-content > .card,
+.health-tab-content > .card,
+.health-tab-content .grid > .card{
   margin-top:0;
   border-top:none;
   border-top-left-radius:0;
@@ -105,7 +114,9 @@
 /* a second card in the same panel is just another card again */
 .update-tab-content > .card ~ .card,
 .model-tab-content > .card ~ .card,
-.proj-tab-content > .card ~ .card{
+.proj-tab-content > .card ~ .card,
+.health-tab-content > .card ~ .card,
+.health-tab-content .grid > .card ~ .card{
   margin-top:14px;
   border-top:1px solid var(--line);
   border-radius:10px;
@@ -114,7 +125,8 @@
 @media (max-width:640px){
   .update-tab,
   .model-tab,
-  .proj-tab{ padding:8px 10px; font-size:13px }
+  .proj-tab,
+  .health-tab{ padding:8px 10px; font-size:13px }
 }
 
 /* The menu-only ruling (owner, 6.14.1zg/1zh): the models sections navigate
@@ -124,3 +136,7 @@
  * in its panel headings + the sheet's aria-current mark. Geometry lives
  * here, in one place, per the law. */
 .model-tabs{display:none}
+
+/* Health joins the menu-only ruling (6.14.1zi): System/Portal open from
+ * the nav sheet, so the in-page strip retires at every width. */
+.health-tabs{display:none}

@@ -39,8 +39,6 @@
         "/api/router",
         "/api/comfyui",
         "/api/services",
-        "/api/updates/llamacpp",
-        "/api/updates/comfyui",
         "/api/router/report"
       ],
       "expectVisible": [
@@ -49,16 +47,6 @@
         "#router-feed",
         "#comfy-state",
         "#comfy-feed",
-        "#update-llamacpp",
-        "#update-comfyui",
-        "#update-huggingface",
-        "#update-python",
-        "#update-gpu",
-        "#build-select",
-        "#upd-btn",
-        "#build-count",
-        "#switch-build-btn",
-        "#delete-build-btn",
         "#pulse-lanes",
         "#pulse-dot",
         "#pulse-switch",
@@ -75,7 +63,132 @@
         "#census-clash",
         "#census-presets",
         "#census-served",
-        "#census-refresh"
+        "#census-refresh",
+        "#attention"
+      ],
+      "expectEnabled": [],
+      "expectAbsent": [
+        "#lanes-none"
+      ],
+      "expectDisabled": [],
+      "selectCases": [],
+      "fixtures": [],
+      "expectStylesheets": [
+        "/static/tabs.css"
+      ],
+      "tabGroups": [],
+      "requireConfirmFor": [
+        "^/api/services/llamacpp/(stop|restart)$",
+        "^/api/services/comfyui/(stop|restart)$",
+        "^/api/services/llamacpp/start$"
+      ],
+      "expectText": [
+        {
+          "_comment": "The pulse pane has to say something a person can act on. These strings come from tests/ui/bin/journalctl, the sandbox's stand-in router journal: one slot mid-generation, one just truncated, two warnings and an error. Order matters for mutation reports: the most specific assertion of a given state comes first."
+        },
+        {
+          "selector": "#pulse-lanes .lane.s-generate .lane-detail",
+          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
+        },
+        {
+          "selector": "#pulse-lanes .lane",
+          "minCount": 2
+        },
+        {
+          "selector": "#pulse-lanes",
+          "contains": "generating"
+        },
+        {
+          "selector": "#pulse-lanes",
+          "contains": "context limit"
+        },
+        {
+          "selector": "#pulse-signals",
+          "contains": "requests"
+        },
+        {
+          "selector": "#tps-now",
+          "matches": "\\d"
+        },
+        {
+          "selector": "#reslights",
+          "matches": "\\d"
+        },
+        {
+          "selector": "#router-feed .ln",
+          "contains": "prompt cache pressure"
+        },
+        {
+          "selector": "#attention-count",
+          "matches": "\\d"
+        },
+        {
+          "_comment": [
+            "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
+            "MainPID=0 (so no router process, and every server found is outside the unit) and the",
+            "fixture seeds a llama-server the portal does not control. So these are the panel's",
+            "branch-specific sentences, not a shape that both branches happen to share."
+          ],
+          "selector": "#census-state",
+          "contains": "ai-llama-router is"
+        },
+        {
+          "selector": "#census-workers",
+          "contains": "no router process"
+        },
+        {
+          "selector": "#census-foreign",
+          "contains": "does not control"
+        },
+        {
+          "selector": "#census-clash",
+          "contains": "no port"
+        },
+        {
+          "selector": "#census-presets",
+          "contains": "no router process"
+        },
+        {
+          "selector": "#attention h3",
+          "contains": "Needs attention"
+        },
+        {
+          "selector": "#attention",
+          "contains": "amdrocm-base9.9"
+        }
+      ],
+      "expectHidden": [
+        "#nav-sub-models"
+      ],
+      "_census_comment": [
+        "Starting the router is confirm-gated in the harness because the page now confirms it when the",
+        "census names a llama-server outside the unit -- a hand-started server on the router's port makes",
+        "`systemctl start` succeed while every client is talking to the other process. The denied pass",
+        "proves the page requested nothing before the confirm."
+      ],
+      "noopSelfLinks": true,
+      "_noopSelfLinks_comment": "The nav bar carries a link to every page, including the one you stand on; clicking it changes nothing in a browser (jsdom counts it as nothing since the menu-bar round's document click listener lands on the same page). href-matched: links to OTHER pages that change nothing stay loud."
+    },
+    {
+      "name": "updates",
+      "path": "/updates",
+      "expectTitle": "Updates",
+      "_comment": "Unified Updates page (owner, 6.14.1zi): the dashboard's tool-repository machinery moved whole + the Health page's apt card as the System tab. The gates below moved with the machinery (fixtures, selectCases, confirm-locks): the suite follows the code, not the other way around.",
+      "expectRequests": [
+        "/api/updates/llamacpp",
+        "/api/updates/comfyui"
+      ],
+      "expectVisible": [
+        ".update-tabs",
+        "#update-llamacpp",
+        "#upd-job",
+        "#build-select",
+        "#upd-btn",
+        "#build-count",
+        "#current-build",
+        "#switch-build-btn",
+        "#delete-build-btn",
+        "#build-hint"
       ],
       "expectEnabled": [
         "#update-llamacpp button.btn-primary-sm",
@@ -83,19 +196,29 @@
         "#comfy-upd-btn",
         ".update-tab"
       ],
-      "expectAbsent": [
-        "#upd-releases",
-        "#upd-sdk",
-        "#lanes-none"
-      ],
       "expectDisabled": [
         "#switch-build-btn",
         "#delete-build-btn"
       ],
-      "_selectCases_comment": [
-        "The delete button's entire safety story is which selection unlocks",
-        "it: the build the router is running must never be deletable or",
-        "switchable to, and any other stored build must be both."
+      "expectAbsent": [
+        "#upd-releases",
+        "#upd-sdk"
+      ],
+      "expectHidden": [
+        "#stray-row",
+        "#stray-hint",
+        "#nav-sub-models"
+      ],
+      "expectStylesheets": [
+        "/static/tabs.css"
+      ],
+      "tabGroups": [
+        {
+          "tabs": ".update-tab",
+          "panels": ".update-tab-content",
+          "expectTabs": 7,
+          "expectPanels": 7
+        }
       ],
       "selectCases": [
         {
@@ -130,12 +253,6 @@
             "state the select was left in."
           ]
         }
-      ],
-      "_fixtures_comment": [
-        "GET fixtures for the update tabs: they make the deploy/rollback buttons",
-        "live so their requests can be asserted, and make the dashboard render",
-        "the same way on any machine. The real endpoints are covered by",
-        "tests/test_updates.py."
       ],
       "fixtures": [
         {
@@ -325,95 +442,16 @@
           "path": "^/api/updates/opencode$"
         }
       ],
-      "expectStylesheets": [
-        "/static/tabs.css"
-      ],
-      "tabGroups": [
-        {
-          "tabs": ".update-tab",
-          "panels": ".update-tab-content",
-          "expectTabs": 6,
-          "expectPanels": 6
-        }
-      ],
       "requireConfirmFor": [
-        "^/api/services/llamacpp/(stop|restart)$",
-        "^/api/services/comfyui/(stop|restart)$",
         "^/api/updates/llamacpp$",
         "^/api/updates/llamacpp/rollback$",
         "^/api/updates/llamacpp/delete$",
         "^/api/updates/comfyui$",
         "^/api/updates/hf$",
-        "^/api/services/llamacpp/start$",
         "^/api/updates/gpu$",
         "^/api/updates/opencode/(upgrade|restart|plugins)$"
       ],
       "expectText": [
-        {
-          "_comment": "The pulse pane has to say something a person can act on. These strings come from tests/ui/bin/journalctl, the sandbox's stand-in router journal: one slot mid-generation, one just truncated, two warnings and an error. Order matters for mutation reports: the most specific assertion of a given state comes first."
-        },
-        {
-          "selector": "#pulse-lanes .lane.s-generate .lane-detail",
-          "matches": "\\d+ tok \u00b7 \\d+\\.\\d t/s"
-        },
-        {
-          "selector": "#pulse-lanes .lane",
-          "minCount": 2
-        },
-        {
-          "selector": "#pulse-lanes",
-          "contains": "generating"
-        },
-        {
-          "selector": "#pulse-lanes",
-          "contains": "context limit"
-        },
-        {
-          "selector": "#pulse-signals",
-          "contains": "requests"
-        },
-        {
-          "selector": "#tps-now",
-          "matches": "\\d"
-        },
-        {
-          "selector": "#reslights",
-          "matches": "\\d"
-        },
-        {
-          "selector": "#router-feed .ln",
-          "contains": "prompt cache pressure"
-        },
-        {
-          "selector": "#attention-count",
-          "matches": "\\d"
-        },
-        {
-          "_comment": [
-            "\u00a76.14.1l. The sandbox is deterministic for the census: the systemctl stand-in reports",
-            "MainPID=0 (so no router process, and every server found is outside the unit) and the",
-            "fixture seeds a llama-server the portal does not control. So these are the panel's",
-            "branch-specific sentences, not a shape that both branches happen to share."
-          ],
-          "selector": "#census-state",
-          "contains": "ai-llama-router is"
-        },
-        {
-          "selector": "#census-workers",
-          "contains": "no router process"
-        },
-        {
-          "selector": "#census-foreign",
-          "contains": "does not control"
-        },
-        {
-          "selector": "#census-clash",
-          "contains": "no port"
-        },
-        {
-          "selector": "#census-presets",
-          "contains": "no router process"
-        },
         {
           "_comment": "GPU card (fixture: 34 real-shape pending): the pane fills when the tab opens, so these assert after the tab pass. Truncation is painted text (head-6 + '+28 more (34 total)'), full list in the tooltip; the pill names the state.",
           "selector": "#gpu-pending",
@@ -429,21 +467,12 @@
           "selector": "#gpu-pill",
           "contains": "ready",
           "after_select": true
+        },
+        {
+          "selector": "#update-system",
+          "contains": "never runs"
         }
-      ],
-      "expectHidden": [
-        "#stray-row",
-        "#stray-hint",
-        "#nav-sub-models"
-      ],
-      "_census_comment": [
-        "Starting the router is confirm-gated in the harness because the page now confirms it when the",
-        "census names a llama-server outside the unit -- a hand-started server on the router's port makes",
-        "`systemctl start` succeed while every client is talking to the other process. The denied pass",
-        "proves the page requested nothing before the confirm."
-      ],
-      "noopSelfLinks": true,
-      "_noopSelfLinks_comment": "The nav bar carries a link to every page, including the one you stand on; clicking it changes nothing in a browser (jsdom counts it as nothing since the menu-bar round's document click listener lands on the same page). href-matched: links to OTHER pages that change nothing stay loud."
+      ]
     },
     {
       "_comment": [
@@ -457,7 +486,7 @@
       "path": "/",
       "expectTitle": "Status",
       "expectEnabled": [
-        ".update-tab"
+        "#census-refresh"
       ],
       "fixtures": [
         {
@@ -519,15 +548,9 @@
           "contains": "view log"
         }
       ],
-      "_disabled_comment": [
-        "These three are enabled by the dashboard's own fixtures and locked only",
-        "by the bar: this is the bar's doing, not the page's. The restore path is",
-        "asserted by mutation \"job bar never unlocks the controls again\" \u2014 a",
-        "static spec cannot see a lock that was never released, so it has to be",
-        "broken in the template to know it is tested."
-      ],
+      "_disabled_comment": "busy-job page: the bar's busy gate disables every data-needs-machine control. 6.14.1zi: the update buttons moved to /updates, so the gate is asserted on the dashboard's own machine verbs (.svc-verb); the census refresh proves the page rendered controls to gate.",
       "expectDisabled": [
-        "#upd-btn"
+        ".svc-verb"
       ],
       "_body_comment": [
         "data-jobbusy is the machine-wide lock and must still be set after every",
@@ -733,25 +756,16 @@
         "/api/health/detail"
       ],
       "expectVisible": [
-        "#attention",
         "#gpu-stack",
+        "#npu",
+        "#disk",
         "#deployed",
         "#vulkan",
-        "#updates",
-        "#disk",
         "#model-store"
       ],
       "expectText": [
         {
           "_comment": "Every pane must render its own heading even when the sandbox has nothing to say about it, and the attention list must show the GPU-stack callout the apt shim provokes (tests/ui/bin/apt-get)."
-        },
-        {
-          "selector": "#attention h3",
-          "contains": "Needs attention"
-        },
-        {
-          "selector": "#attention",
-          "contains": "amdrocm-base9.9"
         },
         {
           "_comment": "label AND value in one row: the ROCm coupling table is why this pane exists, and 'ROCm installed (apt) \u2014' is the shape of the fact, not the fact."
@@ -769,10 +783,6 @@
           "contains": "latest known upstream"
         },
         {
-          "selector": "#updates",
-          "contains": "never runs"
-        },
-        {
           "selector": "#disk",
           "contains": "cmake build trees"
         },
@@ -788,8 +798,20 @@
           "contains": "invisible to llama.cpp"
         }
       ],
-      "tabGroups": [],
-      "noopSelfLinks": true
+      "tabGroups": [
+        {
+          "tabs": ".health-tab",
+          "panels": ".health-tab-content",
+          "expectTabs": 2,
+          "expectPanels": 2
+        }
+      ],
+      "noopSelfLinks": true,
+      "expectHidden": [
+        "#nav-sub-health",
+        "#nav-sub-models"
+      ],
+      "_split_comment": "Menu-only split (6.14.1zi): tab-system = GPU stack/NPU/disk (the machine), tab-portal = deployed/Vulkan/model store (our software); the nav sheet is the navigator, the strip is CSS-retired; rotation exercises both panels. Needs attention moved to the Status hero; the apt card to /updates."
     },
     {
       "name": "settings",
@@ -905,15 +927,9 @@
     },
     {
       "name": "builds-strays",
-      "extends": "dashboard",
-      "path": "/",
-      "_comment": [
-        "Build directories the registry never recorded. One is in use through a",
-        "broken link in ~/ai/bin and must never be purgeable; the other is dead",
-        "weight and must be. The fixture patches the dashboard payload rather",
-        "than copying it, so these assertions cannot quietly start describing a",
-        "state the base page no longer serves."
-      ],
+      "extends": "updates",
+      "path": "/updates",
+      "_comment": "stray-builds fixtures against the Updates page (6.14.1zi): the build machinery (dropdown, strays, purge) moved whole from the dashboard.",
       "fixtures": [
         {
           "path": "^/api/updates/llamacpp$",

@@ -856,6 +856,11 @@ def create_app() -> FastAPI:
         # seconds-scale numbers with no second-scale signal in them. They carry the time
         # they were read, and the poll below reports the time of its own sample.
         msnap = metrics.snapshot()
+        # the Needs attention hero (6.14.1zi): the curated probe findings, read
+        # through the same cached summary /health uses (probes TTL-cache: the
+        # page is the first thing an operator opens, and this is what they
+        # opened it for).
+        advisories = _health_page(refresh=False).get("advisories", [])
         disk = [[k, f"{_human(v['used'])} / {_human(v['total'])} ({v['percent']:.0f}%)"]
                 for k, v in (msnap["disk"] or {}).items() if v]
         gpu = msnap.get("gpu")
@@ -863,6 +868,7 @@ def create_app() -> FastAPI:
                    if gpu and gpu.get("use_percent") is not None else "n/a (rocm-smi)")
         return templates.TemplateResponse(request, "dashboard.html",
                                           {"providers": providers, "health": hb,
+                                           "advisories": advisories,
                                            "r": snap, "comfy": _comfy_with_link(request), "census": census,
                                            "router_web": _link(request, serviceconf.port_of("llamacpp", 8080)),
                                            "disk": disk, "gpu": gpu_txt,
@@ -1050,6 +1056,16 @@ def create_app() -> FastAPI:
         without fear of what reading it might do.
         """
         return templates.TemplateResponse(request, "health.html",
+                                          _health_page(refresh))
+
+    @app.get("/updates")
+    def updates_page(request: Request, refresh: bool = False,
+                     _=Depends(_require_auth)):
+        """The unified Updates page (owner, 6.14.1zi): the dashboard's
+        tool-repository machinery (moved whole) plus the apt layer from the
+        old Health/Updates card. Read of the health bundle, writes are the
+        same confirm-gated deploy endpoints the dashboard used."""
+        return templates.TemplateResponse(request, "updates.html",
                                           _health_page(refresh))
 
     # ----------------------------------------------------------------- JSON

@@ -97,6 +97,103 @@ def test_probe_covers_every_page_of_the_census(probe):
     assert set(probe) == pages
 
 
+def test_the_updates_page_deep_links_land_on_the_right_tab(ui_server):
+    """The unified Updates page (owner, 6.14.1zi) in a real browser: the
+    section the URL names is the section you see -- ?tab=gpu opens the GPU
+    tab (strip mark + panel), the address keeps the tab after a switch, and
+    the System (apt) tab renders its server-rendered table at phone width.
+    Chromium is the judge: the lazy loader fires for the opened tab."""
+    from playwright.sync_api import sync_playwright
+    base, cookie = ui_server["base"], ui_server["cookie"]
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844})
+        name, value = cookie.split("=", 1)
+        ctx.add_cookies([{"name": name, "value": value, "url": base}])
+        page = ctx.new_page()
+        page.goto(f"{base}/updates?tab=gpu", wait_until="networkidle")
+        page.wait_for_timeout(900)
+        m = page.evaluate("""() => {
+          const p = document.querySelector('#update-gpu');
+          const tab = [...document.querySelectorAll('.update-tab')]
+            .find(t => (t.getAttribute('onclick') || '').includes("'gpu'"));
+          const active = [...document.querySelectorAll('.update-tab-content')]
+            .filter(c => c.classList.contains('active')).map(c => c.id);
+          return {panelActive: p.classList.contains('active'),
+                  tabMarked: tab.classList.contains('active'),
+                  activePanels: active,
+                  gpuVisible: p.getBoundingClientRect().height > 2,
+                  stripVisible: document.querySelector('.update-tabs').getBoundingClientRect().height > 2};
+        }""")
+        assert m["panelActive"] and m["tabMarked"], f"?tab=gpu did not open the GPU tab: {m}"
+        assert m["activePanels"] == ["update-gpu"], f"more than one panel active: {m}"
+        assert m["stripVisible"], "the owner-endorsed strip must stay visible (it is the page's navigator)"
+        # the address follows the tab (the models precedent)
+        page.click('.update-tab[onclick*="opencode"]')
+        page.wait_for_timeout(400)
+        assert "?tab=opencode" in page.url, f"the address stopped following the tab: {page.url}"
+        # the System (apt) tab renders server-side content at phone width
+        page.goto(f"{base}/updates?tab=system", wait_until="networkidle")
+        page.wait_for_timeout(600)
+        sysm = page.evaluate("""() => {
+          const p = document.querySelector('#update-system');
+          return {active: p.classList.contains('active'),
+                  h: Math.round(p.getBoundingClientRect().height),
+                  text: p.textContent.includes('apt') || p.textContent.includes('package')};
+        }""")
+        assert sysm["active"] and sysm["h"] > 20 and sysm["text"], f"System (apt) tab: {sysm}"
+        b.close()
+
+
+def test_the_health_menu_is_a_sheet_of_sections(ui_server):
+    """The menu bar's second tenant (owner, 6.14.1zi): at 390px the Health
+    icon opens System / Portal / Updates. Tapping a child lands on the right
+    section (portal panel active; the Updates child is a real route), the
+    sheet marks the section you stand on, and while /updates is open the
+    Health icon carries the active mark (child paths light the menu)."""
+    from playwright.sync_api import sync_playwright
+    base, cookie = ui_server["base"], ui_server["cookie"]
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        ctx = b.new_context(viewport={"width": 390, "height": 844})
+        name, value = cookie.split("=", 1)
+        ctx.add_cookies([{"name": name, "value": value, "url": base}])
+        page = ctx.new_page()
+        page.goto(f"{base}/health", wait_until="networkidle")
+        page.wait_for_timeout(600)
+        page.click('.nav-menu-btn[data-menu="/health"]')
+        page.wait_for_timeout(200)
+        m = page.evaluate("""() => {
+          const sub = document.querySelector('#nav-sub-health');
+          const rows = [...sub.querySelectorAll('a')].map(a => {
+            const r = a.getBoundingClientRect();
+            return {min: Math.round(Math.min(r.width, r.height)), right: Math.round(r.right)};
+          });
+          const cur = [...sub.querySelectorAll('a')]
+            .filter(a => a.getAttribute('aria-current') === 'page').map(a => a.textContent.trim());
+          return {hidden: sub.hidden, rows, cur, vw: innerWidth};
+        }""")
+        assert not m["hidden"], "the health menu did not open on tap"
+        assert len(m["rows"]) == 3, f"expected System/Portal/Updates rows: {m['rows']}"
+        for row in m["rows"]:
+            assert row["min"] >= 44, f"menu row under 44px: {row}"
+            assert row["right"] <= m["vw"], f"menu row passes the viewport edge: {row}"
+        # /health (default tab=system) marks System as the standing section
+        assert m["cur"] == ["System"], f"aria-current on /health: {m['cur']}"
+        # the Portal child lands on the portal panel
+        page.click('#nav-sub-health a[href="/health?tab=portal"]')
+        page.wait_for_timeout(600)
+        assert page.evaluate("() => document.querySelector('#tab-portal').classList.contains('active')"), \
+            "the Portal child did not light the portal panel"
+        # /updates lights the Health icon (child-path active rule)
+        page.goto(f"{base}/updates", wait_until="networkidle")
+        page.wait_for_timeout(600)
+        assert page.evaluate("""() => document
+            .querySelector('.nav-menu-btn[data-menu="/health"]').classList.contains('on')"""), \
+            "the Health icon is not marked active on /updates"
+        b.close()
+
+
 def test_the_models_menu_is_a_phone_sheet(ui_server):
     """The menu-bar pilot's acceptance (owner, 6.14.1zf): at 390px the
     Models button opens a sheet -- rows >= 44px, the panel inside the

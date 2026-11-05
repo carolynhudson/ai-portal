@@ -438,23 +438,37 @@ def test_health_page_requires_auth():
 
 
 def test_health_page_renders_every_pane(client):
+    """The split panes (6.14.1zi): /health answers System (GPU stack, NPU,
+    disk) and Portal (deployed, Vulkan, model store); the attention list
+    answers on the Status hero and the apt table on /updates -- each fact
+    has one home and the test walks all three."""
     r = client.get("/health")
     assert r.status_code == 200, r.text[:800]
-    for sel in ("id=\"attention\"", "id=\"gpu-stack\"", "id=\"deployed\"",
-                "id=\"vulkan\"", "id=\"updates\"", "id=\"disk\"",
-                "id=\"model-store\""):
+    for sel in ("id=\"gpu-stack\"", "id=\"npu\"", "id=\"deployed\"",
+                "id=\"vulkan\"", "id=\"disk\"", "id=\"model-store\""):
         assert sel in r.text, sel
-    for needle in ("Needs attention", "ROCm installed (apt)", "HIP (hipcc)",
-                   "amdrocm-base9.9", "cmake build trees",
-                   "invisible to llama.cpp"):
+    for needle in ("ROCm installed (apt)", "HIP (hipcc)",
+                   "cmake build trees", "invisible to llama.cpp"):
         assert needle in r.text, needle
     assert "{{" not in r.text, "unrendered template markup"
+    # the moved sections render at their new homes
+    hero = client.get("/").text
+    assert 'id="attention"' in hero and "Needs attention" in hero, \
+        "the Needs attention hero is not on the Status page"
+    assert "amdrocm-base9.9" in hero, "the sandbox's GPU advisory is not on the hero"
+    upd = client.get("/updates").text
+    assert 'id="update-system"' in upd and "amdrocm-base9.9" in upd, \
+        "the apt table is not rendering on /updates"
+    assert 'id="attention"' not in r.text, "the attention card crept back onto /health"
 
 
 def test_the_pane_tells_you_what_it_will_not_do(client):
-    """The whole point of phase F: read the machine without touching it."""
+    """The whole point of phase F: read the machine without touching it.
+    The never-apt law moved with the apt card to /updates (6.14.1zi);
+    /health keeps its no-forms rule."""
+    assert "portal never runs" in client.get("/updates").text, \
+        "the portal-never-runs-apt-upgrade law is not on the Updates page"
     body = client.get("/health").text
-    assert "portal never runs" in body
     assert "<form" not in body.split("<main>")[1].split("</main>")[0], \
         "the health page must offer no mutation of its own"
 
@@ -467,8 +481,9 @@ def test_detail_json_is_the_same_bundle_as_the_page(client):
     assert j["apt"]["gpu_pending"] == ["amdrocm-base9.9"]
     assert any(a["level"] == "warn" and "amdrocm" in a["text"]
                for a in j["advisories"])
-    html = client.get("/health").text
-    assert "amdrocm-base9.9" in html
+    # the page face of the payload: apt table on /updates, advisory on the hero
+    assert "amdrocm-base9.9" in client.get("/updates").text
+    assert "amdrocm-base9.9" in client.get("/").text
 
 
 def test_refresh_query_bypasses_the_cache(client, tmp_path):

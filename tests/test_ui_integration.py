@@ -381,6 +381,9 @@ def test_destructive_requests_carry_what_the_backend_needs(ui_server):
     contracts = {
         "dashboard": [
             (r"^/api/services/[^/]+/(start|stop|restart)$", {"confirm"}),
+        ],
+        # 6.14.1zi: the deploy/rollback machinery moved whole to /updates
+        "updates": [
             (r"^/api/updates/llamacpp$", {"target", "restart", "smoke"}),
             (r"^/api/updates/llamacpp/rollback$", {"release", "confirm"}),
             (r"^/api/updates/comfyui$", {"restart"}),
