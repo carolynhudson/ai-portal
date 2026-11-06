@@ -792,17 +792,20 @@ def check_setting(key: str, value: Any) -> str | None:
 #: `safe` — the thing to fall back to. Minimal on purpose: one model, nothing else
 #: resident. If this one cannot start, the box is broken and the portal says so.
 #:
-#: It names a hub-cache row, not a library directory, because the library is empty on this box and
-#: the fallback has to be something that is actually here. That is a real dependency: prune the
-#: cache and this personality refuses to render — with the candidates listed beside the refusal —
-#: rather than writing a preset for weights that are gone. Chosen among the *chat-capable* cached
-#: files rather than the smallest cached files: the two smallest are an embedder (0.31 GiB) and a
-#: reranker (0.60 GiB), and neither can answer the completion a fallback exists to answer.
+#: It named a hub-cache row until the model moved home (6.14.1zk): the
+#: migration put it at ``~/ai/models/llama/Qwopus3.5-4B-coder-Q8_0/``, and the
+#: reference follows the move like every other. The library is a set the
+#: operator owns; prune it and this personality refuses to render — with the
+#: candidates listed beside the refusal — rather than writing a preset for
+#: weights that are gone. Chosen among the *chat-capable* files rather than
+#: the smallest: the two smallest on this box were an embedder (0.31 GiB) and
+#: a reranker (0.60 GiB), and neither can answer the completion a fallback
+#: exists to answer.
 SAFE = {
     "name": "safe",
     "models_max": 1,
     "note": "fallback state; one small chat model, nothing else resident",
-    "models": ["Jackrong/Qwopus3.5-4B-Coder-GGUF:Q8_0"],
+    "models": ["Qwopus3.5-4B-coder-Q8_0"],
 }
 
 #: `default` — the whole library, one resident at a time. Behaviour comes from the
