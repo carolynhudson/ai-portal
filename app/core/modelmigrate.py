@@ -601,7 +601,7 @@ def _drop_cache(plan: dict, log) -> None:
                 bs = b.stat()
             except OSError:
                 continue
-            if b.is_file() and (bs.st_ino, bs.st_dev) == (dev, ino):
+            if b.is_file() and (bs.st_dev, bs.st_ino) == (dev, ino):
                 b.unlink()
                 log(f"cache: blob {b.name} released")
 

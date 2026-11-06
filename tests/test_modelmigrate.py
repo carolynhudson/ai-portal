@@ -76,11 +76,15 @@ def seed_repo(hub: Path, repo: str, files: dict[str, str],
     blobs, snap = folder / "blobs", folder / "snapshots" / revision
     blobs.mkdir(parents=True, exist_ok=True)
     snap.mkdir(parents=True, exist_ok=True)
-    for name, rev in files.items():
+    for i, (name, rev) in enumerate(files.items()):
         if rev != revision:
             continue        # caller wires shared-revision links by hand
         p = snap / name
-        _write_fake_gguf(p, _KV, pad=len(name))
+        # pad = len(name) + i: fixture contents must be distinct, or
+        # content-addressing quietly fuses two names into one blob and the
+        # last-user tests measure a coincidence (happened: mmproj and draft
+        # shared 20 bytes of pad and one blob)
+        _write_fake_gguf(p, _KV, pad=len(name) + i)
         data = p.read_bytes()
         blob = blobs / hashlib.sha1(data).hexdigest()
         p.unlink()
@@ -162,6 +166,7 @@ def test_apply_lands_every_file_shared_sidecars_hardlinked(tmp_path):
                                 "mmproj-muse-f16.gguf", "draft-muse-Q8_0.gguf"])
     index_all(hub)
     plan = mm.plan_for("org/Muse-GGUF", "Q4_K_M")
+    before = {f["name"]: Path(f["src"]).stat().st_ino for f in plan["files"]}
     mm.apply(plan)
     dest = plan["dest"]
     assert sorted(p.name for p in dest.iterdir()) == \
@@ -169,10 +174,13 @@ def test_apply_lands_every_file_shared_sidecars_hardlinked(tmp_path):
     assert not list(paths.LLAMA_MODELS.rglob(".mig-*"))
     blob_dir = hub / "models--org--Muse-GGUF" / "blobs"
     for f in plan["files"]:
-        assert (dest / f["name"]).stat().st_ino == Path(f["src"]).stat().st_ino, \
+        assert (dest / f["name"]).stat().st_ino == before[f["name"]], \
             f"{f['name']}: hardlinks share the blob inode — zero bytes, router-visible"
     assert len(list(blob_dir.glob("*"))) == 3, \
-        "the migrated main's blob name is released; the three names Q8 still uses stay"
+        "the migrated main's blob name is released; the three Q8 can use stay"
+    main_src = next(Path(f["src"]) for f in plan["files"] if f["role"] == "model")
+    assert not main_src.exists(), \
+        "the migrated model's own blob name must be released (this is where bytes free)"
     rows = rows_by_id()
     assert "muse-Q4_K_M" in rows and rows["muse-Q4_K_M"]["source"] == "library"
     modelindex.rescan(cache_dir=hub)   # production's next scan prunes the cache row
