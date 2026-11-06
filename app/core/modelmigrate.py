@@ -519,7 +519,7 @@ def apply(plan: dict, log=print) -> dict:
 
 
 def _stage(f: dict, tmp: Path, log) -> None:
-    src = Path(f["src"])
+    src = Path(f.get("dedupe") or f["src"])
     if f["mode"] == "link":
         try:
             os.link(src, tmp)
@@ -641,6 +641,18 @@ def _drop_cache(plan: dict, log) -> None:
                  if m.get("source") == "cache"
                  and snap_dir in Path(m["path"] or "").parents
                  and str(m["id"]) != str(plan["id"])]
+    # Content-addressed law, hub-wide (witnessed by the IQ3_S-fixture twin):
+    # a sidecar NAME may be shared by several repos' links onto one blob.
+    # Removing names must never dangle a link this plan does not own: the
+    # survivor scan, minus the inodes this plan removes, is the gate.
+    plan_inos = set()
+    for f in plan["files"]:
+        try:
+            st = Path(f["src"]).stat()
+            plan_inos.add((st.st_dev, st.st_ino))
+        except OSError:
+            pass
+    survivors = _snapshot_inos(hub) - plan_inos
     removed: list[tuple[int, int]] = []
     for p in sorted({Path(f["link_src"]) for f in plan["files"]}):
         if not p.is_symlink():
@@ -651,6 +663,14 @@ def _drop_cache(plan: dict, log) -> None:
             continue
         try:
             st = _resolve_src(p).stat()
+        except OSError as e:
+            log(f"cache left intact for {p.name}: {e}")
+            continue
+        if (st.st_dev, st.st_ino) in survivors:
+            log(f"cache kept: {p.name} — a link this plan does not own "
+                "resolves to the same blob")
+            continue
+        try:
             p.unlink()
             removed.append((st.st_dev, st.st_ino))
             log(f"cache: snapshot link removed for {p.name}")

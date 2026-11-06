@@ -939,7 +939,18 @@ def create_app() -> FastAPI:
         for m in indexed:
             repo, _, rest = str(m["id"]).rpartition("/")
             stem, _, _quant = rest.rpartition(":")
-            by_repo.setdefault(repo or "Local files", {}).setdefault(stem, []).append(m)
+            if not repo:
+                # A library row's id is a directory name (no namespace), so
+                # the cache tree's split cannot see it — every migrated
+                # model became an orphan "Local files" group (owner). One
+                # group, named for what it is, and the family is the id
+                # minus its `-QUANT` suffix: the quants of one base gather
+                # under one stem, the same shape the cache tree shows.
+                repo = "Portal library"
+                q = str(m.get("quant") or "")
+                if q and stem.casefold().endswith("-" + q.casefold()):
+                    stem = stem[: -(len(q) + 1)]
+            by_repo.setdefault(repo, {}).setdefault(stem, []).append(m)
         mv_tree = [{"repo": repo,
                     "subs": [{"name": name,
                               "bytes": sum(int(m.get("bytes") or 0) for m in by_repo[repo][name]),

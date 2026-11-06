@@ -76,15 +76,16 @@ def seed_repo(hub: Path, repo: str, files: dict[str, str],
     blobs, snap = folder / "blobs", folder / "snapshots" / revision
     blobs.mkdir(parents=True, exist_ok=True)
     snap.mkdir(parents=True, exist_ok=True)
+    repo_pad = len(repo)
     for i, (name, rev) in enumerate(files.items()):
         if rev != revision:
             continue        # caller wires shared-revision links by hand
         p = snap / name
-        # pad = len(name) + i: fixture contents must be distinct, or
-        # content-addressing quietly fuses two names into one blob and the
-        # last-user tests measure a coincidence (happened: mmproj and draft
-        # shared 20 bytes of pad and one blob)
-        _write_fake_gguf(p, _KV, pad=len(name) + i)
+        # pad = len(name) + i + len(repo): fixture contents are unique per
+        # repo AND per file (measured twice: same pad fused names into one
+        # blob, and identical MAINS across repos fused repos' blobs —
+        # content-addressing is merciless, and so is the last-user law)
+        _write_fake_gguf(p, _KV, pad=len(name) + i + repo_pad)
         data = p.read_bytes()
         blob = blobs / hashlib.sha1(data).hexdigest()
         p.unlink()
@@ -239,7 +240,11 @@ def test_existing_destination_newer_wins_never_assume_skip(tmp_path):
     dest = plan["dest"]
     dest.mkdir(parents=True)
     keep = dest / "keep-Q4_K_M.gguf"
-    _write_fake_gguf(keep, _KV, pad=16)          # same content ⇒ same size
+    import shutil as _sh
+    _sh.copy2(Path(plan["files"][0]["src"]), keep)
+    # THE exists-rule's own words: same size + valid GGUF + newer mtime =
+    # keep. The fixture must therefore BE the source's bytes (size equality
+    # is the law; faking it with a pad difference measures the replace path).
     os.utime(keep, (time.time() + 60, time.time() + 60))
     plan = mm.plan_for("org/Keep-GGUF", "Q4_K_M")
     by = {f["name"]: f for f in plan["files"]}
@@ -380,16 +385,31 @@ def test_content_identical_sidecars_share_one_library_inode(tmp_path):
     it; the second repo's migration links to the first library copy
     (sha256-verified), and the cache releases its own names."""
     hub = hub_root()
-    seed(hub, "org/Base-GGUF", ["base-Q4_K_M.gguf", "mmproj-flash-BF16.gguf"])
-    seed(hub, "org/Coder-GGUF", ["coder-Q4_K_M.gguf", "mmproj-flash-BF16.gguf"])
-    first = (hub / "models--org--Base-GGUF" / "snapshots" / _REV
-             / "mmproj-flash-BF16.gguf")
-    link2 = (hub / "models--org--Coder-GGUF" / "snapshots" / _REV
-             / "mmproj-flash-BF16.gguf")
-    b2 = link2.resolve()
-    link2.unlink()
-    b2.unlink()                       # coder repo's own copy is gone
-    link2.symlink_to(os.path.relpath(first.resolve(), link2.parent))
+    seed(hub, "org/Base-GGUF", ["base-Q4_K_M.gguf"])
+    seed(hub, "org/Coder-GGUF", ["coder-Q4_K_M.gguf"])
+
+    def mk_sidecar(repo: str, data: bytes) -> Path:
+        """Seed a sidecar with GIVEN bytes into the repo's own blob — the
+        real hub's shape: content-addressing is per-repo, so two repos with
+        an identical projector hold two distinct blobs (the IQ3_S failure:
+        dedupe must bridge inodes, and the fixture must not fuse them)."""
+        folder = hub / f"models--{repo.replace('/', '--')}"
+        blobs = folder / "blobs"
+        snap = folder / "snapshots" / _REV
+        blob = blobs / hashlib.sha1(data).hexdigest()
+        blob.write_bytes(data)
+        link = snap / "mmproj-flash-BF16.gguf"
+        link.symlink_to(os.path.relpath(blob, snap))
+        return link
+
+    import tests.gguf_fixture as gf
+    proj = tmp_path / "proj.bin"
+    gf._write_fake_gguf(proj, _KV, pad=7)
+    data = proj.read_bytes()
+    link1 = mk_sidecar("org/Base-GGUF", data)
+    link2 = mk_sidecar("org/Coder-GGUF", data)
+    assert link1.resolve().stat().st_ino != link2.resolve().stat().st_ino, \
+        "fixture must model inode-distinct, content-identical sidecars"
     index_all(hub)
     mm.apply(mm.plan_for("org/Base-GGUF", "Q4_K_M"))
     mm.apply(mm.plan_for("org/Coder-GGUF", "Q4_K_M"))
@@ -397,12 +417,12 @@ def test_content_identical_sidecars_share_one_library_inode(tmp_path):
     coder = paths.LLAMA_MODELS / "coder-Q4_K_M" / "mmproj-flash-BF16.gguf"
     assert base.stat().st_ino == coder.stat().st_ino, \
         "one projector inode serves both model directories"
-    # nlink 3: the coder repo's own blob name survives because its symlink
-    # still resolves there (the removal loop's survivor rule) — symlinks are
-    # path references, not nlink entries.
-    assert coder.stat().st_nlink == 3
-    assert not link2.exists() or link2.is_symlink(), \
-        "the coder's snapshot link may keep pointing (zero bytes), never dangle"
+    # nlink 2: base library name + coder library name, ONE inode. The coder
+    # repo's own blob and snapshot link are released — the last-user rule
+    # read hub-wide: after the plan's own removals, no link anywhere resolves
+    # to the coder blob; the library holds the bytes.
+    assert coder.stat().st_nlink == 2
+    assert not link2.exists(), "the coder's snapshot link released, not dangling"
 
 
 def test_partial_downloads_are_refused_never_migrated(tmp_path):
