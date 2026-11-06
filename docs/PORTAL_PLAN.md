@@ -7579,3 +7579,14 @@ entry is orphaned furniture; the title panel IS the heading (pinned). The
 Portal vitals got plural agreement ("1 model dir") and default(0, true)
 for the never-built index -- Jinja's Undefined is not None, and
 `is not none` let the empty index render as half a fact.
+
+Round two of the owner's eye, shipped the same day: the title cards' detail
+lines were baseline-aligned under a 22px title (the small text sat too low)
+-- center-aligned now, like the dashboard hero-head. i-upgrades redrawn as
+one big arrow-plus (crossbar and shaft share one thickness, the vertical is
+a diagram arrow); i-attention is the classic caution sign in the mark's warn
+amber -- the icon law's meaning-color exception, red stays banned. The Disk
+and Model store h2s retired from outside their cards: every panel on System
+and Portal now carries its title inside the card (h3 family). Witnessed at
+1280: the amber sign draws the eye, the arrow-plus reads, the vitals line
+centers on the title.
