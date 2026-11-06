@@ -327,6 +327,80 @@ def test_shards_land_together_in_one_directory(tmp_path):
 
 # -------------------------------------------------------------- refusals
 
+def test_per_quant_snapshot_subdir_repos_take_their_root_sidecars(tmp_path):
+    """Multi-quant GGUF repos nest each quant in a snapshot SUBDIR and park
+    sidecars at the snapshot root (witnessed live: ISTA Coder IQ1_M — the
+    projector sat one level above the shards). The plan must find the root
+    projector, and apply must leave no stranded blob names behind."""
+    hub = hub_root()
+    repo = hub / "models--org--Nest-GGUF"
+
+    def mk(relpath: str, pad: int) -> Path:
+        blobs = repo / "blobs"
+        blobs.mkdir(parents=True, exist_ok=True)
+        p = repo / "snapshots" / _REV / relpath
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _write_fake_gguf(p, _KV, pad=pad)
+        data = p.read_bytes()
+        blob = blobs / hashlib.sha1(data).hexdigest()
+        p.unlink()
+        if not blob.exists():
+            blob.write_bytes(data)
+        os.symlink(os.path.relpath(blob, p.parent), p)
+        return blob
+
+    mk("IQ1_M/nest-IQ1_M-00001-of-00002.gguf", 40)
+    mk("IQ1_M/nest-IQ1_M-00002-of-00002.gguf", 41)
+    mk("mmproj-nest-BF16.gguf", 42)
+    (repo / "refs").mkdir(parents=True)
+    (repo / "refs" / "main").write_text(_REV + "\n")
+    index_all(hub)
+    plan = mm.plan_for("org/Nest-GGUF", "IQ1_M")
+    names = {f["name"] for f in plan["files"]}
+    assert "mmproj-nest-BF16.gguf" in names, \
+        "the snapshot-root projector belongs to the nested quant's plan"
+    mm.apply(plan)
+    dest = plan["dest"]
+    assert (dest / "mmproj-nest-BF16.gguf").is_file()
+    assert len(list(dest.glob("*.gguf"))) == 3
+    for f in plan["files"]:
+        lp = dest / f["name"]
+        assert lp.stat().st_nlink == 1, \
+            f"{f['name']}: blob name stranded at nlink 2 — release it"
+    assert not list((repo / "blobs").glob("*")), "the repo's blobs are all ours now"
+
+
+def test_content_identical_sidecars_share_one_library_inode(tmp_path):
+    """The owner's coder note as a law: the Coder's mmproj IS the Flash-Next
+    projector — identical bytes, two repos. The library keeps ONE inode for
+    it; the second repo's migration links to the first library copy
+    (sha256-verified), and the cache releases its own names."""
+    hub = hub_root()
+    seed(hub, "org/Base-GGUF", ["base-Q4_K_M.gguf", "mmproj-flash-BF16.gguf"])
+    seed(hub, "org/Coder-GGUF", ["coder-Q4_K_M.gguf", "mmproj-flash-BF16.gguf"])
+    first = (hub / "models--org--Base-GGUF" / "snapshots" / _REV
+             / "mmproj-flash-BF16.gguf")
+    link2 = (hub / "models--org--Coder-GGUF" / "snapshots" / _REV
+             / "mmproj-flash-BF16.gguf")
+    b2 = link2.resolve()
+    link2.unlink()
+    b2.unlink()                       # coder repo's own copy is gone
+    link2.symlink_to(os.path.relpath(first.resolve(), link2.parent))
+    index_all(hub)
+    mm.apply(mm.plan_for("org/Base-GGUF", "Q4_K_M"))
+    mm.apply(mm.plan_for("org/Coder-GGUF", "Q4_K_M"))
+    base = paths.LLAMA_MODELS / "base-Q4_K_M" / "mmproj-flash-BF16.gguf"
+    coder = paths.LLAMA_MODELS / "coder-Q4_K_M" / "mmproj-flash-BF16.gguf"
+    assert base.stat().st_ino == coder.stat().st_ino, \
+        "one projector inode serves both model directories"
+    # nlink 3: the coder repo's own blob name survives because its symlink
+    # still resolves there (the removal loop's survivor rule) — symlinks are
+    # path references, not nlink entries.
+    assert coder.stat().st_nlink == 3
+    assert not link2.exists() or link2.is_symlink(), \
+        "the coder's snapshot link may keep pointing (zero bytes), never dangle"
+
+
 def test_partial_downloads_are_refused_never_migrated(tmp_path):
     """The owner's warning: metadata testing left partial models in the cache.
     A snapshot whose blob is gone has no index row (the scan reports the

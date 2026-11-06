@@ -279,8 +279,32 @@ def plan_for(repo_id: str, tag: str | None = None) -> dict:
     if not src.is_file() and not src.is_symlink():
         raise MigrationError(f"{row['id']}: snapshot file missing: {src}")
     snap_dir = src.parent
-    repo_dir = snap_dir.parent.parent            # models--org--repo/
+    # The repo dir is the models--* ancestor — NOT parent.parent: nested
+    # (per-quant subdir) layouts sit one level deeper, and a snapshots/
+    # "repo_dir" silently skips both blob-release loops (witnessed in tests).
+    repo_dir = next((a for a in snap_dir.parents
+                     if a.name.startswith("models--")),
+                    snap_dir.parent.parent)
     siblings = [p for p in sorted(snap_dir.glob("*.gguf"))]
+    # Multi-quant GGUF repos nest each quant in its own snapshot SUBDIR and
+    # park the sidecars at the snapshot root (witnessed: ISTA Coder IQ1_M —
+    # the projector sat one level above the shards, and a plan blind to it
+    # would ship a vision model with no eyes). Sidecar candidates therefore
+    # include the snapshot root — ONLY for nested layouts: a flat repo's
+    # parent is snapshots/, and scanning it would pull in OTHER revisions
+    # (refs-named revisions are the scanned set; leftovers of older ones are
+    # not models, test_modelindex pins that law).
+    if snap_dir.parent.name == "snapshots":
+        pass  # flat: snap_dir IS the snapshot root; its own glob covered it
+    else:
+        seen_ino = {p.stat().st_ino for p in siblings if p.exists()}
+        for p in sorted(snap_dir.parent.glob("*.gguf")):
+            try:
+                if p.stat().st_ino not in seen_ino:
+                    siblings.append(p)
+                    seen_ino.add(p.stat().st_ino)
+            except OSError:
+                continue
     mains = [p for p in siblings
              if file_role(p.name) == "model"
              and _shard_base(p.name) == _shard_base(src.name)]
@@ -363,10 +387,37 @@ def _file_op(p: Path, role: str, dest: Path, dev_lib: int,
         return op
     op["mode"] = "link" if os.stat(src).st_dev == dev_lib else "copy"
     op["bytes_needed"] = 0 if op["mode"] == "link" else op["size"]
+    if role in ("mmproj", "draft", "draft-rename"):
+        op["dedupe"] = _dedupe_target(src, op["size"], dest)
     dst = dest / final
     if dst.exists():
         op["exists"] = _exists_check(src, dst)
     return op
+
+
+def _dedupe_target(src: Path, size: int, dest: Path) -> str:
+    """An identical sidecar already lives in the library: link to THAT inode
+    so one projector exists on disk for every quant directory (and repo)
+    that shares it — the Coder's mmproj IS the Flash-Next projector (owner,
+    6.14.1zk: the coder is Flash-Next with experts removed). Content is
+    sha256-verified before a match is trusted; sizes are compared first."""
+    try:
+        src_h = None
+        for cand in sorted(paths.LLAMA_MODELS.glob("*/*.gguf")):
+            if cand.parent == dest:
+                continue
+            try:
+                if cand.stat().st_size != size:
+                    continue
+            except OSError:
+                continue
+            if src_h is None:
+                src_h = _sha256(src)
+            if _sha256(cand) == src_h:
+                return str(cand)
+    except OSError:
+        pass
+    return ""
 
 
 def _exists_check(src: Path, dst: Path) -> str:
@@ -486,10 +537,15 @@ def _stage(f: dict, tmp: Path, log) -> None:
             raise MigrationError(f"verify: {f['name']} sha256 mismatch")
         log(f"staged {f['name']} (copy, sha256 verified)")
     else:
-        sst = Path(f["src"]).stat()
-        if (st.st_ino, st.st_dev) != (sst.st_ino, sst.st_dev):
+        anchor = Path(f.get("dedupe") or f["src"])
+        a = anchor.stat()
+        if (st.st_ino, st.st_dev) != (a.st_ino, a.st_dev):
             raise MigrationError(f"verify: {f['name']} link inode identity lost")
-        log(f"staged {f['name']} (hardlink, inode verified)")
+        if f.get("dedupe"):
+            log(f"staged {f['name']} (hardlink to the library's identical "
+                "copy — sha256-verified)")
+        else:
+            log(f"staged {f['name']} (hardlink, inode verified)")
 
 
 def _land(f: dict, tmp: Path, final: Path, stamp: str,
@@ -570,9 +626,15 @@ def _drop_cache(plan: dict, log) -> None:
     inode — the last-user rule, read from the filesystem."""
     hub = modelindex.hub_dir().resolve()
     snap_dir = Path(plan["snapshot_dir"])
+    # "who still uses this" means OTHER quants: the plan's own id is gone by
+    # definition, and counting it kept IQ1_M's root projector linked to an
+    # empty repo (the owner's coder note: the Coder IS the repo's only
+    # quant, and its mmproj is the base Flash-Next projector — the library
+    # copy is the survivor).
     remaining = [m for m in modelindex.rows()
                  if m.get("source") == "cache"
-                 and snap_dir in Path(m["path"] or "").parents]
+                 and snap_dir in Path(m["path"] or "").parents
+                 and str(m["id"]) != str(plan["id"])]
     removed: list[tuple[int, int]] = []
     for p in sorted({Path(f["link_src"]) for f in plan["files"]}):
         if not p.is_symlink():
@@ -604,15 +666,45 @@ def _drop_cache(plan: dict, log) -> None:
             if b.is_file() and (bs.st_dev, bs.st_ino) == (dev, ino):
                 b.unlink()
                 log(f"cache: blob {b.name} released")
+    # Stranded release: a landed library name sharing a blob whose snapshot
+    # links are ALL gone. The blob name is cache litter — unlinking it frees
+    # nothing (the bytes live in our name) and completes the move. Witnessed
+    # on IQ1_M: shards migrated, blob names stranded. THE TRAP (measured):
+    # snapshot links are SYMLINKS — they do not appear in st_nlink, so
+    # nlink==2 cannot tell "blob + our name" from "blob + our name + a live
+    # symlink pointing here by path". The survivor scan is the gate.
+    survivors = _snapshot_inos(hub)
+    dest = Path(plan["dest"])
+    if blobs.is_dir():
+        for f in plan["files"]:
+            lp = dest / f["name"]
+            try:
+                ls = lp.stat()
+            except OSError:
+                continue
+            if ls.st_nlink != 2 or (ls.st_dev, ls.st_ino) in survivors:
+                continue        # a name (or a symlink's target) remains
+            for b in blobs.glob("*"):
+                try:
+                    bs = b.stat()
+                except OSError:
+                    continue
+                if b.is_file() and (bs.st_dev, bs.st_ino) == (ls.st_dev, ls.st_ino):
+                    b.unlink()
+                    log(f"cache: stranded blob released for {lp.name}")
 
 
 def _snapshot_inos(hub: Path) -> set[tuple[int, int]]:
-    """(dev, ino) of every blob every snapshot link resolves to, cache-wide."""
+    """(dev, ino) of every blob every snapshot link resolves to, cache-wide.
+    Two depths: flat repos name files at the snapshot root, multi-quant repos
+    nest them in per-quant subdirs (both layouts live in this hub)."""
     out: set[tuple[int, int]] = set()
     if not hub.is_dir():
         return out
     for repo in hub.glob("models--*"):
-        for link in (repo / "snapshots").glob("*/*.gguf"):
+        snaps = repo / "snapshots"
+        links = list(snaps.glob("*/*.gguf")) + list(snaps.glob("*/*/*.gguf"))
+        for link in links:
             if link.is_symlink():
                 try:
                     st = _resolve_src(link).stat()
