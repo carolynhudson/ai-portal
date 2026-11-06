@@ -183,7 +183,11 @@ def test_apply_lands_every_file_shared_sidecars_hardlinked(tmp_path):
         "the migrated model's own blob name must be released (this is where bytes free)"
     rows = rows_by_id()
     assert "muse-Q4_K_M" in rows and rows["muse-Q4_K_M"]["source"] == "library"
-    modelindex.rescan(cache_dir=hub)   # production's next scan prunes the cache row
+    # THE GHOST-ROW LAW (owner witnessed on the live page): apply() must end
+    # with a rescan AFTER the cache drop, so the cache row retires in the
+    # same transaction. Before the fix, the page kept a "hub cache" row and
+    # its Migrate button pointing at a deleted snapshot — confirm, fail,
+    # stay. No extra rescan here: the row must be gone from apply's own work.
     rows = rows_by_id()
     assert "org/Muse-GGUF:Q4_K_M" not in rows, "the cache row retired with its links"
     assert "org/Muse-GGUF:Q8_0" in rows, "the sibling quant the button did not press stays in cache"

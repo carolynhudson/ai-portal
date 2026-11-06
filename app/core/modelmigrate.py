@@ -491,6 +491,12 @@ def apply(plan: dict, log=print) -> dict:
         plan["refs"] = _rewrite_refs(plan["id"], plan["dest_name"], log)
         modelindex.rescan()
         _drop_cache(plan, log)
+        # Rescan AFTER the drop (witnessed live): the first rescan ran while
+        # the cache links existed, so it re-listed the cache row; with the
+        # links now gone, only a second scan prunes it. Skip this and the
+        # models page keeps a ghost "hub cache" row whose Migrate button
+        # confirms, fails (snapshot file missing), and stays — measured.
+        modelindex.rescan()
         plan["ok"] = True
         db.event("portal", "model-migrate",
                  f"migrated {plan['id']} -> {plan['dest_name']}/ "
@@ -742,6 +748,12 @@ def migratable() -> dict[str, dict]:
             bad = mine & problems_by_path
             if f"id:{mid}" in used:
                 entry["reason"] = "loaded on the router — its worker holds the file"
+            elif not src.is_file():
+                # A cache row whose file is gone is a ghost (a completed
+                # migration's stale index row): no button, honest reason.
+                # The page self-heals on the next rescan; a click here can
+                # only ever fail.
+                entry["reason"] = "snapshot file missing (stale index row?)"
             elif bad:
                 entry["reason"] = "source integrity problem (partial download?)"
             elif str(_resolve_src(src)) in used:
