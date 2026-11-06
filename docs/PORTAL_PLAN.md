@@ -7669,3 +7669,26 @@ every later module (measured: 11 full-suite failures), and so do DB rows
 (personality `safe` — a real seeded name! — use `mig-*` and a teardown
 that deletes tmp-dir-referencing rows). Isolation is the autouse fixture's
 job: hub, library, and teardown.
+
+**The live ladder, witnessed (post-commit):** rung 1 codegemma-2b (link →
+land → snapshot link + blob released, library owns the file at nlink 1).
+Rung 2 Qwopus Q8_0 — the repo's mmproj joined the directory and its
+snapshot link stayed for the sibling quant; SAFE's builtin id followed the
+move. Rung 3 exposed what no sandbox had: the MTP pair migrated clean, but
+the 54 GiB 2-shard vision Coder (a) had its projector at the SNAPSHOT ROOT
+above the per-quant subdir — a blind plan ships a vision model with no
+eyes; (b) `repo_dir = parent.parent` pointed at `snapshots/` for nested
+repos and silently skipped both blob-release loops; (c) snapshot links are
+SYMLINKS — invisible to `st_nlink` — so the nlink-2 stranded release
+dangled kept sidecars until the survivor-gate landed; (d) the sidecar
+"remaining users" count included the plan's own id, keeping IQ1_M's
+projector linked to an empty repo for a phantom user. All four fixed with
+pins (21 tests). The owner's coder note became law too: the Coder IS
+Flash-Next's projector (experts removed), so content-identical sidecars
+dedupe to ONE library inode, sha256-verified — the Swift move will share
+it, not duplicate it. The half-migrated Coder (cache row retired by the
+first apply; the tool cannot re-plan a repo with no cache row) was
+repaired by hand with the tool's own verification rules: projector
+hardlinked + header-verified, cache names released under the survivor
+gate, 55.2 GiB freed. HUB: 507G -> 441G. Known gap for a future round: a
+`--repair` mode for repos whose cache row retired mid-move.
