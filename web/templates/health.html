@@ -45,7 +45,7 @@
 </div>
 
 <div id="tab-system" class="health-tab-content active">
-<div class="card" id="sys-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+<div class="card" id="sys-head" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
   <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-system"/></svg>System</h2>
   <span class="mut">{{ host.hostname }} · {{ host.os }} · kernel {{ host.kernel }} · up
     {{ host.uptime_s|dur }} · python {{ host.python }}</span>
@@ -92,8 +92,8 @@
   </div>
 </div>
 
-<h2>Disk</h2>
 <div class="card" id="disk" style="margin-bottom:14px">
+  <h3>Disk</h3>
   <div class="kv"><span class="k">free</span><b>{{ disk.free_bytes|sz }} of {{ disk.total_bytes|sz }}
     ({{ disk.used_pct }}% used)</b></div>
   <div class="bar"><i style="width:{{ disk.used_pct or 0 }}%"></i></div>
@@ -111,7 +111,7 @@
 </div>
 
 <div id="tab-portal" class="health-tab-content">
-<div class="card" id="por-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+<div class="card" id="por-head" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
   <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-portal"/></svg>Portal</h2>
   {# Portal's own vitals, OS-line style (owner, 6.14.1zj): the services, the
      deployed build, the store -- facts the Portal section is about. #}
@@ -154,8 +154,8 @@
       configure time, so a newer SDK only matters on a fresh build directory.</p>
     {% if vulkan.check_error %}<p class="mut">Version check: {{ vulkan.check_error }} (offline?)</p>{% endif %}
   </div>
-<h2>Model store</h2>
 <div class="card" id="model-store">
+  <h3>Model store</h3>
   <div class="kv"><span class="k">index (INDEX.json)</span>
     <b class="{% if model_store.index.age_h and model_store.index.age_h > 168 %}old{% endif %}">
       {{ "updated " + (model_store.index.age_h|ago) + " ago" if model_store.index.exists else "never built" }}</b></div>

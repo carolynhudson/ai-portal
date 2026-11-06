@@ -373,12 +373,30 @@ def test_title_panels_and_the_status_hero_family():
     assert ".router-hero + .router-hero{margin-top:14px}" in dash, \
         "the hero pair lost the 14px rhythm (it measured 0px before the ruling)"
     assert "<use href=\"#i-attention\"/>" in dash, "the attention glyph is gone"
-    # the title glyphs ride the mark gradient (the icon law's base palette)
-    for sym, grad in (("i-system", "hv"), ("i-portal", "hv"), ("i-upgrades", "hv"),
-                      ("i-attention", "hv")):
-        body = re.search(r'<symbol id="%s".*?</symbol>' % sym,
-                         (ROOT / "web" / "templates" / "_icons.svg").read_text(), re.S)
+    # the title glyphs ride the mark gradient (the icon law's base palette);
+    # the attention glyph is the law's meaning-color exception: the classic
+    # caution sign in the mark's warn amber (owner, 6.14.1zj)
+    sprite = (ROOT / "web" / "templates" / "_icons.svg").read_text()
+    for sym, grad in (("i-system", "hv"), ("i-portal", "hv"), ("i-upgrades", "hv")):
+        body = re.search(r'<symbol id="%s".*?</symbol>' % sym, sprite, re.S)
         assert body and f"url(#{grad})" in body.group(0), f"{sym} left the mark gradient"
+    att = re.search(r'<symbol id="i-attention".*?</symbol>', sprite, re.S).group(0)
+    assert "#d29922" in att and "#f85149" not in att, \
+        "the attention sign left the warn amber (and red is never an icon)"
+    # panel titles live INSIDE their cards (the Portal/System panel family)
+    assert "<h2>Disk</h2>" not in h and "<h2>Model store</h2>" not in h, \
+        "a panel title returned outside its card"
+    for card, title in (("id=\"disk\"", "Disk"), ("id=\"model-store\"", "Model store")):
+        seg = h[h.index(card):]
+        assert f"<h3>{title}</h3>" in seg[:200], f"the {title} h3 is not the card's first element"
+    # the title cards center the detail line on the title (not baseline: a
+    # 22px title on baseline drops the small text too low -- owner's eye)
+    for hid in ("sys-head", "por-head"):
+        assert f'id="{hid}" style="display:flex;gap:16px;align-items:center;' in h, \
+            f"#{hid} stopped centering its detail text on the title"
+    upd_html = upd
+    assert 'id="upg-head" style="display:flex;gap:16px;align-items:center;' in upd_html, \
+        "#upg-head stopped centering its detail text on the title"
 
 
 def test_the_health_page_is_split_system_and_portal_and_deep_links():

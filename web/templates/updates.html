@@ -15,7 +15,7 @@
    offers, the header names it (icon first, the family look), and the line
    answers "what is behind?" -- apt is server facts, the tabs fill the live
    checks in as they load. #}
-<div class="card" id="upg-head" style="display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;margin-bottom:14px">
+<div class="card" id="upg-head" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
   <h2 style="margin:0;display:flex;align-items:center;gap:10px"><svg width="24" height="24" aria-hidden="true"><use href="#i-upgrades"/></svg>Upgrades</h2>
   <span class="mut">apt: {{ apt.pending if apt.available else '—' }} pending
     {%- if apt.available and apt.gpu_pending %} ({{ apt.gpu_pending|length }} gpu/kernel){% endif %}
