@@ -47,6 +47,7 @@ from .core import (
     model_config,
     modeladd,
     modelindex,
+    modelmigrate,
     network,
     paths,
     personality,
@@ -361,6 +362,11 @@ class AddModelBody(BaseModel):
     filename: str | None = None
     category: str | None = None   # safetensors override; else auto-classified
     model_dir: str | None = None  # llama model dir (for mmproj/draft files)
+
+
+class MigrateModelBody(BaseModel):
+    """One cache model id (org/repo:TAG) — the row the Migrate button shows."""
+    id: str
 
 
 class SearchModelsBody(BaseModel):
@@ -968,6 +974,9 @@ def create_app() -> FastAPI:
                                                1 for m in indexed
                                                if m["verdict"] == "unknown"),
                                            "diskroot": str(paths.LLAMA_MODELS),
+                                           # per cache row: can the Migrate button
+                                           # be shown, and where would it land.
+                                           "mig": _migratable_flags(),
                                            "comfy": comfy,
                                            "mv_tree": mv_tree,
                                            "comfy_categories": cp.categories() if cp else [],
@@ -2190,6 +2199,46 @@ def create_app() -> FastAPI:
             raise _busy()
         db.event("portal", "model-add", f"upload {p.name}")
         return {"job": job_id, "path": str(p)}
+
+    def _migratable_flags() -> dict:
+        """Cache rows the Migrate button may offer (library law in
+        modelmigrate). Best-effort: an unreachable router hides the buttons,
+        it never breaks the page."""
+        try:
+            return modelmigrate.migratable()
+        except Exception:  # noqa: BLE001
+            return {}
+
+    @app.post("/api/models/migrate")
+    def api_migrate_model(body: MigrateModelBody, _=Depends(_require_auth)):
+        """Move one cached quant into the portal library (PORTAL_PLAN
+        §6.14.1zk): verified copy first, references rewritten, cache names
+        released last. Progress via /api/jobs/{id}. The page only shows the
+        button for rows the preflight clears; the route re-checks, because
+        the page's view can be minutes old and the router's live list is
+        seconds old."""
+        mid = str(body.id or "")
+        repo, _, tag = mid.rpartition(":")
+        if not repo or not tag:
+            raise HTTPException(400, "model id should look like org/repo:TAG")
+        flags = _migratable_flags()
+        f = flags.get(mid)
+        if not f or not f.get("ok"):
+            raise HTTPException(
+                400, f"{mid} is not migratable: "
+                     f"{(f or {}).get('reason', 'not in the model index')}")
+
+        def work(log):
+            plan = modelmigrate.plan_for(repo, tag)
+            r = modelmigrate.apply(plan, log=log)
+            return {"dest": r["dest_name"],
+                    "refs": r.get("refs", {}).get("rewrote", [])}
+
+        jid = updater.start_job("model-migrate", mid, work)
+        if jid is None:
+            raise _busy()
+        db.event("portal", "model-migrate", f"started {mid} -> {f.get('dir')}")
+        return {"job": jid, "dest": f.get("dir")}
 
     @app.post("/api/models/add")
     def api_add_model(body: AddModelBody, _=Depends(_require_auth)):

@@ -31,6 +31,10 @@
 .mv-quant>summary{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .mv-quant[open]>summary{border-bottom:1px solid var(--line)}
 .mv-cache{font-size:.7rem;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.mv-migbtn{font-size:.72rem;padding:1px 9px;border-radius:6px;background:#2a3340;
+  color:var(--fg);font-weight:600}
+.mv-migbtn[disabled]{opacity:.55;cursor:default}
+.mv-migstat{font-size:.72rem}
 .mv-card{margin:8px 0 10px}
 .mv-sec{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);
   margin:10px 0 3px;border-bottom:1px solid var(--line)}
@@ -174,6 +178,15 @@
           <span class="tag {{ vt }}" title="{{ m.verdict }}{% if m.verdict == 'reduced' and m.est_ctx %} — max about {{ m.est_ctx | ctxlen }} here{% endif %}">{{ m.verdict }}</span>
           {% if m.live %}<span class="tag ok mv-live" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">on router</span>{% endif %}
           {% if m.source == "cache" %}<span class="mv-cache" title="found in the Hugging Face hub cache, not under {{ diskroot }} — llama.cpp can load it and does list it, but the portal did not put it there">hub cache</span>{% elif m.source and m.source != "library" %}<span class="mv-cache">{{ m.source }}</span>{% endif %}
+          {# The Migrate button (6.14.1zk) shows only for cache rows the
+             preflight clears — files in live service use and partial
+             downloads get no button, only the library law's own verdict. #}
+          {% set mf = mig.get(m.id) %}
+          {% if m.source == "cache" and mf and mf.ok %}
+          <button type="button" class="mv-migbtn" data-id="{{ m.id }}"
+                  data-dir="{{ mf.dir }}"
+                  title="Move this quant into the portal library as {{ mf.dir }}/ — verified copy first, references follow, cache released last">Migrate</button>
+          {% endif %}
         </summary>
         <section class="mv-card" data-model="{{ m.id }}">
           <div class="mv-sec">on the router</div>
@@ -529,5 +542,54 @@ function pollAddJob(jid){
       .catch(() => setTimeout(tick, 4000));
   })();
 }
+
+/* Migrate (6.14.1zk): one cached quant into the portal library. The server
+ * re-checks migratability at click time (the page's view can be minutes
+ * old), so a row that went busy since the render fails with the reason in
+ * the row. The confirm IS the gate: copy lands verified, references follow,
+ * cache names release last. */
+function migrateModel(btn){
+  const id = btn.dataset.id, dir = btn.dataset.dir;
+  if (!confirm('Migrate ' + id + '\n\n→ ' + dir + '/ in the portal library?\n\n'
+      + 'The verified copy lands first, personality and config references '
+      + 'follow, and cache names are released last.')) return;
+  btn.disabled = true;
+  const row = btn.closest('summary');
+  const stat = document.createElement('span');
+  stat.className = 'mut mv-migstat';
+  stat.textContent = 'migrating…';
+  row.appendChild(stat);
+  fetch('/api/models/migrate', {method: 'POST', credentials: 'same-origin',
+    headers: {'content-type': 'application/json'}, body: JSON.stringify({id})})
+    .then(r => r.ok ? r.json() : Promise.reject(r))
+    .then(d => pollMigJob(d.job, stat))
+    .catch(r => (r && r.json ? r.json() : Promise.reject(r))
+      .then(d => { stat.textContent = d.detail || 'failed'; btn.disabled = false; })
+      .catch(() => { stat.textContent = 'failed'; btn.disabled = false; }));
+}
+function pollMigJob(jid, stat){
+  let j = null;
+  (function tick(){
+    fetch('/api/jobs/' + jid, {credentials: 'same-origin'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d){
+          j = d;
+          const lines = (d.log || '').split('\n').filter(Boolean);
+          stat.textContent = d.status === 'running'
+            ? (lines[lines.length - 1] || 'working…') : d.status;
+        }
+        if (!j || j.status === 'running') return setTimeout(tick, 2000);
+        if (j.status === 'success') setTimeout(() => location.reload(), 800);
+      })
+      .catch(() => setTimeout(tick, 4000));
+  })();
+}
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('.mv-migbtn');
+  if (!b) return;
+  ev.preventDefault(); ev.stopPropagation();   // the row must not toggle
+  migrateModel(b);
+});
 </script>
 {% endblock %}

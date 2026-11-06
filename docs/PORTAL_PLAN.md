@@ -7590,3 +7590,82 @@ and Model store h2s retired from outside their cards: every panel on System
 and Portal now carries its title inside the card (h3 family). Witnessed at
 1280: the amber sign draws the eye, the arrow-plus reads, the vitals line
 centers on the title.
+
+##### 6.14.1zk The HF cache → library migration: the tool, the law, the button (2026-11-06)
+
+The owner's ruling: the hub cache is perfect as a download cache and opaque
+as a model store — router models come home to `~/ai/models/llama`, the
+portal library. This round is the plan (approved), the tool, and the models
+page button; **no production model has been moved by this round** — the
+rest-test ladder and the Swift move are the owner's, next.
+
+**The facts the plan had to satisfy, all source-verified** (`common/preset.cpp`
+@0.9.0, the live router, and the portal index):
+* The router scans `--models-dir` one level deep; **each subdirectory is
+  exactly one model**, named by the directory, and the LAST plain `.gguf`
+  iterated inside silently becomes the model file. Four quants in one
+  directory = one model by filesystem luck (the Xing4.0 dir exposed only
+  Q6_K — the router list proved it, and `model_index` collapses multi-quant
+  dirs to one row, PK = id).
+* llama.cpp sees sidecars as: filename contains `mmproj`, prefix
+  `mtp-`/`dspark-`/`dflash-`. A `draft-*.gguf` is a MAIN-model candidate —
+  it can hijack the dir. The portal's own aux list includes `draft-`; the
+  migration renames those onto `mtp-` and records it.
+* Cache models are spawned with `--hf-repo`, not `--model`: a loaded
+  worker's args carry no file path, only the id. The usage guard binds
+  loaded ids.
+
+**The scheme (owner-approved):** one directory per quant —
+`<Base>-<QUANT>/` — quants of a base group lexically; architecture is
+index metadata (the depth law forbids it as a folder). Base from the GGUF
+metadata fail-over chain: `general.name` → filename stem minus quant/shard
+tags (skipping pure-quant and pure-hex noise — a 40-char SHA lives in
+Jackrong/Qwopus's `general.name`) → repo → the literal `Unknown`.
+Collisions: `Base-QUANT` → `org-Base-QUANT` → hash-suffix, deterministic.
+Source filenames are kept (the router parses quant/shard tags from them).
+
+**Shared files = hardlinks.** The cache and the library share one
+filesystem, so a shared mmproj/draft links into every quant directory:
+zero bytes, router-visible, and the inode's link count IS the "who still
+uses this" ledger. The snapshot link of a sidecar stays while any cached
+quant of the repo leans on it; a blob is released only when the last
+snapshot user is gone and the destination verified. That is the owner's
+copy-while-shared / move-when-last law expressed by the filesystem.
+
+**The tool** (`app/core/modelmigrate.py`, `tools/modelmigrate.py`): report
+first by standing rule; plan → preflight (free space, path safety, source
+integrity — the partial downloads from metadata testing are reported and
+skipped, collisions, live-service refusal) → one model at a time:
+stage under `.mig-*` names, verify (size, GGUF header, sha256 for copies,
+inode identity for links), land (`newer wins` on an existing destination,
+never assume skip), write the ledger, rewrite references (personalities'
+ids, model_config bases by sanctioned DB retarget — `save()` refuses by
+design), rescan, and ONLY THEN release cache names. Rollback deletes only
+the tool's own staged names and restores what it replaced; the cache is
+untouched until the last verified step. Nothing recursive, nothing outside
+the plan's tracked names.
+
+**The button** (models page llama tab): server-computed `migratable()` per
+cache row — the button shows ONLY for rows that clear it (the loaded
+resident is refused: "its worker holds the file"), the route re-checks at
+click time, confirm gates the click, `model-migrate` runs as a job with
+the log in the row. `POST /api/models/migrate` {id} → {job, dest}.
+
+**RAG safety** (the owner's warning): the embedding sidecar runs
+`~/ai/models/sidecar/embeddinggemma-2-Q8_0.gguf` — outside both trees —
+and the usage guard generalizes: any unit's ExecStart `--model` path is
+refuse-to-move, witnessed by test. Partial cache downloads (the metadata-
+testing leftovers) never get a button.
+
+**Xing4.0** (the owner's alert): a library-local, self-converted 29B with
+no HF copy — not rest-test eligible, untouched by this round; any
+restructure is confirm-first, and the four-quant collapse above says its
+directory serves only one quant to the router today. A decision, not an
+accident.
+
+**Suite lessons this round:** the suite home is shared — fixture hubs under
+`paths.HF_CACHE` and library dirs under `paths.LLAMA_MODELS` leak into
+every later module (measured: 11 full-suite failures), and so do DB rows
+(personality `safe` — a real seeded name! — use `mig-*` and a teardown
+that deletes tmp-dir-referencing rows). Isolation is the autouse fixture's
+job: hub, library, and teardown.

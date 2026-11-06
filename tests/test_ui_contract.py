@@ -399,6 +399,34 @@ def test_title_panels_and_the_status_hero_family():
         "#upg-head stopped centering its detail text on the title"
 
 
+def test_the_migrate_button_follows_the_library_law():
+    """The HF-cache -> library migration UI (6.14.1zk). The owner's rule:
+    the Migrate button is visible ONLY for rows the preflight clears — the
+    template gates on the server-computed flag, never on row styling. The
+    route re-checks at click time (a page render can be minutes old and a
+    loaded model's file must never move), runs the move as a job, and the
+    page confirms before starting it (the standing confirm gate for
+    consequential controls)."""
+    m = (ROOT / "web" / "templates" / "models.html").read_text()
+    assert '{% set mf = mig.get(m.id) %}' in m, "the flag lookup is gone"
+    assert '{% if m.source == "cache" and mf and mf.ok %}' in m, \
+        "the button escaped its migratable-only gate"
+    assert 'class="mv-migbtn"' in m and "Migrate</button>" in m
+    assert "function migrateModel(btn)" in m and "confirm(" in m, \
+        "the confirm gate is gone"
+    main = (ROOT / "app" / "main.py").read_text()
+    assert '@app.post("/api/models/migrate")' in main
+    assert 'start_job("model-migrate"' in main, "the move must run as a job"
+    assert "is not migratable" in main, "the route must re-check at click time"
+    assert (ROOT / "tools" / "modelmigrate.py").exists(), \
+        "the operator CLI is the report-first face of the same law"
+    mig = (ROOT / "app" / "core" / "modelmigrate.py").read_text()
+    assert "usage_guard" in mig, "the live-service refusal is the RAG-safety law"
+    assert "draft-" in mig and "mtp-" in mig, "the router-prefix rename is gone"
+    assert "def apply(plan" in mig and ".mig-" in mig, \
+        "the staged-verify-then-land law is gone"
+
+
 def test_the_health_page_is_split_system_and_portal_and_deep_links():
     """The owner's health restructure (6.14.1zi): the Health page is two menu
     sections -- System (the machine: GPU stack, NPU, disk) and Portal (the
