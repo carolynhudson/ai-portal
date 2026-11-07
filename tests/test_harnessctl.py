@@ -432,6 +432,50 @@ def test_the_seed_writes_the_harness_plugin_list_the_host_can_load(monkeypatch):
     assert seeded["model"] == "llamacpp/x", "the copy keeps the rest of the generated config"
 
 
+def test_a_vendored_plugin_path_is_accepted_and_written_bare(tmp_path):
+    """6.14.1zl pilot: the llama.cpp plugin's V2 port is NOT published (npm's
+    package is the 10-month-old V1 upstream), so it rides as a vendored
+    directory. V2 loads a local plugin directory by absolute path — the seed
+    writes such a spec BARE (the shape the docs load), npm pins as objects.
+    The pin law survives: the vendored checkout is the pin, vendor.json
+    records its git sha, and updating is an owner action."""
+    from app.core import db
+    _fresh_state()
+    vend = tmp_path / "opencode2-llama.cpp"
+    vend.mkdir()
+    (vend / "package.json").write_text(json.dumps(
+        {"name": "opencode-plugin-llama.cpp", "version": "0.2.0"}))
+    db.set_setting("harness_plugins", ["opencode-search@1.0.0", str(vend)])
+    home = _cache(4102)
+    if home.exists():
+        shutil.rmtree(home)
+    oc = paths.HOME / ".config" / "opencode"
+    oc.mkdir(parents=True, exist_ok=True)
+    (oc / "opencode.json").write_text(json.dumps({"model": "x"}))
+    try:
+        out = harnessctl.seed_cache_home(4102)
+        assert out["ok"] is True
+        seeded = json.loads((home / "opencode.json").read_text())
+        assert seeded["plugins"] == [{"package": "opencode-search@1.0.0"},
+                                     str(vend)], seeded["plugins"]
+    finally:
+        db.set_setting("harness_plugins", None)
+
+
+def test_a_path_that_is_not_a_plugin_directory_is_refused(tmp_path):
+    """A vendored path without package.json is a typo, not a plugin: the pin
+    law refuses it before the host starts on a directory it cannot load."""
+    from app.core import db
+    import pytest
+    _fresh_state()
+    db.set_setting("harness_plugins", [str(tmp_path / "not-a-plugin")])
+    try:
+        with pytest.raises(harnessctl.HarnessError):
+            harnessctl.plugin_specs()
+    finally:
+        db.set_setting("harness_plugins", None)
+
+
 def test_the_seed_hands_the_host_its_memory_server(monkeypatch):
     """RAG-for-opencode (queue 34): the memory MCP server must be in the config the
     host reads, written by the seed with the deployed portal's own interpreter and

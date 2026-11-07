@@ -45,7 +45,12 @@ from app.core import routerctl
 # Provider ids. `llama.cpp` is pi's own built-in id, so model ids come out as
 # `llama.cpp/<repo>:<quant>` — the shape pi's own docs and the ACP config options use.
 PI_PROVIDER = "llama.cpp"
-OC_PROVIDER = "llamacpp"
+# 6.14.1zl: opencode rides the SAME id as pi and as the vendored llama.cpp
+# plugin (which owns the provider id `llama.cpp`): one provider, one router,
+# and the plugin corrects our declared provider in place (name/baseURL only —
+# apiKey and our declared model entries survive as the merge base). Two ids
+# (`llamacpp` + `llama.cpp`) would mean two providers on one router.
+OC_PROVIDER = "llama.cpp"
 
 # The router does not authenticate; pi's provider machinery insists on a non-empty
 # credential before it will name a model. This is the whole content of that key.

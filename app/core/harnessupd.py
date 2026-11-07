@@ -28,6 +28,7 @@ import re
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
 
 from . import harnessctl, logsetup
 
@@ -92,11 +93,24 @@ def disk_version() -> tuple[str | None, str | None]:
     return (m.group(1) if m else None), (None if m else "the binary printed no version")
 
 
+def _plugin_name(spec: str) -> str:
+    """The name a spec is keyed by. npm pins: the name before the @. Vendored
+    paths: the package.json `name` (the host reports loaded plugins by it),
+    falling back to the directory name — the check wants the same key."""
+    if spec.startswith("/"):
+        try:
+            d = json.loads((Path(spec) / "package.json").read_text())
+            return str(d.get("name") or Path(spec).name)
+        except (OSError, ValueError):
+            return Path(spec).name
+    return spec.split("@")[0]
+
+
 def loaded_plugins(specs: list[str]) -> tuple[dict, str | None]:
     """{name: {"version","status"}} from the live host's plugin check, plus a
     note when the host refused. The check reports builtins too; only the
     configured packages are kept."""
-    want = {s.split("@")[0]: s for s in specs}
+    want = {_plugin_name(s): s for s in specs}
     try:
         _st, out = harnessctl._request("POST", "/api/plugin/check",
                                        body={"plugins": [{"package": s} for s in specs]})
@@ -144,6 +158,27 @@ def check(refresh: bool = False) -> dict:
     loaded, loaded_note = loaded_plugins(specs)
     plugins = []
     for spec in specs:
+        if spec.startswith("/"):
+            # Vendored copy: the checkout is the pin (vendor.json beside the
+            # plugins carries git origin + sha); npm has nothing to say about
+            # it, and "update available" is not a portal verb — the owner
+            # updates by git pull, deliberately.
+            name = _plugin_name(spec)
+            got = loaded.get(name) or {}
+            try:
+                sha = (Path(spec) / ".vendored-sha").read_text().strip()[:7]
+            except OSError:
+                sha = ""
+            plugins.append({
+                "name": name,
+                "pinned": sha or "vendored",
+                "loaded": got.get("version"),
+                "status": got.get("status"),
+                "latest": None,
+                "update_available": False,
+                "note": "vendored copy — updating is an owner action (git pull)",
+            })
+            continue
         name = spec.split("@")[0]
         pin = spec.partition("@")[2]
         npm, npm_note = npm_latest(name)

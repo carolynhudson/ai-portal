@@ -80,24 +80,47 @@ def harness_bin() -> Path:
 
 
 def plugin_specs() -> list[str]:
-    """The harness plugin list, pinned `name@version` strings.
+    """The harness plugin list: pinned `name@version` strings, or absolute
+    paths to vendored plugin directories.
 
     Portal-managed via the `harness_plugins` setting so the Status tab's
     pin-update verb has something to write; the source constant is the default
     for a box that never edited it. The seed reads the same function, so what
     the page lists is what the host will load on its next start.
+
+    A path spec is a vendored copy (6.14.1zl pilot): V2 loads a local plugin
+    directory by absolute path, resolving its parts through package.json. The
+    pin for a vendored copy is the checkout itself — vendor.json beside the
+    plugins records git origin + sha — and updating is an owner action (git
+    pull), which honors the same law that forces npm pins: a host restart is
+    never a silent supply-chain event. Refused unless the directory carries a
+    package.json: a path that is not a plugin is a typo, not a plugin.
     """
     from . import db
     raw = db.get_setting("harness_plugins", None)
     if not isinstance(raw, list) or not raw:
         return list(HARNESS_V2_PLUGINS)
     specs = [str(x).strip() for x in raw if str(x).strip()]
-    bad = [s for s in specs if not _PINNED_PKG_RE.match(s)]
+    bad = [s for s in specs
+           if not s.startswith("/") and not _PINNED_PKG_RE.match(s)]
     if bad:
         raise HarnessError(
             f"unpinned plugin specs refused: {', '.join(bad)} — pin name@x.y.z; "
             "an unpinned entry means 'whatever is latest on release day'")
+    for s in specs:
+        if s.startswith("/") and not (Path(s) / "package.json").is_file():
+            raise HarnessError(
+                f"vendored plugin {s} has no package.json — it is not a "
+                "plugin directory (vendor it: git clone + npm install --omit=dev)")
     return specs
+
+
+def plugin_entries() -> list:
+    """The `plugins` value for the seeded config. V2 accepts bare path
+    strings for local plugin directories and `{"package": ...}` objects for
+    registry pins; the seed writes the shape each entry type speaks."""
+    return [p if p.startswith("/") else {"package": p}
+            for p in plugin_specs()]
 
 
 class HarnessError(Exception):
@@ -212,7 +235,7 @@ def seed_cache_home(port: int, log=print) -> dict:
     files = []
     cfg = json.loads((src / "opencode.json").read_text())
     try:
-        cfg["plugins"] = [{"package": p} for p in plugin_specs()]
+        cfg["plugins"] = plugin_entries()
     except HarnessError as e:
         # A corrupt plugin list must not brick the host: fall back to the
         # pinned default and say so in the journal, where the operator will look.

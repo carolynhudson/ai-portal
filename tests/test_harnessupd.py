@@ -9,6 +9,7 @@ restart things) live in main.py and are tested for their confirm gates here.
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -144,6 +145,30 @@ def test_check_flags_a_plugin_pin_behind_npm_latest(tmp_path, monkeypatch, clean
                         lambda: ["opencode-search@1.0.0"])
     d = harnessupd.check(refresh=True)
     assert d["plugins"][0]["update_available"] is True
+
+
+def test_a_vendored_plugin_row_reports_the_checkout_as_the_pin(tmp_path, monkeypatch, clean_cache):
+    """A vendored plugin (6.14.1zl pilot: the llama.cpp plugin's V2 port is
+    unpublished — npm holds only the old V1 upstream) has no npm latest to
+    chase: the vendored checkout's sha IS the pin, the row says updating is an
+    owner action, and the loaded-check keys by the package.json `name` — what
+    the host reports plugins by."""
+    _live_host(monkeypatch)
+    _disk(monkeypatch, tmp_path)
+    monkeypatch.setattr(harnessupd, "_get_json", _fake_json_for())
+    vend = tmp_path / "opencode2-llama.cpp"
+    vend.mkdir()
+    (vend / "package.json").write_text(json.dumps(
+        {"name": "opencode-plugin-llama.cpp", "version": "0.2.0"}))
+    (vend / ".vendored-sha").write_text("661c3eabf99189e359585306c9bc7596f0579a8d\n")
+    monkeypatch.setattr(harnessctl, "plugin_specs", lambda: [str(vend)])
+    d = harnessupd.check(refresh=True)
+    row = d["plugins"][0]
+    assert row["name"] == "opencode-plugin-llama.cpp"
+    assert row["pinned"] == "661c3ea", "the vendored sha is the pin"
+    assert row["update_available"] is False
+    assert row["latest"] is None
+    assert "owner action" in row["note"]
 
 
 def test_a_down_host_degrades_to_a_stated_unknown(tmp_path, monkeypatch, clean_cache):

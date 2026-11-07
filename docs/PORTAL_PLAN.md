@@ -7814,3 +7814,20 @@ Plugin evaluation (joeblowma/opencode2-llama.cpp, fork of mrnbd, MIT, V2):
   automatically). The portal generator stays the source of record for
   linked/pinned entries; Windows agents keep the generated resident-only file
   (auto-detect is localhost-only; remote wants the baseURL option).
+
+**6.14.1zl follow-up 4 — llama.cpp plugin pilot (owner GO):** the V2 plugin
+is vendored at `~/ai/harness/plugins/opencode2-llama.cpp` (git sha 661c3eab,
+2026-10-24; `vendor.json` beside it records origin + sha; runtime deps
+installed; the last commit's "broken tui" note concerns the TUI part, which
+the headless harness never loads). Portal law changes: harness plugin specs
+now accept **absolute paths** to vendored plugin directories (package.json
+required; the checkout is the pin — restart is never a supply-chain event),
+and the seed writes each shape V2 speaks (path bare, npm pins as objects);
+the Updates tab reports vendored rows with the sha as pin and "owner action"
+notes. Provider id: opencode moves from `llamacpp` to **`llama.cpp`** — the
+same id pi uses and the id the plugin owns, so one provider points at one
+router and the plugin corrects it in place. Host config renamed (default
+`llama.cpp/Swift-Flash-Next-IQ3_S`); `harness_plugins` carries the vendored
+path. The plugin activates at the next harness restart (owner-gated): from
+then the model list in opencode.json is maintained by the router's own
+account on a 60s sweep, and migrations cannot strand the harness again.

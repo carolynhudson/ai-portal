@@ -270,11 +270,15 @@ def test_the_credential_check_reports_presence_and_never_the_value(tmp_path):
 
 
 def test_the_provider_ids_are_the_ones_the_harnesses_use():
-    """pi's built-in id is `llama.cpp` (its docs and its ACP config options both use it); opencode
-    gets its own id so a hand-written `llamacpp` provider can coexist with its built-in `llama`."""
+    """pi's built-in id is `llama.cpp` (its docs and its ACP config options both
+    use it). 6.14.1zl: opencode rides the SAME id — the vendored llama.cpp
+    plugin owns provider id `llama.cpp` and corrects a declared provider in
+    place; a second id would put two providers on the one router. The old law
+    (opencode kept its own `llamacpp` to dodge a built-in `llama`) is retired:
+    the declared provider's baseURL and package decide what answers."""
     assert agentconfig.PI_PROVIDER == "llama.cpp"
-    assert agentconfig.OC_PROVIDER == "llamacpp"
-    assert agentconfig.OC_PROVIDER != "llama"
+    assert agentconfig.OC_PROVIDER == "llama.cpp"
+    assert agentconfig.OC_PROVIDER != "llamacpp"
 
 
 # --- the endpoints (D1: every read is also an endpoint) ----------------------------------------
