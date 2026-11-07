@@ -7692,3 +7692,46 @@ repaired by hand with the tool's own verification rules: projector
 hardlinked + header-verified, cache names released under the survivor
 gate, 55.2 GiB freed. HUB: 507G -> 441G. Known gap for a future round: a
 `--repair` mode for repos whose cache row retired mid-move.
+
+##### 6.14.1zl Data-driven model display + the provenance ledger (2026-11-06)
+
+The owner's directive: the llama tree must be `$quantizer/$model/$quant`
+built from COLLECTED DATA (GGUF headers, the id, the HF download path), the
+HF identity (download path + hub URL) must survive migrations, and the
+indexer needs operator doors. All three shipped, witnessed live.
+
+**The provenance ledger.** `model_index` gains `hf_repo`/`hf_tag` columns
+(SCHEMA + `_WRITE_COLUMNS` + the literal INSERT — the drift pins enforce);
+`models.provenance` (JSON, COALESCE-preserved: a clueless re-index never
+erases what a placement recorded). scan_cache fills the columns from the id;
+scan_library reads the ledger for library rows; `modeladd` records provenance
+for HF-sourced downloads; `modelmigrate._write_ledger` records the repo:tag
+of every migrated quant. Backfill: the 10 models migrated before the ledger
+were provenance-restored, each pair validated against the hub's folder
+census (refuse-not-guess). The migrated models now sit in their hub repo
+groups — the same tree they had as cache rows — with a "portal library"
+placement badge and a live `huggingface.co/<repo>:<TAG>` link (19 links
+live). Xing4.0 (derived, not downloadable): the metadata chain's honest
+words — `Unknown / Roleplay Xing4.0 29B / Q6_K`, no fabricated repo, no
+link. That is the chain ending in the literal `Unknown`, obeyed.
+
+**Blind spots the audits found and the round pinned.** A GGUF at the
+models-dir ROOT is a model to the router (one-level scan) and had no
+identity in the index: `scan_library` now reports `root-gguf`, health names
+it. And the failed IQ3_S apply's `.mig-*` staged name was **indexed as a
+phantom quant** — the scanner was blind to the tool's own temp-prefix law:
+the scan refuses `.mig-*` names, the plan's residue law ignores them, and a
+failed apply removes the empty directory it created. Live residue (one
+staged projector, sha256-verified identical to the landed copy) was removed
+by hand under the same verification rules.
+
+**Indexer doors.** `tools/modelindex.py` (status / show <id> / rescan / tree
+— the tree command prints the page's grouping law in text) and
+`POST /api/models/rescan` (auth, exclusive `model-index` job — a scan never
+runs beside a migration). The link law the owner asked for: index id ↔
+personalities/models ↔ model_configs.base_model ↔ presets sections ↔ router
+registry (router_key/live_as) ↔ migration rewrite all resolve through the
+same row and columns; the models page's "live" badges and extra_live table
+are the report from the router back to the index.
+
+Suite 1321/5; witnesses: `~/ai/logs/viewport-20261102/data-tree.png`.
