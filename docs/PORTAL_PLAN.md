@@ -7735,3 +7735,19 @@ same row and columns; the models page's "live" badges and extra_live table
 are the report from the router back to the index.
 
 Suite 1321/5; witnesses: `~/ai/logs/viewport-20261102/data-tree.png`.
+
+**6.14.1zl follow-up — the org law and presets.ini self-update (same day, owner report):**
+tree level 1 is the ORGANIZATION (`bartowski`, `ukisai`… — repo ids split
+at the slash, repo name minus `-GGUF`/`-GGUF-RCO` is the level-2 family, and
+cache rows + migrated library rows of one repo share the stem node).
+presets.ini now follows the move: the section header IS the router's
+binding, so `apply()` renames `[org/repo:TAG]` → `[dir]` — snapshot first,
+read-back verify, collision refuses a merge, no section writes nothing; the
+router restart stays owner-gated. The "Live but not in the library" rows are
+honest from the data: router ids matched against `hf_repo:hf_tag` are
+annotated "migrated to <dir>/ — presets.ini updated, clears at the next
+router restart" (the retired map keys on data equality first — `router_key`
+strips the org AND the tag, so normalized forms cannot bridge cache↔dir).
+The template renders `m['note']` (it had been computed, then dropped).
+Witnesses: 7 zombies annotated on the live page; sections are the library
+ids; full suite 1323/5.
