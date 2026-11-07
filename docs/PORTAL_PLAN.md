@@ -7856,3 +7856,27 @@ The Model store card's footer also stopped preaching `gguf-indexer --scan`
 write token (Settings → Mesh identities, shown once) → paste into the kit's
 mcp block → opencode: kb_search cites, memory_add lands pending → Health
 page: Promote publishes it.
+
+**6.14.1zl follow-up 6 — the RainbowBlock agent server goes live (owner runs the kit):**
+The Windows box now runs `start_agent_server.ps1` → `opencode serve
+--hostname 0.0.0.0 --port 24096` rooted in C:\forge\kit, Basic auth (user
+`opencode`, per-server password recorded in C:\forge\kit\agent_server.json),
+logs to C:\forge\logs\agent-server-*.log. `admin_bringup.ps1` ran elevated:
+inbound 8188 scoped to 192.168.1.228 only, the 24096 rule, and logon tasks
+`ai-forge-comfyui` + `ai-forge-opencode-agent` (both Ready). Verified from
+halo: **:24096 answers 401** (reachable, auth-protected, IP-scoped — the
+mesh link is real), **:8188 answers 000** (engine down; start via
+`Start-ScheduledTask -TaskName 'ai-forge-comfyui'` when the forge is
+needed). The kit on the box grew a contained `forge-ops` agent
+(kit-rooted, external_directory deny) — and the session's bottom bar showed
+the migration break in the wild: `model 'ukisai/…:IQ3_S' not found` (the kit
+file predates the library move). Law added: `sync_agent_models.py` regens
+now MERGE (pin: provider.llamarouter + default model follow the router; the
+box's agents, posture, and the mcp block WITH ITS PASTED TOKEN survive);
+kit regenerated with the resident id. House notes: the agent-server
+password appeared in a screenshot — rotate it (rerun start_agent_server.ps1);
+the new kit scripts (start_agent_server / admin_bringup / probe_agent)
+exist only on the box — pull them into deploy/windows-agent/ so the kit is
+one source again; pairing (POST /api/pair one-time code, then halo's harness
+can `--server http://RainbowBlock.local:24096`) is the next step,
+owner-gated.

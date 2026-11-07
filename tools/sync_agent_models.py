@@ -85,6 +85,24 @@ def build_config(models: dict[str, dict]) -> dict:
     }
 
 
+def merge_config(existing: dict, generated: dict) -> dict:
+    """The regen merge law. What follows the router is exactly two things:
+    provider.llamarouter and the default `model` — that IS the point of
+    generating (a stale model id is the "model not found" break the mesh
+    paid on 2026-11-07). Everything the box added survives the regen: the
+    forge-ops agent, its permission posture, and the mcp block WITH ITS
+    PASTED TOKEN — regenerating over the token silently shuts the mesh door
+    and the next run discovers it mid-task."""
+    out = dict(existing)
+    providers = dict(out.get("provider") or {})
+    providers["llamarouter"] = generated["provider"]["llamarouter"]
+    out["provider"] = providers
+    out["model"] = generated["model"]
+    if not out.get("mcp"):
+        out["mcp"] = generated["mcp"]
+    return out
+
+
 def main(argv: list[str]) -> int:
     show = "--print" in argv
     try:
@@ -151,7 +169,14 @@ def main(argv: list[str]) -> int:
         entry["reasoning"] = True
         entry["interleaved"] = "reasoning_content"
 
-    cfg = build_config({resident: entry})
+    generated = build_config({resident: entry})
+    existing = None
+    if CONFIG.is_file():
+        try:
+            existing = json.loads(CONFIG.read_text())
+        except (OSError, ValueError):
+            existing = None     # a kit that does not parse is replaced, not merged
+    cfg = merge_config(existing, generated) if isinstance(existing, dict) else generated
     if show:
         print(json.dumps(cfg, indent=2))
         return 0

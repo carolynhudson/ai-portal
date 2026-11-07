@@ -155,7 +155,8 @@ def test_the_model_config_is_generated_not_handwritten():
     script = Path(__file__).resolve().parents[1] / "tools" / "sync_agent_models.py"
     assert script.is_file(), "the agent config must have a generator"
     text = script.read_text()
-    for needle in ("--hf-repo", "--model", "presets.ini", "models-max 1", "build_config"):
+    for needle in ("--hf-repo", "--model", "presets.ini", "models-max 1", "build_config",
+                   "merge_config"):
         assert needle in text, f"the generator lost {needle!r}"
     import subprocess
     import sys
@@ -168,6 +169,38 @@ def test_the_model_config_is_generated_not_handwritten():
     assert len(models) == 1, "generator produced more than the resident model"
     entry = next(iter(models.values()))
     assert entry["limit"]["context"] >= 65536
+
+
+def test_the_regen_merge_keeps_the_box_and_follows_the_router():
+    """2026-11-07 lesson: the kit on RainbowBlock grew a forge-ops agent and
+    a pasted mesh token; a regen that rewrote the whole file would silently
+    evict both. The merge law: provider.llamarouter and the default model
+    follow the router; everything the box added survives, token included."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sync_agent_models",
+        Path(__file__).resolve().parents[1] / "tools" / "sync_agent_models.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    box = {
+        "provider": {"llamarouter": {"models": {"ukisai/DEAD:IQ3_S": {}},
+                                     "options": {"baseURL": "http://old/v1"}},
+                     "somewhere-else": {"npm": "x"}},
+        "model": "llamarouter/ukisai/DEAD:IQ3_S",
+        "mcp": {"halo-kb": {"url": "http://192.168.1.228:8090/api/mcp",
+                            "headers": {"Authorization": "Bearer REAL-PASTED"}}},
+        "agent": {"forge-ops": {"permission": {"external_directory": "deny"}}},
+    }
+    gen = mod.build_config({"Swift-Flash-Next-IQ3_S": {"name": "resident"}})
+    out = mod.merge_config(box, gen)
+    assert list(out["provider"]["llamarouter"]["models"]) == ["Swift-Flash-Next-IQ3_S"], \
+        "the model list must follow the router (the migration break)"
+    assert out["model"] == "llamarouter/Swift-Flash-Next-IQ3_S"
+    assert out["provider"]["somewhere-else"] == {"npm": "x"}, "a foreign provider survives"
+    assert out["mcp"]["halo-kb"]["headers"]["Authorization"] == "Bearer REAL-PASTED", \
+        "the pasted mesh token survives the regen"
+    assert out["agent"]["forge-ops"]["permission"]["external_directory"] == "deny", \
+        "the box's containment agent survives the regen"
 
 
 def test_the_agent_brief_carries_the_hard_rules():
