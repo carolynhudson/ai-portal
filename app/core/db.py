@@ -130,6 +130,11 @@ def init() -> None:
     # exception worth a name — SQLite raises `duplicate column name` and we continue.
     with contextlib.suppress(sqlite3.OperationalError):
         c.execute("ALTER TABLE model_files ADD COLUMN meta TEXT")
+    # Provenance (6.14.1zl): {repo, tag} of models the portal PLACED in the
+    # library (Get download, cache migration). The HF identity must outlive
+    # the cache row it came from; the model index reads it from here.
+    with contextlib.suppress(sqlite3.OperationalError):
+        c.execute("ALTER TABLE models ADD COLUMN provenance TEXT")
     for col in ("pid INTEGER", "boot TEXT"):
         with contextlib.suppress(sqlite3.OperationalError):
             c.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
@@ -251,24 +256,30 @@ def set_release_active(tool: str, rid: str, active: bool = True) -> None:
 
 # -------------------------------------------------------------------- models
 
-def index_model(model_id: str, dir_path, role: str, files: list) -> None:
+def index_model(model_id: str, dir_path, role: str, files: list,
+                provenance: dict | None = None) -> None:
     """Upsert a model into the portal index (``models`` + ``model_files``).
 
     ``files`` is a list of {"name" (relative to dir_path), "size", "sha256",
     "role", "meta"}; sha256 may be None for big pre-existing files not
     hashed yet, meta is the sniffed header dict (JSON) or None.
+    ``provenance`` is {"repo", "tag"} — where the model came from on
+    Hugging Face; COALESCEd so a re-index that knows nothing never erases
+    what a prior placement recorded.
     """
     from pathlib import Path as _Path
 
     c = _conn()
+    prov = json.dumps(provenance) if provenance else None
     c.execute(
-        "INSERT INTO models (id, dir, role_files, size_bytes, updated_at) "
-        "VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        "INSERT INTO models (id, dir, role_files, size_bytes, updated_at, provenance) "
+        "VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
         "dir=excluded.dir, role_files=excluded.role_files, "
-        "size_bytes=excluded.size_bytes, updated_at=excluded.updated_at",
+        "size_bytes=excluded.size_bytes, updated_at=excluded.updated_at, "
+        "provenance=COALESCE(excluded.provenance, models.provenance)",
         (model_id, str(dir_path),
          json.dumps({"role": role, "files": [f["name"] for f in files]}),
-         sum(f["size"] for f in files), time.time()))
+         sum(f["size"] for f in files), time.time(), prov))
     for f in files:
         c.execute(
             "INSERT INTO model_files (path, model, size, sha256, role, meta) "

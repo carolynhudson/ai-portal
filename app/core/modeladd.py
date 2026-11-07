@@ -280,8 +280,15 @@ def _meta_for_db(meta: dict) -> dict:
     return m
 
 
+def _quant_tag(name: str) -> str:
+    """The export tag in a filename (Q4_K_M, IQ3_S…), for provenance."""
+    from . import modelindex
+    return modelindex._quant_from_name(name) or ""
+
+
 def _index_llama_dir(d: Path, touched: Path, touched_sha: str,
-                    touched_meta: dict | None = None) -> None:
+                     touched_meta: dict | None = None,
+                     provenance: dict | None = None) -> None:
     """(Re)index a whole llama model dir; pre-existing files keep whatever
     hash/meta they already had (a 270 GB gguf is not re-hashed on a re-index)."""
     files = []
@@ -298,7 +305,7 @@ def _index_llama_dir(d: Path, touched: Path, touched_sha: str,
         files.append({"name": str(f.relative_to(d)),
                       "size": f.stat().st_size, "sha256": sha,
                       "role": _gguf_file_role(f.name), "meta": meta})
-    db.index_model(d.name, d, "llama", files)
+    db.index_model(d.name, d, "llama", files, provenance=provenance)
 
 
 def add_model(src: dict, filename: str | None = None,
@@ -326,7 +333,9 @@ def add_model(src: dict, filename: str | None = None,
             d, dest = _place_gguf(local, model_dir, log)
             log("hashing new file…")
             sha = _sha256(dest, log)
-            _index_llama_dir(d, dest, sha, _meta_for_db(meta))
+            prov = ({"repo": src["repo_id"], "tag": _quant_tag(dest.name)}
+                    if src["kind"] == "hf" else None)
+            _index_llama_dir(d, dest, sha, _meta_for_db(meta), provenance=prov)
             model_id = d.name
         else:
             d, dest, cat = _place_weight(local, meta, category, log)

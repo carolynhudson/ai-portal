@@ -399,6 +399,30 @@ def test_title_panels_and_the_status_hero_family():
         "#upg-head stopped centering its detail text on the title"
 
 
+def test_the_model_page_is_driven_by_collected_data():
+    """The owner's display law (6.14.1zl): the llama tree is $quantizer/
+    $model/$quant built from DATA — the id (cache), the provenance ledger
+    (migrated library rows), or the header's own words (no-HF models like
+    roleplay-Xing4.0 land under honest Unknowns, never a fabricated repo).
+    The HF identity is columns (hf_repo/hf_tag), the card links the hub,
+    and the indexer has operator doors (CLI + job route)."""
+    m = (ROOT / "web" / "templates" / "models.html").read_text()
+    assert 'href="https://huggingface.co/{{ m.hf_repo }}"' in m, \
+        "the hub link row left the identity card"
+    assert "portal library" in m, "the placement badge is gone"
+    main = (ROOT / "app" / "main.py").read_text()
+    assert "sanitize_repo_group" in main, "the metadata quantizer chain is gone"
+    assert '@app.post("/api/models/rescan")' in main, "the indexer route is gone"
+    assert (ROOT / "tools" / "modelindex.py").exists(), "the indexer CLI is gone"
+    mi = (ROOT / "app" / "core" / "modelindex.py").read_text()
+    assert '"hf_repo TEXT, hf_tag TEXT"' in mi.replace("\n", " ").replace("  ", " ") \
+        or ("hf_repo" in mi and "hf_tag" in mi), "the provenance columns are gone"
+    assert ".mig-" in mi, "the scanner forgot the tool's staged-name law"
+    dbm = (ROOT / "app" / "core" / "db.py").read_text()
+    assert "provenance" in dbm, "the provenance ledger column is gone"
+    assert "COALESCE(excluded.provenance" in dbm, "the ledger's erase-proof is gone"
+
+
 def test_the_migrate_button_follows_the_library_law():
     """The HF-cache -> library migration UI (6.14.1zk). The owner's rule:
     the Migrate button is visible ONLY for rows the preflight clears — the

@@ -55,6 +55,7 @@ this module deliberately never restarts the router.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -326,11 +327,15 @@ def plan_for(repo_id: str, tag: str | None = None) -> dict:
                        f"-{quant_label(row, filename)}")
     residue = paths.LLAMA_MODELS / primary
     if (residue.is_dir() and not residue.is_symlink()
-            and planned & {q.name for q in residue.iterdir()}):
+            and planned & {q.name for q in residue.iterdir()
+                           if not q.name.startswith(".mig-")}):
         # A crashed apply's own directory: names from THIS model's file set
         # live there. The exists-rule operates on those files — the plan
-        # reuses the directory. A different model wearing the name shares no
-        # file names, and takes the collision chain instead.
+        # reuses the directory. Staged .mig-* names are in-flight work, not
+        # a claim on the name (a failed apply's residue once hijacked the
+        # plan AND got indexed as a phantom quant). A different model
+        # wearing the name shares no file names, and takes the collision
+        # chain instead.
         dest_name, dest = primary, residue
     else:
         dest_name = dir_name_for(repo_id, row, filename, taken)
@@ -472,6 +477,7 @@ def apply(plan: dict, log=print) -> dict:
         raise MigrationError("preflight refused: " + "; ".join(problems))
     stamp = time.strftime("%Y%m%d-%H%M%S")
     dest: Path = plan["dest"]
+    created_dest = not dest.exists()
     dest.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink() or not dest.is_dir():
         raise MigrationError(f"destination is not a real directory: {dest}")
@@ -515,6 +521,13 @@ def apply(plan: dict, log=print) -> dict:
                     os.replace(old, fin)
             except OSError:
                 log(f"rollback WARNING: could not restore {fin}")
+        # A directory this apply created is removed if it is now empty —
+        # witnessed: a failed apply left a directory whose staged name the
+        # scanner later indexed as a phantom model. Only an EMPTY directory
+        # this apply made; rmdir refuses anything else.
+        if created_dest:
+            with contextlib.suppress(OSError):
+                dest.rmdir()
         raise
 
 
@@ -580,7 +593,9 @@ def _write_ledger(plan: dict, dest: Path) -> list:
         files.append({"name": f["name"], "size": f["size"],
                       "sha256": _sha256(p) if f["size"] < 4 * 2**30 else None,
                       "role": role, "meta": None})
-    db.index_model(plan["dest_name"], dest, "llama", files)
+    db.index_model(plan["dest_name"], dest, "llama", files,
+                   provenance={"repo": plan["repo"],
+                               "tag": plan.get("quant") or ""})
     return files
 
 

@@ -425,6 +425,75 @@ def test_content_identical_sidecars_share_one_library_inode(tmp_path):
     assert not link2.exists(), "the coder's snapshot link released, not dangling"
 
 
+def test_provenance_survives_the_cache_retiring(tmp_path):
+    """The owner's recovery law (6.14.1zl): the HF identity outlives the
+    cache row. After a migration the library row carries hf_repo/hf_tag from
+    the provenance ledger, and the card's hub link derives from them."""
+    hub = hub_root()
+    seed(hub, "org/Prov-GGUF", ["prov-Q4_K_M.gguf"])
+    index_all(hub)
+    mm.apply(mm.plan_for("org/Prov-GGUF", "Q4_K_M"))
+    rows = rows_by_id()
+    r = rows["prov-Q4_K_M"]
+    assert r["hf_repo"] == "org/Prov-GGUF" and r["hf_tag"] == "Q4_K_M", \
+        "the library row keeps the hub identity the cache row used to be"
+    # A re-index that knows nothing (a bare rescan) must not erase it.
+    modelindex.rescan(cache_dir=hub)
+    assert rows_by_id()["prov-Q4_K_M"]["hf_repo"] == "org/Prov-GGUF"
+    # And a ledger re-write without provenance keeps the old one (COALESCE).
+    from app.core import db as _db
+    _db.index_model("prov-Q4_K_M", plan_dest(), "llama", [])
+    modelindex.rescan(cache_dir=hub)
+    assert rows_by_id()["prov-Q4_K_M"]["hf_repo"] == "org/Prov-GGUF", \
+        "a clueless re-index never erases recorded provenance"
+
+
+def plan_dest() -> Path:
+    return paths.LLAMA_MODELS / "prov-Q4_K_M"
+
+
+def test_cache_rows_carry_repo_and_tag_as_data(tmp_path):
+    """The tree and the hub URL read columns, not id grammar: cache rows
+    carry hf_repo/hf_tag as data on the row."""
+    hub = hub_root()
+    seed(hub, "org/Data-GGUF", ["data-Q5_K_M.gguf"])
+    index_all(hub)
+    r = rows_by_id()["org/Data-GGUF:Q5_K_M"]
+    assert r["hf_repo"] == "org/Data-GGUF" and r["hf_tag"] == "Q5_K_M"
+
+
+def test_staged_mig_names_are_never_models(tmp_path):
+    """The failed IQ3_S apply left a .mig-* staged name; the scanner indexed
+    it as a phantom quant. In-flight names are the tool's, not models —
+    the scan refuses to see them, and they never claim a plan's name."""
+    lib = paths.LLAMA_MODELS
+    d = lib / "ghost-Q4_K_M"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / ".mig-20261106-000000-ghost-Q4_K_M.gguf", _KV, pad=5)
+    models, problems = modelindex.scan_library()
+    assert not any(str(m["id"]).startswith("ghost") for m in models), \
+        "a .mig-* staged name became an index row"
+
+
+def test_failed_apply_removes_the_directory_it_created(tmp_path):
+    hub = hub_root()
+    seed(hub, "org/RD-GGUF", ["rd-Q4_K_M.gguf"])
+    index_all(hub)
+    monkey_final = mm._land
+
+    def kaboom(f, tmp, final, stamp, replaced, landed, log):
+        raise RuntimeError("simulated mid-apply failure")
+
+    mm._land = kaboom
+    try:
+        with pytest.raises(RuntimeError):
+            mm.apply(mm.plan_for("org/RD-GGUF", "Q4_K_M"))
+    finally:
+        mm._land = monkey_final
+    assert not (paths.LLAMA_MODELS / "rd-Q4_K_M").exists(), \
+        "a failed apply leaves no directory behind"
+
+
 def test_partial_downloads_are_refused_never_migrated(tmp_path):
     """The owner's warning: metadata testing left partial models in the cache.
     A snapshot whose blob is gone has no index row (the scan reports the

@@ -41,7 +41,7 @@ os.environ.setdefault("AI_PORTAL_PASSWORD", "mi-test-password")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core import db, modelindex as mi, modelmeta  # noqa: E402
+from app.core import db, modelindex as mi, modelmeta, paths  # noqa: E402
 
 GiB = 1 << 30
 
@@ -1712,3 +1712,45 @@ def test_the_literal_insert_matches_the_write_columns():
     assert built == mi._INSERT_SQL, ("_WRITE_COLUMNS and the literal INSERT have drifted")
     assert mi._INSERT_SQL.count("?") == len(mi._WRITE_COLUMNS), (
         mi._INSERT_SQL.count("?"), len(mi._WRITE_COLUMNS))
+
+
+# ------------------------------------------------------------------ 6.14.1zl
+
+def test_a_gguf_at_the_models_dir_root_is_reported(tmp_path):
+    """The router's one-level scan treats a root-level GGUF as a model; the
+    index gives it no directory identity. The blind spot (measured by the
+    display audit) is now a named problem, health-visible, not a silence."""
+    from tests.gguf_fixture import _write_fake_gguf
+    kv = {"block_count": 8, "attention.head_count": 4,
+          "attention.head_count_kv": 2, "context_length": 4096}
+    _write_fake_gguf(paths.LLAMA_MODELS / "loose-Q4_K_M.gguf", kv, pad=2)
+    _models, problems = mi.scan_library()
+    kinds = [p for p in problems if p.get("kind") == "root-gguf"]
+    assert kinds and "loose-Q4_K_M.gguf" in kinds[0]["path"]
+
+
+def test_health_names_root_ggufs(tmp_path, monkeypatch):
+    from app.core import health
+    (paths.LLAMA_MODELS / "loose-Q8_0.gguf").write_bytes(b"x")
+    m = health.model_store(refresh=True)
+    assert "loose-Q8_0.gguf" in m.get("root_ggufs", [])
+
+
+def test_library_rows_read_the_provenance_ledger(tmp_path):
+    """scan_library attaches {repo, tag} from the models table; the index
+    row carries them as columns — the tree and the hub link read data."""
+    from app.core import db
+    from tests.gguf_fixture import _write_fake_gguf
+    kv = {"block_count": 8, "attention.head_count": 4,
+          "attention.head_count_kv": 2, "context_length": 4096}
+    d = paths.LLAMA_MODELS / "placed-Q4_K_M"
+    d.mkdir(parents=True)
+    _write_fake_gguf(d / "placed-Q4_K_M.gguf", kv, pad=2)
+    db.index_model("placed-Q4_K_M", d, "llama",
+                   [{"name": "placed-Q4_K_M.gguf",
+                     "size": (d / "placed-Q4_K_M.gguf").stat().st_size,
+                     "sha256": None, "role": "gguf", "meta": None}],
+                   provenance={"repo": "org/Placed-GGUF", "tag": "Q4_K_M"})
+    models, _ = mi.scan_library()
+    row = next(m for m in models if m["id"] == "placed-Q4_K_M")
+    assert row["hf_repo"] == "org/Placed-GGUF" and row["hf_tag"] == "Q4_K_M"

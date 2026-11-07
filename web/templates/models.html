@@ -178,6 +178,7 @@
           <span class="tag {{ vt }}" title="{{ m.verdict }}{% if m.verdict == 'reduced' and m.est_ctx %} — max about {{ m.est_ctx | ctxlen }} here{% endif %}">{{ m.verdict }}</span>
           {% if m.live %}<span class="tag ok mv-live" title="registered with the router{% if m.live_as and m.live_as != m.id %} as {{ m.live_as }}{% endif %}">on router</span>{% endif %}
           {% if m.source == "cache" %}<span class="mv-cache" title="found in the Hugging Face hub cache, not under {{ diskroot }} — llama.cpp can load it and does list it, but the portal did not put it there">hub cache</span>{% elif m.source and m.source != "library" %}<span class="mv-cache">{{ m.source }}</span>{% endif %}
+          {% if m.source == "library" and m.hf_repo %}<span class="mv-cache" title="in the portal library, placed from {{ m.hf_repo }}{{ (':' ~ m.hf_tag) if m.hf_tag else '' }} — the tree keeps the hub identity from the provenance ledger, not from a folder name">portal library</span>{% endif %}
           {# The Migrate button (6.14.1zk) shows only for cache rows the
              preflight clears — files in live service use and partial
              downloads get no button, only the library law's own verdict. #}
@@ -205,11 +206,12 @@
           <div class="mv-fields">
             <div class="kv"><span class="k">model id</span><span class="mono">{{ m.id }}</span></div>
             <div class="kv"><span class="k">gguf name</span><span class="mono">{{ m.name or "—" }}</span></div>
-            <div class="kv"><span class="k">quantizer (repo)</span><span class="mono">{{ g.repo }}</span></div>
+            <div class="kv"><span class="k">quantizer (repo)</span><span class="mono">{{ m.hf_repo or g.repo }}</span></div>
             <div class="kv"><span class="k">quantization</span><span class="mono">{{ m.quant or "—" }}{% if m.quant_note %} <span class="tag warn" title="{{ m.quant_note }}">header file_type disagrees</span>{% endif %}</span></div>
             <div class="kv"><span class="k">header file_type</span><span class="mono" title="general.file_type as the GGUF header declares it; the quantization above keeps the filename tag -- the maker's convention and the tag the router registers">{{ m.file_type or "—" }}</span></div>
             <div class="kv"><span class="k">architecture</span><span class="mono">{{ m.arch or "—" }}</span></div>
-            <div class="kv"><span class="k">source</span><span>{% if m.source == "cache" %}<span class="mut">hub cache — llama.cpp discovers it; the portal did not put it there</span>{% elif m.source and m.source != "library" %}{{ m.source }}{% else %}library (portal-managed){% endif %}</span></div>
+            {% if m.hf_repo %}<div class="kv"><span class="k">hugging face</span><span><a href="https://huggingface.co/{{ m.hf_repo }}" target="_blank" rel="noopener" class="mono" title="the hub repository this model's identity comes from">{{ m.hf_repo }}{{ (':' ~ m.hf_tag) if m.hf_tag else '' }}</a></span></div>{% endif %}
+            <div class="kv"><span class="k">source</span><span>{% if m.source == "cache" %}<span class="mut">hub cache — llama.cpp discovers it; the portal did not put it there</span>{% elif m.hf_repo %}<span class="mut">portal library — placed from {{ m.hf_repo }}{{ (':' ~ m.hf_tag) if m.hf_tag else '' }}{% if m.source == "library" %}; the hub cache copy is retired{% endif %}</span>{% elif m.source and m.source != "library" %}{{ m.source }}{% else %}library (portal-managed){% endif %}</span></div>
           </div>
           <div class="mv-sec">size and disk</div>
           <div class="mv-fields">

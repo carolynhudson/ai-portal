@@ -538,7 +538,13 @@ def model_store(refresh: bool = False) -> dict:
         on_disk = []
         hidden: list[str] = []
         empty_dirs: list[str] = []
+        root_ggufs: list[str] = []
         if paths.LLAMA_MODELS.is_dir():
+            # The router's one-level scan treats a GGUF at the models-dir
+            # ROOT as a model file; the portal's index gives it no directory
+            # identity. The gap is reported, not ignored (6.14.1zl).
+            root_ggufs = sorted(p.name for p in paths.LLAMA_MODELS.iterdir()
+                                if p.is_file() and p.suffix.lower() == ".gguf")
             for d in sorted(p for p in paths.LLAMA_MODELS.iterdir() if p.is_dir()):
                 files = [f for f in d.iterdir() if f.is_file()]
                 ggufs = [f for f in files if f.suffix.lower() == ".gguf"]
@@ -566,6 +572,7 @@ def model_store(refresh: bool = False) -> dict:
             "model_dirs": len(on_disk),
             "stale_presets": stale_presets[:10],
             "invisible_models": hidden[:10],
+            "root_ggufs": root_ggufs[:10],
             "dirs_without_model": empty_dirs[:10],
             "broken_links": broken[:10],
         }
@@ -805,6 +812,12 @@ def advisories(release: dict | None = None, service: dict | None = None,
         add("warn", f"{len(m['invisible_models'])} model folder(s) hold model files in a "
                     f"sub-subdirectory ({', '.join(m['invisible_models'][:3])}) — llama.cpp "
                     "scans one level deep, so it cannot see them.")
+    if m.get("root_ggufs"):
+        add("warn", f"{len(m['root_ggufs'])} GGUF file(s) sit at the models-dir root "
+                    f"({', '.join(m['root_ggufs'][:3])}) — the router treats them as "
+                    "models, the index gives them no identity; move each into its own "
+                    "directory.",
+            where="/models?tab=llama", label="Models page")
     if m.get("stale_presets"):
         add("warn", f"{len(m['stale_presets'])} preset section(s) have no model directory: "
                     f"{', '.join(m['stale_presets'][:3])}")

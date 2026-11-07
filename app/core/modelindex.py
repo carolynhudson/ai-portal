@@ -316,19 +316,53 @@ def scan_library(models_dir: Path | None = None) -> tuple[list[dict], list[dict]
     if not root.is_dir():
         return models, [{"kind": "missing-dir", "path": str(root)}]
 
+    # Provenance ledger: the `models` table carries {repo, tag} for library
+    # models the portal placed (downloaded via Get, migrated from the cache).
+    # The HF identity outlives the cache row it came from — the tree, the
+    # card, and the hub URL all read it from here after the cache retires.
+    prov: dict[str, dict] = {}
+    try:
+        from . import db
+        for r in db.query("SELECT id, provenance FROM models "
+                          "WHERE provenance IS NOT NULL"):
+            try:
+                prov[str(r["id"])] = json.loads(r["provenance"] or "{}")
+            except (ValueError, TypeError):
+                continue
+    except Exception:      # noqa: BLE001 — a ledger read never stops a scan
+        pass
+
     for entry in sorted(root.iterdir()):
         if entry.is_symlink() and not entry.exists():
             problems.append({"kind": "dangling-symlink", "path": str(entry),
                              "note": "link goes nowhere; the router cannot see it"})
             continue
         if not entry.is_dir():
+            # The router's one-level scan treats a GGUF at the models-dir ROOT
+            # as a model file — the portal's index and health saw neither,
+            # a blind spot measured in the display audit. It is a model to
+            # llama.cpp, so it is reported, not indexed silently: the layout
+            # law is one directory per model, and a router-visible file that
+            # the index cannot name is exactly the drift this page forbids.
+            if entry.suffix.lower() == ".gguf":
+                problems.append({"kind": "root-gguf", "path": str(entry),
+                                 "note": "a GGUF at the models-dir root is a "
+                                         "model to the router but has no "
+                                         "directory identity; move it into "
+                                         "its own directory"})
             continue
-        _scan_model_dir(entry, models, problems)
+        _scan_model_dir(entry, models, problems, prov.get(entry.name))
     return models, problems
 
 
-def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> None:
-    ggufs = sorted(entry.glob("*.gguf"))
+def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict],
+                    provenance: dict | None = None) -> None:
+    # The migration tool's staged names (.mig-<stamp>-…) are in-flight work,
+    # never models: a scan that globbed them indexed a half-failed apply as
+    # a phantom quant (witnessed 2026-11-06). The tool's rollback cleans
+    # them; the scan refuses to see them.
+    ggufs = [p for p in sorted(entry.glob("*.gguf"))
+             if not p.name.startswith(".mig-")]
     if not ggufs:
         return
 
@@ -360,12 +394,13 @@ def _scan_model_dir(entry: Path, models: list[dict], problems: list[dict]) -> No
 
     for key, s in sets.items():
         _model_row(entry.name, "library", entry, key, s["parts"], s["sidecars"],
-                   models, problems)
+                   models, problems, hf=provenance)
 
 
 def _model_row(model_id: str, source: str, where: Path, model_key: str,
                parts: dict[int, Path], sidecars: list[Path],
-               models: list[dict], problems: list[dict]) -> None:
+               models: list[dict], problems: list[dict],
+               hf: dict | None = None) -> None:
     """Turn one shard set plus its sidecars into one index row.
 
     Shared by the library scan and the HF-cache scan deliberately. Two builders
@@ -443,6 +478,14 @@ def _model_row(model_id: str, source: str, where: Path, model_key: str,
         # the conflict note explains itself.
         "file_type": meta.get("file_type"),
         "quant_note": quant_note,
+        # HF identity, as data: cache rows carry the repo and tag their id
+        # encodes; library rows carry the provenance the portal recorded when
+        # it placed the model (Get download, cache migration). The tree, the
+        # card's hub link, and every "which repo did this come from" question
+        # read these columns — the cache folder structure is not the source
+        # of truth after the cache retires (owner, 6.14.1zl).
+        "hf_repo": (hf or {}).get("repo") or None,
+        "hf_tag": (hf or {}).get("tag") or None,
         "ctx_trained": meta.get("context_length"),
         "layers": meta.get("block_count"),
         "kv_heads": meta.get("attention_kv_count"),
@@ -797,7 +840,8 @@ def _scan_cache_repo(snap: Path, repo_id: str, models: list[dict],
         if pick is not None:
             s["sidecars"].append(pick)
         _model_row(s["id"], "cache", snap, key, s["parts"], s["sidecars"],
-                   models, problems)
+                   models, problems,
+                   hf={"repo": repo_id, "tag": s["tag"]})
 
 
 # The export-tag grammar, longest-alternative-first. The old pattern required DIGITS
@@ -864,6 +908,7 @@ CREATE TABLE IF NOT EXISTS model_index (
   id TEXT PRIMARY KEY,
   source TEXT, path TEXT, bytes INTEGER, shard_total INTEGER, mmproj_bytes INTEGER,
   arch TEXT, name TEXT, quant TEXT, file_type TEXT, quant_note TEXT,
+  hf_repo TEXT, hf_tag TEXT,
   ctx_trained INTEGER,
   layers INTEGER, kv_heads INTEGER, attention_heads INTEGER,
   embedding_length INTEGER, full_attention_interval INTEGER,
@@ -915,7 +960,7 @@ def _est_row(m: dict, est: dict, ctx: int) -> dict:
 # that was written to prevent it (the imatrix regex, §4.9 notes).
 _WRITE_COLUMNS = (
     "id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name",
-    "quant", "file_type", "quant_note", "ctx_trained", "layers", "kv_heads", "attention_heads",
+    "quant", "file_type", "quant_note", "hf_repo", "hf_tag", "ctx_trained", "layers", "kv_heads", "attention_heads",
     "embedding_length", "full_attention_interval", "rope_dimension_count",
     "expert_count", "expert_used_count", "is_moe", "has_ssm_state",
     "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers",
@@ -991,8 +1036,8 @@ def _insert_sql() -> str:
 # together: the executed text is a literal, so no reader or scanner has to prove that the
 # joined identifier list cannot carry model data, and the builder stays the drift check.
 _INSERT_SQL = (
-    'INSERT OR REPLACE INTO model_index ("id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name", "quant", "file_type", "quant_note", "ctx_trained", "layers", "kv_heads", "attention_heads", "embedding_length", "full_attention_interval", "rope_dimension_count", "expert_count", "expert_used_count", "is_moe", "has_ssm_state", "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers", "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type", "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs", "scanned_at", "header_hash") VALUES '
-    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO model_index ("id", "source", "path", "bytes", "shard_total", "mmproj_bytes", "arch", "name", "quant", "file_type", "quant_note", "hf_repo", "hf_tag", "ctx_trained", "layers", "kv_heads", "attention_heads", "embedding_length", "full_attention_interval", "rope_dimension_count", "expert_count", "expert_used_count", "is_moe", "has_ssm_state", "has_vision", "has_mmproj", "sidecar_type", "has_chat_template", "template_markers", "vocab_size", "has_fim", "nextn_layers", "draft_tensors", "pooling_type", "est_weights", "est_kv", "est_total", "est_ctx", "est_inputs", "scanned_at", "header_hash") VALUES '
+    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 )
 
 

@@ -364,6 +364,15 @@ class AddModelBody(BaseModel):
     model_dir: str | None = None  # llama model dir (for mmproj/draft files)
 
 
+def sanitize_repo_group(value: str) -> str:
+    """A tree group name from GGUF metadata words (``general.quantized_by``,
+    ``general.organization``): printable, bounded, no slashes. An empty
+    result means the chain must continue — the caller's fallback answers."""
+    s = re.sub(r"[^A-Za-z0-9 ._-]+", " ", str(value or "")).strip()
+    s = re.sub(r"\s{2,}", " ", s)[:48]
+    return s
+
+
 class MigrateModelBody(BaseModel):
     """One cache model id (org/repo:TAG) — the row the Migrate button shows."""
     id: str
@@ -935,21 +944,43 @@ def create_app() -> FastAPI:
         # that triple is the index's unique key, so every leaf is exactly one model and a
         # fourth level is not needed. Zero cost: the facts come out of the ids the page
         # already renders; nothing sniffs GGUF headers at render time.
+        def _stem_split(model_id: str) -> tuple[str, str, str]:
+            repo, _, rest = str(model_id).rpartition("/")
+            stem, _, tag = rest.rpartition(":")
+            return repo, stem, tag
+
+        def _hf_stem(repo_id: str, tag: str) -> str:
+            """The cache tree's own stem law (the repo id minus its -GGUF
+            family suffix), reused for library rows that carry provenance so
+            migrated models keep the exact group they had as cache rows."""
+            _r, _, name = repo_id.rpartition("/")
+            low = name.casefold()
+            for suf in ("-gguf", "-gguf-rco"):
+                if low.endswith(suf):
+                    name = name[: -len(suf)] + name[-len(suf):].upper()
+                    break
+            return f"{name}-{tag}" if tag else name
+
         by_repo: dict[str, dict[str, list]] = {}
         for m in indexed:
-            repo, _, rest = str(m["id"]).rpartition("/")
-            stem, _, _quant = rest.rpartition(":")
+            # The tree is driven by collected data, not folder shape (owner,
+            # 6.14.1zl): $quantizer/$model/$quant comes from the id for cache
+            # rows, from the provenance ledger for migrated library rows, and
+            # from the GGUF header's own words for models with no HF
+            # identity (roleplay-Xing4.0: derived, not downloadable — it
+            # lands under honest Unknowns, not a fabricated repo).
+            repo, stem, tag = _stem_split(m["id"])
             if not repo:
-                # A library row's id is a directory name (no namespace), so
-                # the cache tree's split cannot see it — every migrated
-                # model became an orphan "Local files" group (owner). One
-                # group, named for what it is, and the family is the id
-                # minus its `-QUANT` suffix: the quants of one base gather
-                # under one stem, the same shape the cache tree shows.
-                repo = "Portal library"
-                q = str(m.get("quant") or "")
-                if q and stem.casefold().endswith("-" + q.casefold()):
-                    stem = stem[: -(len(q) + 1)]
+                hf_repo = m.get("hf_repo") or ""
+                if hf_repo:
+                    m["hf"] = True
+                    repo = hf_repo
+                    stem = _hf_stem(hf_repo, m.get("hf_tag") or tag)
+                else:
+                    m["hf"] = False
+                    qn = sanitize_repo_group(m.get("quantizer") or "")
+                    repo = qn or "Unknown"
+                    stem = str(m.get("name") or "").strip() or stem
             by_repo.setdefault(repo, {}).setdefault(stem, []).append(m)
         mv_tree = [{"repo": repo,
                     "subs": [{"name": name,
@@ -2219,6 +2250,27 @@ def create_app() -> FastAPI:
             return modelmigrate.migratable()
         except Exception:  # noqa: BLE001
             return {}
+
+    @app.post("/api/models/rescan")
+    def api_models_rescan(_=Depends(_require_auth)):
+        """Rebuild the model index now, as a job (the indexer's second door;
+        the first is tools/modelindex.py). Exclusive: one scan at a time,
+        and it queues behind a running migration — a rescan mid-move would
+        index a half-stated library."""
+        def work(log):
+            r = modelindex.rescan()
+            log(f"scanned {r['models']} model(s) — {r['library']} library, "
+                f"{r['cache']} cache")
+            for p in r.get("problems", [])[:20]:
+                log(f"! {p.get('kind')}: {p.get('path', '')} {p.get('note', '')}")
+            return {"count": r["models"], "problems": len(r.get("problems", []))}
+
+        jid = updater.start_job("model-index", "library+cache", work,
+                                exclusive=True)
+        if jid is None:
+            raise _busy()
+        db.event("portal", "model-index", "manual rescan started")
+        return {"job": jid}
 
     @app.post("/api/models/migrate")
     def api_migrate_model(body: MigrateModelBody, _=Depends(_require_auth)):
