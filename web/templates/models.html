@@ -277,7 +277,8 @@
     <tr><th>router id</th><th>note</th></tr>
     {% for m in extra_live %}
     <tr><td class="mono">{{ m.get('id') }}</td>
-        <td class="mut">registered with the router; no matching directory under {{ diskroot }} and no hub-cache row under that id either</td></tr>
+        {% if m.get('note') %}<td class="mut">{{ m['note'] }}</td>
+        {% else %}<td class="mut">registered with the router; no matching directory under {{ diskroot }} and no hub-cache row under that id either</td>{% endif %}</tr>
     {% endfor %}
   </table>
   {% endif %}
