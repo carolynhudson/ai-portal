@@ -943,12 +943,15 @@ def create_app() -> FastAPI:
         for m in indexed:
             if m.get("hf_repo"):
                 old = f"{m['hf_repo']}:{m.get('hf_tag') or m.get('quant') or ''}"
+                retired[old.lower()] = str(m["id"])          # data equality
                 retired[modelindex.router_key(old.rstrip(":"))] = str(m["id"])
         extra_live = []
         for m in live:
-            if modelindex.router_key(m.get("id") or "") in library_ids:
+            rid = str(m.get("id") or "")
+            if modelindex.router_key(rid) in library_ids:
                 continue
-            tgt = retired.get(modelindex.router_key(m.get("id") or ""))
+            tgt = retired.get(rid.lower()) or \
+                retired.get(modelindex.router_key(rid))
             if tgt:
                 prior = str(m.get("note") or "")
                 m["note"] = (prior + " — " if prior else "") + \
