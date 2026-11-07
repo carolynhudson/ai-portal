@@ -431,6 +431,13 @@ def test_product_logos_mark_the_product_labels():
     assert '<use href="#i-comfy"/></svg> ComfyUI models</h2>' in m
     base = (ROOT / "web" / "templates" / "base.html").read_text()
     assert "'ComfyUI Models', 'i-comfy'" in base, "the nav menu item lost its mark"
+    assert "'Llama Models', 'i-llamacpp'" in base, "the nav menu item lost its mark"
+    # the Get-models service choice is a product-naming label: official
+    # marks, not emoji (owner, 6.14.1zl)
+    assert 'value="llamacpp"' in m and '<use href="#i-llamacpp"/></svg> llama.cpp' in m, \
+        "the llama.cpp search radio lost its mark"
+    assert '<use href="#i-comfy"/></svg> ComfyUI' in m, \
+        "the ComfyUI search radio lost its mark"
     # Prose and logs never wear logos: the log/KB panes must not reference
     # the product sprites.
     kb = (ROOT / "web" / "templates" / "help.html").read_text() \

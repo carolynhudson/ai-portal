@@ -72,8 +72,11 @@
     <p class="mut">Search for AI models on Hugging Face. Select the service you want to run the model on, then search by name or description.</p>
     
     <div class="service-radio">
-      <label><input type="radio" name="search-service" value="llamacpp" checked onchange="updateSearchTypes()"> 🦙 llama.cpp (GGUF models)</label>
-      <label><input type="radio" name="search-service" value="comfyui" onchange="updateSearchTypes()"> 🎨 ComfyUI (Safetensors models)</label>
+      {# Owner ruling (6.14.1zl): the service choice is a product-naming UI
+         label, so it wears the official marks — emoji replaced by the
+         sprite logos. #}
+      <label><input type="radio" name="search-service" value="llamacpp" checked onchange="updateSearchTypes()"> <svg width="14" height="14" aria-hidden="true" style="vertical-align:-2px"><use href="#i-llamacpp"/></svg> llama.cpp (GGUF models)</label>
+      <label><input type="radio" name="search-service" value="comfyui" onchange="updateSearchTypes()"> <svg width="14" height="14" aria-hidden="true" style="vertical-align:-2px"><use href="#i-comfy"/></svg> ComfyUI (Safetensors models)</label>
     </div>
 
     <form onsubmit="searchModels(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">

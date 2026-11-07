@@ -7751,3 +7751,22 @@ strips the org AND the tag, so normalized forms cannot bridge cache↔dir).
 The template renders `m['note']` (it had been computed, then dropped).
 Witnesses: 7 zombies annotated on the live page; sections are the library
 ids; full suite 1323/5.
+
+**6.14.1zl follow-up 2 — the living index alert + product marks (owner):**
+the Needs-attention panel warned "Model index is 66 days old" — it was
+reading the gguf-indexer's dead `INDEX.json` (Sep 1 artifact) while the
+canonical `model_index` table rescans at every start. The intent (index
+freshness) survives, the door moves: `rescan()` now records its own report
+(`model_index.stats`: time, rows, problems + kinds), and the probe/advisory
+report THAT — "last scanned N days ago", "the model index is empty", and
+the last scan's problem counts by kind (incomplete shards, root ggufs,
+invisible layouts) routed to the Models page. The health pane's Model store
+card and the Portal vitals line follow the new shape.
+Product marks (owner ruling): the official llama.brand and comfy.org icons
+join the sprite (`i-llamacpp`, `i-comfy` — llama geometry unmodified with
+theme-following `currentColor` fills; Comfy byte-identical colors), placed
+on the headings/tabs/card-titles/nav-item that name the products (models
+h2s + tabs, updates tabs + release cards, llama.cpp deployed, router-auth,
+dashboard heroes, nav's ComfyUI Models). Trademarks are exempt from the
+gradient-mark law exactly as the caution sign is; prose, logs and
+knowledge text wear no marks.
