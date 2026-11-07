@@ -123,7 +123,7 @@ def handle_request(request, raw: bytes) -> JSONResponse:
                              f"Allowed here: {', '.join(allowed)}. The portal's own "
                              f"session holds the tools no token carries."}]}},
                 headers={"X-Mesh-Scope": ",".join(allowed)})
-        out = kb_mcp.handle(body)
+        out = kb_mcp.handle(body, actor=actor)
         ok = 1 if not (out.get("result") or {}).get("isError") else 0
         db.event(actor, "mcp.call", f"tool={tool} ok={ok} bytes={len(json.dumps(args))}")
         return JSONResponse(out)

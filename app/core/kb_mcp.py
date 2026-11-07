@@ -144,8 +144,15 @@ def _hybrid_search(query: str, limit: int) -> list[dict]:
     return out
 
 
-def call_tool(name: str, args: dict) -> dict:
-    """One tool call, portal-side. Raises on unknown names; tool refusals return isError."""
+def call_tool(name: str, args: dict, actor: str = "portal") -> dict:
+    """One tool call, portal-side. Raises on unknown names; tool refusals return isError.
+
+    `actor` is the calling identity ("portal", or "agent:<name>" from the mesh
+    door). Mesh P1: a write from a mesh identity lands QUARANTINED
+    (status='pending') — real, searchable, flagged, and the tool answer says
+    so, because an agent that believes its fact is already shared will not
+    tell the next session. Portal-session writes self-promote.
+    """
     if name == "kb_search":
         rows = kb.search(str(args.get("query") or ""), limit=int(args.get("limit") or 8))
         # The address a section is cited by is its `id` (kb.find accepts it). The
@@ -162,13 +169,20 @@ def call_tool(name: str, args: dict) -> dict:
         return _result({"ref": sec.get("ref"), "title": sec.get("title"),
                         "body": sec.get("body", "")})
     if name == "memory_add":
+        quarantined = actor.startswith("agent:")
         try:
             row = memory.add(str(args.get("text") or ""), tags=str(args.get("tags") or ""),
-                             source=str(args.get("source") or "mcp"))
+                             source=str(args.get("source") or "mcp"),
+                             status="pending" if quarantined else "promoted",
+                             actor=actor)
         except memory.MemoryError as e:
             return _result({"error": str(e)})
         if embeddings.live():
             _embed_row(row)
+        if quarantined:
+            row["note"] = ("recorded as PENDING: mesh writes are quarantined until the "
+                           "portal owner promotes them (Health page, Mesh section). "
+                           "Searches find it meanwhile, flagged with its status.")
         return _result(row)
     if name == "memory_search":
         return _result(_hybrid_search(str(args.get("query") or ""),
@@ -191,8 +205,10 @@ def call_tool(name: str, args: dict) -> dict:
     raise LookupError(f"unknown tool: {name}")
 
 
-def handle(msg: dict) -> dict | None:
-    """One JSON-RPC message in, one response out (None for notifications)."""
+def handle(msg: dict, actor: str = "portal") -> dict | None:
+    """One JSON-RPC message in, one response out (None for notifications).
+    `actor` is the authenticated identity the transport resolved (the HTTP
+    door passes it; stdio is this box's own harness, so it is the portal)."""
     method = msg.get("method")
     mid = msg.get("id")
     params = msg.get("params") or {}
@@ -211,7 +227,7 @@ def handle(msg: dict) -> dict | None:
         try:
             return {"jsonrpc": "2.0", "id": mid,
                     "result": call_tool(str(params.get("name") or ""),
-                                        params.get("arguments") or {})}
+                                        params.get("arguments") or {}, actor=actor)}
         except LookupError as e:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
         except Exception as e:  # noqa: BLE001 — a tool failure is a tool result, not a death

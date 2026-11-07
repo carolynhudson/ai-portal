@@ -33,23 +33,36 @@ class MemoryError(ValueError):
     pass
 
 
-def add(text: str, tags: str = "", source: str = "") -> dict:
-    """Record one memory. Returns the stored row."""
+def add(text: str, tags: str = "", source: str = "",
+        status: str = "promoted", actor: str = "portal") -> dict:
+    """Record one memory. Returns the stored row.
+
+    Mesh P1: a write from a mesh identity arrives `status="pending"` —
+    quarantined. It is real, it is searchable, and it is flagged; the owner
+    promotes it into the shared store (or rejects it) from the Health page.
+    Portal-session writes self-promote (the owner's own session is the
+    trust root; the quarantine gates the machines, not the owner).
+    """
     text = (text or "").strip()
     if not text:
         raise MemoryError("a memory needs text")
     if len(text) > MAX_TEXT:
         raise MemoryError(f"the memory is {len(text)} characters; the ceiling is {MAX_TEXT} — "
                           "this store is for what a later session must know, not for transcripts")
+    if status not in ("promoted", "pending"):
+        raise MemoryError(f"unknown memory status {status!r}")
     now = time.time()
-    db.execute("INSERT INTO memory (text, tags, source, created_at) VALUES (?,?,?,?)",
-               (text, (tags or "").strip(), (source or "").strip(), now))
-    rows = db.query("SELECT id, text, tags, source, created_at FROM memory "
-                    "WHERE id = last_insert_rowid()")
+    db.execute("INSERT INTO memory (text, tags, source, created_at, status, actor) "
+               "VALUES (?,?,?,?,?,?)",
+               (text, (tags or "").strip(), (source or "").strip(), now,
+                status, (actor or "portal").strip()[:64] or "portal"))
+    rows = db.query("SELECT id, text, tags, source, created_at, status, actor "
+                    "FROM memory WHERE id = last_insert_rowid()")
     row = dict(rows[0]) if rows else {"text": text, "tags": tags, "source": source,
-                                      "created_at": now}
+                                      "created_at": now, "status": status, "actor": actor}
     db.event("portal", "memory-add", f"id={row.get('id')} tags={row.get('tags') or '-'} "
-                                     f"chars={len(text)} source={row.get('source') or '-'}")
+                                     f"chars={len(text)} source={row.get('source') or '-'} "
+                                     f"status={status} actor={row.get('actor')}")
     return row
 
 
@@ -64,7 +77,7 @@ def search(query: str, limit: int = 10) -> list[dict]:
     limit = max(1, min(int(limit or 10), 100))
     try:
         rows = db.query(
-            "SELECT m.id, m.text, m.tags, m.source, m.created_at, "
+            "SELECT m.id, m.text, m.tags, m.source, m.created_at, m.status, m.actor, "
             "       bm25(memory_fts) AS rank "
             "FROM memory_fts JOIN memory m ON m.id = memory_fts.rowid "
             "WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?",
@@ -90,7 +103,7 @@ def search(query: str, limit: int = 10) -> list[dict]:
     for t in terms:
         params += [f"%{t}%", f"%{t}%"]
     params.append(limit)
-    rows = db.query(f"SELECT id, text, tags, source, created_at, {score} AS score "
+    rows = db.query(f"SELECT id, text, tags, source, created_at, status, actor, {score} AS score "
                     f"FROM memory WHERE {where} "
                     f"ORDER BY score DESC, created_at DESC LIMIT ?", tuple(params))
     return [dict(r) for r in rows]
@@ -98,9 +111,50 @@ def search(query: str, limit: int = 10) -> list[dict]:
 
 def recent(limit: int = 20) -> list[dict]:
     limit = max(1, min(int(limit or 20), 100))
-    rows = db.query("SELECT id, text, tags, source, created_at FROM memory "
+    rows = db.query("SELECT id, text, tags, source, created_at, status, actor FROM memory "
                     "ORDER BY created_at DESC LIMIT ?", (limit,))
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------- quarantine (mesh P1)
+
+def pending(limit: int = 50) -> list[dict]:
+    """Quarantined mesh writes, newest first — the Health page's mesh list."""
+    rows = db.query("SELECT id, text, tags, source, created_at, status, actor "
+                    "FROM memory WHERE status = 'pending' "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (max(1, min(int(limit or 50), 200)),))
+    return [dict(r) for r in rows]
+
+
+def count_pending() -> int:
+    rows = db.query("SELECT COUNT(*) AS n FROM memory WHERE status = 'pending'")
+    return int(rows[0]["n"]) if rows else 0
+
+
+def promote(mem_id: int) -> dict | None:
+    """Owner approval: the quarantined fact joins the shared store. Audited."""
+    rows = db.query("SELECT id, text, tags, source, created_at, status, actor "
+                    "FROM memory WHERE id = ?", (int(mem_id),))
+    if not rows:
+        return None
+    db.execute("UPDATE memory SET status = 'promoted' WHERE id = ?", (int(mem_id),))
+    row = dict(rows[0])
+    db.event("portal", "memory-promote", f"id={mem_id} actor={row.get('actor')}")
+    row["status"] = "promoted"
+    return row
+
+
+def reject(mem_id: int) -> bool:
+    """Owner refusal: the quarantined fact is deleted (the FTS row goes with
+    it — the delete trigger). Audited; the text is never copied into the audit."""
+    rows = db.query("SELECT id, actor, text FROM memory WHERE id = ?", (int(mem_id),))
+    if not rows:
+        return False
+    db.execute("DELETE FROM memory WHERE id = ?", (int(mem_id),))
+    db.event("portal", "memory-reject", f"id={mem_id} actor={rows[0]['actor']} "
+                                        f"chars={len(rows[0]['text'])}")
+    return True
 
 
 def remove(mem_id: int) -> bool:

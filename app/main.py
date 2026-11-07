@@ -48,6 +48,7 @@ from .core import (
     modeladd,
     modelindex,
     modelmigrate,
+    memory,
     network,
     paths,
     personality,
@@ -208,6 +209,19 @@ class AgentIssueBody(BaseModel):
 
 class AgentRevokeBody(BaseModel):
     name: str
+    confirm: bool = False
+
+
+class MeshPromoteBody(BaseModel):
+    """Publish one quarantined mesh write. No `confirm`: promoting is
+    additive (a fact joins the store; reject is the delete, gated)."""
+    id: int
+
+
+class MeshRejectBody(BaseModel):
+    """Delete one quarantined mesh write. `confirm` because a delete removes
+    what a peer's session recorded — the owner's call, made deliberately."""
+    id: int
     confirm: bool = False
 
 
@@ -1128,6 +1142,10 @@ def create_app() -> FastAPI:
         # operator runs; the advisories already weigh these states.
         body["service"] = router_u
         body["comfy"] = comfy_u
+        # Mesh section (P1, owner): quarantined remote writes and the mesh's
+        # own event trail. The pane is read-only everywhere else; the mesh
+        # verbs are its one state-changer, each behind its own confirm.
+        body["mesh"] = _mesh_state(evlimit=12)
         return body
 
     @app.get("/health")
@@ -1839,6 +1857,50 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404,
                                 detail=f"no active identity named {body.name!r}")
         return {"ok": True, "name": body.name}
+
+    # --------------------------------------- mesh quarantine (mesh P1, owner ruling)
+    # Remote-agent memory writes land `pending` (kb_mcp.call_tool is the law);
+    # the Health page's Mesh section shows them here. Promote publishes an
+    # accepted fact (additive, audited); reject deletes it (confirm, as every
+    # delete). The feed is the mesh's own event trail: who knocked, what they
+    # asked for, what the owner decided.
+
+    def _mesh_state(evlimit: int = 20) -> dict:
+        pend = memory.pending(50)
+        for r in pend:
+            r["age_s"] = round(time.time() - (r.get("created_at") or 0), 1)
+            r["ago"] = _ago(r["age_s"] / 3600)
+        ev = db.query("SELECT ts, actor, kind, detail FROM events "
+                      "WHERE actor LIKE 'agent:%' OR kind LIKE 'mcp.%' "
+                      "OR kind IN ('memory-promote', 'memory-reject') "
+                      "ORDER BY ts DESC LIMIT ?", (evlimit,))
+        events = []
+        for e in ev:
+            d = dict(e)
+            d["ago"] = _ago(max(0.0, (time.time() - (d.get("ts") or 0)) / 3600))
+            events.append(d)
+        return {"pending": pend, "count_pending": memory.count_pending(),
+                "events": events}
+
+    @app.get("/api/mesh")
+    def api_mesh(_=Depends(_require_auth)):
+        return _mesh_state()
+
+    @app.post("/api/mesh/promote")
+    def api_mesh_promote(body: MeshPromoteBody, _=Depends(_require_auth)):
+        row = memory.promote(body.id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no memory {body.id}")
+        return {"ok": True, "id": body.id, "status": row["status"]}
+
+    @app.post("/api/mesh/reject")
+    def api_mesh_reject(body: MeshRejectBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="rejecting a quarantined memory needs confirm=true")
+        if not memory.reject(body.id):
+            raise HTTPException(status_code=404, detail=f"no memory {body.id}")
+        return {"ok": True, "id": body.id}
 
     # --------------------------------------- remote image forge (Settings page)
     # The Windows box's ComfyUI is not a local unit: it has no systemd row and

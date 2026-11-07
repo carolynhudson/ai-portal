@@ -21,7 +21,7 @@ import sqlite3
 
 import pytest
 
-from app.core import agents, db, kb_http
+from app.core import agents, db, kb_http, memory
 
 
 @pytest.fixture()
@@ -172,6 +172,87 @@ def test_a_write_identity_can_write_and_the_audit_keeps_its_mouth_shut(mesh_db):
     assert "agent:writer" in events and "mcp.call" in events
     assert "ae.safetensors" not in events, "the audit copied the payload"
     assert token not in events, "a live token reached the audit trail"
+
+
+def test_a_remote_write_lands_quarantined_and_the_answer_says_so(mesh_db):
+    """Mesh P1 (owner ruling 2026-11-07): every write from a mesh identity
+    lands `pending` with its actor, and the tool answer says so — an agent
+    that believes its fact is already shared will not tell the next session.
+    Portal-session writes (the stdio door, this box's harness) self-promote."""
+    token = token_of("writer", ("read", "write"))
+    req = Req(headers={"authorization": f"Bearer {token}"})
+    resp = call(req, {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                      "params": {"name": "memory_add",
+                                 "arguments": {"text": "the forge on windows needs the cuda13 torch wheel",
+                                               "source": "RainbowBlock"}}})
+    result = body_of(resp)["result"]
+    assert not result.get("isError"), result
+    row = json.loads(result["content"][0]["text"])
+    assert row["status"] == "pending", "the mesh write must not self-promote"
+    assert row["actor"] == "agent:writer", "a quarantined fact without its author is an audit hole"
+    assert "PENDING" in row.get("note", ""), "the agent must be told its fact is quarantined"
+    stored = [dict(r) for r in db.query("SELECT status, actor FROM memory")]
+    assert stored[0] == {"status": "pending", "actor": "agent:writer"}
+
+    # the stdio door (this box's harness = portal-local) self-promotes
+    from app.core import kb_mcp
+    mine = json.loads(kb_mcp.call_tool("memory_add",
+                                       {"text": "portal-local fact", "source": "chat"})
+                      ["content"][0]["text"])
+    assert mine["status"] == "promoted", "the owner's own session is the trust root"
+
+    # promote publishes it; searches find it flagged while pending
+    hits = kb_mcp.call_tool("memory_search", {"query": "cuda13"})
+    rows = json.loads(hits["content"][0]["text"])
+    assert rows and rows[0]["status"] == "pending"
+    assert memory.promote(row["id"])["status"] == "promoted"
+    hits = kb_mcp.call_tool("memory_search", {"query": "cuda13"})
+    assert json.loads(hits["content"][0]["text"])[0]["status"] == "promoted"
+
+    # reject deletes (audited, payload never copied)
+    victim = memory.add("a fact the owner refuses", status="pending", actor="agent:writer")
+    assert memory.reject(victim["id"]) is True
+    assert memory.count_pending() == 0
+    events = " ".join(str(dict(r)) for r in db.query("SELECT detail FROM events"))
+    assert "refuses" not in events, "the reject audit copied the text"
+
+
+def test_the_mesh_verbs_are_gated_and_honest():
+    """The Health page's Promote publishes (additive); Reject needs confirm
+    like every delete; a ghost id is a 404, not a 200. Runs against the
+    suite's shared base (the endpoints' threads see it, not a fixture conn)
+    and removes every row it creates."""
+    c = _authed_client()
+    row = memory.add("windows lessons: winget node then npm i -g opencode-ai",
+                     tags="mesh-p1-test", status="pending", actor="agent:rainbowblock")
+    try:
+        g = c.get("/api/mesh")
+        assert g.status_code == 200, g.text
+        ids = [p["id"] for p in g.json()["pending"]]
+        assert row["id"] in ids, "a quarantined write must surface for the owner's call"
+
+        r = c.post("/api/mesh/reject", json={"id": row["id"], "confirm": False})
+        assert r.status_code == 409, "a delete without the gate"
+        r = c.post("/api/mesh/promote", json={"id": row["id"]})
+        assert r.status_code == 200 and r.json()["status"] == "promoted"
+        assert row["id"] not in [p["id"] for p in c.get("/api/mesh").json()["pending"]]
+
+        ghost = memory.add("doomed fact", tags="mesh-p1-test",
+                           status="pending", actor="agent:x")
+        assert c.post("/api/mesh/promote", json={"id": 9999}).status_code == 404
+        r = c.post("/api/mesh/reject", json={"id": ghost["id"], "confirm": True})
+        assert r.status_code == 200
+        assert c.post("/api/mesh/reject", json={"id": 9999, "confirm": True}).status_code == 404
+    finally:
+        memory.remove(row["id"])
+
+    # auth gate on all three
+    from fastapi.testclient import TestClient
+    from app.main import app
+    anon = TestClient(app)
+    assert anon.get("/api/mesh", follow_redirects=False).status_code == 401
+    assert anon.post("/api/mesh/promote", json={"id": 1},
+                     follow_redirects=False).status_code == 401
 
 
 def test_a_malformed_body_is_refused_loudly_and_cheaply(mesh_db):

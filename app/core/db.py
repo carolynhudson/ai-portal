@@ -143,6 +143,17 @@ def init() -> None:
     # reverse) is exactly the orphaned-index failure the vector stores are famous for.
     with contextlib.suppress(sqlite3.OperationalError):
         c.execute("ALTER TABLE memory ADD COLUMN embedding TEXT")
+    # Mesh P1 (owner ruling 2026-11-07): remote-agent writes land QUARANTINED.
+    # `status` is 'promoted' (the shared store) or 'pending' (a mesh write
+    # awaiting the owner's promotion); `actor` names who wrote it. Portal-
+    # session writes self-promote; every write through the mesh door lands
+    # pending. A column pair, not a side table: a quarantined fact without
+    # its author, or an author without the fact, is the audit hole the
+    # quarantine is meant to close.
+    for col in ("status TEXT NOT NULL DEFAULT 'promoted'",
+                "actor TEXT NOT NULL DEFAULT 'portal'"):
+        with contextlib.suppress(sqlite3.OperationalError):
+            c.execute(f"ALTER TABLE memory ADD COLUMN {col}")
     c.commit()
 
 

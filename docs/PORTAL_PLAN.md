@@ -7831,3 +7831,28 @@ router and the plugin corrects it in place. Host config renamed (default
 path. The plugin activates at the next harness restart (owner-gated): from
 then the model list in opencode.json is maintained by the router's own
 account on a 60s sweep, and migrations cannot strand the harness again.
+
+**6.14.1zl follow-up 5 — Mesh P1: the quarantine (owner decisions 2026-11-07):**
+§5 answered — remote writes ALWAYS pending (no auto-promote), feed on the
+HEALTH page (Status pays no new poll), MacBook joins after the consent
+checklist, fleet size two. Built: `memory.status`/`memory.actor` columns
+(a quarantined fact without its author is an audit hole); the MCP layer is
+the law — `kb_mcp.call_tool(..., actor=...)`: a write from `agent:*` lands
+`pending` with a note in the tool answer (an agent that believes its fact
+is shared will not tell the next session), portal-local writes self-promote
+(the owner's session is the trust root); searches find pending rows,
+flagged. The Health page grows the **Mesh quarantine** card — pending list
+with Promote (additive) / Reject (confirm, audited without copying text),
+the count, and the mesh trail (who knocked, what they asked, what the
+owner decided) from the audit events. Routes: GET /api/mesh, POST
+/api/mesh/promote|reject (auth-gated; reject confirm-gated). Kit AGENTS.md
+now states the quarantine law (one write, one promotion — never re-add a
+pending fact). Lesson pinned: main.py has `from __future__ import
+annotations`, so request-body models must live at MODULE scope — a
+closure-scoped model is invisible to the annotation resolver and FastAPI
+silently demotes it to a query param (the 422 "query body missing").
+The Model store card's footer also stopped preaching `gguf-indexer --scan`
+(the living-index round's leftover). Witness path for RainbowBlock: issue a
+write token (Settings → Mesh identities, shown once) → paste into the kit's
+mcp block → opencode: kb_search cites, memory_add lands pending → Health
+page: Promote publishes it.

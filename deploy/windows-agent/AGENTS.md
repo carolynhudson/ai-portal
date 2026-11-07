@@ -49,13 +49,18 @@ remembers what it learned. Start from that memory, and add to it:
 3. **Write one durable fact, not a transcript.** After a fix that a future
    machine would otherwise re-derive, `memory_add` it: what broke, the
    cause, the fix, the tag. Say which machine you are on in the `source`.
+   A write from this box lands **quarantined** (`pending`): real, searchable,
+   flagged — the tool answer says so. The portal owner promotes it to the
+   shared store (Health page, Mesh section) or rejects it. Never re-add a
+   pending fact because a search shows it "only" pending: one write, one
+   promotion.
 4. **Never write a secret.** Tokens, passwords, key-file contents. The door
    refuses them; do not test it.
 
 The door is the portal's MCP over HTTP (`halo-kb` in your `opencode.json`,
 issued on the portal's Settings page as an identity for this box). A read
-identity can search and read; a write identity can also record.
-`memory_remove` is on no token — forgetting is the portal's job.
+identity can search and read; a write identity can also record — quarantined,
+as above. `memory_remove` is on no token — forgetting is the portal's job.
 
 ## Steps (the kit is in this folder; its README.md has the full detail)
 

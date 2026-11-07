@@ -189,11 +189,67 @@
       <td>{% if model_store.broken_links %}<span class="gone mono">{{ model_store.broken_links|join(", ") }}</span>
         — those commands fail until relinked{% else %}none{% endif %}</td></tr>
   </table></div>
-  <p class="mut" style="margin:12px 0 0">The index is built by the gguf-indexer timer; when it is
-    old, the Models page and any hash in a preset may not match the file on disk. Rebuild it with
-    <code class="mono">gguf-indexer --scan</code>.</p>
+  <p class="mut" style="margin:12px 0 0">The index is the portal's own <code class="mono">model_index</code>
+    table, rescanned at startup, after every migration, and by the Models page's rescan verb;
+    when the last scan is old, models placed since then are not listed and migration plans
+    read a stale view.</p>
+</div>
+
+<div class="card" id="mesh">
+  <h3>Mesh quarantine</h3>
+  {# Mesh P1 (owner ruling): remote-agent memory writes land pending; Promote
+     publishes (additive, audited), Reject deletes (confirm, as every delete).
+     The trail below is the mesh's own event record. #}
+  {% if mesh.pending %}
+  <div class="scroll"><table>
+    <tr><th>fact</th><th>from</th><th>age</th><th></th></tr>
+    {% for p in mesh.pending %}
+    <tr>
+      <td style="max-width:34rem">{{ p.text[:160] }}{% if p.text|length > 160 %}…{% endif %}
+        {% if p.tags %}<span class="mut">[{{ p.tags }}]</span>{% endif %}</td>
+      <td class="mono">{{ p.actor }}{% if p.source %}<span class="mut"> · {{ p.source }}</span>{% endif %}</td>
+      <td>{{ p.ago }}</td>
+      <td style="white-space:nowrap">
+        <button class="ghost" style="padding:4px 10px;font-size:13px"
+                onclick="meshVerb('/api/mesh/promote', {{ p.id }}, false)">Promote</button>
+        <button class="ghost" style="padding:4px 10px;font-size:13px"
+                onclick="meshVerb('/api/mesh/reject', {{ p.id }}, true)">Reject</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <span class="mut">nothing quarantined — a remote agent's write lands here for your call
+    (tokens and scopes: Settings → Mesh identities).</span>
+  {% endif %}
+  <div class="kv"><span class="k">quarantined now</span><b>{{ mesh.count_pending }}</b></div>
+  <h3 style="margin-top:14px">Mesh trail</h3>
+  {% if mesh.events %}
+  <div class="scroll"><table>
+    <tr><th>who</th><th>what</th><th>detail</th><th>ago</th></tr>
+    {% for e in mesh.events %}
+    <tr><td class="mono">{{ e.actor }}</td><td>{{ e.kind }}</td>
+      <td class="mono">{{ e.detail }}</td><td>{{ e.ago }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <span class="mut">no mesh traffic yet.</span>
+  {% endif %}
 </div>
 </div>
+
+
+<script>
+async function meshVerb(path, id, isReject) {
+  if (isReject && !confirm("Reject this quarantined memory? It is deleted, not hidden."))
+    return;
+  const r = await fetch(path, {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: id, confirm: true})});
+  if (r.ok) location.reload();
+  else alert(((await r.json()) || {}).detail || ("mesh call failed: " + r.status));
+}
+</script>
 
 
 <script>

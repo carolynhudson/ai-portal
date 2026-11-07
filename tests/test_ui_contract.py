@@ -445,6 +445,23 @@ def test_product_logos_mark_the_product_labels():
     assert "i-llamacpp" not in kb, "the help/knowledge page wears a product logo"
 
 
+def test_the_health_page_holds_the_mesh_quarantine():
+    """Mesh P1 (owner decisions 2026-11-07): the quarantine lives on the
+    HEALTH page (Status pays no new poll). Promote publishes (additive);
+    Reject is a delete and carries its confirm; the trail is the mesh's own
+    audit record; and the kit tells remote agents their writes land
+    quarantined, so nobody re-adds a pending fact."""
+    h = (ROOT / "web" / "templates" / "health.html").read_text()
+    assert 'id="mesh"' in h, "the mesh section left the Health page"
+    assert "Mesh quarantine" in h and "Mesh trail" in h
+    assert "/api/mesh/promote" in h and "/api/mesh/reject" in h
+    assert "Reject this quarantined memory" in h, "the reject verb has no confirm gate"
+    assert 'code class="mono">gguf-indexer' not in h, \
+        "the model store card still prescribes the dead indexer"
+    kit = (ROOT / "deploy" / "windows-agent" / "AGENTS.md").read_text()
+    assert "quarantined" in kit, "the kit's agents are not told writes land pending"
+
+
 def test_the_model_page_is_driven_by_collected_data():
     """The owner's display law (6.14.1zl): the llama tree is $quantizer/
     $model/$quant built from DATA — the id (cache), the provenance ledger
