@@ -494,6 +494,34 @@ def test_failed_apply_removes_the_directory_it_created(tmp_path):
         "a failed apply leaves no directory behind"
 
 
+def test_presets_ini_section_follows_the_move(tmp_path, monkeypatch):
+    """Owner's linkage law (6.14.1zl): the migration triggers the systems
+    that read presets.ini to update themselves. The section header IS the
+    router's binding, so apply renames [cache:id] -> [dir] — snapshot first,
+    verify after; the restart stays owner-gated. A colliding destination
+    section refuses the merge."""
+    from app.core import paths as _p, presets_store
+    ini = _p.PRESETS_INI
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("[*]\nfoo = 1\n\n[org/Prez-GGUF:Q4_K_M]\nalias = Prez\ntemp = 1.0\n")
+    hub = hub_root()
+    seed(hub, "org/Prez-GGUF", ["prez-Q4_K_M.gguf"])
+    index_all(hub)
+    mm.apply(mm.plan_for("org/Prez-GGUF", "Q4_K_M"))
+    text = ini.read_text()
+    assert "[prez-Q4_K_M]" in text and "[org/Prez-GGUF:Q4_K_M]" not in text, \
+        "the section header is the binding — it follows the model"
+    assert "alias = Prez" in text, "the section body must survive the rename"
+    assert presets_store.list_snapshots(), "the presets file was written without a snapshot"
+    # Collision: a section already at the destination name refuses the merge.
+    seed(hub, "org/Prez2-GGUF", ["prez2-Q4_K_M.gguf"])
+    index_all(hub)
+    ini.write_text("[prez2-Q4_K_M]\nx = 1\n")
+    mm.apply(mm.plan_for("org/Prez2-GGUF", "Q4_K_M"))
+    assert ini.read_text().strip() == "[prez2-Q4_K_M]\nx = 1", \
+        "two sections never merge"
+
+
 def test_partial_downloads_are_refused_never_migrated(tmp_path):
     """The owner's warning: metadata testing left partial models in the cache.
     A snapshot whose blob is gone has no index row (the scan reports the
@@ -562,6 +590,18 @@ def test_usage_guard_reads_installed_unit_files(tmp_path, monkeypatch):
     used = mm.usage_guard()
     assert any("embeddinggemma" in p for p in used), \
         "the RAG sidecar's model must be on the refuse-to-move list"
+
+
+def test_presets_section_update_is_inert_when_no_section_exists(tmp_path):
+    hub = hub_root()
+    seed(hub, "org/Bare-GGUF", ["bare-Q4_K_M.gguf"])
+    index_all(hub)
+    from app.core import paths as _p
+    _p.PRESETS_INI.parent.mkdir(parents=True, exist_ok=True)
+    _p.PRESETS_INI.write_text("[*]\nfoo = 1\n")
+    mm.apply(mm.plan_for("org/Bare-GGUF", "Q4_K_M"))
+    assert _p.PRESETS_INI.read_text() == "[*]\nfoo = 1\n", \
+        "a migration with no section to follow writes nothing"
 
 
 def test_the_button_flag_only_shows_for_migratable_rows(tmp_path, monkeypatch):

@@ -418,6 +418,16 @@ def test_the_model_page_is_driven_by_collected_data():
     assert '"hf_repo TEXT, hf_tag TEXT"' in mi.replace("\n", " ").replace("  ", " ") \
         or ("hf_repo" in mi and "hf_tag" in mi), "the provenance columns are gone"
     assert ".mig-" in mi, "the scanner forgot the tool's staged-name law"
+    # Level 1 is the ORGANIZATION (owner ruling): the repo id is split at the
+    # slash, and cache/library rows of one repo share the stem node.
+    assert "_hf_family" in main, "the repo-family stem law (level 2) is gone"
+    assert "org, _, name = repo.rpartition" in main, \
+        "the tree regressed to whole-repo level-1 groups"
+    assert "migrated to" in main, \
+        "the router's migrated-id zombies lost their honest note"
+    mig = (ROOT / "app" / "core" / "modelmigrate.py").read_text()
+    assert "_update_presets" in mig, \
+        "presets.ini stopped following the move (the section IS the binding)"
     dbm = (ROOT / "app" / "core" / "db.py").read_text()
     assert "provenance" in dbm, "the provenance ledger column is gone"
     assert "COALESCE(excluded.provenance" in dbm, "the ledger's erase-proof is gone"

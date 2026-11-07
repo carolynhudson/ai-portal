@@ -935,8 +935,26 @@ def create_app() -> FastAPI:
         # or an alias whose weights live under a different name. Listed rather than
         # dropped, because "the router is serving something I cannot see in my library"
         # is a fact an operator needs, and hiding it makes the merged table a lie.
-        extra_live = [m for m in live
-                      if modelindex.router_key(m.get("id") or "") not in library_ids]
+        # A router id that is a MIGRATED cache id (data: hf_repo:hf_tag -> the
+        # library row) is not a mystery: presets.ini carried the old section
+        # into the running router, and lazy workers outlive their files. The
+        # note names the model it moved to and the event that clears it.
+        retired = {}
+        for m in indexed:
+            if m.get("hf_repo"):
+                old = f"{m['hf_repo']}:{m.get('hf_tag') or m.get('quant') or ''}"
+                retired[modelindex.router_key(old.rstrip(":"))] = str(m["id"])
+        extra_live = []
+        for m in live:
+            if modelindex.router_key(m.get("id") or "") in library_ids:
+                continue
+            tgt = retired.get(modelindex.router_key(m.get("id") or ""))
+            if tgt:
+                prior = str(m.get("note") or "")
+                m["note"] = (prior + " — " if prior else "") + \
+                    (f"migrated to {tgt}/ — presets.ini updated, clears at "
+                     "the next router restart")
+            extra_live.append(m)
         # The tree (owner Oct-18: the 12-column wall overflowed its id column on every row
         # and obscured the rest). Levels are the id's own metadata -- the repository
         # namespace is the quantizer (`general.quantized_by`), the stem is the model
@@ -944,43 +962,52 @@ def create_app() -> FastAPI:
         # that triple is the index's unique key, so every leaf is exactly one model and a
         # fourth level is not needed. Zero cost: the facts come out of the ids the page
         # already renders; nothing sniffs GGUF headers at render time.
-        def _stem_split(model_id: str) -> tuple[str, str, str]:
-            repo, _, rest = str(model_id).rpartition("/")
-            stem, _, tag = rest.rpartition(":")
-            return repo, stem, tag
+        def _hf_family(name: str) -> str:
+            """The repo name minus its export-family suffix (-GGUF,
+            -GGUF-RCO…): the model base the owner's $quantizer/$model/$quant
+            pattern puts at level 2, shared by cache rows and migrated
+            library rows so both sides of a migration gather together."""
+            low = name.casefold()
+            for suf in ("-gguf-rco", "-gguf"):
+                if low.endswith(suf):
+                    return name[: -len(suf)]
+            return name
 
         def _hf_stem(repo_id: str, tag: str) -> str:
             """The cache tree's own stem law (the repo id minus its -GGUF
             family suffix), reused for library rows that carry provenance so
             migrated models keep the exact group they had as cache rows."""
             _r, _, name = repo_id.rpartition("/")
-            low = name.casefold()
-            for suf in ("-gguf", "-gguf-rco"):
-                if low.endswith(suf):
-                    name = name[: -len(suf)] + name[-len(suf):].upper()
-                    break
-            return f"{name}-{tag}" if tag else name
+            fam = _hf_family(name)
+            return f"{fam}-{tag}" if tag else fam
 
         by_repo: dict[str, dict[str, list]] = {}
         for m in indexed:
             # The tree is driven by collected data, not folder shape (owner,
-            # 6.14.1zl): $quantizer/$model/$quant comes from the id for cache
-            # rows, from the provenance ledger for migrated library rows, and
-            # from the GGUF header's own words for models with no HF
-            # identity (roleplay-Xing4.0: derived, not downloadable — it
-            # lands under honest Unknowns, not a fabricated repo).
-            repo, stem, tag = _stem_split(m["id"])
-            if not repo:
-                hf_repo = m.get("hf_repo") or ""
-                if hf_repo:
-                    m["hf"] = True
-                    repo = hf_repo
-                    stem = _hf_stem(hf_repo, m.get("hf_tag") or tag)
-                else:
-                    m["hf"] = False
-                    qn = sanitize_repo_group(m.get("quantizer") or "")
-                    repo = qn or "Unknown"
-                    stem = str(m.get("name") or "").strip() or stem
+            # 6.14.1zl + the org-grouping ruling): level 1 is the
+            # QUANTIZER/ORGANIZATION (the org of the repo id, the ledger's
+            # org, or the header's own words), level 2 the model base, level
+            # 3 the quant tag. Cache rows and migrated library rows of one
+            # repo land on the SAME stem node, so a base with quants on both
+            # sides of a migration reads as one model.
+            repo, _, rest = str(m["id"]).rpartition("/")
+            stem, _, tag = rest.rpartition(":")
+            hf_repo = m.get("hf_repo") or ""
+            if repo:
+                org, _, name = repo.rpartition("/")
+                fam = _hf_family(name)
+                stem = f"{fam}-{tag}" if tag else fam
+                repo = org or repo
+            elif hf_repo:
+                m["hf"] = True
+                org, _, _n = hf_repo.rpartition("/")
+                repo = org or hf_repo
+                stem = _hf_stem(hf_repo, m.get("hf_tag") or tag)
+            else:
+                m["hf"] = False
+                qn = sanitize_repo_group(m.get("quantizer") or "")
+                repo = qn or "Unknown"
+                stem = str(m.get("name") or "").strip() or stem
             by_repo.setdefault(repo, {}).setdefault(stem, []).append(m)
         mv_tree = [{"repo": repo,
                     "subs": [{"name": name,

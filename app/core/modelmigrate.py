@@ -495,6 +495,7 @@ def apply(plan: dict, log=print) -> dict:
             _land(f, tmp, final, stamp, replaced, landed, log)
         plan["ledger"] = _write_ledger(plan, dest)
         plan["refs"] = _rewrite_refs(plan["id"], plan["dest_name"], log)
+        _update_presets(plan["id"], plan["dest_name"], log)
         modelindex.rescan()
         _drop_cache(plan, log)
         # Rescan AFTER the drop (witnessed live): the first rescan ran while
@@ -636,6 +637,52 @@ def _rewrite_refs(cache_id: str, new_id: str, log) -> dict:
         log("references rewritten: " + ", ".join(rewrote)
             + " — re-apply the personalities page so presets.ini follows")
     return {"rewrote": rewrote}
+
+
+def _update_presets(cache_id: str, new_id: str, log) -> None:
+    """presets.ini follows the move (owner, 6.14.1zl: internal tools must
+    trigger the other systems to update themselves). The section header IS
+    the router's binding, so the update is a surgical header rename —
+    ``[org/repo:TAG]`` -> ``[dir]`` — with every other byte of the file left
+    untouched. The law of the personalities pipeline applies in miniature:
+    snapshot first, write, read back and verify; the router RESTART stays
+    owner-gated (the section takes effect at the next load, and the health
+    probe says so until the restart happens)."""
+    if not paths.PRESETS_INI.is_file():
+        return
+    from . import presets_store
+    text = paths.PRESETS_INI.read_text()
+    out: list[str] = []
+    target = f"[{cache_id}]"
+    renamed = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            if s == target:
+                out.append(f"[{new_id}]")
+                renamed = True
+                continue
+            if s == f"[{new_id}]":
+                log("presets.ini untouched: the destination section already "
+                    "exists — refusing to merge two sections")
+                return
+        out.append(line)
+    if not renamed:
+        return
+    if not out or out[-1] != "":
+        out.append("")
+    snap = presets_store.snapshot("model-migrate", personality="")
+    try:
+        paths.PRESETS_INI.write_text("\n".join(out) + "\n")
+        if paths.PRESETS_INI.read_text() != "\n".join(out) + "\n":
+            raise OSError("read-back differs from what was written")
+    except OSError as e:
+        presets_store.restore(snap["stamp"])
+        log(f"presets.ini update refused ({e}); snapshot {snap['stamp']} "
+            "restored")
+        return
+    log(f"presets.ini section [{cache_id}] -> [{new_id}] (snapshot "
+        f"{snap['stamp']}; takes effect at the next router restart)")
 
 
 def _drop_cache(plan: dict, log) -> None:
