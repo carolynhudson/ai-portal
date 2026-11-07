@@ -7770,3 +7770,47 @@ h2s + tabs, updates tabs + release cards, llama.cpp deployed, router-auth,
 dashboard heroes, nav's ComfyUI Models). Trademarks are exempt from the
 gradient-mark law exactly as the caution sign is; prose, logs and
 knowledge text wear no marks.
+
+**6.14.1zl follow-up 3 — post-migration harness break/fix + opencode-llama.cpp plugin evaluation (owner):**
+The Swift migration renamed every router id, which bricked the harness configs
+(opencode.json keyed on cache ids; default model = dead `:IQ3_XXS`). Break/fix:
+`agentconfig.sync()` regenerated the provider block from the router's truth
+(20 live ids, caps-driven limits, posture kept — the tuned metadata IS this
+generator's shape), the default model was set explicitly (sync deliberately
+keeps an existing `model`), backup `opencode.json.bak-20261107`.
+`tools/sync_agent_models.py` learned the library-worker spawn shape: resident =
+the `--model` file's parent dir under `~/ai/models/llama` (cache workers keep
+`--hf-repo`; the embedding sidecar is excluded by the LLAMA_MODELS prefix;
+the router front no longer truncates the scan), native-family test is the name
+("Swift"), Windows kit regenerated (resident id, 262k, reasoning flags).
+Note for the owner: the migrated presets sections carry **no ctx-size** —
+`fit` picks the context at load while harness metadata advertises 262144;
+writing `ctx-size = 262144` in the Swift sections would make that honest.
+
+Plugin evaluation (joeblowma/opencode2-llama.cpp, fork of mrnbd, MIT, V2):
+- Source-verified: declared provider survives (only name/baseURL corrected —
+  apiKey intact); declared model entries are the merge BASE (tuned reasoning/
+  interleaved/variants survive), the plugin overlays name, context (server
+  `context_length` → launch `--ctx-size` → 16k fallback), tools (from `/props`
+  chat_template_caps, loaded models only — autoload-safe), modalities (offline
+  GGUF metadata). 60s rediscovery + `/llamacpp-refresh` + `provider.reload` —
+  the model list in opencode.json becomes maintenance-free, which is the
+  owner's goal; this exact break (migration renames ids, config goes stale)
+  cannot recur. Broken-preset exclusion (fs-stat the `--model` paths) would
+  have hidden the zombie registrations; the session hook warns when the
+  selected model is not loaded (lazy-mode aware); `/llamacpp-unload` is
+  operator-driven and refuses the active model — fits the resident-model law.
+- Frictions: the plugin owns provider id `llama.cpp` (ours is `llamacpp` —
+  adopt = rename, else two providers on one router); npm's
+  `opencode-plugin-llama.cpp@0.1.0` is the 10-month-old V1 upstream by a
+  different author — the V2 fork is NOT published, so installing means
+  vendoring at a pinned git SHA (the harness pin law demands `name@version`;
+  vendored-path support is a small portal addition); 0-star unaudited port
+  (the author's own README says review before production); `limit.output` is
+  not overlaid (our declared entries keep the 16k).
+- Verdict: suitable as a PILOT on the portal host (auto-detect includes 8080;
+  router enforces no key — measured 200 without — so keyless registration
+  works; personalities ride presets.ini → live ids → the catalog follows
+  automatically). The portal generator stays the source of record for
+  linked/pinned entries; Windows agents keep the generated resident-only file
+  (auto-detect is localhost-only; remote wants the baseURL option).

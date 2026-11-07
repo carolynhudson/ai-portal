@@ -9,8 +9,8 @@
         "apiKey": "local"
       },
       "models": {
-        "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S": {
-          "name": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S (resident: zero load)",
+        "Swift-Flash-Next-IQ3_S": {
+          "name": "Swift-Flash-Next-IQ3_S (resident: zero load)",
           "tool_call": true,
           "temperature": true,
           "limit": {
@@ -32,5 +32,5 @@
       }
     }
   },
-  "model": "llamarouter/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S"
+  "model": "llamarouter/Swift-Flash-Next-IQ3_S"
 }

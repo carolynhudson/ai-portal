@@ -32,8 +32,10 @@ DEFAULT_CONTEXT = 32768        # llama.cpp's n_ctx default when nothing says oth
 DEFAULT_OUTPUT = 8192
 CTX_FROM_ALIAS = (262144, 16384)  # native window for Qwen3-Next class ids (as the harness runs them)
 REPO_RE = re.compile(r"--hf-repo\s+(\S+)")
+MODEL_RE = re.compile(r"--model\s+(\S+\.gguf)")
 CTX_RE = re.compile(r"--ctx-size\s+(\d+)")
 ALIAS_RE = re.compile(r"--alias\s+(\S+)")
+LLAMA_MODELS = Path.home() / "ai/models/llama"
 
 
 def preset_ctx(model_id: str) -> int | None:
@@ -96,26 +98,46 @@ def main(argv: list[str]) -> int:
         return 2
 
     # The router front carries no --hf-repo; workers do. --models-max 1
-    # means at most one worker, so "resident" is that worker's model id -
-    # the exact string callers pass as `model` and opencode lists as id.
+    # means at most one worker, so "resident" is that worker's model id.
+    # Two spawn shapes (measured): cache-sourced workers carry --hf-repo
+    # (the id IS the repo:tag); library-sourced workers carry --model
+    # <path> and the router serves them under their models-dir directory
+    # name (preset.cpp depth law) - since the HF-cache migration, the
+    # resident is almost always this shape. Note: the embedding sidecar
+    # also carries --model; the LLAMA_MODELS prefix is what makes a worker
+    # path a router catalog member.
     resident = None
     worker_ctx = None
     worker_alias = None
     for cmd in procs:
+        if "llama-server" not in cmd:
+            continue
         m = REPO_RE.search(cmd)
         if m and "--alias" in cmd:
             resident = m.group(1)
-            a = ALIAS_RE.search(cmd)
-            worker_alias = a.group(1) if a else None
-            c = CTX_RE.search(cmd)
-            worker_ctx = int(c.group(1)) if c else None
-            break
+        else:
+            mm = MODEL_RE.search(cmd)
+            if not mm:
+                continue  # the router front carries no model at all
+            p = Path(mm.group(1)).resolve()
+            if not str(p).startswith(str(LLAMA_MODELS) + "/"):
+                continue  # sidecar outside the trees: never the router's resident
+            resident = p.parent.name
+        a = ALIAS_RE.search(cmd)
+        worker_alias = a.group(1) if a else None
+        c = CTX_RE.search(cmd)
+        worker_ctx = int(c.group(1)) if c else None
+        break
     if resident is None:
-        print("no resident worker (--hf-repo) - nothing safe to configure", file=sys.stderr)
+        print("no resident worker (--hf-repo, or --model under the llama "
+              "library) - nothing safe to configure", file=sys.stderr)
         return 2
 
     ctx = preset_ctx(resident) or worker_ctx
-    native = ":IQ3" in resident  # the 262k-window Swift family, as the harness runs it
+    # The 262k-window Swift family, as the harness runs it. The cache-era
+    # test was ":IQ3" (repo:tag ids); library ids are directory names
+    # ("Swift-Flash-Next-IQ3_S"), so the family signature is the name.
+    native = ":IQ3" in resident or "Swift" in resident
     if ctx is None:
         ctx = CTX_FROM_ALIAS[0] if native else DEFAULT_CONTEXT
     entry = {
