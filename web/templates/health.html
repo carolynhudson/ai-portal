@@ -119,13 +119,13 @@
     {{ comfy.ActiveState if comfy else '—' }} · deployed {{ deployed.name or '—' }}
     ({{ deployed.built_ago or deployed.built_at or '—' }}){% if deployed.behind_master %} ·
     {{ deployed.behind_master }} behind origin{% endif %} ·
-    {{ model_store.index.files_on_disk|default(0, true) }}
-    model file{{ '' if model_store.index.files_on_disk == 1 else 's' }} ·
+    {{ model_store.index.rows|default(0, true) }}
+    model{{ '' if model_store.index.rows == 1 else 's' }} indexed ·
     {{ model_store.model_dirs }} model dir{{ '' if model_store.model_dirs == 1 else 's' }}</span>
   <a href="/health?tab=portal&refresh=1" title="Re-run every probe now instead of using the cached result">Re-check now</a>
 </div>
   <div class="card" id="deployed">
-    <h3>llama.cpp deployed</h3>
+    <h3><svg width="18" height="18" aria-hidden="true" style="vertical-align:-3px"><use href="#i-llamacpp"/></svg> llama.cpp deployed</h3>
     <div class="kv"><span class="k">release</span><b class="mono">{{ deployed.name or "—" }}</b></div>
     <div class="kv"><span class="k">commit</span><b class="mono">{{ deployed.commit or "—" }}</b></div>
     <div class="kv"><span class="k">built</span><b>{{ deployed.built_ago or deployed.built_at or "—" }}</b></div>
@@ -156,16 +156,21 @@
   </div>
 <div class="card" id="model-store">
   <h3>Model store</h3>
-  <div class="kv"><span class="k">index (INDEX.json)</span>
+  {# The canonical index is the model_index table (owner ruling): the pane
+     reports the portal's OWN last scan and what it found — the dead
+     gguf-indexer's INDEX.json is not a thing anyone reads. #}
+  <div class="kv"><span class="k">index (model_index)</span>
     <b class="{% if model_store.index.age_h and model_store.index.age_h > 168 %}old{% endif %}">
-      {{ "updated " + (model_store.index.age_h|ago) + " ago" if model_store.index.exists else "never built" }}</b></div>
-  {# Guard on the pair, not on files_on_disk alone: an index can record a file
-     count without a size, and the old guard rendered "1 (…)" with a dash where
-     the bytes belonged. Showing nothing is truer than showing half a fact. #}
-  {% if model_store.index.files_on_disk is not none and
-        model_store.index.total_bytes is not none %}
-  <div class="kv"><span class="k">files in index</span><b>{{ model_store.index.files_on_disk }}
-    ({{ model_store.index.total_bytes|sz }})</b></div>
+      {{ "scanned " + (model_store.index.age_h|ago) + " ago" if model_store.index.exists else "never scanned" }}</b></div>
+  {% if model_store.index.rows %}
+  <div class="kv"><span class="k">rows in index</span><b>{{ model_store.index.rows }}
+    model{{ '' if model_store.index.rows == 1 else 's' }}
+    {%- if model_store.index.models is not none and model_store.index.models != model_store.index.rows %} (last scan: {{ model_store.index.models }}){% endif %}</b></div>
+  {% endif %}
+  {% if model_store.index.problems %}
+  <div class="kv"><span class="k">last scan problems</span>
+    <b class="old">{{ model_store.index.problems }}
+    ({{ model_store.index.kinds.items()|map('join', '×')|join(', ') }})</b></div>
   {% endif %}
   <div class="kv"><span class="k">model directories</span><b>{{ model_store.model_dirs }}</b></div>
   <div class="kv"><span class="k">preset sections</span><b>{{ model_store.presets.sections }}</b></div>

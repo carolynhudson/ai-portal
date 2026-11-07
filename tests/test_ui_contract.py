@@ -218,8 +218,11 @@ def test_third_party_marks_are_served_unmodified():
     the licenses/attribution live in web/static/BRAND-LICENSES.md."""
     root = Path(__file__).resolve().parents[1]
     dash = (root / "web/templates/dashboard.html").read_text()
-    assert "/static/third-party/icon-dark.svg" in dash, "the llama.cpp mark left the hero"
-    assert "/static/third-party/comfy-icon.svg" in dash, "the ComfyUI mark left the hero"
+    # 6.14.1zl: the hero marks ride the inlined sprite now (official
+    # geometry; llama fills follow the theme via currentColor, Comfy's
+    # colors are byte-identical to the served file).
+    assert "#i-llamacpp" in dash, "the llama.cpp mark left the hero"
+    assert "#i-comfy" in dash, "the ComfyUI mark left the hero"
     assert "image forge" in dash, (
         "ComfyUI ends in 'UI' - the hero title must say what the service is")
     lic = (root / "web/static/BRAND-LICENSES.md").read_text()
@@ -350,7 +353,7 @@ def test_title_panels_and_the_status_hero_family():
         "the System title card (icon + OS line) is gone"
     assert '<div class="card" id="por-head"' in h and "<use href=\"#i-portal\"/>" in h, \
         "the Portal title card (icon + service vitals) is gone"
-    assert "model file{{" in h and "behind origin" in h, "the Portal vitals line lost its facts"
+    assert "model{{" in h and "behind origin" in h, "the Portal vitals line lost its facts"
     assert 'href="/health?tab=portal&refresh=1"' in h, \
         "the Portal re-check must keep the reader on the Portal tab"
     assert ">Health</h2>" not in h, "the orphaned 'Health' header card is back"
@@ -397,6 +400,42 @@ def test_title_panels_and_the_status_hero_family():
     upd_html = upd
     assert 'id="upg-head" style="display:flex;gap:16px;align-items:center;' in upd_html, \
         "#upg-head stopped centering its detail text on the title"
+
+
+def test_product_logos_mark_the_product_labels():
+    """Owner ruling (6.14.1zl): the OFFICIAL product marks go on headings,
+    titles, and UI labels that directly name llama.cpp / ComfyUI — never on
+    prose, logs, or knowledge text. The marks are the trademarked icons
+    (llama.brand geometry, comfy.org icon unmodified), inlined as sprite
+    symbols so they resolve like every other nav glyph; they are exempt
+    from the gradient-mark law exactly as the amber caution sign is."""
+    icons = (ROOT / "web" / "templates" / "_icons.svg").read_text()
+    assert 'id="i-llamacpp"' in icons and 'id="i-comfy"' in icons, \
+        "the product sprites are gone"
+    assert "currentColor" in icons.split('id="i-llamacpp"')[1][:800], \
+        "the llama mark must follow the theme, not a fixed fill"
+    pages = {
+        "models": "web/templates/models.html",
+        "updates": "web/templates/updates.html",
+        "settings": "web/templates/settings.html",
+        "health": "web/templates/health.html",
+        "dashboard": "web/templates/dashboard.html",
+    }
+    for name, rel in pages.items():
+        t = (ROOT / rel).read_text()
+        assert "i-llamacpp" in t or "i-comfy" in t, f"{name}: no product mark"
+    m = (ROOT / "web" / "templates" / "models.html").read_text()
+    assert '<h2><svg width="22" height="22" aria-hidden="true" ' \
+        'style="vertical-align:-4px"><use href="#i-llamacpp"/></svg> ' \
+        "llama.cpp models</h2>" in m, "the llama.cpp models heading lost its mark"
+    assert '<use href="#i-comfy"/></svg> ComfyUI models</h2>' in m
+    base = (ROOT / "web" / "templates" / "base.html").read_text()
+    assert "'ComfyUI Models', 'i-comfy'" in base, "the nav menu item lost its mark"
+    # Prose and logs never wear logos: the log/KB panes must not reference
+    # the product sprites.
+    kb = (ROOT / "web" / "templates" / "help.html").read_text() \
+        if (ROOT / "web" / "templates" / "help.html").exists() else ""
+    assert "i-llamacpp" not in kb, "the help/knowledge page wears a product logo"
 
 
 def test_the_model_page_is_driven_by_collected_data():

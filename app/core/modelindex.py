@@ -1141,6 +1141,13 @@ def rescan(models_dir: Path | None = None, budget_bytes: int | None = None,
                              # loads the right file today" is the whole message; an empty would_load
                              # left operators guessing which one they were being warned about
                              "picks_this_file": risk.get("picks_this_file", False)})
+    kinds = {}
+    for p in problems:
+        kinds[str(p.get("kind"))] = kinds.get(str(p.get("kind")), 0) + 1
+    db.set_setting("model_index.stats",
+                   {"at": time.time(), "models": n, "library": library_n,
+                    "cache": n - library_n, "problems": len(problems),
+                    "kinds": kinds})
     db.event("portal", "model-index",
              f"scanned {n} model(s) — {library_n} from the library, "
              f"{n - library_n} from the hub cache; {len(problems)} problem(s)")

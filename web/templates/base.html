@@ -204,7 +204,7 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   {% set navlinks = [('/', 'Status', 'i-status'),
                      ('/models', 'Models', 'i-models', [('/models?tab=get', 'Get Models'),
                                                         ('/models?tab=llama', 'Llama Models'),
-                                                        ('/models?tab=comfy', 'ComfyUI Models')]),
+                                                        ('/models?tab=comfy', 'ComfyUI Models', 'i-comfy')]),
                      ('/health', 'Health', 'i-health', [('/health?tab=system', 'System'),
                                                         ('/health?tab=portal', 'Portal'),
                                                         ('/updates', 'Upgrades')]),
@@ -230,10 +230,11 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
          sheet marks it (/health -> System, /models -> Get Models). #}
       {% set qtab = request.query_params.get('tab') or '' %}
       {% set first = kids[0][0].split('tab=')[1] if kids and 'tab=' in kids[0][0] else '' %}
-      {% for chref, clabel in kids %}
+      {% for ch in kids %}
+        {% set chref = ch[0] %}{% set clabel = ch[1] %}{% set cicon = ch[2] if ch|length > 2 else '' %}
         {% set ctab = chref.split('tab=')[1] if 'tab=' in chref else '' %}
         {% set cur = chref.split('?')[0] == request.path and (ctab == (qtab if qtab else first)) %}
-      <a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}"{% if cur %} aria-current="page"{% endif %}>{{ clabel }}</a>{% endfor %}
+      <a href="{{ chref }}" role="menuitem" aria-label="{{ clabel }}"{% if cur %} aria-current="page"{% endif %}>{% if cicon %}<svg width="13" height="13" aria-hidden="true"><use href="#{{ cicon }}"/></svg> {% endif %}{{ clabel }}</a>{% endfor %}
     </span>
   </span>
   {% else %}

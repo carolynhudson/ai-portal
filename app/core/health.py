@@ -34,7 +34,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import paths, serviceenv, systemd
+from . import db, paths, serviceenv, systemd
 
 # apt is the only package manager on this box (Ubuntu 26.04). Kept as a name,
 # not a path, so tests can put a stand-in earlier on PATH.
@@ -87,6 +87,11 @@ def _age(path: Path) -> float | None:
         return max(0.0, time.time() - path.stat().st_mtime)
     except OSError:
         return None
+
+
+def _age_stamp(t: float) -> float:
+    """The same clock, on a stored unix time (the index's own last-scan)."""
+    return max(0.0, time.time() - float(t))
 
 
 def _vers(text: str) -> tuple:
@@ -511,24 +516,29 @@ def model_store(refresh: bool = False) -> dict:
     is gone is a lie the router will try to honour.
     """
     def probe() -> dict:
-        index_path = paths.LLAMA_MODELS / "INDEX.json"
+        # The canonical index is the model_index table, written by rescan
+        # (startup, migrations, the rescan route/CLI); its own stats record
+        # the last scan. The gguf-indexer's INDEX.json was the freshness
+        # source before the table existed (its 66-day artifact once cried
+        # "stale" at a portal that rescans on every start); the artifact is
+        # dead — the alert follows the living index (owner, 6.14.1zl).
         index = {}
-        if index_path.is_file():
-            import json
-            try:
-                raw = json.loads(index_path.read_text())
-                scan = raw.get("scan") or {}
-                index = {
-                    "exists": True,
-                    "age_h": round((_age(index_path) or 0) / 3600, 1),
-                    "version": raw.get("index_version"),
-                    "files_on_disk": scan.get("files_on_disk"),
-                    "total_bytes": scan.get("total_bytes"),
-                }
-            except Exception as e:  # noqa: BLE001
-                index = {"exists": True, "error": f"unreadable: {e}"}
-        else:
-            index = {"exists": False}
+        try:
+            age = None
+            st = db.get_setting("model_index.stats") or {}
+            row = db.query("SELECT MAX(scanned_at) AS t, COUNT(*) AS n "
+                           "FROM model_index")
+            n_rows = int((row[0]["n"] if row else 0) or 0)
+            t = max(float(st.get("at") or 0),
+                    float((row[0]["t"] if row else 0) or 0))
+            if t:
+                age = round((_age_stamp(t)) / 3600, 1)
+            index = {"exists": n_rows > 0, "rows": n_rows,
+                     "age_h": age,
+                     "models": st.get("models"), "problems": st.get("problems"),
+                     "kinds": st.get("kinds") or {}}
+        except Exception:      # noqa: BLE001 — the probe never dies on a read
+            index = {"exists": False, "error": "index unreadable"}
 
         presets = []
         if paths.PRESETS_INI.is_file():
@@ -800,10 +810,23 @@ def advisories(release: dict | None = None, service: dict | None = None,
     m = model_store()
     idx = m.get("index") or {}
     if not idx.get("exists"):
-        add("warn", "No model index (INDEX.json) — the gguf-indexer has never run here.")
+        add("warn", "The model index is empty — the portal has not scanned the "
+                    "model store; model listings, cards, and migration plans "
+                    "have no data to work from.",
+            where="/models?tab=llama", label="Models page")
     elif idx.get("age_h") is not None and idx["age_h"] > 24 * 7:
-        add("warn", f"Model index is {idx['age_h'] / 24:.0f} days old: model listings "
-                    "and hashes may not match what is on disk.")
+        add("warn", f"The model index was last scanned {idx['age_h'] / 24:.0f} "
+                    "days ago: models placed since then are not listed, and "
+                    "migration plans read from the stale view.",
+            where="/models?tab=llama", label="Models page")
+    if idx.get("problems"):
+        kinds = idx.get("kinds") or {}
+        top = ", ".join(f"{k}×{v}" for k, v in
+                        sorted(kinds.items(), key=lambda kv: -kv[1])[:4])
+        add("warn", f"The last model scan reported {idx['problems']} problem(s) "
+                    f"({top}) — incomplete shard sets, unreadable files, and "
+                    "router-invisible layouts are named on the Models page.",
+            where="/models?tab=llama", label="Models page")
     if m.get("broken_links"):
         add("bad", f"Broken links in the bin farm: {', '.join(m['broken_links'][:5])} — "
                    "those commands will fail until they are relinked.",

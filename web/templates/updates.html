@@ -26,8 +26,8 @@
 </div>
 
 <div class="update-tabs">
-  <div class="update-tab active" onclick="switchUpdateTab('llamacpp', this)">llama.cpp</div>
-  <div class="update-tab" onclick="switchUpdateTab('comfyui', this)">ComfyUI</div>
+  <div class="update-tab active" onclick="switchUpdateTab('llamacpp', this)"><svg width="14" height="14" aria-hidden="true"><use href="#i-llamacpp"/></svg> llama.cpp</div>
+  <div class="update-tab" onclick="switchUpdateTab('comfyui', this)"><svg width="14" height="14" aria-hidden="true"><use href="#i-comfy"/></svg> ComfyUI</div>
   <div class="update-tab" onclick="switchUpdateTab('huggingface', this)">huggingface-cli</div>
   <div class="update-tab" onclick="switchUpdateTab('python', this)">Python / venv</div>
   <div class="update-tab" onclick="switchUpdateTab('gpu', this)">GPU Drivers / SDKs</div>
@@ -39,7 +39,7 @@
   {# ---- llama.cpp release update (Phase C) ----------------------------- #}
   <div class="card">
     <div class="tool-header-row">
-      <h3 style="margin:0">llama.cpp release</h3>
+      <h3 style="margin:0"><svg width="18" height="18" aria-hidden="true" style="vertical-align:-3px"><use href="#i-llamacpp"/></svg> llama.cpp release</h3>
       <div class="tool-header-controls">
         <span class="pill mut" id="upd-pill">no release</span>
         <button class="btn btn-primary-sm" onclick="updCheck()">check now</button>
@@ -96,7 +96,7 @@
   {# ---- ComfyUI release update ----------------------------------------- #}
   <div class="card">
     <div class="tool-header-row">
-      <h3 style="margin:0">ComfyUI release</h3>
+      <h3 style="margin:0"><svg width="18" height="18" aria-hidden="true" style="vertical-align:-3px"><use href="#i-comfy"/></svg> ComfyUI release</h3>
       <div class="tool-header-controls">
         <button class="btn btn-primary-sm" onclick="comfyCheck()">check now</button>
         <button class="btn btn-primary-sm" id="comfy-upd-btn" data-needs-machine disabled onclick="comfyDeploy(document.getElementById('comfy-upd-btn').dataset.commit)">update + sync venv</button>

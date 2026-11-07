@@ -312,7 +312,7 @@ def test_a_scarce_disk_is_a_warning(shims, tree, monkeypatch):
 
 # ----------------------------------------------------------------- model store
 
-def test_the_model_store_checks_what_the_router_can_actually_see(tree):
+def test_the_model_store_checks_what_the_router_can_actually_see(tree, tmp_path):
     model(tree, "Good-Model", "good.gguf")
     hidden = model(tree, "Big-Model", "big.gguf")
     (hidden / "draft").mkdir()
@@ -331,21 +331,66 @@ def test_the_model_store_checks_what_the_router_can_actually_see(tree):
     assert m["dirs_without_model"] == ["hub"]
     assert m["stale_presets"] == ["Vanished-Model"]
     assert m["broken_links"] == ["llama-server"]
-    assert m["index"]["files_on_disk"] == 20
+    # The canonical index is the model_index table (owner ruling): the
+    # modelindex probe seeds it, and the probe reports ITS freshness.
+    from app.core import db as _db, modelindex
+    from tests.gguf_fixture import _write_fake_gguf, seed_hub_model
+    _db.init()
+    # A real (fake-)GGUF: the scan's law is header-first, and the fixture's
+    # text files are correctly reported as not-gguf, which yields no rows.
+    _write_fake_gguf(paths.LLAMA_MODELS / "Good-Model" / "good.gguf",
+                     {"block_count": 8, "attention.head_count": 4,
+                      "attention.head_count_kv": 2, "context_length": 4096},
+                     pad=3)
+    hub = tmp_path / "probe-hub"
+    seed_hub_model(hub, "org/Probe-GGUF:Q4_K_M",
+                   {"block_count": 8, "attention.head_count": 4,
+                    "attention.head_count_kv": 2, "context_length": 4096})
+    modelindex.rescan(cache_dir=hub)
+    assert health.model_store(refresh=True)["index"]["exists"] is True
 
 
 def test_a_stale_index_is_called_out_with_its_age(tree):
-    index = paths.LLAMA_MODELS / "INDEX.json"
-    index.write_text(json.dumps({"index_version": "5.0", "scan": {}}))
+    """Freshness follows the LIVING index: the last rescan's recorded time,
+    not the dead gguf-indexer artifact (whose 66-day file once warned an
+    operator about a portal that rescans on every start)."""
+    from app.core import db as _db
+    _db.init()
     old = time.time() - 12 * 24 * 3600
-    os.utime(index, (old, old))
-    assert health.model_store()["index"]["age_h"] > 24 * 7
-    assert any("days old" in a["text"] for a in health.advisories())
+    _db.set_setting("model_index.stats",
+                    {"at": old, "models": 9, "library": 4, "cache": 5,
+                     "problems": 0, "kinds": {}})
+    _db.execute("DELETE FROM model_index")
+    _db.execute("INSERT INTO model_index (id, source, scanned_at) "
+                "VALUES ('stale-x', 'library', ?)", (old,))
+    assert health.model_store(refresh=True)["index"]["age_h"] > 24 * 7
+    assert any("days ago" in a["text"] for a in health.advisories())
+
+
+def test_the_scans_own_problems_are_reported(tree):
+    """Needs-attention speaks with the index's own voice: the problems the
+    last scan found (kinds and counts), not a file's mtime."""
+    from app.core import db as _db
+    _db.init()
+    _db.set_setting("model_index.stats",
+                    {"at": time.time(), "models": 9, "library": 4, "cache": 5,
+                     "problems": 3, "kinds": {"incomplete-shards": 2,
+                                              "root-gguf": 1}})
+    _db.execute("DELETE FROM model_index")
+    _db.execute("INSERT INTO model_index (id, source, scanned_at) "
+                "VALUES ('prob-x', 'library', ?)", (time.time(),))
+    texts = [a["text"] for a in health.advisories()]
+    assert any("3 problem(s)" in t and "incomplete-shards×2" in t
+               for t in texts)
 
 
 def test_no_index_at_all_says_so(tree):
-    assert health.model_store()["index"]["exists"] is False
-    assert any("never run" in a["text"] for a in health.advisories())
+    from app.core import db as _db
+    _db.init()
+    _db.execute("DELETE FROM model_index")
+    _db.set_setting("model_index.stats", {})
+    assert health.model_store(refresh=True)["index"]["exists"] is False
+    assert any("model index is empty" in a["text"] for a in health.advisories())
 
 
 # ------------------------------------------------------------------ advisories
@@ -361,7 +406,7 @@ def test_advisories_are_sorted_worst_first_and_point_somewhere(tree, monkeypatch
     assert all("text" in a and "level" in a for a in items)
 
 
-def test_a_quiet_machine_has_nothing_to_report(shims, tree, monkeypatch):
+def test_a_quiet_machine_has_nothing_to_report(shims, tree, tmp_path, monkeypatch):
     from app.core import systemd
     shims("apt-get", """cat <<'EOF'
 Reading package lists...
@@ -369,8 +414,24 @@ EOF
 """)
     monkeypatch.setattr(systemd, "reboot_pending", lambda: {"reboot_required": False})
     model(tree, "Good-Model", "good.gguf")
-    (paths.LLAMA_MODELS / "INDEX.json").write_text(
-        json.dumps({"index_version": "5.0", "scan": {"files_on_disk": 1}}))
+    from app.core import db as _db, modelindex
+    from tests.gguf_fixture import _write_fake_gguf, seed_hub_model
+    _db.init()
+    _write_fake_gguf(paths.LLAMA_MODELS / "Good-Model" / "good.gguf",
+                     {"block_count": 8, "attention.head_count": 4,
+                      "attention.head_count_kv": 2, "context_length": 4096},
+                     pad=3)
+    hub = tmp_path / "quiet-hub"
+    seed_hub_model(hub, "org/Quiet-GGUF:Q8_0",
+                   {"block_count": 8, "attention.head_count": 4,
+                    "attention.head_count_kv": 2, "context_length": 4096})
+    modelindex.rescan(cache_dir=hub)
+    # The scan's own report: rows present, zero problems, scanned now — the
+    # quiet machine's index is quiet because the index says so.
+    _db.set_setting("model_index.stats",
+                    {"at": time.time(), "models": 1, "library": 1,
+                     "cache": 0, "problems": 0, "kinds": {}})
+    health.reset_cache()
     monkeypatch.setattr(health, "_fetch_latest_vulkan",
                         lambda: {"latest": None, "checked_at": time.time(),
                                  "error": "offline"})

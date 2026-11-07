@@ -61,8 +61,8 @@
    is the entry point (single-level, owner's touch law). #}
 <div class="model-tabs">
   <div id="model-tab-get" class="model-tab active" onclick="switchModelTab('get', this)">Get Models</div>
-  <div id="model-tab-llama" class="model-tab" onclick="switchModelTab('llama', this)">Llama Models</div>
-  <div id="model-tab-comfy" class="model-tab" onclick="switchModelTab('comfy', this)">ComfyUI Models</div>
+  <div id="model-tab-llama" class="model-tab" onclick="switchModelTab('llama', this)"><svg width="14" height="14" aria-hidden="true"><use href="#i-llamacpp"/></svg> Llama Models</div>
+  <div id="model-tab-comfy" class="model-tab" onclick="switchModelTab('comfy', this)"><svg width="14" height="14" aria-hidden="true"><use href="#i-comfy"/></svg> ComfyUI Models</div>
 </div>
 
 <div id="tab-get" class="model-tab-content active">
@@ -115,7 +115,7 @@
 </div>
 
 <div id="tab-llama" class="model-tab-content">
-<h2>llama.cpp models</h2>
+<h2><svg width="22" height="22" aria-hidden="true" style="vertical-align:-4px"><use href="#i-llamacpp"/></svg> llama.cpp models</h2>
 
 {# The Router live list used to be its own table beside this one, listing ids the
    library table already listed. Two tables of the same model names, one with the
@@ -286,7 +286,7 @@
 </div>
 
 <div id="tab-comfy" class="model-tab-content">
-<h2>ComfyUI models</h2>
+<h2><svg width="22" height="22" aria-hidden="true" style="vertical-align:-4px"><use href="#i-comfy"/></svg> ComfyUI models</h2>
 {# These cards used to sit directly under the llama.cpp library table with no heading
    of their own, so the page read as one long list and the safetensors categories
    looked like more entries in the GGUF table. They are a different store, a different
