@@ -7893,3 +7893,22 @@ the placeholder, any password-shaped assignment, or an `agent_server.json` in
 the kit directory fails the suite, so the next well-meant folder copy is
 caught pre-commit. Password rotation was done by the owner; a token leak is
 revoked/re-issued on Settings -> Mesh identities.
+
+**6.14.1zl follow-up 7 — the forge session's verdict + the Workroom proposal:**
+The RainbowBlock agent is NOT stuck — it finished and idled, and proved the
+mesh in the process: boot ritual (kb_search/memory_recent), then SIX
+memory_add writes, ALL quarantined pending (Health → Mesh quarantine,
+awaiting promotion) — including the GPU audit that answers the "25 pct"
+question: Task Manager averages engines and under-reads CUDA (nvidia-smi
+showed sustained 100 pct over 282 samples, no throttle); the real cost is
+the 9B int8 prompt-enhancer at ~1.5 tok/s on the 2080 Ti (23-46 min per
+rewrite; VRAM 93 pct spill) — fix policy: PE off for loops, offload rewrites
+to the Halo router and feed the forge plain text; new qwen21_t2i_turbo
+contract ~3x faster. Forge up, queue empty, models unloaded (1.2/11 GiB).
+Owner's collaboration ask (files, messages, notes; organized, searchable)
+drawn as **docs/COLLAB_PROPOSAL.md** (registered in kb DOC_ORDER,
+searchable): the Workroom — benches per project, threads (kinds, replies,
+P1 quarantine law reused), text-typed content-addressed files with the kit
+secret-scan generalized to write-time, mesh-door transport with a `collab`
+scope, search union KB+memory+workroom, Workroom page, phases W0-W3, five
+owner decisions. Proposal only — nothing built.
