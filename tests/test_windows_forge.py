@@ -171,6 +171,27 @@ def test_the_model_config_is_generated_not_handwritten():
     assert entry["limit"]["context"] >= 65536
 
 
+def test_the_kit_carries_no_credential_material():
+    """2026-11-07 lesson: a folder copy from C:\\forge\\kit brought the box's
+    live secrets into the repo — the agent server's Basic-auth password
+    (agent_server.json) and the pasted mesh token (a real Bearer in
+    opencode.json). The kit's law is placeholder tokens and box-local state;
+    this scan is the net that catches the next well-meant copy. The mesh
+    token, not the password, is the one that keeps working across rotations,
+    so neither is ever allowed here."""
+    import re
+    secret = re.compile(r"Bearer\s+(?!PASTE-TOKEN)[A-Za-z0-9_\-\.]{20,}"
+                        r"|password[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9][^\s\"']{11,}")
+    for p in sorted(AGENT.rglob("*")):
+        if not p.is_file() or p.name == ".gitignore":
+            continue
+        assert p.name != "agent_server.json", \
+            "box-local agent state entered the repo (it carries the auth password)"
+        t = p.read_text(errors="replace")
+        hits = secret.findall(t)
+        assert not hits, f"{p.name} carries credential material: {[h[:10] for h in hits]}"
+
+
 def test_the_regen_merge_keeps_the_box_and_follows_the_router():
     """2026-11-07 lesson: the kit on RainbowBlock grew a forge-ops agent and
     a pasted mesh token; a regen that rewrote the whole file would silently

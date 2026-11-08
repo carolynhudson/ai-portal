@@ -1,0 +1,6 @@
+# Box-local state, never the repo: the agent server writes its Basic-auth
+# password here on start (rotate by rerunning start_agent_server.ps1).
+agent_server.json
+# session droppings
+results.txt
+*.log

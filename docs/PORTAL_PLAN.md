@@ -7880,3 +7880,16 @@ exist only on the box — pull them into deploy/windows-agent/ so the kit is
 one source again; pairing (POST /api/pair one-time code, then halo's harness
 can `--server http://RainbowBlock.local:24096`) is the next step,
 owner-gated.
+
+**6.14.1zl follow-up 6b — the kit copy and the secret net:** the owner copied
+`C:\forge\kit` into `deploy/windows-agent/` — the 13 box scripts landed (all
+pass the ASCII/parse pins; `probe_agent.ps1` et al. are now repo-canonical),
+and the copy carried two live secrets in: `agent_server.json` (the Basic-auth
+password) and the real mesh token pasted in `opencode.json`. Removed the
+box-state (`.gitignore` now names them), restored the token placeholder,
+regenerated under the merge law (box content survives; provider/model follow
+the router). New suite net: **the kit secret scan** — a `Bearer` that is not
+the placeholder, any password-shaped assignment, or an `agent_server.json` in
+the kit directory fails the suite, so the next well-meant folder copy is
+caught pre-commit. Password rotation was done by the owner; a token leak is
+revoked/re-issued on Settings -> Mesh identities.
