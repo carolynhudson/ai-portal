@@ -7956,3 +7956,18 @@ hf_repo/hf_tag ride the row so the hub link + quant menu survive. presets
 gained no section (add law: sections are an owner/personality act); the
 router's models-dir scan sees `Merged-Q6_K` as a loadable id — loading stays
 the owner's call (no in-session swap). Voice-chat test model is in place.
+
+**6.14.1zn — the research state checkpoint (context-budget ruling, owner):** the
+Qwen-Image-2.1 web-research subagent was cancelled mid-flight to protect the
+parent's context window, on the owner's call. Its whole value is seed facts, so
+the state moved to disk: `docs/QWEN_IMAGE_21_RESEARCH.md` — measured HF listings
+(2.1 30.9 G diffusers / -Turbo 30.3 G / Comfy-Org one-stop 114.4 G with the
+bf16+int8_convrot DiT pairs, qwen3vl_8b TE, 9B PE TEs, 5/6/8-step distill loras,
+fun_controlnet_union), the forge's validated 2.1 canon (memory 108–117 digest),
+halo's engine probe (ROCm 7.13, 108 GiB addressable, zero custom_nodes), the
+community finds (madebyollin texture-fix-vae, lightx2v Lightning-v2-RL, GGUF
+repos), the open questions as a literal resume prompt (§4), and provisional
+picks + the draft sharing law (§5). Memory 120 is the pointer. Resuming the
+research = one subagent call seeded with §1–§3 asking §4 — no context archaeology
+needed. Law noted: when a subagent's payload is facts, checkpoint the facts to a
+KB doc before the parent compacts; the subagent is a tool, the doc is the state.
