@@ -7941,3 +7941,18 @@ an uncreated cache dir, resume normalizes to running, refs/main must be
 git-hash-shaped (test-law). Live witness queued: LessThanThreeAI/Qwen3.8-
 27B-Humanlike-Chat-GGUF:Q6_K (21.4 G, mmproj follows) per the owner's
 explicit GO — voice-chat test model.
+
+**6.14.1zm witness — the first live -hf grab (owner GO):**
+`LessThanThreeAI/Qwen3.8-27B-Humanlike-Chat-GGUF:Q6_K` through the rebuilt
+pane path: plan named exactly the model (20.57 G) + the mmproj from its
+`mmproj/` subfolder (0.87 G), left the repo's LoRA/imatrix/images/BF16-split
+behind; space guard (728 G free vs 21.4 G); 2 workers finished 21.4 G in
+~6.5 min; the migration ladder ran for real (staged hardlink inode-verified,
+landed, refs follow, snapshot link + blob released); the sidecar hardlinked
+into the SAME dir. Library: `~/ai/models/llama/Merged-Q6_K/` — the dir name
+followed the header-name law (the maker's `general.name` is literally
+"Merged"); the page's quant_note tells the file_type-vs-filename story, and
+hf_repo/hf_tag ride the row so the hub link + quant menu survive. presets
+gained no section (add law: sections are an owner/personality act); the
+router's models-dir scan sees `Merged-Q6_K` as a loadable id — loading stays
+the owner's call (no in-session swap). Voice-chat test model is in place.
