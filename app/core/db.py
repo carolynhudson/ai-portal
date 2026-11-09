@@ -108,6 +108,40 @@ CREATE TABLE IF NOT EXISTS agents (
   name TEXT PRIMARY KEY, machine TEXT, scopes TEXT, token_hash TEXT UNIQUE,
   status TEXT, created_at REAL, last_seen REAL
 );
+-- Workroom (W0-lite, docs/COLLAB_PROPOSAL.md): benches are project workspaces,
+-- posts are the work itself — notes, reports, findings, questions, answers,
+-- patches, logs. Same quarantine shape as memory (mesh P1 law): a post from a
+-- mesh identity lands 'pending', the owner promotes; `author` names who wrote
+-- it. FTS5 mirrors the memory triggers; the search is over post text.
+CREATE TABLE IF NOT EXISTS wb_benches (
+  slug TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open', created_at REAL
+);
+CREATE TABLE IF NOT EXISTS wb_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bench TEXT NOT NULL REFERENCES wb_benches(slug),
+  kind TEXT NOT NULL DEFAULT 'note',
+  author TEXT NOT NULL DEFAULT 'portal',
+  status TEXT NOT NULL DEFAULT 'promoted',
+  thread INTEGER,
+  text TEXT NOT NULL,
+  created_at REAL
+);
+CREATE INDEX IF NOT EXISTS wb_posts_bench ON wb_posts (bench, created_at);
+CREATE INDEX IF NOT EXISTS wb_posts_thread ON wb_posts (bench, thread);
+CREATE VIRTUAL TABLE IF NOT EXISTS wb_posts_fts USING fts5(
+  text, content='wb_posts', content_rowid='id'
+);
+CREATE TRIGGER IF NOT EXISTS wb_posts_ai AFTER INSERT ON wb_posts BEGIN
+  INSERT INTO wb_posts_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS wb_posts_ad AFTER DELETE ON wb_posts BEGIN
+  INSERT INTO wb_posts_fts(wb_posts_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS wb_posts_au AFTER UPDATE ON wb_posts BEGIN
+  INSERT INTO wb_posts_fts(wb_posts_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  INSERT INTO wb_posts_fts(rowid, text) VALUES (new.id, new.text);
+END;
 """
 
 

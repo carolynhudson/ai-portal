@@ -34,7 +34,7 @@ from pathlib import Path
 # package must be importable from here.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core import db, embeddings, kb, memory  # noqa: E402
+from app.core import db, embeddings, kb, memory, workroom  # noqa: E402
 
 PROTOCOL_FALLBACK = "2025-03-26"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", "2025-06-18"}
@@ -94,6 +94,34 @@ TOOLS = [
                        "give the reason as the id's argument context in your reply, not here.",
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "integer"}}, "required": ["id"]},
+    },
+    {
+        "name": "bench_ls",
+        "description": "List the Workroom's benches — the project workspaces machines collaborate "
+                       "in (docs/COLLAB_PROPOSAL.md). Returns slug, title, goal, post counts.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "bench_read",
+        "description": "Read one Workroom bench: its goal and its recent posts (notes, reports, "
+                       "findings, questions, answers, patches, logs). Pending posts are flagged.",
+        "inputSchema": {"type": "object", "properties": {
+            "bench": {"type": "string", "description": "the bench slug, e.g. 'qwen-image-2.1'"},
+            "limit": {"type": "integer", "description": "max posts (default 30)"}},
+            "required": ["bench"]},
+    },
+    {
+        "name": "thread_post",
+        "description": "Post one unit of work to a Workroom bench: kind note/report/finding/"
+                       "question/answer/patch/log, text under 16 KB, thread=<top post id> to answer. "
+                       "Write posts from mesh identities land PENDING until the owner promotes. "
+                       "Secrets (keys, tokens, passwords) are refused at write time.",
+        "inputSchema": {"type": "object", "properties": {
+            "bench": {"type": "string", "description": "the bench slug (see bench_ls)"},
+            "kind": {"type": "string", "description": "note | report | finding | question | answer | patch | log"},
+            "text": {"type": "string", "description": "the work — one post, under 16384 characters"},
+            "thread": {"type": "integer", "description": "id of the post being answered (optional)"}},
+            "required": ["bench", "kind", "text"]},
     },
 ]
 
@@ -202,6 +230,32 @@ def call_tool(name: str, args: dict, actor: str = "portal") -> dict:
         return _result(memory.recent(int(args.get("limit") or 20)))
     if name == "memory_remove":
         return _result({"removed": memory.remove(int(args.get("id") or 0))})
+    if name == "bench_ls":
+        return _result(workroom.list_benches())
+    if name == "bench_read":
+        b = workroom.bench(str(args.get("bench") or ""))
+        if b is None:
+            return _result({"error": f"no bench {args.get('bench')!r}; "
+                                     "bench_ls lists the open ones"})
+        b["posts"] = workroom.posts(str(args.get("bench") or ""),
+                                    int(args.get("limit") or 30))
+        return _result(b)
+    if name == "thread_post":
+        quarantined = actor.startswith("agent:")
+        try:
+            row = workroom.post(str(args.get("bench") or ""),
+                                str(args.get("kind") or "note"),
+                                str(args.get("text") or ""),
+                                author=actor,
+                                thread=args.get("thread"),
+                                status="pending" if quarantined else "promoted")
+        except workroom.WorkroomError as e:
+            return _result({"error": str(e)})
+        if quarantined:
+            row["note"] = ("posted as PENDING: mesh writes are quarantined until the "
+                           "portal owner promotes them (Workroom page). Searches find "
+                           "it meanwhile, flagged with its status.")
+        return _result(row)
     raise LookupError(f"unknown tool: {name}")
 
 

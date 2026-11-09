@@ -63,6 +63,7 @@ from .core import (
     settingrows,
     systemd,
     updater,
+    workroom,
 )
 from .core import config as cfg
 from .providers import PROVIDERS
@@ -222,6 +223,27 @@ class MeshPromoteBody(BaseModel):
 class MeshRejectBody(BaseModel):
     """Delete one quarantined mesh write. `confirm` because a delete removes
     what a peer's session recorded — the owner's call, made deliberately."""
+    id: int
+    confirm: bool = False
+
+
+class WorkroomPostBody(BaseModel):
+    """One post to a bench. The portal session self-promotes (mesh P1 law);
+    this route is the owner's hands on the Workroom page."""
+    bench: str
+    kind: str = "note"
+    text: str
+    thread: int | None = None
+
+
+class WorkroomBenchBody(BaseModel):
+    slug: str
+    title: str
+    goal: str = ""
+
+
+class WorkroomRejectBody(BaseModel):
+    """Delete one quarantined post — same gate as mesh reject."""
     id: int
     confirm: bool = False
 
@@ -1914,6 +1936,75 @@ def create_app() -> FastAPI:
                                 detail="rejecting a quarantined memory needs confirm=true")
         if not memory.reject(body.id):
             raise HTTPException(status_code=404, detail=f"no memory {body.id}")
+        return {"ok": True, "id": body.id}
+
+    # --------------------------------------- workroom (W0-lite, COLLAB_PROPOSAL)
+    # Benches are project workspaces, posts are the work (note/report/finding/
+    # question/answer/patch/log). Remote agents post through the door
+    # (kb_mcp: bench_ls/bench_read/thread_post) and their writes land PENDING
+    # (mesh P1 law); this page shows the shared record and the triage in the
+    # same place the work lives. Portal posts self-promote — the owner's own
+    # session is the trust root.
+
+    @app.get("/workroom")
+    def workroom_page(request: Request, _=Depends(_require_auth)):
+        workroom.ensure_seed()
+        benches = workroom.list_benches()
+        for b in benches:
+            b["last_ago"] = (_ago(max(0.0, (time.time() - b["last_post"]) / 3600))
+                             if b.get("last_post") else "")
+        slug = request.query_params.get("bench") or (benches[0]["slug"] if benches else None)
+        b = workroom.bench(slug) if slug else None
+        posts = workroom.posts(b["slug"]) if b else []
+        for p in posts:
+            p["ago"] = _ago(max(0.0, (time.time() - (p.get("created_at") or 0)) / 3600))
+        return templates.TemplateResponse(request, "workroom.html", {
+            "benches": benches, "bench": b, "posts": posts,
+            "count_pending": workroom.count_pending(), "kinds": workroom.KINDS})
+
+    @app.get("/api/workroom")
+    def api_workroom(_=Depends(_require_auth)):
+        workroom.ensure_seed()
+        return {"benches": workroom.list_benches(), "count_pending": workroom.count_pending()}
+
+    @app.get("/api/workroom/bench")
+    def api_workroom_bench(request: Request, _=Depends(_require_auth)):
+        b = workroom.bench(request.query_params.get("bench") or "")
+        if b is None:
+            raise HTTPException(status_code=404, detail="no such bench")
+        b["posts"] = workroom.posts(b["slug"])
+        return b
+
+    @app.post("/api/workroom/post")
+    def api_workroom_post(body: WorkroomPostBody, _=Depends(_require_auth)):
+        try:
+            row = workroom.post(body.bench, body.kind, body.text,
+                                author="portal", thread=body.thread)
+        except workroom.WorkroomError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"ok": True, **row}
+
+    @app.post("/api/workroom/bench")
+    def api_workroom_bench_new(body: WorkroomBenchBody, _=Depends(_require_auth)):
+        try:
+            return {"ok": True, **workroom.seed(body.slug, body.title, body.goal)}
+        except workroom.WorkroomError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+    @app.post("/api/workroom/promote")
+    def api_workroom_promote(body: MeshPromoteBody, _=Depends(_require_auth)):
+        row = workroom.promote(body.id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no post {body.id}")
+        return {"ok": True, "id": body.id, "status": row["status"]}
+
+    @app.post("/api/workroom/reject")
+    def api_workroom_reject(body: WorkroomRejectBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(status_code=409,
+                                detail="rejecting a quarantined post needs confirm=true")
+        if not workroom.reject(body.id):
+            raise HTTPException(status_code=404, detail=f"no post {body.id}")
         return {"ok": True, "id": body.id}
 
     # --------------------------------------- remote image forge (Settings page)

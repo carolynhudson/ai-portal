@@ -7971,3 +7971,25 @@ picks + the draft sharing law (§5). Memory 120 is the pointer. Resuming the
 research = one subagent call seeded with §1–§3 asking §4 — no context archaeology
 needed. Law noted: when a subagent's payload is facts, checkpoint the facts to a
 KB doc before the parent compacts; the subagent is a tool, the doc is the state.
+
+**6.14.1zo — Workroom W0-lite ships (the COLLAB_PROPOSAL phase-in, owner GO):**
+benches and posts land in the portal's schema (`wb_benches`/`wb_posts` + FTS5,
+mirroring the memory triggers), and `app/core/workroom.py` keeps the laws: the
+16 KB cap (findings, not transcripts), the secret net AT WRITE TIME (private-key
+blocks, live Bearer tokens, password-shaped assignments refused; kit placeholders
+`<token>`/`...`/`your_password_here` pass — a net that fires on placeholders
+trains agents around it; the refusal audits the SHAPE, never the text), replies
+riding the top-level id (threads one deep), and the mesh P1 quarantine:
+`agent:*` posts land pending, portal posts self-promote. The door gains
+`bench_ls`/`bench_read` (read scope) and `thread_post` (write scope) — no new
+scope invented for W0. The page (/workroom, nav under Projects as a sheet — the
+seven-slot portrait law caught the eighth link and the suite named the overflow
+in px) renders bench list, bench record with pending cards, Promote/Reject
+(confirm), the compose form, and Open-a-bench. The founding bench is
+`qwen-image-2.1`, seeded: the research task is the Workroom's first dogfood,
+and docs/QWEN_IMAGE_21_RESEARCH.md is its book of ground truth. The UI harness
+earned its keep: it drove the sweep, recorded the POST shapes (bench+kind+text —
+the contract), flagged a dead radio (clicking the current value IS inert: the
+spec's expectInert law is the honest answer), and pinned the over-asserted
+selector (the bench card is a navigation STATE, not an invariant). Suite
+1366/5. Deployed; the first agent posts to qwen-image-2.1 will be its witness.

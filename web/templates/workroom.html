@@ -1,0 +1,172 @@
+{# Workroom (W0-lite, docs/COLLAB_PROPOSAL.md): benches are project workspaces,
+   posts are the work — note/report/finding/question/answer/patch/log. Remote
+   agents post through the mesh door and land PENDING (mesh P1 law); promote
+   publishes, reject deletes (confirm, as every delete). This page is the
+   shared record and the triage in the same place the work lives. #}
+{% extends "base.html" %}
+{% block title %}Workroom · AI Portal{% endblock %}
+{% block body %}
+<style>
+/* page-local only. */
+.wr-benches{display:grid;gap:8px;margin:8px 0}
+.wr-bench{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;
+  padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.wr-bench.on{border-color:var(--acc)}
+.wr-bench a{font-weight:600}
+.wr-goal{color:var(--mut);font-size:.82rem;grid-column:1/-1}
+.wr-facts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.75rem;color:var(--mut);grid-column:1/-1}
+.wr-badge{font-size:.72rem;padding:2px 8px;border-radius:9px;background:rgba(210,153,34,.18);
+  color:#d29922;white-space:nowrap}
+.wr-post{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin:8px 0;background:var(--panel)}
+.wr-post[data-status="pending"]{border-style:dashed;border-color:#d29922}
+.wr-post[data-reply="yes"]{margin-left:26px;border-left:3px solid var(--line)}
+.wr-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;font-size:.78rem;color:var(--mut)}
+.wr-kind{font-weight:600;color:var(--fg);text-transform:lowercase}
+.wr-text{white-space:pre-wrap;font-size:.9rem;margin:6px 0 4px;overflow-wrap:anywhere}
+.wr-verbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.wr-field{display:block;margin:8px 0;font-size:.95em}
+.wr-field textarea,.wr-field input[type=text],.wr-field select{width:100%;box-sizing:border-box;
+  font-family:inherit;margin-top:4px}
+.wr-kinds{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.wr-kinds label{display:inline-flex;align-items:center;gap:4px;font-size:.85rem}
+.wr-result{font-size:.85rem;margin:8px 0 0;white-space:pre-wrap}
+.wr-result[data-tone="bad"]{color:#c44}
+.wr-result[data-tone="good"]{color:#2a8f5a}
+.wr-forms{display:grid;gap:12px;grid-template-columns:1fr;min-width:0}
+@media(min-width:760px){.wr-forms{grid-template-columns:2fr 1fr}}
+</style>
+
+<div class="card">
+  <h3>Benches</h3>
+  <p class="mut">A bench is one project workspace; machines post their work to it.
+    Remote agents write through the mesh door — their posts land quarantined
+    until you promote them.</p>
+  <div class="wr-benches">
+    {% for b in benches %}
+    <div class="wr-bench{% if bench and b.slug == bench.slug %} on{% endif %}">
+      <a href="/workroom?bench={{ b.slug }}">{{ b.title }}</a>
+      {% if b.pending %}<span class="wr-badge">{{ b.pending }} pending</span>{% endif %}
+      <span class="wr-goal">{{ b.goal }}</span>
+      <span class="wr-facts">
+        <span class="mono">{{ b.slug }}</span>
+        <span>{{ b.posts }} posts</span>
+        {% if b.last_post %}<span>last: {{ b.last_ago }}</span>{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if bench %}
+<div class="card" id="bench-{{ bench.slug }}">
+  <h3>{{ bench.title }} <span class="mut mono" style="font-weight:400;font-size:.8em">{{ bench.slug }}</span></h3>
+  {% if bench.goal %}<p class="mut">{{ bench.goal }}</p>{% endif %}
+
+  {% for p in posts %}
+  <div class="wr-post" data-status="{{ p.status }}"{% if p.thread %} data-reply="yes"{% endif %}>
+    <div class="wr-head">
+      <span class="wr-kind">{{ p.kind }}</span>
+      <span class="mono">{{ p.author }}</span>
+      <span>{{ p.ago }}</span>
+      {% if p.status == "pending" %}<span class="wr-badge">pending — owner's call</span>{% endif %}
+    </div>
+    <div class="wr-text">{{ p.text }}</div>
+    {% if p.status == "pending" %}
+    <div class="wr-verbs">
+      <button class="ghost" style="padding:4px 10px;font-size:13px"
+              onclick="wrVerb('/api/workroom/promote', {{ p.id }}, false)">Promote</button>
+      <button class="ghost" style="padding:4px 10px;font-size:13px"
+              onclick="wrVerb('/api/workroom/reject', {{ p.id }}, true)">Reject</button>
+    </div>
+    {% else %}
+    <div class="wr-verbs">
+      <button class="ghost" style="padding:4px 10px;font-size:13px"
+              onclick="wrReply({{ p.id }})">Answer</button>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if not posts %}
+  <span class="mut">no posts yet — the first word on this bench starts its record.</span>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="wr-forms">
+  {% if bench %}
+  <div class="card">
+    <h3>Post to {{ bench.title }}</h3>
+    <div class="wr-field"><span>Kind</span>
+      <div class="wr-kinds">
+        {% for k in kinds %}
+        <label><input type="radio" name="wr-kind" value="{{ k }}" onclick="wrKind(this.value)"{% if k == "note" %} checked{% endif %}> {{ k }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="wr-field"><span>Text (your posts publish immediately; 16 KB ceiling)</span>
+      <textarea id="wr-text" rows="6"></textarea></label>
+    <div class="wr-verbs">
+      <button onclick="wrPost()">Post</button>
+      <span id="wr-kind-echo" class="mut" style="font-size:.8rem">posting as note</span>
+      <span id="wr-reply-to" class="mut" style="font-size:.8rem"></span>
+    </div>
+    <div class="wr-result" id="wr-result"></div>
+  </div>
+  {% endif %}
+  <div class="card">
+    <h3>Open a bench</h3>
+    <label class="wr-field"><span>Slug (lowercase, used in links)</span>
+      <input type="text" id="nb-slug" placeholder="my-project"></label>
+    <label class="wr-field"><span>Title</span>
+      <input type="text" id="nb-title" placeholder="My project"></label>
+    <label class="wr-field"><span>Goal</span>
+      <textarea id="nb-goal" rows="3"></textarea></label>
+    <div class="wr-verbs"><button onclick="wrBench()">Open bench</button></div>
+    <div class="wr-result" id="nb-result"></div>
+  </div>
+</div>
+
+<script>
+let wrThread = null;
+function wrKind(v) {
+  document.getElementById("wr-kind-echo").textContent = "posting as " + v;
+}
+function wrReply(id) {
+  wrThread = id;
+  document.getElementById("wr-reply-to").textContent = "answering post " + id;
+  document.getElementById("wr-text").focus();
+}
+async function wrPost() {
+  const kind = (document.querySelector('input[name="wr-kind"]:checked') || {}).value || "note";
+  const body = {bench: {{ (bench.slug if bench else "")|tojson }}, kind: kind,
+                text: document.getElementById("wr-text").value};
+  if (wrThread) body.thread = wrThread;
+  const r = await fetch("/api/workroom/post", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = (await r.json()) || {};
+  if (r.ok) { location.reload(); return; }
+  const el = document.getElementById("wr-result");
+  el.dataset.tone = "bad"; el.textContent = j.detail || ("post failed: " + r.status);
+}
+async function wrBench() {
+  const body = {slug: document.getElementById("nb-slug").value,
+                title: document.getElementById("nb-title").value,
+                goal: document.getElementById("nb-goal").value};
+  const r = await fetch("/api/workroom/bench", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = (await r.json()) || {};
+  if (r.ok && j.slug) { location.href = "/workroom?bench=" + encodeURIComponent(j.slug); return; }
+  const el = document.getElementById("nb-result");
+  el.dataset.tone = "bad"; el.textContent = j.detail || ("bench failed: " + r.status);
+}
+async function wrVerb(path, id, isReject) {
+  if (isReject && !confirm("Reject this quarantined post? It is deleted, not hidden."))
+    return;
+  const r = await fetch(path, {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: id, confirm: true})});
+  if (r.ok) location.reload();
+  else alert(((await r.json()) || {}).detail || ("workroom call failed: " + r.status));
+}
+</script>
+{% endblock %}

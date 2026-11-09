@@ -36,8 +36,9 @@ from . import agents, config as cfg, db, kb_mcp
 # Scope -> tools. memory_remove and memory_reindex are portal-session only:
 # a destructive tool on a token that can leak off-box is not a trade worth
 # making, and reindexing is maintenance the portal schedules for itself.
-READ_TOOLS = ("kb_search", "kb_read", "memory_search", "memory_recent")
-WRITE_TOOLS = READ_TOOLS + ("memory_add",)
+READ_TOOLS = ("kb_search", "kb_read", "memory_search", "memory_recent",
+              "bench_ls", "bench_read")
+WRITE_TOOLS = READ_TOOLS + ("memory_add", "thread_post")
 PORTAL_TOOLS = tuple(t["name"] for t in kb_mcp.TOOLS)
 
 _settings_cache = None

@@ -2537,6 +2537,30 @@
           "expectPanels": 2
         }
       ]
+    },
+    {
+      "name": "workroom",
+      "path": "/workroom",
+      "expectTitle": "Workroom",
+      "_comment": [
+        "W0-lite (docs/COLLAB_PROPOSAL.md): benches + posts are server-rendered; the page is the",
+        "shared record AND the quarantine triage in one place. Load must not fetch (a view that",
+        "polls starts owning the data path), and the founding bench renders with its seed."
+      ],
+      "expectRequests": [],
+      "expectNoRequests": ["/api/workroom"],
+      "expectVisible": [".wr-benches", ".wr-forms"],
+      "expectText": [
+        {
+          "_comment": "the bench list is the page's spine: it must show the founding bench by name",
+          "selector": ".wr-benches",
+          "contains": "Qwen-Image-2.1 chain picks"
+        },
+        {
+          "selector": ".wr-forms",
+          "contains": "Open a bench"
+        }
+      ]
     }
   ]
 }
