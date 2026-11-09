@@ -571,10 +571,13 @@ def test_the_health_menu_is_a_sheet_of_sections():
 
 def test_the_models_page_is_split_three_ways_and_deep_links():
     """The menu-bar pilot's page side (owner, 6.14.1zf): the Models page is
-    three tab sections -- Get Models (HF search + download/add tools), Llama
-    Models, ComfyUI Models -- and every section is reachable by URL
+    three tab sections -- Get Models (HF search + the -hf download pane),
+    Llama Models, ComfyUI Models -- and every section is reachable by URL
     (/models?tab=get|llama|comfy) so the nav menu is a set of honest links.
-    selectModel (a search hit) must land in the tool that consumes it."""
+    The 6.14.1zm law rides here too: a search hit's get… chip carries the
+    repo id through esc() into data-repo (no inline string interpolation),
+    and a chip click lands in the pane that consumes it (#grab-spec fills,
+    flashes, and submits)."""
     m = (ROOT / "web" / "templates" / "models.html").read_text()
     for tid in ("model-tab-get", "model-tab-llama", "model-tab-comfy"):
         assert f'id="{tid}"' in m, f"models tab {tid} missing"
@@ -585,8 +588,15 @@ def test_the_models_page_is_split_three_ways_and_deep_links():
     assert "URLSearchParams" in m and "switchModelTab(q," in m, "deep link init gone"
     assert "history.replaceState(null, '', '?tab=' + tab)" in m, \
         "switchModelTab stopped syncing the address"
-    assert "switchModelTab('get', document.getElementById('model-tab-get'))" in m, \
-        "selectModel no longer lands in the Get Models tab"
+    # the -hf pane law: one spec input; the out-of-place filename/dir inputs
+    # are the owner's explicit no (6.14.1zm) and must stay gone
+    assert 'id="grab-spec"' in m and 'id="grab-job"' in m, "the -hf pane is gone"
+    for ghost in ("add-src", "add-name", "add-dir", "add-cat"):
+        assert f'id="{ghost}"' not in m, f"retired input {ghost} is back"
+    assert 'data-repo="${esc(m.id)}"' in m, \
+        "the search row stopped escaping the repo id into data-repo"
+    assert "input.closest('form').requestSubmit()" in m \
+        and "add-flash" in m, "a quant chip no longer lands visibly in the pane"
     # the old tab names must be fully retired (no ghost references)
     for ghost in ("tab-search", "tab-download", "model-tab-download"):
         assert f'id="{ghost}"' not in m, f"retired id {ghost} still in models.html"

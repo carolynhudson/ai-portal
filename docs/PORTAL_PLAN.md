@@ -7912,3 +7912,32 @@ P1 quarantine law reused), text-typed content-addressed files with the kit
 secret-scan generalized to write-time, mesh-door transport with a `collab`
 scope, search union KB+memory+workroom, Workroom page, phases W0-W3, five
 owner decisions. Proposal only — nothing built.
+
+**6.14.1zm — the -hf download law (owner ruling: the pane's only purpose is
+the occasional direct grab):** the Get-models pane is rebuilt around one
+spec field — `org/model:QUANT`, llama.cpp style. `app/core/hfgrab.py` plans
+the file set (quant-matched weights INCLUDING split parts, mmproj/mtp
+sidecars from any folder; LoRAs, imatrix, images never travel), downloads
+into the hub cache with 2 workers, retries x3, and file-granular
+pause/resume/cancel (mid-file is the hub's; the cache IS the resume); then
+places by type: GGUF hands off to the migration ladder (full law: preflight,
+verified copy, refs follow, cache names release last) and the sidecars
+follow into the SAME library dir (router sidecar law); Comfy repos classify
+by tensor keys with the deepest repo folder as prior and the CHAIN LAW: one
+file per category, smallest variant wins, and a variant filter never
+amputates a role the chain needs (witnessed: Qwen-Image ComfyUI = 260 G
+whole-repo, 28 G as `:fp8`). The out-of-place filename/model-dir inputs are
+gone (owner's no). Search rows get a get… chip -> quant menu (`/api/models/
+quants`, one hub call per click, sizes + part counts) -> the chip starts the
+grab. Routes: /api/models/grab, /api/models/grab/control (cancel confirm-
+gated in UI), /api/models/quants; job kind model-grab (non-disruptive: one
+of its kind, never over a build). selectModel retires; contract pins +
+harness spec updated (inert pin: no selectModel at all; repo ids ride
+data-repo through esc). 12 new tests incl. two FULL route journeys (fake
+hub -> cache -> REAL ladder -> library, cache names released; comfy chain
+journey with classifier placement). Law bugs caught in tests: split-file
+quant read as '' (shard dash joins the extension), space guard crashed on
+an uncreated cache dir, resume normalizes to running, refs/main must be
+git-hash-shaped (test-law). Live witness queued: LessThanThreeAI/Qwen3.8-
+27B-Humanlike-Chat-GGUF:Q6_K (21.4 G, mmproj follows) per the owner's
+explicit GO — voice-chat test model.

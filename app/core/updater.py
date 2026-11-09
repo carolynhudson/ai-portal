@@ -38,6 +38,7 @@ KIND_LABEL = {
     "comfyui": "ComfyUI update",
     "comfyui-download": "ComfyUI model download",
     "model-add": "model add",
+    "model-grab": "model download (hf)",
     "huggingface": "HF CLI update",
 }
 

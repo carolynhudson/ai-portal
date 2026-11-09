@@ -641,10 +641,8 @@
         "#tab-get",
         "#search-query",
         "#search-model-type",
-        "#add-src",
-        "#add-name",
-        "#add-dir",
-        "#add-cat"
+        "#grab-spec",
+        "#grab-job"
       ],
       "expectStylesheets": [
         "/static/tabs.css"
@@ -658,6 +656,18 @@
         }
       ],
       "fixtures": [
+        {
+          "_comment": "the quant menu is one hub call per click; in the sandbox the hub is offline, so the fixture answers it and the chips render from it (6.14.1zm)",
+          "path": "^/api/models/quants$",
+          "status": 200,
+          "body": {
+            "repo": "TheBloke/UiT-Huge-GGUF",
+            "quants": [
+              {"tag": "Q4_K_M", "bytes": 16106127360, "files": 1},
+              {"tag": "Q8_0", "bytes": 28573646848, "files": 2}
+            ]
+          }
+        },
         {
           "path": "^/api/models/search$",
           "status": 200,
@@ -736,7 +746,7 @@
         }
       ],
       "expectInert": [
-        "selectModel\\('evil/Injected-Model"
+        "selectModel\\("
       ],
       "expectHidden": [
         "#nav-sub-models"

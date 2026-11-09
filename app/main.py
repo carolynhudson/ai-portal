@@ -40,6 +40,7 @@ from .core import (
     harnessctl,
     harnessupd,
     health,
+    hfgrab,
     kb,
     kb_http,
     llamakey,
@@ -376,6 +377,19 @@ class AddModelBody(BaseModel):
     filename: str | None = None
     category: str | None = None   # safetensors override; else auto-classified
     model_dir: str | None = None  # llama model dir (for mmproj/draft files)
+
+
+class ModelGrabBody(BaseModel):
+    """The -hf spec: org/model:QUANT (GGUF), org/model:VARIANT (Comfy
+    chains — one file per category), or bare org/model. Module scope: the
+    `from __future__ import annotations` closure-scope trap is pinned."""
+    spec: str
+
+
+class ModelGrabControlBody(BaseModel):
+    """pause | resume | cancel for the running grab (file-granular: an
+    in-flight file finishes; the HF cache resumes the rest)."""
+    command: str
 
 
 def sanitize_repo_group(value: str) -> str:
@@ -2416,6 +2430,48 @@ def create_app() -> FastAPI:
             raise _busy()
         db.event("portal", "model-add", src["label"])
         return {"job": jid, "source": src}
+
+    @app.post("/api/models/grab")
+    def api_models_grab(body: ModelGrabBody, _=Depends(_require_auth)):
+        """The -hf law: one spec (org/model:QUANT) fetches every file the
+        model needs — all split parts, the mmproj — then places by type:
+        the migration ladder for GGUF, the tensor-key classifier for Comfy
+        (repo folder as prior, chain law: one file per category). Progress
+        via /api/jobs/{id}; pause/resume/cancel via /api/models/grab/control."""
+        try:
+            spec = hfgrab.parse_spec(body.spec)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        jid = updater.start_job(hfgrab.GRAB_KIND, spec["label"],
+                                lambda log: hfgrab.grab(spec, log))
+        if jid is None:
+            raise _busy()
+        db.event("portal", "model-grab", spec["label"])
+        return {"job": jid, "spec": spec}
+
+    @app.post("/api/models/grab/control")
+    def api_models_grab_control(body: ModelGrabControlBody,
+                                _=Depends(_require_auth)):
+        """File-granular controls for the running download: pause stops
+        new files, resume continues, cancel abandons — cached parts stay
+        and a re-run resumes (the hub cache is the resume machinery)."""
+        try:
+            cmd = hfgrab.set_command(body.command)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        db.event("portal", "model-grab", f"control: {cmd}")
+        return {"command": cmd}
+
+    @app.get("/api/models/quants")
+    def api_models_quants(repo: str, _=Depends(_require_auth)):
+        """The quant menu of one HF repo (what llama.cpp -hf needs to be
+        picked from): tags with sizes and part counts, sidecars/junk gone.
+        One hub call per click — the search list itself stays cheap."""
+        try:
+            siblings = hfgrab._siblings(repo)
+        except Exception as e:
+            raise HTTPException(404, f"{repo}: {type(e).__name__}: {e}") from None
+        return {"repo": repo, "quants": hfgrab.quants_of(siblings)}
 
     @app.post("/api/models/search")
     def api_search_models(body: SearchModelsBody, _=Depends(_require_auth)):

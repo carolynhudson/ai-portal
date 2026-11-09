@@ -43,8 +43,11 @@
   justify-content:space-between;gap:14px}
 .mv-fields .kv .mono{word-break:break-all;text-align:right}
 .mv-fields .mv-wide{grid-column:1/-1}
-/* where did my click go? the add-src field pulses once when a search result fills it */
-#add-src.add-flash{animation:addflash 1.2s ease-out}
+/* where did my click go? the spec field pulses when a search chip starts a grab */
+#grab-spec.add-flash{animation:addflash 1.2s ease-out}
+.sr-quants{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
+.sr-quant,.sr-get{font-size:.85em}
+.grab-ctl{margin-top:6px;display:flex;gap:8px;align-items:center}
 @keyframes addflash{0%{box-shadow:0 0 0 4px rgba(90,169,255,.55)}100%{box-shadow:0 0 0 0 transparent}}
 </style>
 
@@ -90,29 +93,22 @@
     <div id="search-results" class="search-results"></div>
   </div>
   <div class="card" style="margin-bottom:16px">
-    <h3>Download / Add Model</h3>
-    <p class="mut">Paste a <code>huggingface-cli download …</code> command, an HF repo
-    name (<code>org/name</code>), a direct file URL, or a local path. The portal fetches
-    it, checks the format, and files it in the right store —
-    <code>~/ai/models/llama/&lt;model&gt;/</code> for GGUF,
-    <code>~/ai/comfyui/models/&lt;category&gt;/</code> for safetensors
-    (category auto-detected when the tensor names make it obvious).</p>
-    <form onsubmit="addModel(event)">
-      <div class="kv"><span class="k">source</span>
-        <input id="add-src" type="text" style="min-width:420px" required
-               placeholder="huggingface-cli download org/repo file.gguf | org/repo | https://… | ~/downloads/model.safetensors"></div>
-      <div class="kv"><span class="k">filename</span>
-        <input id="add-name" type="text" placeholder="optional — which file (url / hf repo)"></div>
-      <div class="kv"><span class="k">model dir</span>
-        <input id="add-dir" type="text" placeholder="optional — llama dir, e.g. for mmproj/draft files"></div>
-      <div class="kv"><span class="k">category</span>
-        <select id="add-cat">
-          <option value="">auto (safetensors)</option>
-          {% for c in comfy_categories %}<option>{{ c }}</option>{% endfor %}
-        </select>
-        <span class="mut">safetensors only</span></div>
-      <button type="submit">add model</button>
-      <div id="add-job"></div>
+    <h3>Download a model</h3>
+    <p class="mut">One spec, llama.cpp <code>-hf</code> style.
+    <code>org/model:QUANT</code> fetches every file the model needs — all
+    split parts and the mmproj sidecar — and the migration ladder files it
+    in the library (preflight, verified copy, refs follow, cache names
+    release last). Comfy chains: <code>org/model</code> takes one weight per
+    model folder (<code>diffusion_models/</code>, <code>text_encoders/</code>,
+    <code>vae/</code>, …) and places each by its tensor keys;
+    <code>org/model:fp8</code> picks the variant. Pause / resume / cancel:
+    finished parts stay cached and a re-run resumes where it stopped.</p>
+    <form onsubmit="startGrab(event)">
+      <div class="kv"><span class="k">spec</span>
+        <input id="grab-spec" type="text" style="min-width:420px" required
+               placeholder="org/model:Q6_K — a pasted hf download command works too"></div>
+      <button type="submit">download</button>
+      <div id="grab-job"></div>
     </form>
   </div>
 </div>
@@ -459,7 +455,7 @@ function renderSearchResults(results, service){
     const tags = (m.tags || []).slice(0, 5).map(esc).join(', ');
     const type = service === 'llamacpp' ? (m.has_gguf ? 'GGUF (llama.cpp)' : 'Not GGUF')
              : (m.has_safetensors ? 'Safetensors (ComfyUI)' : 'Not Safetensors');
-    html += `<div class="search-result-item" onclick="selectModel('${esc(m.id)}')">
+    html += `<div class="search-result-item" onclick="getQuants(this.querySelector('.sr-get'))">
       <h4>${esc(m.id)}</h4>
       <div class="meta">
         <span>📥 ${esc(m.downloads || 0)} downloads</span>
@@ -468,29 +464,17 @@ function renderSearchResults(results, service){
         ${m.pipeline_tag ? `<span>🎯 ${esc(m.pipeline_tag)}</span>` : ''}
       </div>
       ${tags ? `<div class="tags">${tags}</div>` : ''}
+      <div class="sr-actions"><button class="sr-get" data-repo="${esc(m.id)}"
+        onclick="event.stopPropagation();getQuants(this)">get…</button></div>
+      <div class="sr-quants"></div>
     </div>`;
   }
   container.innerHTML = html;
 }
 
-function selectModel(repoId){
-  // Jump to the Get Models tab with this repo pre-filled.
-  // The fill must be SEEN: the Get tab is usually already the visible one,
-  // so a bare value assignment is a silent no-op (the UI harness calls that
-  // dead, and so would a user hunting where the click went). Flash + focus
-  // point at the field that filled.
-  switchModelTab('get', document.getElementById('model-tab-get'));
-  const src = document.getElementById('add-src');
-  src.value = 'huggingface-cli download ' + repoId;
-  // the trace rides the attribute so every pick is a visible DOM fact (the
-  // UI harness watches serialized DOM: value properties and repeat-click
-  // idempotence are invisible to it, and to a user watching the field)
-  src.dataset.picked = repoId;
-  src.dataset.pickedAt = String(Date.now());
-  src.classList.remove('add-flash'); void src.offsetWidth;
-  src.classList.add('add-flash');
-  src.focus();
-}
+// selectModel is retired (6.14.1zm): a search hit no longer "fills a field"
+// somewhere — the row's get… chip lists the quant menu and each chip IS the
+// download, and the fill lands in #grab-spec with the flash law.
 
 // Deep link (nav menu bar pilot, 6.14.1zf): /models?tab=get|llama|comfy
 (function(){
@@ -500,53 +484,102 @@ function selectModel(repoId){
   if (q && tabs[q]) switchModelTab(q, document.getElementById(tabs[q]));
 })();
 
-// Smart add-model: the pasted source can be an HF CLI command, an HF repo
-// name, a direct URL, or a local path — sniff which, then let the backend do
-// the fetching, format check and placement (one background job).
-function classifySrc(v){
-  if (/^(huggingface-?cli|hf)\s+download\b/i.test(v)) return 'hf_cli';
-  if (/^https?:\/\//i.test(v)) return 'url';
-  if (/^[A-Za-z0-9_.\-]+\/[A-Za-z0-9_.\-\/]+$/.test(v)) return 'hf_repo';
-  return 'path';
-}
-async function addModel(ev){
+// The -hf law (owner ruling 6.14.1zm): one spec = the whole model.
+// org/model:QUANT (GGUF: parts + mmproj, then the migration ladder) or
+// org/model[:variant] (Comfy chains, tensor-key placement). Filename/dir
+// inputs are gone — the pane's only job is the occasional direct grab.
+function fmtG(b){ return (b / 2**30) >= 1 ? (b / 2**30).toFixed(1) + ' G'
+                                           : (b / 2**20).toFixed(0) + ' M'; }
+async function startGrab(ev){
   ev.preventDefault();
-  const raw = document.getElementById('add-src').value.trim();
-  if (!raw) return;
-  const body = {};
-  body[classifySrc(raw)] = raw;
-  body.filename = document.getElementById('add-name').value.trim() || null;
-  body.model_dir = document.getElementById('add-dir').value.trim() || null;
-  body.category = document.getElementById('add-cat').value || null;
-  const box = document.getElementById('add-job');
+  const spec = document.getElementById('grab-spec').value.trim();
+  if (!spec) return;
+  const box = document.getElementById('grab-job');
   box.innerHTML = '<span class="mut">starting…</span>';
   try{
-    const r = await fetch('/api/models/add', {method: 'POST',
+    const r = await fetch('/api/models/grab', {method: 'POST',
       credentials: 'same-origin', headers: {'content-type': 'application/json'},
-      body: JSON.stringify(body)});
+      body: JSON.stringify({spec})});
     const d = await r.json().catch(() => ({}));
     if (!r.ok){ box.innerHTML = '<span class="mut">' + esc(d.detail || r.status) + '</span>'; return; }
-    pollAddJob(d.job);
+    pollGrab(d.job);
   }catch(e){ box.innerHTML = '<span class="mut">' + esc(e) + '</span>'; }
 }
-function pollAddJob(jid){
-  const box = document.getElementById('add-job');
-  box.innerHTML = '<pre class="feed" style="max-height:180px"></pre><span class="mut">working…</span>';
+let grabRunning = null;
+function pollGrab(jid){
+  grabRunning = jid;
+  const box = document.getElementById('grab-job');
+  box.innerHTML = '<pre class="feed" style="max-height:220px"></pre>'
+    + '<div class="grab-ctl"><button onclick="grabCtl(\'pause\')">pause</button>'
+    + '<button onclick="grabCtl(\'resume\')" disabled>resume</button>'
+    + '<button onclick="grabCtl(\'cancel\')">cancel</button>'
+    + '<span class="mut">working…</span></div>';
   const pre = box.querySelector('pre');
-  const note = box.lastElementChild;
+  const note = box.querySelector('.grab-ctl .mut');
+  const bPause = box.querySelector('button');
+  const bResume = box.querySelectorAll('button')[1];
+  const bCancel = box.querySelector('[onclick*="cancel"]');
   let j = null;
   (function tick(){
     fetch('/api/jobs/' + jid, {credentials: 'same-origin'})
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d){ j = d; pre.textContent = d.log || ''; pre.scrollTop = pre.scrollHeight; }
-        if (!j || j.status === 'running') return setTimeout(tick, 2000);
+        if (!j || j.status === 'running'){
+          if (j && grabRunning === jid) note.textContent = 'working…';
+          return setTimeout(tick, 2000);
+        }
+        grabRunning = null;
+        bPause.disabled = bResume.disabled = bCancel.disabled = true;
         note.textContent = j.status === 'success' ? 'done — refreshing…'
-                                                  : 'failed — see log above';
+                                                  : 'ended: ' + j.status + ' — see log above';
         if (j.status === 'success') setTimeout(() => location.reload(), 800);
       })
       .catch(() => setTimeout(tick, 4000));
   })();
+}
+async function grabCtl(cmd){
+  if (cmd === 'cancel'
+      && !confirm('Cancel this download?\n\nFinished parts stay in the hub cache; '
+                + 'starting the same spec again resumes where it stopped.')) return;
+  const box = document.getElementById('grab-job');
+  const note = box.querySelector('.grab-ctl .mut');
+  if (note) note.textContent = cmd + '…';
+  await fetch('/api/models/grab/control', {method: 'POST', credentials: 'same-origin',
+    headers: {'content-type': 'application/json'}, body: JSON.stringify({command: cmd})});
+  const b = box.querySelectorAll('.grab-ctl button');
+  if (b.length >= 2){ b[0].disabled = cmd === 'pause'; b[1].disabled = cmd !== 'pause'; }
+}
+function grabFrom(repo, tag){
+  const input = document.getElementById('grab-spec');
+  input.value = tag ? repo + ':' + tag : repo;
+  input.dataset.picked = input.value;
+  input.classList.remove('add-flash'); void input.offsetWidth;
+  input.classList.add('add-flash');
+  input.closest('form').requestSubmit();
+}
+async function getQuants(btn){
+  // one hub call per click (the search list itself stays cheap): the
+  // repo's quant menu, each chip a download of exactly that file set.
+  const repo = btn.dataset.repo;
+  const box = btn.closest('.search-result-item').querySelector('.sr-quants');
+  box.innerHTML = '<span class="mut">listing quants…</span>';
+  try{
+    const r = await fetch('/api/models/quants?repo=' + encodeURIComponent(repo),
+                          {credentials: 'same-origin'});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ box.innerHTML = '<span class="mut">' + esc(d.detail || r.status) + '</span>'; return; }
+    if (!d.quants.length){   // weights repo: the chain law takes it whole
+      box.innerHTML = '<button class="sr-quant" data-repo="' + esc(repo)
+        + '" onclick="event.stopPropagation();grabFrom(this.dataset.repo)">chain — one per folder</button>';
+      return;
+    }
+    box.innerHTML = d.quants.map(q =>
+      '<button class="sr-quant" data-repo="' + esc(repo) + '" data-tag="'
+      + esc(q.tag) + '" onclick="event.stopPropagation();grabFrom(this.dataset.repo, this.dataset.tag)">'
+      + esc(q.tag) + ' · ' + fmtG(q.bytes)
+      + (q.files > 1 ? ' · ' + q.files + ' parts' : '') + '</button>').join('');
+  }catch(e){ box.innerHTML = '<span class="mut">' + esc(e) + '</span>'; }
 }
 
 /* Migrate (6.14.1zk): one cached quant into the portal library. The server
