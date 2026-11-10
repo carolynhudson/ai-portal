@@ -54,22 +54,140 @@ Source: quarantined memories 108–117 (portal DB, `agent:rainbowblock-forge`), 
 - Library is 2512/2509-era: `qwen_image_2512_fp8_e4m3fn` + `qwen_image_edit_2509_fp8_e4m3fn` run there (fp8 dequant path proven working on this ROCm build), z_image_turbo_bf16, qwen3vl_4b_fp8_scaled + qwen_2.5_vl_7b_fp8_scaled TEs, `qwen_image_vae`. **2.1 needs the Qwen3-VL 8B TE — not present.**
 - Migration law applies to every download: hfgrab `-hf` spec, one file per category chain law, GGUF→ladder, Comfy→deepest-folder prior + copy/sha256 verify.
 
-## 4. Open questions (the cancelled subagent's scope — resume prompt lives here)
-Restart protocol: spawn `general` subagent (background) seeded with §1–§3 of this
-file, then ask it ONLY:
-1. What is Turbo exactly (step-distilled? canonical steps/cfg; relationship to the 5/6/8-step distill loras and the 0.85 G turbo_lora — base+lora ≈ Turbo?).
-2. Editing on 2.1: same DiT + Qwen3-VL encoder (TextEncodeQwenImage21 image slot) vs separate Edit model lineage (2509 edit) — what is native, what does ComfyUI core need, fun_controlnet_union usage.
-3. RGBA: 2.1 official alpha prompt-wrapper (forge-validated) vs `Qwen/Qwen-Image-Layered` separate model + Layered trio nodes — when is Layered the right tool.
-4. Community improvements: texture-fix-vae (madebyollin) reported effect; lightx2v Lightning-v2-RL steps/quality; TailSteer; uncensored quants — which are real "Swift 1.5"-class upgrades with evidence.
-5. ROCm/gfx1151 status 2026: bf16 support (known good: z_image bf16 runs), fp8 e4m3fn runs (known: 2512_fp8 runs) — is int8_convrot a no-go on ROCm (bitsandbytes CUDA kernels), w4a8 (Triton; ROCm support?), any Strix Halo qwen-image reports with s/it.
-6. Model-sharing law inputs: which quantization families are hardware-portable across BOTH boxes (bf16/fp16 portable; int8_convrot CUDA-sm80+; w4a8 Triton arch; GGUF needs ComfyUI-GGUF, ROCm speed?), so the once-downloaded set.
-7. Qwen3-VL 8B TE in ComfyUI core: CLIPLoader type qwen_image expectations, qwen3vl_8b_bf16 RAM/VRAM behavior on 128 GiB unified, PE 9B t2i/i2i node + quality gain evidence.
+## 4. Open questions — ANSWERED (2026-11-09, main-thread bounded research + forge A/B)
 
-## 5. Picks (provisional, pending §4; owner GO gates downloads)
-- **halo chain** (bf16/fp8 language, huge addressable vram): `qwen_image_2.1_bf16` + `qwen_image_2.1_turbo_bf16` + `qwen3vl_8b_bf16` TE + 2.1 VAE + `texture-fix-vae` candidate + 5/8-step distill loras; PE 9B later (CPU/router prose lane law).
-- **forge chain**: already canon (int8_convrot trio + turbo/edit/rgba contracts); candidates = texture-fix-vae, lightning/step loras, w4a8 TE is likely NO (Turing Triton).
-- **Downloads** (owner GO): `Comfy-Org/Qwen-Image-2.1` subset via hfgrab spec, chain law ≈ 40–45 G halo set.
-- **Sharing law (draft)**: download once = bf16/fp16 files, loras, VAEs (hardware-agnostic). CUDA-only: int8_convrot. GGUF: needs ComfyUI-GGUF node. Big coding LLMs: llama.cpp-only, stay on halo router (forge 2080 Ti can't host them).
+### Q1 — what Turbo is (official card, measured)
+- Turbo = accelerated checkpoint of 2.1: **8 denoising steps, CFG 1**, same
+  ~7B architecture, loads with `QwenImage21Pipeline`; the 8-step schedule is
+  SAVED IN THE CHECKPOINT (`num_inference_steps` alone does not override;
+  call-time `sigmas` does). Prefix-KV caching (`use_kv_cache=True`) reuses
+  text + reference-image context across steps. Forge measured the equivalent
+  ManualSigmas `[1.0, .978, .954, .927, .895, .845, .705, .415, 0]` — same
+  schedule, and proved **base + turbo_lora renders turbo behavior** (softer,
+  1444 sharpness vs turbo int8's crisp): the halo bf16 chain needs NO
+  separate turbo DiT download — bf16 base + turbo_lora is the turbo lane.
+- Native resolution is 2K-class: presets 2048², 2400×1792, 2528×1696,
+  2752×1536. Editing is the SAME pipeline with `image=` input (single
+  sketch→photo, multi-reference grid composition, 4-image interior
+  composition all showcased). RGBA ("Transparent Image Generation") is
+  NATIVE to 2.1/Turbo — matching the forge-validated prompt wrapper.
+- License: Qwen Research License (both). Ecosystem at the repo: 92
+  finetunes + 12 adapters + 53 quantizations of the 2.1/Turbo line.
+
+### Q2 — editing (answered by forge canon + card)
+2.1 editing is IN the base DiT: `TextEncodeQwenImage21` with image refs
+(`LoadImage` → `<image1>..`), pixel-budget resolution; card confirms
+multi-reference. No separate Edit model needed for 2.1 (2509 edit-2509
+files on halo are the OLD line). ControlNet = the fun_controlnet_union
+model_patches (bf16 7.03 G / int8 3.52 G) — not yet wired in a contract.
+
+### Q3 — RGBA vs Layered (answered)
+- 2.1/Turbo RGBA = prompt-wrapper alpha, PNG out — native, validated.
+- `Qwen/Qwen-Image-Layered` is a SEPARATE model, NOT 2.1-based: 20B DiT
+  (old Qwen-Image base), Qwen2.5-VL TE, 50 steps cfg 4, Apache-2.0. It
+  DECOMPOSES an image into 3–8 RGBA layers (recursive), for per-layer
+  edit/move/resize — a heavyweight adjunct (25 G+ DiT; needs the Layered
+  trio nodes, not installed on halo). Path: alpha for generation (2.1),
+  Layered later if per-object editing earns its 25 G on halo's vram.
+
+### Q4 — community fixes (forge-quantified, 2026-11-09 A/B, post 1)
+- `madebyollin/texture-fix-vae-for-qwen-image-2.1`: **+50% sharpness
+  (1931→2890 Laplacian var), identical composition** — keeper, decode-only
+  swap, 0.63 G bf16 PORTABLE.
+- `lightx2v/Qwen-Image-2.1-Lightning-v2-RL` 4-step: best image of the set
+  (3343), 7 s warm — new draft lane on forge.
+- Official `p_q_image_2.1_5_steps` uniform-5-sigmas: 10 s, mild distill
+  drift. Turbo int8 = mid lane (6 s). Forge lane ladder: lightning4 <
+  turbo < pq5 < official-25 (finals).
+
+### Q5 — ROCm/w4a8 (answered for both boxes)
+- Forge: w4a8 is a NO (no triton in the Windows torch build); int8_convrot
+  is the fast path.
+- halo: fp8 e4m3fn proven (2512_fp8 runs), bf16 proven (z_image bf16
+  runs); int8_convrot = CUDA-kernel family (NO on ROCm); w4a8 = Triton
+  family (no evidence ROCm 7.13 kernels; not in halo's library) → halo's
+  language stays bf16 (+fp8 where variants exist; 2.1 ships no fp8).
+
+### Q6 — sharing law (measured, both boxes)
+PORTABLE (download once): bf16/fp16 safetensors, all loras, VAEs
+(texture-fix 0.63 G, 2.1 vae), fun_controlnet bf16. CUDA-sm80+ only:
+int8_convrot (forge keeps its set). Triton-gated: w4a8. GGUF: needs
+ComfyUI-GGUF (halo has no custom_nodes — GGUF is a node install away,
+and its ROCm speed is unmeasured). Big coding LLMs: llama.cpp-only, stay
+on the halo router; forge CPU prose lane = Qwen3-30B-A3B Q4_K_M (20.2
+tok/s measured).
+
+### Q7 — prompt enhancement (answered by forge)
+9B PE on GPU = 1.47 tok/s (never). PE = prose lane OUTSIDE ComfyUI:
+forge → llama.cpp CPU `:8081` (20.2 tok/s); halo → router. Text-enhanced
+prompts feed the contracts. ComfyUI CPU-device LLM nodes = 0.21 tok/s
+(never).
+
+## 4.1 Method note (owner law 2026-11-09)
+This section was built with BOUNDED main-thread research: ~7 targeted
+fetches total, each finding written into this doc immediately. No
+open-ended subagent. Forge-side facts arrive as promoted Workroom posts
+(bench `qwen-image-2.1`, post 1) — the Workroom is the mesh's book.
+
+## 4.2 Raw open-question list (kept for history)
+
+Turbo definition · editing lineage · RGBA vs Layered · community fixes
+(texture-fix, Lightning, TailSteer, uncensored quants) · ROCm/w4a8 ·
+sharing law · PE encoders. All answered above; TailSteer and the
+uncensored quants were NOT adopted (no mandate, no measurement).
+
+
+## 5. Picks — FINAL (2026-11-09; measurements: forge post 1 + §4)
+
+### halo chain (bf16 language; ~32 G via hfgrab from `Comfy-Org/Qwen-Image-2.1`)
+- `diffusion_models/qwen_image_2.1_bf16` 13.25 G — the base; finals at
+  25 steps cfg 1 (official params, forge-validated shape).
+- `text_encoders/qwen3vl_8b_bf16` 16.3 G — 2.1's encoder (the library's
+  qwen3vl_4b/2.5vl fp8 files do NOT serve 2.1).
+- 2.1 VAE 0.63 G + `madebyollin/texture-fix-vae` 0.63 G (portable; the
+  +50% decode).
+- Loras (portable): `qwen_image_2.1_turbo_lora_avg_rank_178` 0.85 G
+  (turbo lane WITHOUT the 13.25 G turbo DiT — forge proved base+lora),
+  `p_q_image_2.1_5_steps` 0.32 G, `p_q_image_2.1_8_steps` 0.31 G;
+  `lightx2v/Qwen-Image-2.1-Lightning-v2-RL` (4-step draft lane, best
+  image of the forge A/B).
+- Skipped for halo: int8_convrot family (CUDA-only), w4a8 (Triton-only),
+  turbo DiT bf16 (lora covers it), PE 9B TEs (prose = router lane, never
+  ComfyUI-CPU), fun_controlnet (later, if control work starts).
+
+### forge chain (measured, already installed by the forge session)
+- Canon trio (int8_convrot DiT + qwen3vl_8b int8 TE + TextEncodeQwenImage21)
+  with **texture-fix vae as the decode vae in every contract**; lane ladder
+  lightning4 (7 s) < turbo int8 (6 s) < pq5 (10 s) < official-25 (53 s,
+  finals). Contracts: qwen21_t2i_official/_turbo/_edit/_rgba +
+  qwen21_t2i_lightning4/_pq5.
+
+### toolchains, settled
+- GENERATION: native (both boxes).
+- EDITING: native to 2.1 (same trio + image refs); fun_controlnet_union
+  available for structural control (bf16 7.03 G on halo if needed).
+- RGBA: native prompt-wrapper alpha (validated); Layered (separate 20B,
+  Qwen2.5-VL, Apache-2.0) is a per-object decomposition adjunct — halo
+  vram can host it later; not in this download.
+- Speed: forge = int8 lanes; halo = bf16 (fp8 where variants exist);
+  prose/PE = llama.cpp prose lanes on both boxes.
+
+### download law (owner GO to execute)
+`Comfy-Org/Qwen-Image-2.1` subset spec (base bf16 + qwen3vl_8b_bf16 +
+turbo/pq loras + 2.1 vae) ≈ 31 G, then `madebyollin/texture-fix-vae` +
+`lightx2v/Qwen-Image-2.1-Lightning-v2-RL` as two small specs. Chain law
+applies; the forge truncation story (570/913 MB "success") is already
+covered portal-side by copy+sha256 verify on Comfy lands.
+
+Exact targets (measured via HfApi, 2026-11-09):
+- `madebyollin/texture-fix-vae-for-qwen-image-2.1` →
+  `texture_fix_vae_for_qwen_image_2.1_bf16.safetensors` 644 M (skip the
+  1.29 G fp32 twin).
+- `lightx2v/Qwen-Image-2.1-Lightning-v2-RL` →
+  `qwen_image_21_lightning_v2_rl_4steps_lora_rank64.safetensors` 656 M
+  (skip the 27 G full distilled model — the lora onto the bf16 base is
+  the lane; the full model would compete with the base, chain law).
+
 
 ## 6. Where this lands
 Findings post to Workroom bench `qwen-image-2.1` as posts (agent posts land
