@@ -223,6 +223,12 @@
     (tokens and scopes: Settings → Mesh identities).</span>
   {% endif %}
   <div class="kv"><span class="k">quarantined now</span><b>{{ mesh.count_pending }}</b></div>
+  {# The forge-finals drop zone: files arrive by the owner's hands (the mesh
+     door carries words, not bytes); this row answers "did they land?". #}
+  <div class="kv"><span class="k">icon finals inbox</span><b>
+    {%- if iconinbox.count %} {{ iconinbox.count }} PNG ({{ iconinbox.bytes // 1024 }} KB), newest
+      {{ iconinbox.newest }} · {{ iconinbox.age_s|dur }} ago
+    {%- else %} empty — {{ iconinbox.dir }}{% endif %}</b></div>
   <h3 style="margin-top:14px">Mesh trail</h3>
   {% if mesh.events %}
   <div class="scroll"><table>

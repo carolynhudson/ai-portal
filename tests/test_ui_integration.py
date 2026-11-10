@@ -340,7 +340,7 @@ def test_every_served_page_has_a_ui_spec():
         # the static mount are not UI to spec
         if getattr(endpoint, "__module__", None) != "app.main":
             continue
-        if path.startswith("/api") or path == "/healthz":
+        if path.startswith("/api") or path in ("/healthz", "/favicon.ico"):
             continue
         served.add(path)
     specced = {p["path"] for p in SPEC["pages"]}

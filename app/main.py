@@ -811,6 +811,15 @@ def create_app() -> FastAPI:
                 "app_version": __version__, "build": BUILD,
                 "pid": os.getpid(), "uptime_s": round(time.time() - STARTED_AT, 1)}
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        """Browsers auto-probe the site root for this name (Firefox serves the
+        tab from it even when the <link> points at /static). The icon is a
+        public tile by nature — no auth, no session. 6.14.1zx."""
+        from fastapi.responses import FileResponse
+        return FileResponse(str(WEB / "static" / "favicon.ico"),
+                            media_type="image/x-icon")
+
     # ------------------------------------------------------------------ auth
     @app.get("/login")
     def login_get(request: Request, error: str | None = None):
@@ -1182,7 +1191,22 @@ def create_app() -> FastAPI:
         # own event trail. The pane is read-only everywhere else; the mesh
         # verbs are its one state-changer, each behind its own confirm.
         body["mesh"] = _mesh_state(evlimit=12)
+        body["iconinbox"] = _iconinbox_state()
         return body
+
+    def _iconinbox_state() -> dict:
+        """The forge-finals drop zone (~/ai/state/icons-inbox): the portal
+        cannot receive files through the mesh door (P2 is queued), so the
+        owner carries PNGs over the LAN; this row answers "did they land?".
+        """
+        d = paths.PORTAL_STATE.parent / "icons-inbox"
+        files = (sorted(d.glob("*.png"), key=lambda p: p.stat().st_mtime,
+                        reverse=True) if d.is_dir() else [])
+        newest = files[0] if files else None
+        return {"dir": str(d), "count": len(files),
+                "newest": newest.name if newest else None,
+                "age_s": round(time.time() - newest.stat().st_mtime) if newest else None,
+                "bytes": sum(f.stat().st_size for f in files)}
 
     @app.get("/health")
     def health_page(request: Request, refresh: bool = False,

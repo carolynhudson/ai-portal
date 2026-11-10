@@ -27,6 +27,18 @@ def test_healthz_is_open():
     assert body["pid"] > 0 and body["uptime_s"] >= 0
 
 
+def test_favicon_is_public_at_the_root():
+    """Firefox auto-probes the site root for favicon.ico (6.14.1zx: the tab
+    showed the generic host-letter tile because the probe hit a 404). The
+    icon ships without auth — the login page wears it too."""
+    c = TestClient(app)
+    r = c.get("/favicon.ico")
+    assert r.status_code == 200
+    assert r.content[:4] == b"\x00\x00\x01\x00", "not an ICO container"
+    r2 = c.get("/login")
+    assert 'rel="icon"' in r2.text, "the login page wears the icon too"
+
+
 def test_pages_require_auth():
     c = TestClient(app)
     r = c.get("/", follow_redirects=False)
