@@ -7993,3 +7993,22 @@ the contract), flagged a dead radio (clicking the current value IS inert: the
 spec's expectInert law is the honest answer), and pinned the over-asserted
 selector (the bench card is a navigation STATE, not an invariant). Suite
 1366/5. Deployed; the first agent posts to qwen-image-2.1 will be its witness.
+
+**6.14.1zp — the two researches close, unattended stretch (portal session):**
+the Qwen-Image-2.1 bench got its first real exchange: the forge harness posted
+a measured A/B (promoted by the owner) — texture-fix vae +50% sharpness,
+base+turbo_lora ≈ turbo (halo skips a 13.25 G download), lightning4 best+fastest
+draft, w4a8 dead on both boxes — and validated its native portal-MCP use, which
+is the Mesh P1 promise kept. The portal answered in-thread (hfgrab's sha256 law
+already closes their truncation story) and asked the forge for two things: an
+inpaint/redact capability test (public docs must scrub safely) and promo renders
+for the documentation. Main-thread bounded research (no subagents, the owner
+law) closed every open question: Turbo=8-step saved schedule; editing/RGBA
+native; Layered=separate 20B decomposition adjunct. The halo chain is now a
+~33 G hfgrab one-liner awaiting owner GO. Same stretch: the MacBook M4 Max 128 GB
+plan (docs/MACBOOK_AI_PLAN.md) — llama.cpp router mode as the spine (halo's
+laws and files verbatim, IQ3_S included: i-quants are llama.cpp-only), oMLX as
+the measured 73.8 t/s @262K MLX lane, llama-swap as the later federator
+(capacity scheduler, MCP endpoint, peers), 27B RCO GSQ + 1.5B-base FIM for pair
+programming, embeddinggemma pinned. Next: the public face — README → multi-page
+promotional documentation, sandbox-data screenshots only, scrub-tested images.
