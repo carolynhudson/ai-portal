@@ -412,8 +412,8 @@ def test_the_halo_brand_is_wired_and_font_free():
     sizes = {w % 256 for w, _ in
              (struct.unpack("<BB", ico[6 + i * 16:8 + i * 16]) for i in range(n))}
     assert 16 in sizes, "an ICO without 16x16 blurfs in the tab"
-    assert "/static/portal-mark.svg" in base and ">HALO</span>" in base, (
-        "the nav brand is the mark + the chosen name")
+    assert "/static/pasture-nav.png" in base and ">HALO</span>" in base, (
+        "the nav brand is the pasture portal mark + the chosen name (6.14.1zw)")
     for name in ("portal-mark.svg", "favicon.svg", "portal-wordmark.svg"):
         svg = (root / "web/static" / name).read_text()
         assert "<text" not in svg, f"{name} gained font-dependent <text>"

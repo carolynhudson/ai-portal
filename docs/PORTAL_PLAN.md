@@ -8137,3 +8137,13 @@ family), apple-touch, 192/512 (og:image now the pasture), Pages gets
 favicon+apple-touch+icon.svg (medium), models page gains the gilded badge.
 Dialog-context gate passed on portal-dark/page-dark/white/mica with 10x edge
 zoom. Suite 1366/5; hero test enforces the 16-in-ICO icon law.
+
+**6.14.1zx — one mark (owner ruling):** the icon set is pruned to law —
+the **edge pasture portal** is THE mark: favicon (7-entry ICO, size-matched
+ring weights), Pages icons + og, and the nav logo (`/static/pasture-nav.png`
+replaces the portal-mark in the brand; the heritage SVGs stay on static/,
+font-free, asserted). The models page flies the **neon brain** (diffusion
+h3b seed 42: glowing blue-violet lobes) as its emblem. The day's test
+variants (owl eyes, ripple ring, gilded brain, JP composites, P2 rounds)
+are abandoned; lessons live in memory 129/130 and this journal. The forge
+(bench 6) renders the scene-disc finals. Suite 1366/5.
