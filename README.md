@@ -1,206 +1,87 @@
-# AI Tool Management Portal
+# HALO — the AI Tool Management Portal
 
-Web portal for managing, updating and configuring the AI tools on this
-Framework Desktop (Ubuntu 26.04, AMD Ryzen AI Max+ 395, 128 GB shared RAM):
-**llama.cpp**, **ComfyUI**, and the **huggingface** CLI/libraries.
+**One desktop machine. All the AI. No cloud.**
 
-Backend is Python (FastAPI, no front-end build step: Jinja templates + inline
-JS, which is why the test suite drives the pages in a real DOM — see *Tests*).
-The repo also holds the earlier environment-consolidation planning and migration
-tooling that the portal is built on top of.
+A web console that manages, updates, and connects the AI tools on a single
+AMD Strix Halo box: the llama.cpp router, ComfyUI, model files, projects,
+coding agents, and the machines next door.
 
-## Contents
+This project began as a personal challenge: **can a fully functional Edge AI
+tools management portal be built using only edge AI tools** — models running
+on the family's Framework Desktop (AMD Ryzen AI Max+ 395, 128 GB shared
+memory)? The answer, so far, is yes. The portal was planned, written, tested,
+and reviewed by coding agents running on the machine it manages, and the
+portal in turn launches those agents. Nothing here rents intelligence.
 
-| Path | What it is |
+> Screenshots are from the live portal, scrubbed of private data at capture:
+> addresses, account paths, and token-shaped text are masked before the
+> pixels exist.
+
+![The portal status page](docs/showcase/img/status.png)
+
+## What it does
+
+| Page | The short story |
 |---|---|
-| `docs/ENVIRONMENT.md` | Full inventory of the machine: hardware, GPU, disks, every AI-related file/dir with sizes, the llama.cpp router's actual behavior (verified from source + live API), findings F1–F11, and prior-session script triage |
-| `docs/PLAN.md` | Target layout (`~/ai/`), the phased migration plan (who runs what, risk, rollback), and the update-policy the portal will implement |
-| `docs/UPDATES.md` | Which components self-update (apt) vs need portal/user action, ROCm↔llama.cpp↔torch version-coupling watch items, the health-pane data list, model-download flow, and the code-verified model layout rules (incl. draft/MTP naming) |
-| `tools/aiportal.py` | Shared constants + helpers for the phase scripts |
-| `tools/phase1_build_model_tree.py` | Build `~/ai/models/llama/` (one subdir per model, hardlinks, 0 extra disk) + validated `presets.ini` |
-| `tools/phase2_move_repos.py` | Move `~/llama.cpp`, `~/ComfyUI`, `~/comfyui` (venv) into `~/ai/`; merge the unique workspace models; compat symlinks at old paths |
-| `tools/phase3_rebuild_llama_cpp.py` | Rebuild llama.cpp (pinned commit, HIP+Vulkan, `~/vulkan` SDK) into a self-contained `~/ai/releases/llama.cpp-b<ver>/` + `~/ai/bin/` symlink farm |
-| `tools/phase4_router_cutover.py` | **User-run** cutover: stop old router, install `ai-llama-router` systemd user service on the new layout, verify model list, write rollback instructions |
-| `tools/phase5_cleanup.py` | **User-run** cleanup (explicit flags, dry-run default): stale build trees, old clones, `~/.local/bin` llama junk, LM Studio tree removal, home-script archiving |
-| `archive/` | (created by phase 5) legacy scripts from prior AI sessions |
+| **Status** | The router and ComfyUI at a glance: live tokens-per-second, cache reuse, per-slot activity, service logs, and an attention list that says what needs you. |
+| **Models** | Every model in the library, decoded from the files themselves — quant, size, context, what the router can see — plus a migration planner that moves them safely. |
+| **Get Models** | Name a Hugging Face model with a quant, and the portal plans the download, verifies every byte, and files it where the router will find it. |
+| **Health** | The machine tells the truth: GPU aperture, driver coupling (ROCm ↔ llama.cpp ↔ torch), pending updates, disk — and the portal never applies system updates itself. |
+| **Personalities** | Bind a model, its settings, and a coding agent into a named voice. The router loads what the moment needs. |
+| **Projects** | Point at a folder, pick a personality, and a real coding session starts — reachable from the browser, durable across restarts. |
+| **Workroom** | Where the machines post their work to each other: findings, reports, questions — quarantined until the owner promotes them. |
+| **Settings** | Network bind per service, firewall lines shown before they are run, agent tokens for the mesh, router key management. |
 
-`02-install-llama-cpp.sh` at the repo root is the previous (bash) attempt at the
-llama.cpp update flow. It is superseded by `tools/phase3_rebuild_llama_cpp.py`
-but kept for reference.
+That's the summary. The long form lives in the showcase:
 
-## Current state (after phases 1–3, run 2026-08-30/31)
+- [**Features**](docs/showcase/features.md) — each page, with pictures.
+- [**Milestones**](docs/showcase/milestones.md) — what this project has survived and shipped.
+- [**The edge mesh**](docs/showcase/mesh.md) — a Windows box, a Mac on the way, and a portal that keeps the record.
+- [**Engineering**](docs/showcase/engineering.md) — how it stays trustworthy: 1,366 tests, no build step, laws written down.
 
-```
-~/ai/
-├── llama.cpp/                    # source repo (commit 539f24529)
-├── build/llama.cpp-539f24529/    # build tree (rebuildable, disposable)
-├── releases/llama.cpp-b10641/    # self-contained release (ldd-clean)
-├── bin/                          # symlink farm -> releases
-├──
- models
-/llama
-/
-<13
- model
- dirs
->
-/
- 
-#
- router
- layout
-,
- hardlinked
-,
- verified
-├── comfyui/                      # ComfyUI repo + venv (was ~/ComfyUI + ~/comfyui)
-├── config/llama/presets.ini      # per-model tuning (validated live on port 18080)
-└── state/llama-releases.json     # release tracking
-```
+## The milestones people ask about
 
-Phases 1–5 are complete: the router runs as the `ai-llama-router` user service
-on the new layout (`:8080`, 13 local models + 1 HF-cache duplicate), and the
-LM-Studio rollback copy has been removed. See `docs/PLAN.md` / `docs/UPDATES.md`
-for the history and `docs/PORTAL_PLAN.md` for the portal design.
+- **The 4096-token mystery.** A flagship model loaded cleanly and reported a
+  4096-token context — a "broken model" that was really a 64 GiB driver cap
+  on the GPU's view of memory. The fix (a proper TTM module setting, worked
+  out by the owner) raised the window to 108 GiB, and the portal now checks
+  the aperture and warns when a kernel update quietly resets it.
+- **llama.cpp, kept alive.** Update, build (HIP + Vulkan), release registry,
+  symlink farm, rollback — one button, no footnotes, no surprise rebuilds.
+- **Models you can plan with.** The portal decodes GGUF files — quant,
+  architecture, trained context — and turns that into router "personalities"
+  and honest memory budgets.
+- **A harness you can reach from anywhere.** Projects launch real coding
+  sessions with a personality attached; the session view keeps working when
+  you close the laptop.
+- **Downloads that can't lie.** A `-hf` spec plans the bytes up front and
+  verifies them at the door; the 21.4 GB witness run landed exactly as
+  planned, with the model filed into the router's library.
+- **A mesh, not a script.** The Windows box next door reads the portal's
+  knowledge base, posts measured A/B tests to a shared Workroom bench, and
+  its writes land quarantined until the owner promotes them. A 128 GB
+  MacBook is next.
 
-## The portal application (Phase A — built)
+## Under the hood, in one paragraph
 
-A Python/FastAPI web console that manages **llama.cpp**, **ComfyUI**, and
-**Hugging Face**. Frontend is **HTMX + Jinja** (decision D1, no JS build); every
-read is also a JSON endpoint so charts (CPU/RAM/GPU) are added by dropping a
-`<canvas>` + a `fetch()` in a template — no re-engineering. Access is **LAN + a
-single app password** (decision D2, no cloud auth). Updates are **advisory** for
-now (decision D3) — the health pane surfaces apt/reboot/version drift and offers
-actions; one-click execution is a later phase.
+FastAPI and Jinja — no front-end build step, so the test suite drives every
+page in a real DOM. One SQLite base (jobs, models, memories, mesh, events)
+with FTS5 and vector recall. The portal audits everything it does and never
+takes destructive action without a confirmation. The project's own journal
+(records from day one), its environment survey, and its design proposals
+are all in [`docs/`](docs/) — searchable from inside the portal by the AI
+agents themselves, through a door the portal built for them.
 
-Layout — the repo is where code is *written*; `~/ai/ai-portal` is where it
-*runs* (deployed, own venv, systemd user service):
+## Run it
 
-```
-app/
-  main.py            # FastAPI app: auth, HTML pages, JSON API
-  deploy.py          # python -m app.deploy — deploy / update / rollback the service
-  core/              # paths · config(auth) · db(sqlite) · systemd · units (env file +
-                     # wrapper + unit generation) · serviceenv · serviceconf · network ·
-                     # llamakey · ratelimit · logsetup · updater · modeladd · modelmeta
-                     # · rlog (router journal -> live slots/throughput)
-  providers/         # llamacpp.py · comfyui.py · huggingface.py  (one class per tool)
-  metrics.py         # /proc + rocm-smi host metrics (stdlib)
-  router.py          # live llama.cpp router state (dashboard hero)
-web/                 # templates/ (HTMX+Jinja) + static/htmx.min.js (vendored, LAN-safe)
-deploy/              # install.sh (thin wrapper over app.deploy) + GENERATED_UNITS.txt
-scripts/dev-run.sh   # source tree on :8091, next to the service
-tests/               # 214 pytest tests, all on a throwaway AI_PORTAL_HOME
-  ui/                # DOM harness (jsdom): drives every control on every page
-```
-
-Runtime state (gitignored, outside the repo): `~/ai/state/portal/portal.db`
-(SQLite, WAL), `portal.auth.json` (0600, password hash), `PORTAL_PASSWORD.txt`
-(0600, printed once on first run), `deployment.json` (deployed sha + history).
-
-### Run it
+Ubuntu 26.04 on AMD Strix Halo is the home, but the parts (llama.cpp,
+ComfyUI, Hugging Face tooling) are standard. See
+[START_HERE](docs/START_HERE.md) for the tour and
+[ENVIRONMENT](docs/ENVIRONMENT.md) for the machine the portal was built on.
 
 ```bash
-./deploy/install.sh --dry-run    # exactly what a deploy would do
-./deploy/install.sh              # deploy HEAD -> ~/ai/ai-portal, enable + start
-./deploy/install.sh --status     # recorded sha + live unit state
-./deploy/install.sh --rollback   # redeploy the previously recorded sha
-./scripts/dev-run.sh             # source tree on :8091 with debug logging
-./scripts/check-ui.sh            # the whole suite, UI included — run after every change
-bash tools/live_smoke.sh         # end-to-end against the live router
+./deploy/install.sh
+systemctl --user restart ai-portal   # then open the printed URL
 ```
 
-First run generates a password and writes it to
-`~/ai/state/portal/PORTAL_PASSWORD.txt` (delete after reading). To set your own,
-put `AI_PORTAL_PASSWORD=...` in `~/ai/config/portal.env`. Pages: `/` (status),
-`/models`, `/metrics`, `/health`, `/settings`; JSON API under `/api/*` — full
-endpoint and curl list in [docs/DEBUGGING.md](docs/DEBUGGING.md).
-
-**`/health` never changes anything.** It is the one page whose whole job is to
-say what the machine needs — pending apt with the GPU packages called out, the
-ROCm a build was compiled for vs the ROCm that loads at launch vs the ROCm
-ComfyUI's torch ships, Vulkan SDK installed vs published, disk by tree, model
-index age, model directories the router cannot see, broken links in `~/ai/bin`.
-Its only control is a re-check; applying updates and rebooting stay where they
-can be confirmed (PORTAL_PLAN §4.5).
-
-**Long actions outlive the page they started on.** A build or a venv sync is a
-job on the server, so closing the tab never stops it — and a bar at the bottom of
-*every* page now says what is running, for how long, what step it is on, and lets
-you open its log without leaving. It holds the other update controls while a
-disruptive job runs, and the server refuses them too: one build, one venv sync,
-one CLI upgrade at a time, refused by name (`busy — ComfyUI update master (job
-77, since 10:14) — syncing venv`). A ComfyUI sync installs into the venv the
-service actually runs, holds this machine's ROCm builds of torch/triton in place
-with a generated constraint file, and verifies torch still has ROCm **before**
-restarting the service into it (PORTAL_PLAN §6.11).
-
-### Network access (who can reach these services)
-
-Each managed service binds one of three ways, chosen per service on
-**Settings → Network access** and stored in `~/ai/config/<service>.env`:
-`loopback` (127.0.0.1 — this machine), `lan` (one interface address), `all`
-(0.0.0.0 — the local network). The page shows the machine's real LAN address,
-whether the port is *actually* answering on it right now (a TCP probe of the LAN
-address is what distinguishes "open" from "loopback-only"), whether a restart is
-still pending, and the `ufw allow …` command the firewall would need — the
-portal has no root, so it never changes the firewall itself.
-
-**Exposure is stated, not hidden:** the router and ComfyUI serve unauthenticated
-HTTP, and ComfyUI can execute code (`/prompt` plus custom nodes). Opening them
-is an explicit operator decision, warned about in the UI. The router can be
-given an `--api-key-file` from Settings (shared `Authorization: Bearer <key>`,
-stored 0600 under `~/ai/state/portal/`, never in an env file).
-
-### Tests
-
-```bash
-./scripts/check-ui.sh              # everything, UI included (~1.5 min). After every change.
-./scripts/check-ui.sh --ui-only    # the UI suites alone
-./scripts/check-ui.sh --mutations  # inject known UI bugs: prove the suite can fail
-uv run --with pytest pytest tests/ -q    # same as check-ui.sh, without the jsdom setup
-bash tools/live_smoke.sh           # boots the app on :18090 against the live router
-```
-
-The portal has **no build step**, so nothing type-checks the wiring between a
-template and the code behind it: a page can render perfectly and still have
-buttons that do nothing. `tests/test_ui_integration.py` loads each page in a
-real DOM (jsdom) from a sandboxed portal and drives **every interactable
-element** — clicks, typing, changes, submits, all tabs — requiring per control
-that nothing threw, no id lookup missed, no endpoint 4xx'd, and that the control
-actually *did* something. Tab groups must be a bijection; destructive requests
-must be confirm-gated **before** the request (an `alert()` afterwards is not a
-confirmation); a control unlocked by a selection is asserted in that selection
-(`selectCases`, and `then_click` to drive it against a known choice); a final
-coverage pass fails if any visible control was never driven. A page spec may
-`extends` another: `jobbar` and `jobbar-finished` are the dashboard with a
-running/finished job pinned by a fixture, which is how "an update started on
-Status is still visible on Metrics, and still locking the machine" is tested
-without copying that page's fixtures. `tests/test_ui_contract.py` is the fast static half (every inline
-`<script>` must parse, every `onclick` must name a function that exists, every
-`fetch` target must be a registered route, `expectText` requires live regions to
-show *data* rather than merely exist (a slot board stuck on `—` has a working id
-and tells you nothing), and the tab/panel junction in
-`/static/tabs.css` holds — asserted as CSS text there, and measured through the
-DOM by the harness, since a frame edge meeting its panel is geometry, not taste).
-
-Running them cannot disturb the machine: the portal under test gets a temp
-`AI_PORTAL_HOME`, `tests/ui/bin` on `PATH` (`systemctl`/`journalctl`/`apt-get`/
-`dpkg-query`/`hipcc` are shims that answer fixed data or log instead of acting), a
-dead outbound proxy, and a harness that
-intercepts service/update mutations and answers them synthetically. A test
-asserts no `start|stop|restart` ever reached systemd. Debug a page by hand with
-`uv run python -m tests.ui_sandbox dashboard` (or `--serve` to leave it up).
-
-`./scripts/install-hooks.sh` installs a pre-commit hook that runs the UI suites
-covering what you staged, so a template edit that breaks a `<script>` block
-cannot be committed.
-
-### What's next (see PORTAL_PLAN.md §7)
-
-G (remaining frontend polish), H (RAG service: per-project stores, ingestion
-jobs, MCP interface), and the `app/main.py` route split left over from J. Phase F
-(the health pane) and phase M (the global job bar, machine-wide update
-exclusivity, and the ComfyUI venv fix) landed 2026-09-14; service controls, the
-llama.cpp and ComfyUI updaters with rollback, the model manager, the settings
-page, LAN bind modes, deployment and the UI test harness are done.
+Written by Carolyn Hudson with the help of the machines it manages.

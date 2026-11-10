@@ -8012,3 +8012,19 @@ the measured 73.8 t/s @262K MLX lane, llama-swap as the later federator
 (capacity scheduler, MCP endpoint, peers), 27B RCO GSQ + 1.5B-base FIM for pair
 programming, embeddinggemma pinned. Next: the public face — README → multi-page
 promotional documentation, sandbox-data screenshots only, scrub-tested images.
+
+**6.14.1zq — the public face (owner's overnight brief, portal session):** README
+rewritten as the front door (the challenge stated: a fully functional edge-AI
+management portal built with only edge AI tools, on the family's Framework
+Desktop; Carolyn Hudson credited), and `docs/showcase/` opened: features,
+milestones, mesh, engineering — Markdown so it renders identically on GitHub
+and in a local clone, per the owner's preference. Ten screenshots, captured
+from the live portal with a scrub net that rewrites text nodes IN THE DOM
+BEFORE the pixels exist (LAN IPs, account paths, username, token-shaped
+strings, long hex → block glyphs); the capture script proves the net had
+work (13–27 nodes scrubbed per page). The forge-side redaction test and the
+promo-render request are open questions on the qwen-image-2.1 bench — the
+forge's answer arrives where its A/B report did. Sensitive-data law for docs:
+scrub at capture, simulated data where possible, and the secret net stays the
+pattern for text meant to travel. Suite untouched (docs-only); the UI-contract
+hook guards the templates.
