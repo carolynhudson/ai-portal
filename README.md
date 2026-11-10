@@ -10,9 +10,9 @@ tools, on the family's Framework Desktop — and the portal is planned,
 written, and reviewed by coding agents running on the machine it manages.
 
 **For the tour, the features, and the milestones, see the project
-documentation → [`docs/index.html`](docs/index.html)**
-(published: [GitHub Pages](https://carolynhudson.github.io/ai-portal/)
-once Pages is enabled; the link works from the repo too).
+documentation → [the HALO documentation site](https://carolynhudson.github.io/ai-portal/)**.
+The pages are plain HTML in [`docs/`](docs/) — open `docs/index.html`
+from a clone to browse the same site offline.
 
 This README is the technical document: requirements, installation,
 configuration, tests.
@@ -134,10 +134,13 @@ enforces (dead controls, confirm gates, viewport laws).
 ## Publishing this documentation
 
 GitHub renders Markdown natively; the aesthetic documentation is the HTML
-site in `docs/`. To publish it: **Settings → Pages → Deploy from a branch
-→ `main` / `/docs`** — the site lives at
-`https://carolynhudson.github.io/ai-portal/`, every link inside it is
-relative, and the same files browse from any clone.
+site in `docs/`, published at
+`https://carolynhudson.github.io/ai-portal/` via **Settings → Pages →
+Deploy from a branch → `main` / `/docs`**. The folder carries a
+`.nojekyll` file so Pages publishes the files verbatim — no Jekyll
+pipeline, no front-matter rules; the first build after enabling takes a
+minute or two. Every link inside the site is relative, and the same files
+browse from any clone.
 
 ## License
 

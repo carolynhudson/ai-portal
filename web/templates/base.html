@@ -166,6 +166,9 @@ canvas{width:100%;height:160px;background:#0b0e13;border-radius:8px}
 .jobbar .jobbar-row{display:flex;gap:12px;align-items:baseline;padding:10px 20px}
 .jobbar button{padding:3px 10px;font-size:12px;border-radius:6px;background:#2a3340;
   color:var(--fg);border:1px solid #384353;cursor:pointer}
+/* the ✕ is furniture, not a call to action: compact and quiet */
+.jobbar #jobbar-hide{flex:0 0 auto;padding:3px 9px;line-height:1.2;color:var(--mut)}
+.jobbar #jobbar-hide:hover{color:var(--fg)}
 .jobbar pre{margin:0;padding:0 20px 12px;max-height:34vh;overflow:auto;color:var(--mut);
   font-size:12px;white-space:pre-wrap;word-break:break-word}
 .jobbar.done{border-top-color:var(--ok)}
@@ -263,6 +266,7 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
     <span class="spin" aria-hidden="true"></span>
     <span class="jobbar-text" id="jobbar-text"></span>
     <button type="button" id="jobbar-toggle" aria-expanded="false" aria-controls="jobbar-log">view log</button>
+    <button type="button" id="jobbar-hide" title="Hide this bar. The task keeps running on the machine." aria-label="Dismiss job bar">&#x2715;</button>
   </div>
   <pre id="jobbar-log" hidden></pre>
 </div>
@@ -280,6 +284,17 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
   let logTail = '';   // what the open log shows; refreshed by every paint
   let timer = null, finishedShownAt = null, lastShownId = null;
   const FINISHED_VISIBLE_MS = 60000;
+  // The operator's ✕. Hiding is presentation only — the job runs on the
+  // server and the data-needs-machine disabling keeps applying. A dismissed
+  // RUNNING job stays hidden on this page (its completion still reports:
+  // the receipt is the point of the bar). A dismissed FINISHED receipt
+  // stays gone everywhere — localStorage, so navigating doesn't re-hang
+  // the same "finished" banner for its 60 s on every page.
+  let dismissedRun = null, currentRunId = null, currentLastId = null;
+  const DONE_KEY = 'jobbar.dismissedDone';
+  function doneDismissed(id){
+    try { return localStorage.getItem(DONE_KEY) === String(id); } catch (e) { return false; }
+  }
 
   // Text nodes for the job bar. A value becomes a node's text and is never parsed as
   // markup, which is the whole point of building it this way — and it means these values
@@ -332,6 +347,11 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
     document.dispatchEvent(new CustomEvent('portal:job', {detail: d}));
 
     if (run) {
+      currentRunId = run.id;
+      if (run.id === dismissedRun) {
+        // the operator hid this job's bar; it stays hidden on this page.
+        bar.hidden = true; document.body.dataset.jobbar = '';
+      } else {
       bar.hidden = false;
       document.body.dataset.jobbar = 'on';
       bar.className = 'jobbar running';
@@ -349,9 +369,12 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
       if (queued.length) txt.append(jobStep('(+' + queued.length + ' more)'));
       showLog(run.log_tail);
       finishedShownAt = null;
+      }
     } else {
+      dismissedRun = null;   // that job is over; the next one earns the bar back
       const last = d.last;
-      if (last && last.id !== lastShownId) {
+      if (last && last.id !== lastShownId && !doneDismissed(last.id)) {
+        currentLastId = last.id;
         lastShownId = last.id;
         finishedShownAt = Date.now();
         bar.hidden = false;
@@ -415,6 +438,24 @@ body[data-jobbusy="1"] [data-needs-machine]{pointer-events:none;opacity:.55}
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     toggle.textContent = open ? 'hide log' : 'view log';
     if (open) paintLog();
+  });
+
+  // ✕ hides the bar; it does not touch the job. The server keeps running,
+  // the busy-disabling of [data-needs-machine] controls keeps applying,
+  // and Status/jobs still lists everything. This is the "stop staring at
+  // me" button, nothing more.
+  const hideBtn = document.getElementById('jobbar-hide');
+  if (hideBtn) hideBtn.addEventListener('click', () => {
+    if (!bar.hidden && bar.className.indexOf('running') >= 0) {
+      dismissedRun = currentRunId;      // hidden for this page; its receipt will still land
+    } else {
+      try { localStorage.setItem(DONE_KEY, String(currentLastId)); } catch (e) {}
+    }
+    bar.hidden = true;
+    document.body.dataset.jobbar = '';
+    if (logBox) logBox.hidden = true;
+    if (toggle) { toggle.textContent = 'view log'; toggle.setAttribute('aria-expanded', 'false'); }
+    finishedShownAt = null;
   });
 
   pump();

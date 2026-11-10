@@ -8062,3 +8062,25 @@ points at the GitHub repo, where the Markdown records render. Publishing is
 the one-time owner act: Settings → Pages → Deploy from a branch → main /
 `/docs`, yielding carolynhudson.github.io/ai-portal. The interim showcase .md
 pages are folded in and removed; screenshots stay in `showcase/img/`.
+
+**6.14.1zt — the operator's three notes (owner report):** the owner read the
+published-shape docs and the live portal and filed three real findings.
+(1) The jobbar ✕: a fixed progress bar with no way to close it "lingers";
+the owner asked for a dismiss that hides the bar without touching the task.
+base.html gained `#jobbar-hide`: dismissing a RUNNING job hides its bar on
+the page (the job runs on the server; the busy-disabling of machine verbs
+keeps applying — verified by the contract's post-sweep `data-jobbusy`
+re-check), its completion receipt still lands; dismissing a FINISHED receipt
+stays dismissed across pages via localStorage. The UI sweep clicked it on
+both jobbar fixtures and accepted the visible change. (2) Screenshots
+carried the live jobbar across full-page captures — the rig now dismisses
+the bar with its own ✕ before each shot and reports it as evidence.
+(3) The Pages site: the owner enabled Pages (main /docs) — `has_pages` is
+true, the first build was still pending (API 404 on builds while queued);
+`docs/.nojekyll` added so Pages publishes the files verbatim, and the
+README preface now links the live site URL (a bare link to `docs/index.html`
+showed GitHub's source viewer, which is not a tour). Also swept: a 0-byte
+repo-root file named `<sqlite3.Connection object at 0x…>` from Oct 30 — a
+stringified-connection path from the pre-sandbox-guard test era; removed,
+the sandbox guards make that class of artifact impossible now.
+Suite 1366/5.

@@ -524,7 +524,14 @@
       "expectVisible": [
         "#jobbar",
         "#jobbar-text",
-        "#jobbar-toggle"
+        "#jobbar-toggle",
+        "#jobbar-hide"
+      ],
+      "_hide_comment": [
+        "The ✕ hides the bar without touching the job (the sweep clicking it",
+        "must visibly act, or the harness calls it a dead control), and the",
+        "busy lock must survive the hiding: expectBodyAttr is re-checked after",
+        "the sweep, so a bar that hid and forgot data-jobbusy fails here."
       ],
       "expectText": [
         {
@@ -602,7 +609,8 @@
         "#jobbar",
         "#jobbar-text",
         "#jobbar-toggle",
-        "#jobbar.failed"
+        "#jobbar.failed",
+        "#jobbar-hide"
       ],
       "expectAbsent": [
         "#jobbar.done"
