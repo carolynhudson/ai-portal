@@ -362,7 +362,7 @@ def test_title_panels_and_the_status_hero_family():
     upd = (ROOT / "web" / "templates" / "updates.html").read_text()
     assert 'id="upg-head"' in upd and "<use href=\"#i-upgrades\"/>" in upd, \
         "the Upgrades title panel is gone"
-    assert "Upgrades · AI Portal" in upd, "the page stopped naming itself Upgrades"
+    assert "Upgrades · HALO" in upd, "the page stopped naming itself Upgrades"
     assert "<h2>Tool Repository Update Status</h2>" not in upd, \
         "the old section h2 returned -- the title panel IS the heading"
     assert "const UPG = {};" in upd and "function upgTick()" in upd, \

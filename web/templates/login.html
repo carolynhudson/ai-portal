@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/static/favicon.ico" sizes="32x32">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<title>Sign in · AI Portal</title>
+<title>Sign in · HALO</title>
 <style>
 :root{--bg:#0e1116;--panel:#171c24;--fg:#e6e9ef;--mut:#8b95a7;--acc:#5aa9ff;--bad:#f85149;--line:#232a35}
 *{box-sizing:border-box}
@@ -21,7 +21,9 @@ button{width:100%;margin-top:12px;padding:11px;border-radius:8px;border:0;backgr
 </head>
 <body>
 <div class="card">
-  <h1>AI Portal</h1>
+  <h1 style="display:flex;align-items:center;gap:10px">
+    <img src="/static/pasture-nav.png" alt="" width="30" height="30">HALO</h1>
+  <p class="mut" style="margin-top:-6px">the machine, honest</p>
   <p>Enter the portal password to continue.</p>
   <form method="post" action="/login">
     <input type="password" name="password" autofocus autocomplete="current-password" placeholder="password">
