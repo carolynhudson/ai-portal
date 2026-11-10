@@ -117,7 +117,7 @@ uv run python -m tests.ui_sandbox status   # drive one page in a real DOM
 The suite runs against a throwaway home by construction: a home that
 resolves to the operator's, or a database outside the suite's sandbox,
 stops the run before it starts. See
-[docs/showcase — Engineering](docs/index.html) for what the UI harness
+[docs/engineering.html](docs/engineering.html) for what the UI harness
 enforces (dead controls, confirm gates, viewport laws).
 
 ## Repository map

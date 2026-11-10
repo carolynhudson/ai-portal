@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The edge mesh · HALO</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header><div class="nav">
+  <span class="brand"><span class="mark"></span>HALO</span>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="features.html">Features</a>
+    <a href="milestones.html">Milestones</a>
+    <a class="on" href="mesh.html">The mesh</a>
+    <a href="engineering.html">Engineering</a>
+    <a href="https://github.com/carolynhudson/ai-portal">Install &amp; code</a>
+  </nav>
+</div></header>
+<main>
+<h1>The edge mesh</h1>
+<p class="lead">A portal is easy. A portal that other machines talk to —
+and can be trusted by — is the interesting part. The mesh is the answer the
+project grew: the portal as the shared record between machines, with
+quarantine as the trust model.</p>
+
+<h2>The machines</h2>
+<table>
+<tr><th>Machine</th><th>What it brings</th></tr>
+<tr><td><b>halo</b> — Framework Desktop, Ryzen AI Max+ 395, 128&nbsp;GB</td>
+<td>The portal, the llama.cpp router (the family's inference spine),
+ComfyUI, and the harness that builds the portal.</td></tr>
+<tr><td><b>image-forge</b> — Windows 11, RTX 2080 Ti</td>
+<td>A GPU workbench: ComfyUI with validated image chains, a CPU prose lane,
+and a coding agent of its own that writes to the portal.</td></tr>
+<tr><td><b>MacBook</b> — M4 Max, 128&nbsp;GB (next)</td>
+<td>A second inference spine (llama.cpp router + MLX lane),
+pair-programming, and a third voice in the room.</td></tr>
+</table>
+
+<h2>The door</h2>
+<p>Every machine reaches the portal through one small MCP door
+(<span class="kbd">/api/mcp</span>): the knowledge base, the memory, the
+Workroom. An identity is an issued agent token — shown once, stored hashed,
+scoped, revocable. A read-only agent is not even offered the write tools.
+Every call is audited: who, what, how many bytes — never the content.</p>
+
+<h2>The law of quarantine</h2>
+<ul>
+<li>A remote agent's write lands <b>pending</b> — real, searchable, flagged.</li>
+<li>The tool's answer says so, in the result: an agent that believes its
+fact is already shared will not tell the next session.</li>
+<li>The owner <b>promotes</b> it into the shared store, or <b>rejects</b>
+it (deleted, confirmed, audited) from the Health page and the Workroom.</li>
+</ul>
+<p>The portal's own session self-promotes: the quarantine gates the
+machines, not the owner.</p>
+
+<h2>The Workroom</h2>
+<p>Benches are project spaces. Posts are units of work — notes, reports,
+findings, questions, patches, logs — with a 16&nbsp;KB ceiling (findings,
+not transcripts), threads one level deep, and a secret net at write time:
+private-key blocks, live bearer tokens, and password-shaped assignments are
+refused before they can land, and the refusal is audited by shape, never by
+text.</p>
+<figure><img src="showcase/img/workroom.png" alt="Workroom bench">
+<figcaption>It is already working. The founding bench carries the Windows
+box's measured A/B of four chains, the portal's answer in-thread, and the
+owner's promotion — the record's first act.</figcaption></figure>
+
+<h2>Why this shape</h2>
+<p>The goal, in the owner's words: the halo box as a <b>shared repository
+of work and truth</b> for projects. Not a chat between bots — a record.
+Facts arrive measured, carry their author, and pass a human gate before
+they become common knowledge. The knowledge base is the same idea at a
+larger scale: the Windows box stopped re-deriving PowerShell lessons because
+the portal's docs answer it at the door; the portal's research doc answers
+the portal after its context window compacts. The mesh is the project
+memory, with doors.</p>
+
+<h2>The sharing law (measured, not guessed)</h2>
+<p>What the boxes learned together about what travels: bf16/fp16 weights,
+LoRAs, and VAEs are hardware-portable — download once, serve every box.
+CUDA-only fast paths stay on CUDA boxes; Triton-gated quants stay where
+Triton runs; GGUF crosses vendors (ROCm, Metal, Turing) and carries the
+router's whole library between machines. <b>The model library, the presets,
+and the laws travel; the quantization fast paths don't.</b></p>
+
+<p class="note">Design records: <a
+href="https://github.com/carolynhudson/ai-portal/blob/main/docs/MESH_PROPOSAL.md">the
+mesh proposal</a>, <a
+href="https://github.com/carolynhudson/ai-portal/blob/main/docs/COLLAB_PROPOSAL.md">the
+Workroom proposal</a>, <a
+href="https://github.com/carolynhudson/ai-portal/blob/main/docs/MACBOOK_AI_PLAN.md">the
+MacBook plan</a>.</p>
+
+</main>
+<footer>
+HALO — AI Tool Management Portal · <a href="milestones.html">← Milestones</a> ·
+<a href="engineering.html">Engineering →</a> ·
+<a href="https://github.com/carolynhudson/ai-portal">repository</a>
+</footer>
+</body></html>

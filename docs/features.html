@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features · HALO</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header><div class="nav">
+  <span class="brand"><span class="mark"></span>HALO</span>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a class="on" href="features.html">Features</a>
+    <a href="milestones.html">Milestones</a>
+    <a href="mesh.html">The mesh</a>
+    <a href="engineering.html">Engineering</a>
+    <a href="https://github.com/carolynhudson/ai-portal">Install &amp; code</a>
+  </nav>
+</div></header>
+<main>
+<h1>Features</h1>
+<p class="lead">One page per surface. Each says what it shows, what you can
+do, and where the proof lives.</p>
+
+<h2>Status — the machine, honest</h2>
+<figure><img src="showcase/img/status.png" alt="Status page">
+<figcaption>Live tokens-per-second, prompt-cache reuse, per-slot activity,
+service RAM against the GPU aperture. The attention list collects what needs
+the owner — each line naming the page that can act on it. Red text is
+advice, never an action the portal took by itself.</figcaption></figure>
+
+<h2>Models — decoded from the files</h2>
+<figure><img src="showcase/img/models.png" alt="Models page">
+<figcaption>Quant, architecture, trained context, shard sets, sidecars —
+read from the GGUF itself. The library answers what the router leaves
+implicit: which files exist, which it can load, which are invisible because
+of layout. Migrations follow the law: copy and verify before any delete,
+size + integrity + newer-wins, loaded files never touched mid-session.</figcaption></figure>
+
+<h2>Get Models — download with a receipt</h2>
+<figure><img src="showcase/img/getmodels.png" alt="Get Models page">
+<figcaption>One field takes a Hugging Face spec (<span class="kbd">org/model:QUANT</span>).
+The portal plans the file list and byte count up front, streams with
+pause/resume/cancel at file granularity, and verifies at the door — sha256
+for safetensors, size and integrity for GGUF. “Downloaded” and “verified”
+are the same claim here.</figcaption></figure>
+
+<h2>ComfyUI — the image forge, local and remote</h2>
+<figure><img src="showcase/img/comfy.png" alt="ComfyUI models page">
+<figcaption>The ComfyUI library, its service state, and the mesh peer's
+ComfyUI probed live — the Windows box's GPU is a link with a health dot,
+not a script you SSH into.</figcaption></figure>
+
+<h2>Health — the coupling, visible</h2>
+<figure><img src="showcase/img/health.png" alt="Health page">
+<figcaption>The GPU aperture against its ceiling, the ROCm series llama.cpp
+was built for, pending GPU-stack packages, Vulkan, disk. It checks that the
+aperture fix survived the last kernel — the 4096-token bug returns silently
+when a modprobe file is lost. The portal reports apt; it never applies
+it.</figcaption></figure>
+
+<h2>Personalities — the router, with a name</h2>
+<figure><img src="showcase/img/personalities.png" alt="Personalities page">
+<figcaption>A personality binds a model, its runtime settings, and the
+coding agent's voice. Presets are shown as the router will receive them;
+edits go through a validated store with rollback, and the page says which
+sections are live. GGUF decoding earns its keep here: context budgets from
+the files, not guesswork.</figcaption></figure>
+
+<h2>Projects — real sessions, started from a page</h2>
+<figure><img src="showcase/img/projects.png" alt="Projects page">
+<figcaption>Pick a folder, pick a personality, launch: a coding session
+starts on the box's harness host and keeps a durable view of itself. Close
+the browser; the session lives. Open the portal an hour later, from another
+machine, and the page takes you back to the work.</figcaption></figure>
+
+<h2>Workroom — the machines post their work</h2>
+<figure><img src="showcase/img/workroom.png" alt="Workroom page">
+<figcaption>Benches are project spaces; posts are findings, reports,
+questions, patches — written through the MCP door, quarantined until the
+owner promotes. The founding bench is a real two-box research project; the
+first posts were a measured A/B of four model chains.</figcaption></figure>
+
+<h2>Settings — the network, on the record</h2>
+<figure><img src="showcase/img/settings.png" alt="Settings page">
+<figcaption>Per-service bind, ports validated live, the exact firewall lines
+shown before anything runs, agent tokens issued once and stored hashed,
+router key management. The red lines are the portal telling you where you
+are exposed — advice, not acts.</figcaption></figure>
+
+<h2>Upgrades — the update desk</h2>
+<figure><img src="showcase/img/updates.png" alt="Upgrades page">
+<figcaption>llama.cpp: releases on disk, the running one, the newest
+upstream, the changelog between, a clean-room build on a pinned commit, and
+a rollback that repoints the symlink farm in one click. ComfyUI: the same
+discipline.</figcaption></figure>
+
+<h2>Where the proof lives</h2>
+<p>Every claim above has a record in the project journal and a test behind
+it: <a
+href="https://github.com/carolynhudson/ai-portal/blob/main/docs/PORTAL_PLAN.md">the
+journal</a>, <a
+href="https://github.com/carolynhudson/ai-portal/blob/main/docs/ENVIRONMENT.md">the
+machine survey</a>, <a
+href="https://github.com/carolynhudson/ai-portal/tree/main/tests">the
+tests</a>.</p>
+
+</main>
+<footer>
+HALO — AI Tool Management Portal · <a href="index.html">← Overview</a> ·
+<a href="https://github.com/carolynhudson/ai-portal">repository</a> ·
+<a href="https://github.com/carolynhudson/ai-portal/blob/main/README.md">installation</a>
+</footer>
+</body></html>

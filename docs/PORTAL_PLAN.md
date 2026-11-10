@@ -8047,3 +8047,18 @@ requirements, install, backup/recovery, tests, repo map — the aesthetic
 documentation is the Pages site (`docs/index.html`, next round). Suite
 1366/5 (six new deploy tests, incl. the dry-run-must-not-reach-systemctl gate
 and the old-python refusal). The live backup witness runs on deploy.
+
+**6.14.1zs — the Pages site (owner's format ruling):** README restructured as
+the technical document (short preface → requirements → install →
+backup/recovery → tests → repo map), and the aesthetic documentation became a
+GitHub Pages site in `docs/`: `index.html` (the challenge, the feature grid,
+the story in three lines), `features.html` (all ten scrubbed screenshots),
+`milestones.html`, `mesh.html`, `engineering.html`, styled by
+`docs/assets/site.css` in the portal's palette, self-contained and
+network-free, honoring prefers-color-scheme. Every internal link is relative
+(works from a clone via file:// — verified by a playwright pass: 12 images
+load, zero broken requests, zero dead links); every resource out of the site
+points at the GitHub repo, where the Markdown records render. Publishing is
+the one-time owner act: Settings → Pages → Deploy from a branch → main /
+`/docs`, yielding carolynhudson.github.io/ai-portal. The interim showcase .md
+pages are folded in and removed; screenshots stay in `showcase/img/`.

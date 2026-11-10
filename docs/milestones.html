@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Milestones · HALO</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header><div class="nav">
+  <span class="brand"><span class="mark"></span>HALO</span>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="features.html">Features</a>
+    <a class="on" href="milestones.html">Milestones</a>
+    <a href="mesh.html">The mesh</a>
+    <a href="engineering.html">Engineering</a>
+    <a href="https://github.com/carolynhudson/ai-portal">Install &amp; code</a>
+  </nav>
+</div></header>
+<main>
+<h1>Milestones</h1>
+<p class="lead">What the project has survived, in the order it happened.
+Every entry has a dated record in the
+<a href="https://github.com/carolynhudson/ai-portal/blob/main/docs/PORTAL_PLAN.md">journal</a>.</p>
+
+<h2>The house before the portal</h2>
+<p>Three ComfyUI folders, two llama.cpp clones, models in five places, and a
+Python environment nobody dared touch. The first act was a survey — every
+file, size, and symlink, written down — then a phased migration to one tree
+(<span class="kbd">~/ai/</span>), with rollback instructions written
+<i>before</i> anything moved.</p>
+
+<h2>The 4096-token mystery</h2>
+<p>The 88&nbsp;GB flagship loaded cleanly and reported a 4096-token context.
+A trained context of 262,144 reduced to 4096 looks like a model defect. It
+was a driver: the iGPU's window onto system RAM defaults to 64&nbsp;GiB, and
+the model's <i>caches</i> were the part that didn't fit. The symptom hid the
+cause for a week, because the model loaded successfully.</p>
+<p>The owner's fix moved the limit onto the AMD TTM module — a window of
+108&nbsp;GiB, the top of the stable band on this OS. The lesson became a
+feature: the health pane reads the aperture and warns when a kernel update
+silently resets it. The written conclusion: <b>a model that loads and
+reports a context far below its trained length is a low-memory failure
+wearing a model-defect mask</b> — a shape worth detecting on any machine.</p>
+
+<h2>llama.cpp, kept alive</h2>
+<p>Updating a GPU-coupled C++ project on ROCm is where good machines go to
+sulk. The portal turned it into a desk: pinned-commit clean-room builds (HIP
+and Vulkan), a release registry, a symlink farm that decides what
+<span class="kbd">llama-server</span> means, the changelog between releases,
+and a one-click rollback. System packages — the ROCm series that couples to
+everything — are reported with the exact command, and the portal never runs
+it. That line is in the code, and the suite keeps it there.</p>
+
+<h2>Reading the models</h2>
+<p>The portal decoded GGUF itself — quant, architecture, trained context,
+vocab, shard completeness — and built a living index: the library and the
+hub cache scanned, problems named, counts recorded on every scan. Layouts
+the router can't see get a migration plan, not a surprise; personalities
+bind models with real context budgets.</p>
+
+<h2>The download that can't lie</h2>
+<p>A model download is a plan and a receipt. One spec field; the exact byte
+plan first; resumable streams; verification at the door. The witness: a
+21.4&nbsp;GB plan, landed byte-exact, filed into the router's library with
+its provenance attached. A peer box's tale of a truncated download that
+“succeeded” is the counter-example the law exists for.</p>
+
+<h2>Projects, and a harness you can reach</h2>
+<p>A folder, a personality, a launch: a coding session starts on the box and
+stays reachable — browser, network, restarts. The harness (opencode) is a
+first-class service the portal updates, configures per personality, and
+validates before edits land.</p>
+
+<h2>Memory the agents can reach</h2>
+<p>The portal's knowledge base — every design doc and lesson — is searchable
+by the agents through a small MCP door, and they can write back: durable
+memories with word-and-vector recall. Remote writes land quarantined; the
+owner promotes. The Windows box stopped paying four install runs
+re-learning PowerShell the day its lessons were recorded.</p>
+
+<h2>The Workroom, and the first real exchange</h2>
+<p>The founding bench dogfooded itself: a two-box image-model study where
+the Windows box posted a measured A/B — a VAE swap that gained 50%
+sharpness, a 4-step lane that beat the 8-step one, a finding that let the
+128&nbsp;GB box skip a 13&nbsp;GB download — answered the portal's open
+questions with numbers, and had its report promoted by the owner from the
+same page it was written to.</p>
+
+<h2>The safety law, tested</h2>
+<p>Destructive actions confirm; deletes verify before they remove; the
+portal never applies system updates; the password is generated once and
+never printed; the Workroom refuses secrets at write time and audits the
+refusal by shape. The suite proves it: 1,366 tests, including a harness that
+drives every page in a real DOM and fails a nav bar that overflows a phone
+by 36 pixels.</p>
+
+<h2>Recovery, not luck</h2>
+<p>The installer is box-specific by design — and the recovery story is
+deliberate: git history plus one archive. <span class="kbd">--backup</span>
+packs the state git cannot restore (database, launch envs, presets,
+password — 0600, “store it like a key”); <span class="kbd">--restore</span>
+lays it onto a new machine and verifies the service answers. Models re-download
+under the same law that fetched them the first time.</p>
+
+<h2>Next</h2>
+<p>A 128&nbsp;GB MacBook joins the mesh as a second AI box — router spine,
+MLX speed lane, pair-programming desk. The mesh grows toward the owner's
+phrase: a shared repository of work and truth.</p>
+
+</main>
+<footer>
+HALO — AI Tool Management Portal · <a href="index.html">← Overview</a> ·
+<a href="mesh.html">The mesh →</a> ·
+<a href="https://github.com/carolynhudson/ai-portal">repository</a>
+</footer>
+</body></html>
