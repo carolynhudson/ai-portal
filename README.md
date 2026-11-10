@@ -4,84 +4,149 @@
 
 A web console that manages, updates, and connects the AI tools on a single
 AMD Strix Halo box: the llama.cpp router, ComfyUI, model files, projects,
-coding agents, and the machines next door.
+coding agents, and the machines next door. The project began as a personal
+challenge — build a fully functional Edge AI portal using only edge AI
+tools, on the family's Framework Desktop — and the portal is planned,
+written, and reviewed by coding agents running on the machine it manages.
 
-This project began as a personal challenge: **can a fully functional Edge AI
-tools management portal be built using only edge AI tools** — models running
-on the family's Framework Desktop (AMD Ryzen AI Max+ 395, 128 GB shared
-memory)? The answer, so far, is yes. The portal was planned, written, tested,
-and reviewed by coding agents running on the machine it manages, and the
-portal in turn launches those agents. Nothing here rents intelligence.
+**For the tour, the features, and the milestones, see the project
+documentation → [`docs/index.html`](docs/index.html)**
+(published: [GitHub Pages](https://carolynhudson.github.io/ai-portal/)
+once Pages is enabled; the link works from the repo too).
 
-> Screenshots are from the live portal, scrubbed of private data at capture:
-> addresses, account paths, and token-shaped text are masked before the
-> pixels exist.
+This README is the technical document: requirements, installation,
+configuration, tests.
 
-![The portal status page](docs/showcase/img/status.png)
+## Requirements
 
-## What it does
-
-| Page | The short story |
+| | |
 |---|---|
-| **Status** | The router and ComfyUI at a glance: live tokens-per-second, cache reuse, per-slot activity, service logs, and an attention list that says what needs you. |
-| **Models** | Every model in the library, decoded from the files themselves — quant, size, context, what the router can see — plus a migration planner that moves them safely. |
-| **Get Models** | Name a Hugging Face model with a quant, and the portal plans the download, verifies every byte, and files it where the router will find it. |
-| **Health** | The machine tells the truth: GPU aperture, driver coupling (ROCm ↔ llama.cpp ↔ torch), pending updates, disk — and the portal never applies system updates itself. |
-| **Personalities** | Bind a model, its settings, and a coding agent into a named voice. The router loads what the moment needs. |
-| **Projects** | Point at a folder, pick a personality, and a real coding session starts — reachable from the browser, durable across restarts. |
-| **Workroom** | Where the machines post their work to each other: findings, reports, questions — quarantined until the owner promotes them. |
-| **Settings** | Network bind per service, firewall lines shown before they are run, agent tokens for the mesh, router key management. |
+| **OS** | Linux, systemd user services. The home is Ubuntu 26.04 on AMD Strix Halo (Ryzen AI Max+ 395, 128 GB); the portal's probes degrade honestly on other boxes. |
+| **Python** | ≥ 3.14 (the deployed venv; `deploy/install.sh` creates it). stdlib + the pins in `requirements.txt`. |
+| **Stack** | FastAPI, Jinja2, uvicorn, httpx, huggingface_hub, pydantic — pinned in [`requirements.txt`](requirements.txt) / `pyproject.toml`. No front-end build step; no node_modules. |
+| **Services managed** | `llama.cpp` (`llama-server` router mode), ComfyUI, the opencode harness host. The portal runs as its own systemd user service and manages the others' units. |
+| **Ports (defaults)** | portal `8090` · router `8080` · harness host `4096` · ComfyUI `8188`. |
+| **Disk** | The portal itself is small; the model library under its management is tens of GB. State lives in `~/ai/state/portal/` (SQLite). |
 
-That's the summary. The long form lives in the showcase:
-
-- [**Features**](docs/showcase/features.md) — each page, with pictures.
-- [**Milestones**](docs/showcase/milestones.md) — what this project has survived and shipped.
-- [**The edge mesh**](docs/showcase/mesh.md) — a Windows box, a Mac on the way, and a portal that keeps the record.
-- [**Engineering**](docs/showcase/engineering.md) — how it stays trustworthy: 1,366 tests, no build step, laws written down.
-
-## The milestones people ask about
-
-- **The 4096-token mystery.** A flagship model loaded cleanly and reported a
-  4096-token context — a "broken model" that was really a 64 GiB driver cap
-  on the GPU's view of memory. The fix (a proper TTM module setting, worked
-  out by the owner) raised the window to 108 GiB, and the portal now checks
-  the aperture and warns when a kernel update quietly resets it.
-- **llama.cpp, kept alive.** Update, build (HIP + Vulkan), release registry,
-  symlink farm, rollback — one button, no footnotes, no surprise rebuilds.
-- **Models you can plan with.** The portal decodes GGUF files — quant,
-  architecture, trained context — and turns that into router "personalities"
-  and honest memory budgets.
-- **A harness you can reach from anywhere.** Projects launch real coding
-  sessions with a personality attached; the session view keeps working when
-  you close the laptop.
-- **Downloads that can't lie.** A `-hf` spec plans the bytes up front and
-  verifies them at the door; the 21.4 GB witness run landed exactly as
-  planned, with the model filed into the router's library.
-- **A mesh, not a script.** The Windows box next door reads the portal's
-  knowledge base, posts measured A/B tests to a shared Workroom bench, and
-  its writes land quarantined until the owner promotes them. A 128 GB
-  MacBook is next.
-
-## Under the hood, in one paragraph
-
-FastAPI and Jinja — no front-end build step, so the test suite drives every
-page in a real DOM. One SQLite base (jobs, models, memories, mesh, events)
-with FTS5 and vector recall. The portal audits everything it does and never
-takes destructive action without a confirmation. The project's own journal
-(records from day one), its environment survey, and its design proposals
-are all in [`docs/`](docs/) — searchable from inside the portal by the AI
-agents themselves, through a door the portal built for them.
-
-## Run it
-
-Ubuntu 26.04 on AMD Strix Halo is the home, but the parts (llama.cpp,
-ComfyUI, Hugging Face tooling) are standard. See
-[START_HERE](docs/START_HERE.md) for the tour and
-[ENVIRONMENT](docs/ENVIRONMENT.md) for the machine the portal was built on.
+## Install
 
 ```bash
+git clone git@github.com:carolynhudson/ai-portal.git
+cd ai-portal
 ./deploy/install.sh
-systemctl --user restart ai-portal   # then open the printed URL
 ```
 
-Written by Carolyn Hudson with the help of the machines it manages.
+The installer is a thin wrapper over `python -m app.deploy` (stdlib-only,
+so it works from a fresh clone before any venv exists). It produces:
+
+```
+~/ai/ai-portal/                      exported git ref + .venv
+~/ai/config/portal.env               launch parameters (bind, port, log level)
+~/ai/bin/ai-portal.sh                generated wrapper the unit execs
+~/.config/systemd/user/ai-portal.service
+~/ai/state/portal/deployment.json    recorded deployment (for --rollback)
+~/ai/state/portal/PORTAL_PASSWORD.txt  first-run password, mode 0600
+```
+
+Open **http://localhost:8090/**, log in with the generated password (the
+installer prints its path; delete the file after reading). Useful installer
+modes: `--dry-run`, `--ref <sha|tag>`, `--no-start`, `--status`,
+`--rollback`.
+
+### Run, watch, update
+
+```bash
+systemctl --user status ai-portal      # unit state
+journalctl --user -u ai-portal -f      # live log (also ~/ai/logs/portal.log)
+./deploy/install.sh                    # redeploy current HEAD
+./deploy/install.sh --rollback         # back to the previous recorded sha
+```
+
+Deploys copy the checkout, so **commit first** — the commit is the release.
+
+### Configuration
+
+Launch-time variables live in `~/ai/config/portal.env` (shared with every
+portal-managed service via `~/ai/config/ai-env.env`):
+
+| Variable | Purpose |
+|---|---|
+| `AI_PORTAL_HOST` / `AI_PORTAL_PORT` | bind + port (default `0.0.0.0:8090`; the Settings page changes bind per service with the firewall lines shown first) |
+| `AI_PORTAL_PASSWORD` | override the generated password (unit drop-in) |
+| `AI_PORTAL_HOME` | relocate the `~/ai` tree (tests use a throwaway) |
+| `AI_PORTAL_ROCM_ROOT`, `AI_PORTAL_APT_STAMP` | health-probe redirection |
+
+The model layout the router and the portal share (`~/ai/models/llama/`,
+one subdirectory per model, `presets.ini` sections as bindings) is
+code-verified against llama.cpp and documented in
+[docs/UPDATES.md](docs/UPDATES.md).
+
+## Backup & recovery
+
+The installer is box-specific by design (Ubuntu on the Strix Halo layout);
+what survives a machine is the git history plus one archive. On a healthy
+box:
+
+```bash
+./deploy/install.sh --backup      # -> ~/ai/state/portal/backups/portal-<ts>.tar.gz
+```
+
+The archive carries the state git cannot restore: the database (sqlite
+backup API, safe on a live service), the launch envs, `presets.ini`, the
+deployment record, and the portal password. **It contains secrets** — mode
+0600, store it like a key, off the machine. Models are not in it; they
+re-download under the `-hf` law. On the new box: clone, `install.sh`, then
+
+```bash
+./deploy/install.sh --restore /path/to/portal-backup-<ts>.tar.gz
+```
+
+which stops the service, backs up whatever is already here, lays the
+archive down, restarts, and verifies `/healthz` reports the build.
+`--uninstall` removes the service (unit/wrapper/env, backed up) and leaves
+the state; `--rollback` redeploys the previous recorded sha.
+
+## Tests
+
+```bash
+uv run python -m pytest -q            # the full suite: 1,366 passed, 5 skipped
+uv run python -m tests.ui_sandbox status   # drive one page in a real DOM
+./scripts/check-ui.sh                 # the UI contract (pre-commit runs this)
+```
+
+The suite runs against a throwaway home by construction: a home that
+resolves to the operator's, or a database outside the suite's sandbox,
+stops the run before it starts. See
+[docs/showcase — Engineering](docs/index.html) for what the UI harness
+enforces (dead controls, confirm gates, viewport laws).
+
+## Repository map
+
+| Path | What it is |
+|---|---|
+| `app/` | the portal: `main.py` routes, `metrics.py`, `core/` modules (one per subject), `core/kb_mcp.py` (the mesh door's stdio twin) |
+| `web/templates/` | Jinja pages, inline JS, the nav icon sprite |
+| `docs/` | the shelf: journal (`PORTAL_PLAN.md`), surveys, proposals, research, and the published documentation (`index.html` + pages) |
+| `deploy/` | installer, generated units, the Windows forge kit |
+| `tools/` | phase scripts, probes, benches the laws lean on |
+| `tests/` | the suite + the UI sandbox (jsdom harness, fixtures, spec) |
+
+## Publishing this documentation
+
+GitHub renders Markdown natively; the aesthetic documentation is the HTML
+site in `docs/`. To publish it: **Settings → Pages → Deploy from a branch
+→ `main` / `/docs`** — the site lives at
+`https://carolynhudson.github.io/ai-portal/`, every link inside it is
+relative, and the same files browse from any clone.
+
+## License
+
+**CC BY-NC 4.0** — free for non-commercial use, with attribution to
+Carolyn Hudson. It is a work in progress, tested only on the author's own
+machine, and provided as-is: install at your own risk, and keep a backup
+(`--backup`). Full terms: [`LICENSE`](LICENSE). Model weights and
+downloaded components carry their own licenses. Screenshots in the
+documentation are scrubbed of private data at capture (addresses, account
+paths, and token-shaped text are masked before the pixels exist).
+
+*Written by Carolyn Hudson with the help of the machines it manages.*

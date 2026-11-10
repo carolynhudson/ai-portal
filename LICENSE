@@ -1,0 +1,43 @@
+# License
+
+Copyright (c) 2026 Carolyn Hudson
+
+This work is licensed under the **Creative Commons Attribution-
+NonCommercial 4.0 International** license.
+
+You are free to:
+
+* **Share** — copy and redistribute the material in any medium or format
+* **Adapt** — remix, transform, and build upon the material
+
+Under the following terms:
+
+* **Attribution** — give credit to Carolyn Hudson, and link to the
+  repository, if you use parts of this project in your own work.
+* **NonCommercial** — you may not use this material for commercial
+  purposes.
+
+The full legal text of the license is at:
+<https://creativecommons.org/licenses/by-nc/4.0/legalcode>
+(the plain-language deed: <https://creativecommons.org/licenses/by-nc/4.0/>).
+
+## This is a work in progress. Use at your own risk.
+
+This portal is a personal project, built for and tested on exactly one
+machine — the author's Framework Desktop (Ubuntu on AMD Strix Halo). It
+has not been tested on any other device, operating system, GPU, or
+driver stack. It manages services, units, model files, and system
+configuration on the machine it runs on.
+
+THE PROJECT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE FITNESS FOR A PARTICULAR
+PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY, ARISING FROM, OUT OF, OR IN
+CONNECTION WITH THE PROJECT OR USE OF THE PROJECT.
+
+Keep a backup before letting it act (`./deploy/install.sh --backup`),
+and read what a destructive action asks you to confirm.
+
+Model weights, datasets, and downloaded components (llama.cpp, ComfyUI,
+Hugging Face tooling, and every model file) carry their own licenses,
+which this license does not modify.

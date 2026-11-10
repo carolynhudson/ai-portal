@@ -7,6 +7,9 @@
 #   ./deploy/install.sh --no-start       # install + enable, start later
 #   ./deploy/install.sh --status         # recorded deployment + unit state
 #   ./deploy/install.sh --rollback       # redeploy the previous recorded sha
+#   ./deploy/install.sh --backup         # archive state git can't restore (0600, has secrets)
+#   ./deploy/install.sh --restore F.tar.gz  # lay a backup onto this machine
+#   ./deploy/install.sh --uninstall      # stop + remove unit/wrapper/env (state stays)
 #
 # Thin wrapper around `python -m app.deploy`, which is stdlib-only on purpose:
 # it has to work from a fresh clone before any venv exists (it creates the
@@ -32,7 +35,7 @@ command -v "$PY" >/dev/null 2>&1 || { echo "python3 not found (set PYTHON=...)" 
 
 # operator hints only after a real deploy
 case "$*" in
-  *--dry-run*|*--status*|*--print-units*) exit 0 ;;
+  *--dry-run*|*--status*|*--print-units*|*--backup*|*--restore*|*--uninstall*) exit 0 ;;
 esac
 
 echo

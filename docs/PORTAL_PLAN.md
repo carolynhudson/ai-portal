@@ -8028,3 +8028,22 @@ forge's answer arrives where its A/B report did. Sensitive-data law for docs:
 scrub at capture, simulated data where possible, and the secret net stays the
 pattern for text meant to travel. Suite untouched (docs-only); the UI-contract
 hook guards the templates.
+
+**6.14.1zr — the recovery law + the license (owner brief):** the owner set the
+distribution terms — CC BY-NC 4.0 (credit, non-commercial), the project named
+(Carolyn Hudson), with the honest warning: work in progress, tested on exactly
+one machine, install at your own risk (`LICENSE`). The installer audit found it
+current (uv lockfile, generated units, /healthz build-sha verification,
+rollback history — it ran every deploy in this journal), missing the two things
+a recovery story needs: `--backup` (sqlite backup API on the live DB + envs +
+presets.ini + deployment record + the portal password into a 0600 tarball —
+"contains secrets, store like a key"; models deliberately excluded, they
+re-fetch under the -hf law) and `--restore` (stop, save current to
+state/rollback/restore-<ts>/, lay the archive, start, verify healthz).
+`--uninstall` (unit/wrapper/env removed with backups; state kept) and a human
+preflight (python ≥3.14 or uv, with the install path in the message) complete
+the install-desk. README restructured per the owner: a short preface, then
+requirements, install, backup/recovery, tests, repo map — the aesthetic
+documentation is the Pages site (`docs/index.html`, next round). Suite
+1366/5 (six new deploy tests, incl. the dry-run-must-not-reach-systemctl gate
+and the old-python refusal). The live backup witness runs on deploy.

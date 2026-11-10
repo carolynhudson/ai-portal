@@ -8,6 +8,9 @@ somebody is editing, and a bad deploy is one command to undo.
     python -m app.deploy --dry-run       # exactly what would happen
     python -m app.deploy --ref v0.2.0    # deploy a specific commit/tag
     python -m app.deploy --rollback      # redeploy the previously recorded sha
+    python -m app.deploy --backup        # archive the state git cannot restore (0600)
+    python -m app.deploy --restore F.tar.gz   # lay a backup onto this machine
+    python -m app.deploy --uninstall     # stop + remove unit/wrapper/env (state stays)
     python -m app.deploy --no-start      # install + enable, don't start
 
 Mechanics, in order:
@@ -428,6 +431,173 @@ def rollback(dry: bool = False) -> dict:
     return deploy(ref=ref, message=f"rollback to {ref[:12]}", dry=dry)
 
 
+def db_path() -> Path:
+    """The portal database, resolved lazily so a fresh clone (no state dir
+    yet) can still import this module."""
+    from .core import db as _db
+    return Path(_db.DB)
+
+
+def backup(out_dir: Path | None = None, dry: bool = False) -> dict:
+    """Pack everything a NEW machine needs that is not in git.
+
+    The recovery story this exists for: the Framework dies, no other copy
+    exists, a fresh clone is the only thing left. Code comes from git; this
+    archive carries the state the code manages — the database (via sqlite's
+    backup API, WAL-safe on a live DB), the launch envs, presets.ini, the
+    deployment record, and the portal password. THE ARCHIVE CONTAINS
+    SECRETS: mode 0600, store it like a key. Models are not in it (tens of
+    GB; they re-download under the -hf law); a machine that lost its models
+    restores state and re-fetches files.
+    """
+    members = {
+        "portal.db": db_path(),
+        "deployment.json": DEPLOYMENT_JSON,
+        "config/portal.env": units.env_path(PORTAL_SERVICE_NAME),
+        "config/ai-env.env": paths.CONFIG / "ai-env.env",
+        "config/llama/presets.ini": paths.LLAMA_CONFIG / "presets.ini",
+        "secrets/PORTAL_PASSWORD.txt": paths.PORTAL_STATE / "PORTAL_PASSWORD.txt",
+    }
+    present = {k: v for k, v in members.items() if v.exists()}
+    out_dir = Path(out_dir) if out_dir else paths.PORTAL_STATE / "backups"
+    tar = out_dir / (time.strftime("portal-backup-%Y%m%d-%H%M%S") + ".tar.gz")
+    if dry:
+        print(f"# dry-run: sqlite-backup portal.db; tar {tar} with "
+              f"{len(present)} member(s) incl. secrets/PORTAL_PASSWORD.txt (0600)")
+        return {"tar": str(tar), "members": sorted(present), "dry_run": True}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import sqlite3
+    import tarfile
+    tmp = out_dir / "portal.db.snapshot"
+    if Path(members["portal.db"]).exists():
+        src = sqlite3.connect(str(members["portal.db"]))
+        dst = sqlite3.connect(str(tmp))
+        with dst:
+            src.backup(dst)
+        src.close(); dst.close()
+    manifest = {"created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "host": os.uname().nodename,
+                "members": sorted(present),
+                "note": "contains secrets; store like a key; models not included"}
+    with tarfile.open(tar, "w:gz") as tf:
+        for name, path in present.items():
+            src = tmp if name == "portal.db" and tmp.exists() else path
+            tf.add(src, arcname=name)
+        mpath = out_dir / "manifest.json"
+        mpath.write_text(json.dumps(manifest, indent=2))
+        tf.add(mpath, arcname="manifest.json")
+        mpath.unlink(missing_ok=True)
+    os.chmod(tar, 0o600)
+    if tmp.exists():
+        tmp.unlink()
+    print(f"  backup: {tar} ({len(present)} members, 0600) — contains secrets.")
+    return {"tar": str(tar), "members": sorted(present)}
+
+
+def restore(tarpath: Path, dry: bool = False) -> dict:
+    """Unpack a backup onto THIS machine and restart. The mirror of
+    `backup()`: stop the unit, back up whatever is here, lay the archive
+    down with the same layout, start, verify /healthz. Fresh-clone use:
+    install first (deploy), then restore, and the box remembers itself."""
+    tarpath = Path(tarpath).expanduser()
+    if not tarpath.exists():
+        sys.exit(f"no backup at {tarpath}")
+    import tarfile
+    with tarfile.open(tarpath, "r:gz") as tf:
+        names = tf.getnames()
+        manifest = {}
+        if "manifest.json" in names:
+            f = tf.extractfile("manifest.json")
+            manifest = json.loads(f.read().decode() or "{}") if f else {}
+    targets = {
+        "portal.db": db_path(),
+        "deployment.json": DEPLOYMENT_JSON,
+        "config/portal.env": units.env_path(PORTAL_SERVICE_NAME),
+        "config/ai-env.env": paths.CONFIG / "ai-env.env",
+        "config/llama/presets.ini": paths.LLAMA_CONFIG / "presets.ini",
+        "secrets/PORTAL_PASSWORD.txt": paths.PORTAL_STATE / "PORTAL_PASSWORD.txt",
+    }
+    wanted = [m for m in names if m in targets and m != "manifest.json"]
+    if dry:
+        print(f"# dry-run: stop unit; backup current to state/rollback/restore-<ts>/; "
+              f"restore {len(wanted)} member(s) from {tarpath}; start; verify /healthz")
+        return {"members": sorted(wanted), "manifest": manifest, "dry_run": True}
+    subprocess.run(["systemctl", "--user", "stop", UNIT_NAME],
+                   capture_output=True, text=True)
+    stamp = time.strftime("restore-%Y%m%d-%H%M%S")
+    saved = paths.ROLLBACK_DIR / stamp
+    saved.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarpath, "r:gz") as tf:
+        for name in wanted:
+            dest: Path = targets[name]
+            if dest.exists():
+                shutil.copy2(dest, saved / name.replace("/", "__"))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src = tf.extractfile(name)
+            if src is None:
+                continue
+            dest.write_bytes(src.read())
+            if name.startswith("secrets/") or name.endswith(".env"):
+                os.chmod(dest, 0o600)
+    print(f"  restored {len(wanted)} member(s); previous files kept in {saved}")
+    start_service()
+    return {"members": sorted(wanted), "saved": str(saved), "manifest": manifest}
+
+
+def preflight(dry: bool = False) -> None:
+    """Refuse, with a path forward, before a deploy starts on an interpreter
+    the app cannot run on. pyproject declares >=3.14; the uv path resolves
+    its own interpreter, the pip fallback uses *this* one — so the check
+    belongs here, where the message can be human."""
+    if sys.version_info < (3, 14) and not shutil.which("uv"):
+        sys.exit("python 3.14+ (or uv) is required: the portal's venv is built "
+                 f"from pyproject (requires-python >=3.14) and this is "
+                 f"{sys.version.split()[0]} with no uv on PATH.\n"
+                 "  install uv:  curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+                 "  ...or install python3.14, then rerun ./deploy/install.sh")
+
+
+def uninstall(dry: bool = False) -> dict:
+    """Stop serving and remove the service's own files — state stays.
+
+    Deliberately conservative, in the migration law's spirit: the unit,
+    wrapper, and env files are BACKED UP to state/rollback/units/ before
+    they are deleted; the deployed tree, the database, the logs, and the
+    shared ~/ai/config/ai-env.env are left alone and named, so the operator
+    decides what else goes. Nothing here can break the other services.
+    """
+    files = [units.unit_path(paths.PORTAL_UNIT),
+             units.wrapper_path(PORTAL_SERVICE_NAME),
+             units.env_path(PORTAL_SERVICE_NAME)]
+    present = [f for f in files if f.exists()]
+    if dry:
+        print("# dry-run: systemctl --user stop+disable ai-portal.service; "
+              "backup+delete unit/wrapper/env; daemon-reload")
+        for f in present:
+            print(f"#   would remove: {f}")
+        return {"removed": [], "missing": [str(f) for f in files if f not in present]}
+    for verb in ("stop", "disable"):
+        subprocess.run(["systemctl", "--user", verb, UNIT_NAME],
+                       capture_output=True, text=True)
+    backup = paths.ROLLBACK_DIR / "units"
+    backup.mkdir(parents=True, exist_ok=True)
+    removed = []
+    for f in present:
+        dest = backup / (f.name + time.strftime(".%Y%m%d-%H%M%S"))
+        shutil.copy2(f, dest)
+        f.unlink()
+        removed.append({"file": str(f), "backup": str(dest)})
+    subprocess.run(["systemctl", "--user", "daemon-reload"],
+                   capture_output=True, text=True)
+    left = [str(paths.PORTAL_STATE), str(paths.AI_ROOT / "ai-portal"),
+            str(paths.LOGS), str(paths.CONFIG / "portal")]
+    print("  unit, wrapper, and env removed (backed up); portal is stopped.")
+    print("  left in place (remove by hand if you want them gone):")
+    for p in left:
+        print(f"    {p}")
+    return {"removed": removed, "left": left}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m app.deploy",
@@ -445,11 +615,28 @@ def main(argv: list[str] | None = None) -> int:
                     help="show the recorded deployment + live unit state")
     ap.add_argument("--print-units", action="store_true",
                     help="render every generated unit/wrapper and exit")
+    ap.add_argument("--uninstall", action="store_true",
+                    help="stop the service and remove unit/wrapper/env (backed up); state stays")
+    ap.add_argument("--backup", action="store_true",
+                    help="archive the state git cannot restore (db, envs, presets, password; 0600)")
+    ap.add_argument("--out", default=None,
+                    help="backup output dir (default ~/ai/state/portal/backups)")
+    ap.add_argument("--restore", metavar="TARBALL", default=None,
+                    help="restore a backup archive onto this machine")
     a = ap.parse_args(argv)
 
     if a.print_units:
         return print_units()
 
+    if a.backup:
+        backup(Path(a.out) if a.out else None, dry=a.dry_run)
+        return 0
+    if a.restore:
+        restore(Path(a.restore), dry=a.dry_run)
+        return 0
+    if a.uninstall:
+        uninstall(dry=a.dry_run)
+        return 0
     if a.status:
         rec = read_deployment() or {}
         print(json.dumps({"recorded": rec,
@@ -460,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.rollback:
         rollback(dry=a.dry_run)
         return 0
+    preflight(dry=a.dry_run)
     deploy(target=Path(a.target).expanduser(), ref=a.ref, dry=a.dry_run,
            start=not a.no_start)
     return 0
