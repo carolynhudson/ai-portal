@@ -8113,3 +8113,27 @@ Bench posts 4–5 ask the forge for qwen21 lightning4 finals: standard +
 tab-tuned masters, magenta plate spec; owner carries the PNGs over the LAN
 and the pipeline re-runs on the forge master. Owner GO: push, then Pages
 serves the icon too.
+
+**6.14.1zw — the icon arc closes on the edge pasture (owner adjudication,
+round 3):** the board of directions (ripple ring, halo-brain, edge pasture,
+framed owl) came back with owner law in hand: **P2v2 is the direction** —
+the pasture disc (blue sky, amber sun, green ground, wide cream trail to the
+horizon; z-image seed 777 interior, plate-measured key) inside the portal's
+own segmented ring, with the ring's **weight ruled by size**: thick/banded at
+16-32 (reads in the tab), medium at 48-64, thin "ring made of blocks" at
+128+ (the owner's ear: "heavier than natural at large scales" — so the SVG
+ships medium, the ICO entries are size-matched per weight, the browser picks
+its own truth). Notches are CUTS in the ring (transparent to the dialog
+behind), the J-proven law that notches become bands at 16px. The gilded-disc
+brain (L2, saint-style halo disc — the owner's iconography save: an
+elliptical halo fails at 16px and on white; a solid disc survives) ships as
+the models-page badge: "good AI" — local, licensed, accounted-for models.
+The owl eye rests (framing round: R-777 reads owl, the owner called the
+first one a one-eyed monster with cute horns — the feather-framing lesson
+lives in the prompts). The forge (bench post 6, thread 4) is asked for the
+qwen21 lightning4 finals of the scene disc ONLY (no ring in the art —
+geometry owns the ring). Wiring: portal favicon.ico (7 sizes, 16 tuned
+family), apple-touch, 192/512 (og:image now the pasture), Pages gets
+favicon+apple-touch+icon.svg (medium), models page gains the gilded badge.
+Dialog-context gate passed on portal-dark/page-dark/white/mica with 10x edge
+zoom. Suite 1366/5; hero test enforces the 16-in-ICO icon law.
