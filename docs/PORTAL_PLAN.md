@@ -8084,3 +8084,32 @@ repo-root file named `<sqlite3.Connection object at 0x…>` from Oct 30 — a
 stringified-connection path from the pre-sandbox-guard test era; removed,
 the sandbox guards make that class of artifact impossible now.
 Suite 1366/5.
+
+**6.14.1zv — the icon arc: the strix eye is HALO's face (owner brief +
+adjudication):** the owner asked for transparent icons that live at tab
+size, professional-but-friendly (the Firefox bar), with the toolchain built
+wherever needed and the AI path explored. What got built: `tools/icon_forge.py`
+— a ComfyUI API client (Z-Image-Turbo lane; the 2512 fp8 chain OOM-killed
+ComfyUI beside the resident router model, a law learned: peak 37 GB in 41 GB
+free, kernel OOM, service auto-recovered, router untouched), plate-MEASURED
+chroma key (the VAE renders "pure magenta" as ~(226,30,190) — keying against
+the ideal leaves an opaque plate; inverting the composite restores true edge
+colors), premultiplied-alpha half-step shrinking (no fringing, alpha stable),
+a hand-built multi-size ICO (and the classic pitfall caught live: a CLI
+off-by-one dropped the 16px entry — the size generators forget), and a
+validation loop the model can see: contact sheets at 256/128/64/32/16 on dark
+and light plates with real tab mockups. Two paths tested per the owner:
+native-Chromium SVG rasterization (the bold aperture redraw passes, quieter)
+and diffusion (9-concept board, owner adjudicated → the STRIX OWL EYE: reads
+as an eye at 16px, warm, the machine's own name). A dialog-context validator
+(the owner's ask: real app surfaces, not flat plates) proved visibility on
+portal-dark #171c24/page #0e1116/white/mica and 10x-clean edges, and found
+the real flaw: the amber spark dies at 16px. Fix shipped: a tab-tuned glyph
+(spark grown ~40% by region-dilating the master) as the ICO's 16px entry,
+24+ untouched. Wiring: portal head (ICO + apple-touch; the SVG aperture
+removes from head, ships on static/), Pages pages (favicon + apple-touch +
+og:image), suite contract updated to the icon law (16-in-ICO asserted).
+Bench posts 4–5 ask the forge for qwen21 lightning4 finals: standard +
+tab-tuned masters, magenta plate spec; owner carries the PNGs over the LAN
+and the pipeline re-runs on the forge master. Owner GO: push, then Pages
+serves the icon too.

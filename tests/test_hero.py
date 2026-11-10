@@ -396,14 +396,22 @@ def test_states_that_cannot_be_measured_flow_instead_of_faking_progress():
 
 def test_the_halo_brand_is_wired_and_font_free():
     """Owner picked the Halo Aperture mark and the name HALO (2026-10-29);
-    "AI Portal" is a functional description, not a brand. The shipped assets
-    must stay: linked in the head, present in the nav, and free of font
-    dependencies - the wordmark's letterforms are hand-built geometry, so a
-    box with no Futura renders the same logo as one with it."""
+    "AI Portal" is a functional description, not a brand. The icon law
+    (2026-11-10): the tab icon is the AI-drawn strix eye set — a multi-size
+    ICO whose 16px entry is the tab-tuned glyph, plus an apple-touch icon;
+    the SVG assets ship on and stay font-free (the wordmark's letterforms
+    are hand-built geometry, so a box with no Futura renders the same logo)."""
+    import struct
     root = pathlib.Path(__file__).resolve().parents[1]
     base = (root / "web/templates/base.html").read_text()
-    assert 'rel="icon"' in base and "/static/favicon.svg" in base, (
-        "the head must carry the SVG favicon")
+    assert 'rel="icon"' in base and "/static/favicon.ico" in base, (
+        "the head must carry the ICO favicon")
+    assert "/static/apple-touch-icon.png" in base, "apple-touch must ship"
+    ico = (root / "web/static" / "favicon.ico").read_bytes()
+    n = struct.unpack("<HHH", ico[:6])[2]
+    sizes = {w % 256 for w, _ in
+             (struct.unpack("<BB", ico[6 + i * 16:8 + i * 16]) for i in range(n))}
+    assert 16 in sizes, "an ICO without 16x16 blurfs in the tab"
     assert "/static/portal-mark.svg" in base and ">HALO</span>" in base, (
         "the nav brand is the mark + the chosen name")
     for name in ("portal-mark.svg", "favicon.svg", "portal-wordmark.svg"):
