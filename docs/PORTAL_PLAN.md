@@ -8164,3 +8164,17 @@ passed on all four surfaces (portal dark, page dark, white, mica + 10x
 edge zoom: feathered, not faded, not harsh). P4 set swapped into favicon
 ICO (7 sizes), apple-touch, 192/512, icon.svg, pasture-nav.png, Pages set
 + og. Memory 132.
+
+**6.14.1zz — mesh intent + storm downtime:** owner rules the image-forge
+router (flint/nemotron :8082) is NOT the go-to agentic-reasoning sub-agent;
+it is a test node for a future AI mesh, and the MacBook Pro is a candidate
+AI-processing MVP for that mesh. Storm overnight: RainbowBlock offline
+(no ping/ARP, gateway alive); halo itself rebooted (the /tmp wipe explained;
+P4 toolchain survived because it now lives in the repo). Ring-transformation
+test staged durable at ~/ai/state/forge-ring: the 1024 icon-on-pure-magenta
+source, the megastructure prompt (blocks = etched gunmetal stargate monoliths,
+blue circle = warped space-time ribbon, pasture painting untouched, outside
+stays flat magenta per the plate law), and the MCP driver (health -> router
+stop [nemotron auto-loads at boot; stop frees ~30 GB] -> upload -> qwen21_edit
+render -> LAN fetch). Awaiting manual power-on + login (tasks run at logon).
+Memory 140.
