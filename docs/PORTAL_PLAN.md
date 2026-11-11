@@ -8178,3 +8178,22 @@ stays flat magenta per the plate law), and the MCP driver (health -> router
 stop [nemotron auto-loads at boot; stop frees ~30 GB] -> upload -> qwen21_edit
 render -> LAN fetch). Awaiting manual power-on + login (tasks run at logon).
 Memory 140.
+
+**6.14.1zza — the AI mesh takes a shape (docs/AI_MESH_PROPOSAL.md, registered
+in kb):** owner phasing ratified. P0 = forge-like onboarding kits (local
+opencode harness per box, portal as KB/repo/anchor — the image-forge is the
+founding prototype, its brittleness list is the spec: key files, IP firewall
+rules, task-at-logon fragility, owner-carried bytes, storm deaths). P1 =
+fabric + trust on the UPS Pi5 pair (Headscale tailnet + step-ca short-lived
+mTLS; the binding law: AI services bind to the overlay only — a coffee-shop
+MacBook exposes zero AI ports). P2 = meshd node daemon (Rust for the mesh
+family: tame on-ramp daemon tokio/axum/rustls + MCP; the voice project is
+the anchor Rust genuinely wins — cpal/whisper-rs/ort, wgpu = one inference
+story across 2080 Ti Vulkan / M4 Max Metal / Strix iGPU; engines stay
+Python, mixers are orchestration not torch-rebuild). P3 = forge-style
+services transition into meshd-managed ones; the portal becomes monitor +
+repo + model registry + agent social workspace, never an engine host.
+P4 = the MacBook joins (MACBOOK_AI_PLAN already speaks mesh law) as AI-MVP
+candidate and macOS build node. Lease ledger = the mechanism for "don't
+hurt running tasks" (the OOM incident, mechanized); privilege tiers 0-3
+port the quarantine law.

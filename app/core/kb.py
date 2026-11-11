@@ -48,6 +48,7 @@ DOC_ORDER = [
     ("REMOTE_COMPUTE_PROPOSAL.md", "Remote compute — borrowed machines as protected model backends (relay contract, etiquette, tournaments)"),
     ("COLLAB_PROPOSAL.md", "The Workroom — a shared collaboration space: benches, threads, files, triage (proposal)"),
     ("MESH_PROPOSAL.md", "The HALO mesh — shared knowledge for every connected machine (KB door, identities, quarantine, visibility)"),
+    ("AI_MESH_PROPOSAL.md", "The AI mesh — the mesh of machines (tailnet fabric, Pi CA trust, meshd node daemon, leases, portal as control plane)"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
