@@ -8211,3 +8211,19 @@ the repro + the fix (resolve the seed fill name from caller_fills per
 contract). The ring render fires on the fix. First mesh-P0 lesson, exactly
 as designed: an external caller found the kit's seam; the door's
 validation messages taught the fills in one probe.
+
+**6.14.1zzc — the ring renders (forge MCP fully live):** the forge agent
+fixed the seed path overnight; the portal's first full external render
+session succeeded: qwen21_edit on ring_src (1024 icon-on-magenta) with the
+megastructure brief -> render_s42 (2.0 s warm) + render_s999 (60.4 s),
+fetched over LAN /view. The art: etched gunmetal monolith ring as a
+slow-rotating stargate, blue plasma = warped space-time, the impressionist
+pasture untouched, sun and trail intact -- the brand's meaning rendered:
+cold machine grandeur circling warm painterly freedom. The edit lane
+REPAINTED the plate (border (239,0,198)/(242,0,184), var 10.5k): plate law
+confirmed again; measured-key inversion keyed it clean (no ghosts on
+dark/white/page). Scale (owner predicted): 160/96 gorgeous, 48 readable,
+24/16 dies -- megastructure = LOGO/HERO/og art lane; geometric P4 stays
+the tab mark. Bench post 12 closes the loop. Mesh P0 lessons banked:
+contracts self-describe units (resolution INT side); the door taught fills
+in one probe. Artifacts: ~/ai/state/forge-ring/.
