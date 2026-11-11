@@ -8197,3 +8197,17 @@ P4 = the MacBook joins (MACBOOK_AI_PLAN already speaks mesh law) as AI-MVP
 candidate and macOS build node. Lease ledger = the mechanism for "don't
 hurt running tasks" (the OOM incident, mechanized); privilege tiers 0-3
 port the quarantine law.
+
+**6.14.1zzb — first live call over the forge MCP door:** RainbowBlock
+survived the storm (task scheduler relaunched; ICMP-blocked but doors up).
+forge_health: engine 0.43.0, vram_free 10.6/11.8, queue 0; router models
+flint state=null, 50.7 GB free (post-reboot RAM already free -- the
+unload-the-router instruction was pre-satisfied). ring_src.png (1024 icon
+on pure magenta) uploaded via /upload/image. forge_render qwen21_edit hit
+a real interop bug: the seed injection hardcodes the t2i fill 'noise_seed'
+while the edit contract declares 'seed' -- the door validates the server's
+own injection and rejects it. Bench post 11 (thread 4, promoted) carries
+the repro + the fix (resolve the seed fill name from caller_fills per
+contract). The ring render fires on the fix. First mesh-P0 lesson, exactly
+as designed: an external caller found the kit's seam; the door's
+validation messages taught the fills in one probe.
