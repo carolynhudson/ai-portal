@@ -8147,3 +8147,20 @@ h3b seed 42: glowing blue-violet lobes) as its emblem. The day's test
 variants (owl eyes, ripple ring, gilded brain, JP composites, P2 rounds)
 are abandoned; lessons live in memory 129/130 and this journal. The forge
 (bench 6) renders the scene-disc finals. Suite 1366/5.
+
+**6.14.1zy — the forge paints the pasture (owner ruling: impressionism):**
+the inbox (~/ai/state/icons-inbox) received forge finals: s12/s777/s999
+intact 1024², s42 truncated in transfer (LAN copy cut short; recopy if ever
+wanted). No magenta plate — the border IS the painted field, so keying is
+moot: the pipeline shifts to a feathered circular crop of the scene, framed
+by the geometric notched ring (ring stays geometry, scene is now art).
+s999 wins the owner's eye; its disc (sun + trail + flowers) is punched
+(+50% color, +18% contrast) for small sizes and set into the P4 family —
+thick 17 / med 13 / thin 10 ring weights, per-size rasters via the new
+repo-durable tools (tools/icon_svg.py rasterizer, tools/icon_dialog.py
+dialog-context gate: /tmp got cleaned overnight mid-arc, so the whole
+toolchain now lives in the repo where wipes cannot kill it). Dialog gate
+passed on all four surfaces (portal dark, page dark, white, mica + 10x
+edge zoom: feathered, not faded, not harsh). P4 set swapped into favicon
+ICO (7 sizes), apple-touch, 192/512, icon.svg, pasture-nav.png, Pages set
++ og. Memory 132.
