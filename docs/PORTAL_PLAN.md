@@ -8227,3 +8227,16 @@ dark/white/page). Scale (owner predicted): 160/96 gorgeous, 48 readable,
 the tab mark. Bench post 12 closes the loop. Mesh P0 lessons banked:
 contracts self-describe units (resolution INT side); the door taught fills
 in one probe. Artifacts: ~/ai/state/forge-ring/.
+
+**6.14.1zzd — the hybrid mark (owner ruling A):** tab size stays geometry,
+every real surface becomes the portal. The ICO ships mixed entries -- 16/24
+from the P4 geometric ring (bright, punchy at tab size; the scale law says
+thin dark metal can't win at 16px, no prompt fixes geometry) and 32/48/64/
+128/256 from the tab-tuned megastructure render (s999 v2: 13 bold etched
+segments, dusk light raking the inner rim to forge-gold, bolded sun+trail --
+the owner's metal+light directives, prompt-level per the scale law).
+apple-touch 180, PWA 192/512, Pages icons and og are the rendered portal;
+icon.svg and the nav logo stay P4 (26px sits in the bright-geometry zone).
+Dialog-context gate passed on all four surfaces + 10x edge. Masters durable:
+~/ai/state/forge-ring/render_s999_00002_.png (keyed: ringtest/tab_s999_keyed).
+The forge's first commissioned art is now the machine's face.
