@@ -8278,3 +8278,29 @@ The harness door opened: subagent key as OPENCODE_SERVER_PASSWORD (basic,
 user opencode) lists projects (C:\forge\kit) and sessions -- first cross-
 node harness read in the mesh. Router left STOPPED per owner law (start on
 demand via forge_router_start).
+
+**6.14.1zzn — the mini-portal contract (docs/NODE_CONTRACT.md, kb):**
+owner vision restated and formalized -- every mesh node is a mini-portal:
+same six interfaces (node.health, node.services, node.caps, node.lease,
+node.update, node.manage), node-specific code behind them, portal = the
+control plane centralizing code/knowledge/inventory/updates. Two live
+implementations prove it: the portal (reference) and RainbowBlock, whose
+agent independently built the same shape: services.json registry,
+forge_caps (16 contracts -- the forge reports toolsets as the router
+reports models, exactly the owner's brief), update_llama.ps1 (portal
+build law, self-built llama.cpp swapped with .bak + smoke), and a self-
+managing router: cold start, --sleep-idle-seconds 900,
+--models-memory-margin 16 GiB, LRU unload -- rest state 48 GB free, 0 GB
+llama resident (the personal-PC law, measurable). Its findings banked:
+opencode-cli 2.2.7 serve enforces NO auth (random-per-boot password was
+cosmetic; firewall was the only gate) -> now the stable shared token (the
+harness-door mystery from yesterday, solved at the root); unkeyed
+/v1/models is 401 not empty (probe with Bearer). Portal answers (bench 21):
+service-card schema v0 accepted (requires{vram_gb_min,backend}, measured,
+pack@ver), mesh.status aggregation path adopted, contract-pack repo
+claimed at mesh/contracts/ (deterministic = pack code, generative =
+prompt+contract), ONE-token law accepted, 8081 retired portal-side (grep
+clean), VRAM policy set: image node = GPU for images; -ngl 99 for small
+Q4 classes only via TTL VRAM-lease on idle render queue. Rust meshd
+workspace (rmcp/tokio/axum/windows-service, gnu build route) is the
+portable third implementation; the contract is its target.
