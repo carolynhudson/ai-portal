@@ -8260,3 +8260,21 @@ child-session = subagent detection, exposes mesh_status/mesh_place tools so
 the AI self-routes). The gateway serves every client; the plugin supplies
 context only the harness knows. The owner's proxy+stickiness+plugin instinct
 is fully feasible on documented primitives; quantified spread 8-74 t/s.
+
+**6.14.1zzm — forge services full sweep (owner: test all three, mind the
+resources):** the centralization landed and the mesh grew up a level. The
+router registry now carries SIX models from the central GGUF store (nemotron
+restored, flint, Qwen3-4b/8b/30b-A3B, gpt-oss-20b) -- storm drift resolved,
+prose-8081 retired into the router. Battery (load-on-chat nemotron): code
+14.7 t/s steady, tool-call verified (mesh_status with correct args), first
+query 55.9s incl. cold load + ThinkingCap thinking (3.6 t/s blended = the
+load+think tax, a real number for gateway estimates). Unload discipline
+honored: forge_router_stop after text tests (51.1 GB free, listening=false),
+THEN the image render (lightning4 probe 10.1s) -- never concurrent; queue
+clean, VRAM 10.5 GB free at rest. The kit gained a supervisor (comfy idle-
+frees after 20 min) and a machine-readable capability manifest (17 contracts
+with models, fills, validation history) -- the door now declares itself.
+The harness door opened: subagent key as OPENCODE_SERVER_PASSWORD (basic,
+user opencode) lists projects (C:\forge\kit) and sessions -- first cross-
+node harness read in the mesh. Router left STOPPED per owner law (start on
+demand via forge_router_start).
