@@ -8240,3 +8240,23 @@ icon.svg and the nav logo stay P4 (26px sits in the bright-geometry zone).
 Dialog-context gate passed on all four surfaces + 10x edge. Masters durable:
 ~/ai/state/forge-ring/render_s999_00002_.png (keyed: ringtest/tab_s999_keyed).
 The forge's first commissioned art is now the machine's face.
+
+**6.14.1zzk — harness sync + heterogeneous compute (docs/MESH_HARNESS_PLAN.md,
+kb-registered):** first live llama-router calls (owner GO): bearer auth OK,
+load-on-chat OK, tool-calls OK, flint ~8-9 t/s CPU (thinking model:
+reasoning_content). FINDING (bench 14): nemotron vanished from the registry
+on the storm reboot -- config drift; the mesh law writes itself: assert
+service state from templates at boot. Harness sync design: canonical base
+in the portal repo (harness/) + per-node overlay + a mesh.sync plugin that
+applies providers/MCP/skills/agents via the V2 transform APIs and reload()
+-- peers stay in step over the wire, drift visible. Heterogeneous compute:
+two layers -- a mesh gateway (OpenAI-compatible; capability registry,
+session stickiness [measured payoff: 8.6-40 s per model swap on models-max-1
+routers + node-local KV cache reuse], performance balancing from meshd
+status, lease admission, sub-agent steering via class headers, model-slot
+mutex) + a thin per-harness opencode plugin (registers the gateway from the
+registry, stamps X-Mesh-Session/Agent/Class from session hooks incl.
+child-session = subagent detection, exposes mesh_status/mesh_place tools so
+the AI self-routes). The gateway serves every client; the plugin supplies
+context only the harness knows. The owner's proxy+stickiness+plugin instinct
+is fully feasible on documented primitives; quantified spread 8-74 t/s.

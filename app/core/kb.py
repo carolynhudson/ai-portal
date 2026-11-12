@@ -49,6 +49,7 @@ DOC_ORDER = [
     ("COLLAB_PROPOSAL.md", "The Workroom — a shared collaboration space: benches, threads, files, triage (proposal)"),
     ("MESH_PROPOSAL.md", "The HALO mesh — shared knowledge for every connected machine (KB door, identities, quarantine, visibility)"),
     ("AI_MESH_PROPOSAL.md", "The AI mesh — the mesh of machines (tailnet fabric, Pi CA trust, meshd node daemon, leases, portal as control plane)"),
+    ("MESH_HARNESS_PLAN.md", "Mesh harness plan — shared opencode config (sync plugin) + heterogeneous compute (gateway, stickiness, sub-agent steering, measured numbers)"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
