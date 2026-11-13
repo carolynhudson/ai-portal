@@ -492,3 +492,29 @@ primary; clients adopt .13 as DNS at lease renewal (no forced
 renews); halo's pin (.11) and router WAN DNS (.11) unaffected.
 Verify: renew pi2's own lease (nmcli reapply) -> nmcli shows
 IP4.DNS=192.168.1.13.
+
+## 18. Final pieces: option 6, RTC reboot, boot hardening (2026-11-13)
+
+- DHCP option 6 -> VIP live on the primary (dnsmasq.conf
+  dhcp-option=6,192.168.1.13); clients adopt .13 at lease renewal.
+  Bonus find: the legacy dnsmasq.conf advertised ntp-server
+  0.0.0.0 (unusable) -> repointed to 192.168.1.13 (FTL's NTP server
+  answers there).
+- Both Pis' IPv4 addressing confirmed STATIC in NetworkManager
+  (manual .11/.24 + .12/24, IPv6 SLAAC preserved) -- the
+  self-serve-DHCP boot race is a non-issue; infra addresses depend
+  on no peer.
+- RTC on pihole.local: dtparam=rtc=on (config.txt backed up
+  .pre-rtc); reboot (owner window) -> kernel 'rpi-rtc: setting
+  system clock' from battery at boot; hwclock via util-linux-extra;
+  NTP confirms seconds later. Cold-boot-1970 risk CLOSED on the
+  CA-primary-to-be.
+- Live-fire during reboot: pihole2 took the VIP while the primary
+  was down and served DNS; preemption returned clean. All boot
+  units enabled (FTL/unbound/keepalived/radvd); leases 17 intact;
+  radvd + names resolving from fresh boot.
+OPTION-6 VERIFICATION: handout rides lease renewals; spot-check any
+client's next renewal shows DNS=192.168.1.13 (halo's pin and router
+WAN DNS stay .11 by design).
+Reboot ledger: pihole.local RTC DONE. Remaining: pihole2 noatime
+(+ DS3231 when owner builds it).

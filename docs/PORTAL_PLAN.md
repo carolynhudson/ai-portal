@@ -8541,3 +8541,14 @@ GUA prefix over ssh (refresh-time), records state, page renders
 offline-cheap; on rotation the Health mesh section shows
 "ROTATED prev -> new" + router paste strings; 2 tests; page row
 added. Suite green.
+
+**6.14.1zzg — pihole pair: D4 finished + RTC live.** Option 6 -> VIP
+deployed (clients adopt the failover address at renewal) + ntp
+option fixed (0.0.0.0 -> VIP). RTC enabled on the Pi 5: reboot in
+owner's window; kernel sets clock from battery RTC at boot; ~20 s to
+full service (FTL/unbound/keepalived/radvd all enabled + active),
+leases intact, names resolve, and the reboot itself demoed VIP
+failover (pihole2 served DNS as primary rebooted, preempt clean
+after). Both Pis' IPv4 confirmed static in NM (no boot-time DHCP
+self-dependency). Pihole pair is now a genuine HA pair: DNS, console,
+NTP, IPv6 RDNSS all ride surviving-box addresses.
