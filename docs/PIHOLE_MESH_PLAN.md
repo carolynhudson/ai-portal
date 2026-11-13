@@ -142,5 +142,23 @@ risk is real, M1 matters.**
    the v6 config_backups/gravity_backups; retention small.
 5. **SD care on pihole2**: noatime in fstab (applies at the next
    scheduled reboot), journal cap 50 MB, FTL query retention reduced.
-6. Reboot needs: only #5 (noatime); everything else is hot. Suggested
+6. **NTP pinning (time for the CA)**: measured 2026-11-13 -- clock health
+   is excellent (jitter 3.3 ms, dispersion 1.2 ms, stratum 2); journal
+   noise = occasional IPv6 pool-server timeouts, self-healing, ~1/19 d.
+   Owner-reported time errors = that noise, normal. Pin
+   systemd-timesyncd to working IPv4 servers (time.cloudflare.com,
+   1.debian.pool.ntp.org, time.nist.gov -- all measured OK from the Pis;
+   Google's NTP endpoint times out both families and is NOT the problem)
+   via /etc/systemd/timesyncd.conf.d/ drop-in + restart timesyncd. Hot,
+   one-file rollback.
+7. Reboot needs: only #5 (noatime); everything else is hot. Suggested
    window: any evening you name.
+
+**CA time dependency (validated 2026-11-13):** cert validation is
+clock arithmetic; the measured jitter (ms-scale) is far inside tolerance.
+Cold-boot 1970 risk is mitigated -- systemd saves/restores the clock
+state at shutdown/boot (pihole2 boot log proves it; boot->sync ~30-60 s).
+Optional hardening for the CA primary (Pi 5, RTC header): official RTC
+module (~$5) so cold boot starts with true time. Rule: the CA issues
+only when `timedatectl` says synchronized; meshd's renewal loop checks
+clock health before ACME calls, defers (not fails) on skew.

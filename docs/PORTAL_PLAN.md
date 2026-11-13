@@ -8396,3 +8396,17 @@ owner approval+scheduling: keepalived VIP .13 (+failover drill), DHCP
 consolidation to primary (+statics -- owner device list requested), DNS
 option-6 to VIP staged after drill, nightly rsync sync cron snapshot-
 first, pihole2 SD care (only reboot-needing item = noatime).
+
+**6.14.1zzu — pihole time-sync diagnosis (owner-reported):** measured
+both Pis: clocks healthy -- jitter 3.3 ms, dispersion 1.2 ms, stratum 2,
+synchronized=yes; 30-day journal shows ~1 IPv6 pool timeout per box,
+self-healing (timesyncd re-contacts instantly). Owner's reported errors =
+that noise = normal. Probe truth: IPv4 UDP/123 works fine from the Pis
+(Cloudflare, Debian pool, NIST all OK); Google's NTP endpoints time out
+on BOTH families (red herring); timesyncd happens to sit on an IPv6 pool
+address (flakier path). Cold-boot-1970 risk already mitigated: systemd
+clock-state file restores last time at boot (pihole2 boot log), boot->
+sync 30-60 s. CA rule banked: issue only when synchronized=yes; meshd
+renewal checks clock health, defers on skew. M1 gains #6: pin timesyncd
+to measured-good IPv4 servers (drop-in, hot, one-file rollback); optional
+$5 RTC on the Pi 5 CA primary for deterministic cold boots.
