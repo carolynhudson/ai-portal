@@ -8456,3 +8456,11 @@ D3 FTL->unbound DNSSEC chain; D4 keepalived VIP+option6; D5 lease-file
 sync (primary = master; owner to name keepers). Owner GO standing for
 the network-sorting program, announce-before-impact law in force.
 Partner safe: router untouched; partner on VPN tunnel.
+
+**6.14.1zzy — D3 executed on pihole2 (owner GO):** FTL->unbound chain
+confirmed/extended (::1#5335 added), dns.dnssec true, FTL restarted
+(4 s), LAN + console verified healthy, config backed up on-box
+(/root/pihole.toml.pre-D3.2026-11-13). Pre-existing quirk banked:
+unbound validator runs with fresh RFC5011 anchor but marks secure
+zones insecure (no ad/RRSIG) -- trace queued. pihole.local D3
+announced (all-client 2-5 s blip) and pending GO.

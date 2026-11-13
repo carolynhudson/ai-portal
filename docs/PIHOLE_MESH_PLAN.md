@@ -235,3 +235,20 @@ Optional hardening for the CA primary (Pi 5, RTC header): official RTC
 module (~$5) so cold boot starts with true time. Rule: the CA issues
 only when `timedatectl` says synchronized; meshd's renewal loop checks
 clock health before ACME calls, defers (not fails) on skew.
+
+## 9. D3 execution log
+
+pihole2 (2026-11-13, owner GO): FTL upstreams were ALREADY
+["127.0.0.1#5335"]; now ["127.0.0.1#5335","::1#5335"]; dns.dnssec
+false->true; FTL restarted (4 s active); verified: LAN UDP from halo
+answers, console 302, backup /root/pihole.toml.pre-D3.2026-11-13.
+Rollback: sudo pihole-FTL --config dns.upstreams ... original list +
+dns.dnssec false + restart (file backup on box).
+FINDING (pre-existing): unbound 1.26.2 validator module active
+(modules: validator iterator), root.key RFC5011 anchor fresh
+(last_success 2026-11-12 23:26, query_failed 0) -- yet responses carry
+no ad flag / no RRSIG: validator treats secure zones as INSECURE.
+Trace queued (suspects: outgoing-path fragmentation/IPv6 filtering of
+large DNSSEC replies). pihole.local D3 PENDING: FTL upstreams there
+are raw 8.8.8.8 -- change = ALL-client 2-5 s blip at restart; needs
+owner GO + backup-first.
