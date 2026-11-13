@@ -395,3 +395,27 @@ Pi-hole within the RA interval, no client/Pi/router reboot. Verify:
 RA capture shows RDNSS = fe80 Pi addrs; halo resolvectl IPv6 DNS
 becomes Pi. Pi-hole IPv6 chain is already Quad9 DoT (D3). radvd on
 pihole2 becomes complementary (it advertises the same fe80 RDNSS).
+
+## 14. IPv6 fix, final shape (2026-11-13): router accepts GUAs only
+
+Netgear validates the IPv6 DNS fields as GLOBAL UNICAST -> fe80 AND
+fd00 (ULA) are rejected at the keyboard (the owner's original defeat
+explained). Two composed layers:
+
+1. ROUTER PAGE (owner applies, will validate): IPv6 DNS "Use These
+   DNS Servers" =
+   Primary   2601:0602:057f:ee84:72c0:abdb:26c2:2a84  (pihole.local GUA)
+   Secondary 2601:0602:057f:ee84:9e38:e994:e647:24cf  (pihole2.local GUA)
+   Kills Comcast relay/resolver from the RA. Rides Comcast's
+   delegated prefix: on rotation the two fields go STALE -> clients
+   fall back to IPv4 .11 (Pi-hole, graceful); owner repastes from
+   the watchdog's prompt.
+2. RADVD (durable layer, deployed on pihole2): advertises RDNSS =
+   fe80 (MAC-derived, rotation-immune, outside Netgear's
+   validation). Third-machine wire proof owed (own-box sniffer
+   can't see own TX) -> task posted for forge capture.
+3. WATCHDOG (queued, portal-side): watch delegated prefix on the
+   Pis; on rotation, alert owner with the two fresh paste strings.
+
+Verification after owner Applies: RA capture (RDNSS must be the two
+GUAs), halo resolvectl, and a dig over IPv6 through Pi-hole.

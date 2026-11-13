@@ -8511,3 +8511,11 @@ fe80::a828:a424:5673:846 (RFC6106 link-local RDNSS, prefix-rotation
 immune; both verified answering). Owner applies (router is theirs);
 verify RA + halo after. DDNS off, UPnP 3074->.162 (note), remote mgmt
 off, local-HTTPS = later. radvd becomes complementary.
+
+**6.14.1zzd — IPv6 fix finalized (Netgear = GUA-only fields).** Owner
+hit the validation wall (explains the year-old defeat): fe80/ULA
+rejected. Composition: router fields = Pi GUAs (owner applies:
+pihole 2601:602:57f:ee84:72c0:abdb:26c2:2a84, pihole2 ...9e38:e994:
+e647:24cf); radvd fe80-RDNSS = rotation-immune durable channel;
+prefix-rotation watchdog = fresh paste strings on churn; graceful
+floor = IPv4 .11. Radvd third-machine proof owed -> bench task.
