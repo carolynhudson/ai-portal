@@ -297,3 +297,41 @@ true; FTL restart (4 s active). Verified: on-box + halo dig via .11
 OK, console 302, leases unchanged (18), unbound clean restart.
 Google now OUT of the chain on BOTH Pis; egress = encrypted DoT to
 Quad9 on the pair. Pair-consistent DNS architecture achieved.
+
+## 11. D2 (IPv6 RDNSS takeover) -- radvd phase (2026-11-13)
+
+Design: FTL 6.8 has NO RA/RDNSS keys (IPv6 engine = DHCPv6 server
+only; router RA sets no M-flag, so clients never solicit it -- the
+root cause of the failed IPv6 takeover). Fix = **radvd 2.20 in
+RDNSS-only mode** on the Pis: pure DNS advertisement RA
+(AdvDefaultLifetime 0 = never claims the gateway; Comcast stays the
+path, Pi becomes the resolver). RDNSS = the box's STABLE fe80
+link-local (survives prefix changes).
+
+pihole2 (secondary, law-compliant first): radvd installed + enabled;
+/etc/radvd.conf (RDNSS fe80::a828..., lifetime 600, intervals 30/100);
+kernel gates: net.ipv6.conf.all.forwarding=1 (the global gate --
+interface-only is NOT enough; kernel suppresses RA TX otherwise),
+eth0.forwarding=1, eth0.accept_ra=2 (hybrid router: Pi keeps its
+SLAAC GUA -- halo is pinned to that GUA, must not break); persisted
+via /etc/NetworkManager/dispatcher.d/90-radvd (NM resets sysctls on
+reactivation). Config validated, service active.
+PROOF STATUS: send NOT yet proven on the wire. Sniffing on the
+sender cannot see its own TX; RS-solicited reply not observed from
+the box itself (suspicious). Next proof: capture from a THIRD machine
+(halo raw capture needs sudo interaction; forge harness can run it).
+If proven silent, suspects: radvd send path with forwarding=1 set
+after start (restart-after-sysctl ordering is now correct).
+Debian radvd 2.20 CLI gotchas banked: no -x/-f facility flags; -m
+wants pidfile; DebugLevel invalid top-level; interface block needs
+{ }; braces.
+pihole.local deployment PENDING owner GO: RA from the primary puts
+Pi-hole fe80 into every client's IPv6 DNS list (the real
+ISP-override fight; clients merge RDNSS from router + Pi; first-
+server preference makes Pi-hole compete; client pinning = the sure
+path -- halo already pinned both families by owner's rush config).
+Netgear CAX80: OpenWrt/third-party firmware = nil (locked DOCSIS
+combo, no project exists); RDNSS injection is the ROUTER's own RA
+(Comcast DNS) -- Netgear firewall cannot be pointed at it. Bridge
+mode = documented later option (owner's troubleshooting objection
+is legitimate).
