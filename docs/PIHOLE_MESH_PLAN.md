@@ -465,3 +465,10 @@ pi2 DHCP confirmed still OFF (full pihole.toml deliberately NOT
 synced -- it would re-enable pi2 DHCP and recreate dual-DHCP).
 Deploy key: /root/.ssh/id_ed25519_sync (PI) -> meshops@pihole2
 authorized_keys (infra-to-infra, revocable one line).
+
+D5 verification (same day): generator bug (regex matched [dns]'s empty
+hosts = [] first) fixed by scoping to [dhcp]; re-run APPLY-OK, pi2
+toml carries 5 statics, dhcp.active false preserved. pi2 name
+lookups forward (statics inert while its DHCP is off -- staged for
+takeover, by design). Deploy key + scripts + cron all in place;
+sync-hosts regenerated nightly from the primary's toml.
