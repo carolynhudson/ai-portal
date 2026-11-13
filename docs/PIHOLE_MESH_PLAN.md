@@ -472,3 +472,23 @@ toml carries 5 statics, dhcp.active false preserved. pi2 name
 lookups forward (statics inert while its DHCP is off -- staged for
 takeover, by design). Deploy key + scripts + cron all in place;
 sync-hosts regenerated nightly from the primary's toml.
+
+## 17. D4 keepalived VIP -- DRILL PASSED (2026-11-13)
+
+keepalived 2.x on both Pis: vrrp_instance PIHOLE, VRID 51, VIP
+192.168.1.13/24 eth0, advert 1 s, PASS auth (stored root-only
+/root/keepalived_authpass.txt, 600). Priorities: pihole=100
+(master), pihole2=90. Configs identical apart from router_id +
+priority; enabled at boot both sides.
+Drill (live): primary preempt -> pi2 released (0); stop keepalived
+on primary -> VIP on pi2 at +5s, dig via VIP answered (8.8.4.4 =
+pi2 chain, i.e. quad9 DoT failover path intact); start primary ->
+preempt back (pi2 zero, dig 8.8.8.8). DNS answered THROUGHOUT --
+one Pi dying is a DNS non-event. Console rides the VIP too (FTL
+serves web on all addrs).
+STAGED NEXT (owner GO, availability-touching): DHCP option 6 -> VIP
+via /etc/pihole/dnsmasq.conf dhcp-option=6,192.168.1.13 on the
+primary; clients adopt .13 as DNS at lease renewal (no forced
+renews); halo's pin (.11) and router WAN DNS (.11) unaffected.
+Verify: renew pi2's own lease (nmcli reapply) -> nmcli shows
+IP4.DNS=192.168.1.13.
