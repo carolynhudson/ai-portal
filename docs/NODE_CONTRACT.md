@@ -102,3 +102,68 @@ stay CPU by PCIe-3 arithmetic). Small Q4 chat classes (4b ~2.6 GB, 8b
 granted a VRAM lease: render queue idle + within margin + TTL'd; the
 router's 900 s sleep returns VRAM at rest. The gateway's stickiness + the
 lease ledger arbitrate; no service free-loads the GPU.
+
+## meshd internal protocol (owner design, refined 2026-11-13)
+
+**Platform seams + build relay.** meshd is Rust with a `platform/` seam:
+one trait per OS-owned capability (service control, network binding, OS
+error/signal surfaces, resource probes, user-session/input-idle detect),
+cfg-selected implementations (`#[cfg(target_os=...)]`, feature flags for
+optional deps like nvml/windows-service). The relay: build+test on halo
+(Linux first), hand to the forge agent (Windows -- gnu route proven,
+windows-service probed), then the MacBook (macOS, and the Mac builds its
+own binary). The seam ships a **platform-conformance test suite**: the
+same tests must pass on every platform, so a platform is "done" when the
+suite is green, not when it compiles. Updates = another relay round.
+
+**Two skins, one protocol.** First-party Rust services link the mesh
+library. Third-party engines (ComfyUI, llama.cpp, opencode, anything)
+cannot link Rust -- they get a **sidecar adapter** (a meshd `--service`
+role: supervise + speak mesh for any executable over stdio/HTTP). The
+abstraction is the protocol, not the linker; this is how any-language
+services behave mesh-native.
+
+**Registration handshake.** A service hello declares: identity, its
+contract card (the caps schema above), flow-control capacity (message
+types accepted, concurrency per type, value ceilings), port needs, and
+resource rules. The node controller's registry auto-populates from hellos
+-- services self-describe, the node reports measured, mesh.status
+aggregates.
+
+**Message model.** Classes control > health > telemetry; priority heap
+at both ends with per-class FIFO and a documented starvation policy;
+backpressure honors the declared capacity. Local wire = the same JSON
+envelope as the mesh (no bespoke RPC; MCP at the edges).
+
+**Port ledger.** Services declare port needs; the controller assigns
+from a pool, records them in the registry, and directs binding to the
+permitted interface (overlay-only law). Static pool first, DHCP-style
+dynamic later if ever needed.
+
+**Resource signals.** The controller monitors (sysinfo/nvml/input-idle
+per platform) and emits `resource.busy{gpu,ram,...}` / `resource.safe`
+events to subscribed services. Availability for the task router =
+declarative per-service policy (min free VRAM/RAM, CPU ceiling,
+user-session yield) AND the live signal. The personal-PC law becomes a
+protocol: when the human arrives, AI yields.
+
+**Launch/recovery discipline.** No launch under low-RAM; blackout delay
++ exponential backoff with a circuit breaker (crash-loop -> stop, mark
+failed, report, human); no restart while the node controller is
+unreachable. The storm is the founding test case.
+
+**Store-and-forward.** Durable node outbox (SQLite) with per-node seq +
+ack; the Pi pair relays/buffers, the portal is terminal. Retention is
+classed: telemetry drop-oldest, control/audit never dropped. **Silence =
+departed:** leases TTL-expire and the node leaves placement while
+disconnected -- store-and-forward carries facts, never authority; a
+reconnected node re-registers.
+
+**Secrets through the secured pipe.** With P1 mTLS (Pi CA), the node
+controller is the node's broker: secrets delivered at runtime, injected
+into service launch, never on disk, redaction law; on-demand privileged
+capabilities (e.g., a changes-allowed harness loaded only for a trusted
+request, torn down at lease end). Honest limit: a bearer token is
+visible to the process that uses it -- "only the requestor knows" is
+enforceable when the requestor-side client uses the secret, not the
+node; the mesh arbitrates custody, not invisibility.

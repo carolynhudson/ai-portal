@@ -8304,3 +8304,25 @@ clean), VRAM policy set: image node = GPU for images; -ngl 99 for small
 Q4 classes only via TTL VRAM-lease on idle render queue. Rust meshd
 workspace (rmcp/tokio/axum/windows-service, gnu build route) is the
 portable third implementation; the contract is its target.
+
+**6.14.1zzp — meshd internal protocol (owner design refined):** node
+controller + AI-service-controller design banked to NODE_CONTRACT.md.
+Refinements: platform seam = traits + conformance suite (relay: halo ->
+forge -> Mac; a platform is done when tests are green, not when it
+compiles); TWO SKINS ONE PROTOCOL (Rust library for first-party, sidecar
+adapter meshd --service for third-party engines -- the abstraction is the
+protocol, not the linker); service hello auto-populates the registry
+(card, flow-control capacity, port needs, resource rules); message
+classes control>health>telemetry, priority heaps, backpressure = declared
+capacity, mesh JSON envelope locally (no bespoke RPC); port ledger with
+overlay-only binding; resource.busy/safe signals make the personal-PC law
+a protocol (availability = policy AND live signal); launch discipline
+(no launch under low RAM, blackout delay, breaker, no restart while
+controller unreachable); store-and-forward via SQLite outbox + Pi relay
+with classed retention, and the hard rule SILENCE = DEPARTED (leases
+expire, placement excludes; forward carries facts not authority);
+node-controller-as-broker for secrets (runtime injection, never on disk,
+honest limit: bearer tokens are visible to the user-process -- custody,
+not invisibility). Pihole pair next: Headscale + step-ca + mesh relay;
+dedicated ed25519 mesh-admin keypair generated (public -> owner for
+authorized_keys on pi+pi2, private 0600 halo, zero passwords in files).
