@@ -8442,3 +8442,17 @@ Fix ladder D1-D4 (all availability-touching, owner-GO-gated): D1 fix
 pihole2 UDP, D2 FTL IPv6 RA/RDNSS announce (honest limit: router's
 RDNSS can't be removed from our side; full defeat needs router-side
 change), D3 FTL->unbound DNSSEC chain, D4 keepalived VIP + option-6.
+
+**6.14.1zzx — D1 diagnosis: false alarm retracted, network picture clean.**
+pihole2 UDP DNS is HEALTHY from real LAN clients (halo digs .12 ->
+8.8.4.4): the "dead UDP" was an on-box ssh loopback quirk. Port 53 is
+FTL-owned both Pis; unbound correctly at 127.0.0.1:5335 (v6 standard);
+no firewall, no UDF module on 6.8, zero bind complaints. Replication
+archaeology: native config/gravity backups exist (weekly), NO cross-Pi
+sync -- owner's drift confirmed; static-lease files diverged (17 fresh
+vs 27 stale rows, conflicting IPs per MAC). Revised ladder: D1
+CANCELLED; D2 FTL IPv6 RA/RDNSS (the real ISP-override fight on IPv6);
+D3 FTL->unbound DNSSEC chain; D4 keepalived VIP+option6; D5 lease-file
+sync (primary = master; owner to name keepers). Owner GO standing for
+the network-sorting program, announce-before-impact law in force.
+Partner safe: router untouched; partner on VPN tunnel.

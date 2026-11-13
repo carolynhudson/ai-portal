@@ -136,25 +136,39 @@ The owner's "rush job" story, verified on the wire:
   FTL sent ZERO RAs despite dhcp.ipv6=true: the IPv6 takeover never
   engaged. Clients therefore run Pi-hole (IPv4) and ISP DNS (IPv6)
   in parallel, and modern resolvers use the IPv6 server first.
-- **pihole2 UDP DNS is dead**: localhost UDP times out, LAN-IP UDP
-  times out, TCP answers 8.8.8.8. Signature = upstream bind conflict
-  (unbound on 127.0.0.1:53 steals FTL's loopback; LAN UDP listener
-  missing). The secondary's DNS -- the service we wanted for failover
-  -- does not answer on the transport clients actually use.
+- **pihole2 UDP DNS: HEALTHY (false alarm retracted same day).** The
+  "dead UDP" reading came from testing on-box via ssh (localhost /
+  self-IP UDP times out = loopback quirk). From halo (real LAN
+  client) UDP to .12 answers 8.8.4.4. No firewall rules, no UDF
+  module on FTL 6.8, no bind conflicts: unbound sits at
+  127.0.0.1:5335 (v6 standard layout), FTL owns :53 on both Pis,
+  zero bind complaints in 14 d of journal.
 - **FTL upstreams are raw 8.8.8.8/8.8.4.4** on both Pis; unbound
   (DNSSEC-validating) runs but is NOT in the FTL upstream chain.
+- **Replication archaeology**: native config_backups (3 deep) +
+  gravity_backups (weekly, Nov 8 freshest) exist on both Pis; NO
+  cross-Pi sync tool/cron exists (owner memory of "backup and
+  restore" = the native backups). Static-lease files diverged:
+  pi = 17 entries (fresh), pi2 = 27 (stale, expiry ~Oct 2025) with
+  conflicting IPs for the same MACs.
 
-Fix list (gated, in order):
-D1 pihole2 UDP fix (unbound/FTL bind reconciliation; test UDP from
-   halo). Availability-touching (DNS) -> owner GO.
+Fix ladder (revised, owner-GO-gated, pihole2-first law):
+D1 CANCELLED -- UDP DNS healthy on both Pis; false alarm retracted;
+   monitor the on-box loopback quirk only.
 D2 FTL IPv6 RA/RDNSS: announce FTL (stable fe80 source) so Pi-hole
    joins IPv6 DNS handout. Honest limit: the ISP router's RDNSS
    cannot be removed from the RA soup from our side; clients pick
    among advertised servers. Full defeat of the override needs a
    router-side change (bridge mode / own router) -- later option.
-D3 FTL upstreams -> unbound loopback (DNSSEC, cache), pair-consistent,
-   after D1 proves unbound's bind surface.
-D4 keepalived VIP + DHCP option-6 -> VIP (M1 as planned).
+D3 FTL upstreams -> unbound loopback 127.0.0.1:5335 (DNSSEC, cache),
+   both Pis one at a time (FTL restart = seconds-scale DNS blip).
+D4 keepalived VIP 192.168.1.13 + DHCP option-6 -> VIP (staged,
+   drill-gated, per M1).
+D5 lease-file sync: primary's dhcp.leases (17 fresh rows) is the
+   authority; nightly rsync to pihole2 replaces its 27 stale rows.
+   Zero client impact (pi2 DHCP is inactive). Owner to provide the
+   statics to KEEP (printer/NAS/partner gear) so pi's file gets
+   cleaned of ancient rows before it becomes the synced master.
 
 ## 8. Hardware: DS3231 RTC for pihole2 (owner task, 2026-11-13)
 
