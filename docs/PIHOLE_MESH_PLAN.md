@@ -441,3 +441,27 @@ socket capture vantage was the flaw, not the wire. Forge bench
 capture (#23) now optional.
 Residual law: last-mile = client pinning on key machines (partner
 PC: pin .11/.12 + Pi v6; meshd automates this for mesh nodes).
+
+## 16. D5: statics + nightly sync (2026-11-13)
+
+Policy (owner): dynamics for most; statics for servers/infrastructure;
+names in Pi-hole everywhere. Statics live in pihole.toml [dhcp].hosts
+(the .leases files are the lease DB, not statics -- plan corrected).
+Written on the primary (and synced to pihole2):
+  2c:cf:67:70:3c:ae -> .11 pihole (Pi5)   e4:5f:01:a0:2c:44 -> .12 pihole2 (Pi4)
+  9c:bf:0d:00:e6:ca -> .228 Halo          f0:b2:b9:18:40:80 -> .25 RainbowBlock
+  10:9c:70:27:9f:04 -> .170 prusa-xl      44:5c:e9:1e:1b:8c,ignore
+All were already their current IPs = zero client movement. prusa-xl
+name now resolves (statics act as local DNS records); the printer's
+IPv4-preferring software gets a permanently stable address. SteamOS
+dual-boot caveat: same NIC MAC -> same lease in both boots; name
+display follows the static entry.
+NIGHTLY SYNC (03:15 root cron on the primary): pihole-sync.sh rsyncs
+gravity.db + adlists.list + statics-JSON (regenerated from toml) to
+pihole2 staging; pihole-apply-sync.sh on pihole2 snapshots to
+/root/pihole-sync-backups (rotate 7), swaps, chowns, re-applies
+statics, restarts FTL, verifies dig. First run: APPLY-OK, exit 0,
+pi2 DHCP confirmed still OFF (full pihole.toml deliberately NOT
+synced -- it would re-enable pi2 DHCP and recreate dual-DHCP).
+Deploy key: /root/.ssh/id_ed25519_sync (PI) -> meshops@pihole2
+authorized_keys (infra-to-infra, revocable one line).
