@@ -8360,3 +8360,24 @@ with the CA validation report. Portal TLS later via a Caddy front (Caddy
 does ACME against step-ca natively = renewal for free). Mesh-to-mesh is
 already mTLS under the CA. Rule: nothing self-signs, ever -- warning
 fatigue is how real warnings die.
+
+**6.14.1zzs — pihole2 read pass + mesh plan (docs/PIHOLE_MESH_PLAN.md, kb):**
+meshops access live (ssh key + NOPASSWD sudo, verified; removed the
+root-owned /tmp temp file -- the one pre-approved mutation). Inventory:
+pihole2 is a Pi 4 8GB (not Pi 5 as expected -- pihole.local model to
+verify), Debian 13 trixie, 235G SD 220G free, load 0.08, 19d uptime.
+Pi-hole v6.5/FTL 6.8/web 6.6.1: **FTL serves its own console on 80+443,
+lighttpd ABSENT, tls_ca/tls.crt/tls.pem self-signed already present** --
+HTTPS console = swap the cert pair, backup self-signed for rollback.
+unbound (DNSSEC) running. 27 DHCP leases; config in pihole.toml (v6
+model). HA research: DNS = keepalived floating VIP (stateless, easy
+win); DHCP = consolidate to primary w/ statics + manual secondary
+takeover now, dnsmasq/FTL failover-protocol eval on pihole2 later;
+config+gravity sync = rsync cron over the mesh ssh key, snapshot-first
+(v6 config_backups/gravity_backups native). Plan M0-M4: M0 pihole.local
+read (requested), M1 HA first, M2 CA crown (step-ca primary pihole +
+key-replica pihole2, acceptance = cert->padlock-from-3-machines->renewal->
+rollback, the owner's validated-as-good suite), M3 Headscale+relay,
+M4 retire statics to CA identities. Cautions banked: v6.6 update gated,
+SD low-write discipline, no new ports beyond 443/53, reboots scheduled
+events (partner's workday).

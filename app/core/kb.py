@@ -51,6 +51,7 @@ DOC_ORDER = [
     ("AI_MESH_PROPOSAL.md", "The AI mesh — the mesh of machines (tailnet fabric, Pi CA trust, meshd node daemon, leases, portal as control plane)"),
     ("MESH_HARNESS_PLAN.md", "Mesh harness plan — shared opencode config (sync plugin) + heterogeneous compute (gateway, stickiness, sub-agent steering, measured numbers)"),
     ("NODE_CONTRACT.md", "Node contract — the mini-portal spec: six interfaces every mesh node implements (health, registry, caps, leases, update, manage) + service cards + pack law"),
+    ("PIHOLE_MESH_PLAN.md", "Pi-hole pair — measured inventory, HA research (keepalived VIP, DHCP options, sync), and the M0-M4 mesh/CA install plan with acceptance tests"),
 ]
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")

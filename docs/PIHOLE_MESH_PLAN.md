@@ -1,0 +1,100 @@
+# Pi-hole pair — findings, HA research, mesh plan (2026-11-13)
+
+Owner side quest, safety law in force: these are production DNS/DHCP
+servers (partner works from home); read-only first, pihole2 before
+pihole.local, mesh services purely additive, permission before any
+availability-touching step. This doc = the pihole2 read pass + research +
+the change list awaiting owner approval.
+
+## 1. pihole2.local — measured inventory (read-only, 2026-11-13)
+
+- **Raspberry Pi 4 Model B, 8 GB** (owner note: the pair was expected to
+  be Pi 5s -- pihole2 is a Pi 4; pihole.local model to verify in its own
+  read pass), Debian 13 trixie aarch64, kernel 6.18, 235 GB SD (220 G
+  free), uptime 19 d, load 0.08, RAM ~7.4 Gi available. Headroom:
+  enormous for Headscale + step-ca + relay (all SQLite, tiny writes).
+- **Pi-hole v6.5 core / web 6.6.1 / FTL 6.8** (upstream has v6.6 --
+  updates are a permission-gated decision, not a reflex).
+- **Key discovery: v6 serves its own console.** pihole-FTL listens on
+  80 AND 443; lighttpd is absent. `/etc/pihole/tls_ca.crt/tls.crt/tls.pem`
+  exist (self-signed, pihole-owned, mode 600). So "HTTPS on the console"
+  = REPLACE THE CERT PAIR with CA-issued certs (SANs: pi.hole +
+  pihole2.local + pihole.local VIP name), FTL reload, done. Rollback =
+  restore the self-signed pair (back it up first). The v6 console is
+  HTTPS-CAPABLE TODAY; today it is the warning-fatigue kind of HTTPS.
+- **unbound.service is running** (DNSSEC-validating local resolver) --
+  good upstream hygiene already present.
+- DHCP: 27 active leases; DHCP config lives in pihole.toml (v6 model),
+  not dnsmasq.d as in v5. `webserver.domain = "pi.hole"`.
+- meshops access verified: ssh key auth + NOPASSWD sudo, root confirmed;
+  the root-owned /tmp/meshops.sudo left from setup was removed (the one
+  pre-approved mutation of this pass).
+
+## 2. HA research: the real gaps and the safe fixes
+
+Measured reality (owner's warning confirmed): no settings sync, no
+gravity sync, DHCP lease tables independent, no failover mechanic.
+
+**DNS (stateless -- the easy, safe win).** Keepalived VIP: a floating
+address (e.g. 192.168.1.13) that migrates between the Pis; both answer
+DNS simultaneously today, so a floating VIP adds clean failover with zero
+DNS software change. Clients (via DHCP option 6) learn the VIP as their
+DNS; a dead Pi moves the VIP in ~seconds. This is the keystone: it makes
+"one Pi dies" a non-event for browsing, which is exactly the guarantee
+the CA needs to sit on this pair.
+
+**DHCP (stateful -- three options, honest trade):**
+a) **Consolidate**: primary serves DHCP (static reservations for the
+   important devices: printer, pis, NAS; long lease times), secondary's
+   DHCP OFF; secondary takes over manually (web UI toggle) on primary
+   loss. Simple, predictable, matches home scale.
+b) **dnsmasq/FTL failover peer**: FTL embeds dnsmasq, which speaks the
+   DHCP failover protocol to a peer (shared lease database). True
+   automatic failover, least well-trodden with Pi-hole v6 -- test on
+   pihole2 first, with the web UI toggle as the fallback path.
+c) **Status quo**: two independent DHCP servers -- the current IP-
+   collision risk on lease shuffles; the thing we're fixing.
+Recommendation: (a) now, evaluate (b) in the pihole2 sandbox; never
+run (c) once the CA lives here.
+
+**Config + gravity sync.** A small, dumb cron on the secondary: pull
+`pihole.toml`, `gravity.db`, adlists from the primary (rsync over the
+mesh ssh key), snapshot before overwrite (pi-hole's config_backups +
+gravity_backups dirs already exist -- native safety). The web API has
+teleporter exports; filesystem rsync is the predictable path. Note:
+pihole.toml contains secrets (API/password hashes) -- the sync channel
+must be the ssh'd pair, never an open port.
+
+## 3. Mesh additions plan (purely additive, owner approval required)
+
+Phase M0 (read): pihole.local inventory (same read-only pass; requested).
+Phase M1 (HA first, per "fix the foundation, then the crown"): keepalived
+VIP + DHCP consolidation to primary + gravity/config cron. Acceptance:
+DNS answers on both AND via VIP; lease table intact (>=27 entries);
+console loads on both; partner's workday unaffected; failover drill:
+drain VIP (systemctl stop keepalived on one, secondary takes it in <5 s,
+dig via VIP succeeds).
+Phase M2 (the crown): step-ca on pihole.local (primary signer) + key
+replica on pihole2 (hot standby; takeover = signing continues); ACME
+endpoint for Caddy; SSH CA issuance (host + user certs, 24 h). Acceptance
+CA suite (the owner's "validated as good", demonstrated not trusted):
+issue cert -> replace pihole2's self-signed tls pair (backup kept) ->
+root installed on halo/forge/Mac -> padlock from all three machines ->
+renewal fires -> rollback rehearsed.
+Phase M3 (fabric): Headscale (tailnet control) on the pair + mesh relay
+(store-and-forward, classed retention). Acceptance: halo+forge join,
+café-roaming simulation (client off-LAN via tailnet), one Pi drained ->
+tailnet survives on the other.
+Phase M4 (retire the stopgap): meshops -> CA-issued identities; static
+tokens die (forge ONE-token migration); secrets broker P0/P1 built on
+the CA (AI_MESH_PROPOSAL 2.2 + the NODE_CONTRACT secured pipe).
+
+## 4. Standing cautions
+
+Pi-hole updates (v6.6) are a separate permission-gated decision.
+SD-card wear: all new services are low-write SQLite; relay retention is
+classed (telemetry drop-oldest) to cap writes. No new listening ports
+beyond 443/53/853-tbd + tailscale; ACME and API over the pair's ssh/LAN
+only. Reboot windows (keepalived/step installs) need owner timing --
+partner's workday respected; the 19-day uptime says reboots are rare
+here, so each one is a scheduled event, not a surprise.
