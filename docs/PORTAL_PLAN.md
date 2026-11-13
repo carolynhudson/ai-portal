@@ -8519,3 +8519,14 @@ pihole 2601:602:57f:ee84:72c0:abdb:26c2:2a84, pihole2 ...9e38:e994:
 e647:24cf); radvd fe80-RDNSS = rotation-immune durable channel;
 prefix-rotation watchdog = fresh paste strings on churn; graceful
 floor = IPv4 .11. Radvd third-machine proof owed -> bench task.
+
+**6.14.1zze — IPv6 WON (validated).** Owner applied router IPv6 DNS =
+Pi GUAs. Query log: 290/357 recent queries IPv6-source from 8+ real
+devices -> Pi-hole. halo's RA-learned DNS = Pi-hole x3 (GUAs +
+pihole2 radvd fe80 = radvd TX proven by real client) + 1 residual
+Netgear self-appended relay (firmware, unremovable; pinning handles
+it). Comcast resolvers GONE. Router's own DNS governed (it queries
+.11). Validation forensics: snmp6 counters beat raw-socket vantage
+(RA flow always healthy; capture flaw banked). Side quest's founding
+fight -- the ISP DNS override -- is DEAD on both families: v4 via
+DHCP .11/.12, v6 via router RDNSS + radvd durable layer.

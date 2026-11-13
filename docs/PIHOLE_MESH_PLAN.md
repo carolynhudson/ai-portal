@@ -419,3 +419,25 @@ explained). Two composed layers:
 
 Verification after owner Applies: RA capture (RDNSS must be the two
 GUAs), halo resolvectl, and a dig over IPv6 through Pi-hole.
+
+## 15. IPv6 VALIDATION (post-Apply, 2026-11-13) -- WON
+
+Ground truth from pihole.local's query log (last 2000 lines):
+357 queries = 290 IPv6-source + 49 IPv4 + cache chatter -> 8+
+distinct LAN devices now resolve IPv6 THROUGH PI-HOLE (privacy
+addresses, real client devices). Router change took effect network-
+wide within minutes, no reboots.
+halo link DNS list (RA-derived): pihole GUA + pihole2 GUA (owner's
+router entries) + fe80::a828 (pihole2 radvd -- TX PROVEN by a real
+client receiving it) + ONE residual: 2601:..9618.. = Netgear
+self-appends its relay address to every RDNSS list (firmware, not
+removable). Comcast's resolver pair (40a8:a573...) GONE from the
+list. Router itself (192.168.1.1) queries Pi-hole (its WAN DNS =
+.11) = router lookups governed too.
+RA-capture forensics: kernel snmp6 counters proved RA flow healthy
+(InRA +15/45s; radvd OutRA incrementing; pihole.local FTL emits RAs
+too -- its engine works, just never answered my RS pattern); raw-
+socket capture vantage was the flaw, not the wire. Forge bench
+capture (#23) now optional.
+Residual law: last-mile = client pinning on key machines (partner
+PC: pin .11/.12 + Pi v6; meshd automates this for mesh nodes).
