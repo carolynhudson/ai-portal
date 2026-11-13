@@ -8410,3 +8410,15 @@ sync 30-60 s. CA rule banked: issue only when synchronized=yes; meshd
 renewal checks clock health, defers on skew. M1 gains #6: pin timesyncd
 to measured-good IPv4 servers (drop-in, hot, one-file rollback); optional
 $5 RTC on the Pi 5 CA primary for deterministic cold boots.
+
+**6.14.1zzv — RTC survey:** owner installed the Pi 5 RTC battery.
+Measured: pihole.local has /dev/rtc0 (RX6110) but the feature is
+DISABLED by firmware default (no rx6110 dmesg probe, no dtparam).
+pihole2 = Pi 4, no RTC hardware (owner's memory confirmed). hwclock
+absent on both (Debian 13 split it into util-linux-extra). M1 gains
+#7: enable RTC on the primary (config.txt dtparam=rtc=on under [all],
+apt util-linux-extra, scheduled reboot, hwclock -w, cold-boot verify;
+rollback = one line deleted) and #8: pihole2 stays on clock-state-file
++ NTP pinning (optional DS3231 i2c-rtc overlay if a spare surfaces).
+Reboot ledger: #5 pihole2 noatime + #7 pihole.local RTC = two scheduled
+reboots, owner-named evenings; everything else hot.

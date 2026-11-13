@@ -151,8 +151,21 @@ risk is real, M1 matters.**
    Google's NTP endpoint times out both families and is NOT the problem)
    via /etc/systemd/timesyncd.conf.d/ drop-in + restart timesyncd. Hot,
    one-file rollback.
-7. Reboot needs: only #5 (noatime); everything else is hot. Suggested
-   window: any evening you name.
+7. **Pi 5 RTC enable (pihole.local)**: battery installed, RTC disabled by
+   firmware default (measured: /dev/rtc0 exists, no rx6110 probe, no
+   rtc dtparam). Steps: backup config.txt; append `dtparam=rtc=on` under
+   [all]; apt install util-linux-extra (hwclock was split out in Debian
+   13); REBOOT (scheduled window); dmesg verify rx6110 probe;
+   `sudo hwclock -w`; verify cold-boot date before NTP. Rollback =
+   delete one line. Post-state: the CA primary starts every boot with
+   true time, fully off the systemd clock-state file.
+8. pihole2 (Pi 4): no RTC hardware (verified) -- adequate mitigation is
+   already live (clock-state file + NTP pinning). If a spare I2C RTC
+   (DS3231-class) surfaces, `dtoverlay=i2c-rtc,ds3231` is the one-liner;
+   not required.
+9. Reboot needs: #5 (noatime, pihole2) and #7 (RTC, pihole.local) each
+   want one scheduled reboot; everything else is hot. Suggested
+   window: one quiet evening per box, your call.
 
 **CA time dependency (validated 2026-11-13):** cert validation is
 clock arithmetic; the measured jitter (ms-scale) is far inside tolerance.
