@@ -8422,3 +8422,23 @@ rollback = one line deleted) and #8: pihole2 stays on clock-state-file
 + NTP pinning (optional DS3231 i2c-rtc overlay if a spare surfaces).
 Reboot ledger: #5 pihole2 noatime + #7 pihole.local RTC = two scheduled
 reboots, owner-named evenings; everything else hot.
+
+**6.14.1zzw — credentials ruling + DS3231 + DNS findings banked.**
+Owner offered the Pi-hole web password via a file on pihole.local:
+DECLINED per no-secrets-on-disk law -- not needed: root ssh (meshops)
+covers all Pi-hole v6 levers; if the web API is needed, generate an
+app-API token on-box (scoped, expiring, revocable). DS3231 I2C RTC
+module FOUND (owner has 2, needs pinout adapter + case + coin cell for
+the Pi 4; no schedule pressure; enable = dtoverlay=i2c-rtc,ds3231 +
+reboot + hwclock -w; PIHOLE_MESH_PLAN §8). DNS/IPv6 wire findings (§7):
+IPv4 side WON (router DHCP hands out .11 as DNS; FTL answers LAN
+UDP+TCP; listeningMode=LOCAL means localhost+LAN -- fine as-is); IPv6
+side NOT won (only the ISP router sends RAs, advertising ITSELF as
+RDNSS = the override alive; FTL sent zero RAs despite dhcp.ipv6=true);
+pihole2 UDP DNS DEAD (UDP times out localhost+LAN, TCP answers =
+upstream bind conflict signature, likely unbound on 127.0.0.1:53);
+FTL upstreams are raw 8.8.8.8/8.8.4.4, unbound (DNSSEC) runs unused.
+Fix ladder D1-D4 (all availability-touching, owner-GO-gated): D1 fix
+pihole2 UDP, D2 FTL IPv6 RA/RDNSS announce (honest limit: router's
+RDNSS can't be removed from our side; full defeat needs router-side
+change), D3 FTL->unbound DNSSEC chain, D4 keepalived VIP + option-6.

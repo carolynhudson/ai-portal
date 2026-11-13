@@ -121,7 +121,53 @@ risk is real, M1 matters.**
 - Gravity pushes (230 MB pulls on sync) ride the nightly cron, snapshot
   rotation kept small -- SD-friendly cadence, not per-hour.
 
-## 6. M1 proposed change list (FOR OWNER APPROVAL + SCHEDULING)
+## 7. DNS/IPv6 deep findings (2026-11-13, live wire capture + dig tests)
+
+The owner's "rush job" story, verified on the wire:
+
+- **IPv4 side WON**: the cable router's DHCP hands out **192.168.1.11
+  (pihole.local) as DNS** (proved: router answered a query FOR
+  pihole.local by name, resolving it to .11). FTL on .11 answers LAN
+  UDP+TCP DNS fine. `dns.listeningMode=LOCAL` means localhost+LAN
+  (not localhost-only) -- no change needed.
+- **IPv6 side NOT won**: passive RA capture (RS-solicited, 30 s) shows
+  **only the router** sends RAs, advertising **its own IPv6 as RDNSS**
+  (link-local-derived addrs) = the ISP DNS override, alive on IPv6.
+  FTL sent ZERO RAs despite dhcp.ipv6=true: the IPv6 takeover never
+  engaged. Clients therefore run Pi-hole (IPv4) and ISP DNS (IPv6)
+  in parallel, and modern resolvers use the IPv6 server first.
+- **pihole2 UDP DNS is dead**: localhost UDP times out, LAN-IP UDP
+  times out, TCP answers 8.8.8.8. Signature = upstream bind conflict
+  (unbound on 127.0.0.1:53 steals FTL's loopback; LAN UDP listener
+  missing). The secondary's DNS -- the service we wanted for failover
+  -- does not answer on the transport clients actually use.
+- **FTL upstreams are raw 8.8.8.8/8.8.4.4** on both Pis; unbound
+  (DNSSEC-validating) runs but is NOT in the FTL upstream chain.
+
+Fix list (gated, in order):
+D1 pihole2 UDP fix (unbound/FTL bind reconciliation; test UDP from
+   halo). Availability-touching (DNS) -> owner GO.
+D2 FTL IPv6 RA/RDNSS: announce FTL (stable fe80 source) so Pi-hole
+   joins IPv6 DNS handout. Honest limit: the ISP router's RDNSS
+   cannot be removed from the RA soup from our side; clients pick
+   among advertised servers. Full defeat of the override needs a
+   router-side change (bridge mode / own router) -- later option.
+D3 FTL upstreams -> unbound loopback (DNSSEC, cache), pair-consistent,
+   after D1 proves unbound's bind surface.
+D4 keepalived VIP + DHCP option-6 -> VIP (M1 as planned).
+
+## 8. Hardware: DS3231 RTC for pihole2 (owner task, 2026-11-13)
+
+Owner found a DS3231 I2C RTC module (bought 2, spare exists). Needs
+vendor pinout matching to Pi 4 GPIO (SDA/SCL/3V3/GND), physical adapter
++ case inside the Pi 4 enclosure, CR2032/LiR2032 battery (not included
+in kit). No schedule pressure. Software when hardware lands:
+`dtoverlay=i2c-rtc,ds3231` in /boot/firmware/config.txt + reboot in a
+scheduled window + `hwclock -w` seed + cold-boot verify; rollback =
+delete overlay line. Until then pihole2 rides the systemd clock-state
+file (already proven working). Low-write law: RTC sync at boot/shutdown
+only, not periodic.
+
 
 1. **keepalived VIP 192.168.1.13** on both Pis (apt install; drop-in
    configs; primary priority 100 pre-empt, secondary 90). Acceptance:
