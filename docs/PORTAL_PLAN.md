@@ -8347,3 +8347,16 @@ task before the CA goes live on them. Future node named: the bird Pi5
 "unknown animal" crops schooled by the mesh into its local embedding
 library (open-set grow, not retraining); NPU may offer small specialty
 capacity to other IoT (lease-gated, the symmetry law).
+
+**6.14.1zzr — HTTPS-on-CA goal (owner):** once the Pi-pair CA is live and
+validated, move to HTTPS where possible, including the Pi-hole web admin
+(lighttpd TLS via the upgrade-safe /etc/lighttpd/external.conf include,
+certs issued by the CA for pihole.local/pihole2.local, renewed by meshd's
+standard loop, rollback = remove include + reload, pihole2 first).
+Validation ritual includes installing the root CA into every consumer
+trust store (Windows store, macOS Keychain, halo bundle) -- a private CA
+is only "good" once clients trust the root; exact per-OS commands ship
+with the CA validation report. Portal TLS later via a Caddy front (Caddy
+does ACME against step-ca natively = renewal for free). Mesh-to-mesh is
+already mTLS under the CA. Rule: nothing self-signs, ever -- warning
+fatigue is how real warnings die.
