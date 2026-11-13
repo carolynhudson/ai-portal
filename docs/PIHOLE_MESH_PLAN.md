@@ -289,3 +289,11 @@ OPEN TASK (cosmetic-class): responses lack ad flag despite
   cached pre-DoT insecure entries (flush cache after forwarder
   switchover).
 Rollback: rm the drop-in + reload = pure recursion restored.
+
+pihole.local (2026-11-13, standing GO): same package applied --
+backup /root/pihole.toml.pre-D3.2026-11-13; Quad9 DoT drop-in +
+reload; FTL upstreams -> [127.0.0.1#5335, ::1#5335]; dns.dnssec
+true; FTL restart (4 s active). Verified: on-box + halo dig via .11
+OK, console 302, leases unchanged (18), unbound clean restart.
+Google now OUT of the chain on BOTH Pis; egress = encrypted DoT to
+Quad9 on the pair. Pair-consistent DNS architecture achieved.

@@ -8477,3 +8477,11 @@ here Oct 2025). ad-flag marking anomaly = open cosmetic task (validator
 provably processing: RRSIGs cached, logs clean; trace w/ verbosity 3 +
 proper flush next). pihole.local D3 (same config, FTL restart 2-5 s
 blip) pending GO. Google fully out of the chain.
+
+**6.14.1zza — D3 complete on the pair.** pihole.local: same package
+(backup, Quad9 DoT drop-in, FTL->unbound chain, dnssec true, FTL
+restart 4 s). Verified from halo via .11, console 302, leases 18
+unchanged. Status: Google out everywhere; both Pis = FTL -> unbound
+-> Quad9 DoT, dns.dnssec on, configs backed up on-box. Next: D2
+(FTL IPv6 RA/RDNSS -- the ISP-override fight), ad-flag trace, D5
+keeper list, D4 VIP window.
