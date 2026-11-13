@@ -229,6 +229,13 @@
     {%- if iconinbox.count %} {{ iconinbox.count }} PNG ({{ iconinbox.bytes // 1024 }} KB), newest
       {{ iconinbox.newest }} · {{ iconinbox.age_s|dur }} ago
     {%- else %} empty — {{ iconinbox.dir }}{% endif %}</b></div>
+  {# Comcast rotates the delegated IPv6 prefix; the router's IPv6 DNS fields
+     are static GUAs, so a rotation stales them — this row is the alert with
+     the paste strings (PIHOLE_MESH_PLAN §14). #}
+  <div class="kv"><span class="k">mesh IPv6 prefix</span><b>
+    {%- if prefixwatch.changed %} ROTATED {{ prefixwatch.prev }} → {{ prefixwatch.prefix }} — re-paste router IPv6 DNS: {{ prefixwatch.pastes }}
+    {%- elif prefixwatch.prefix %} {{ prefixwatch.prefix }} — stable
+    {%- else %} not probed — press refresh (probes pihole.local over ssh){% endif %}</b></div>
   <h3 style="margin-top:14px">Mesh trail</h3>
   {% if mesh.events %}
   <div class="scroll"><table>

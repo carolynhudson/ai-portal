@@ -1192,6 +1192,9 @@ def create_app() -> FastAPI:
         # verbs are its one state-changer, each behind its own confirm.
         body["mesh"] = _mesh_state(evlimit=12)
         body["iconinbox"] = _iconinbox_state()
+        # Comcast prefix rotation is a silent event with a loud consequence
+        # (stale router IPv6 DNS fields); the row shows the last probe.
+        body["prefixwatch"] = health.prefixwatch()
         return body
 
     def _iconinbox_state() -> dict:

@@ -8530,3 +8530,14 @@ it). Comcast resolvers GONE. Router's own DNS governed (it queries
 (RA flow always healthy; capture flaw banked). Side quest's founding
 fight -- the ISP DNS override -- is DEAD on both families: v4 via
 DHCP .11/.12, v6 via router RDNSS + radvd durable layer.
+
+**6.14.1zzf — queue continuation:** (1) ad-flag trace: validator
+caught working the chain live (DS chase in verbosity-3) -- verdict
+line elusive, stays cosmetic-class open. (2) radvd deployed on
+pihole.local (design proven on pihole2): OutRA +3/45s confirms TX,
+GUA intact under accept_ra=2; durable RDNSS channel now on BOTH Pis.
+(3) PREFIX WATCHDOG built: health.prefixwatch() probes pihole.local
+GUA prefix over ssh (refresh-time), records state, page renders
+offline-cheap; on rotation the Health mesh section shows
+"ROTATED prev -> new" + router paste strings; 2 tests; page row
+added. Suite green.

@@ -26,6 +26,7 @@ cost wildly different amounts (a stat vs ``apt -s upgrade`` vs a web fetch).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import resource
@@ -935,3 +936,58 @@ def summary(release: dict | None = None, service: dict | None = None,
     body["advisories"] = advisories(release=release, service=service, comfy=comfy,
                                     builds=builds, aperture=aperture)
     return body
+
+
+# ---------------------------------------------------------------- prefix watch
+# Comcast rotates the IPv6 delegated prefix. The router's IPv6 DNS fields are
+# static entries pointing at the Pi-holes' global addresses, so a rotation
+# silently stales them (docs/PIHOLE_MESH_PLAN.md §14): the owner needs the new
+# paste strings, delivered before the staleness is felt. The probe (ssh,
+# read-only) runs on refresh and records state; page renders read the recorded
+# state, so the pane stays offline-cheap like every other probe here.
+PREFIX_STATE = paths.PORTAL_STATE.parent / "prefixwatch.json"
+
+_PI_SUFFIXES = {
+    "pihole.local": "72c0:abdb:26c2:2a84",
+    "pihole2.local": "9e38:e994:e647:24cf",
+}
+
+
+def _prefix_probe() -> str | None:
+    """The pihole.local GUA prefix (first four hextets) over ssh, '' -> None."""
+    key = str(Path.home() / "ai/config/ssh/mesh_admin")
+    out = _run(["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=6",
+                "meshops@pihole.local",
+                "ip -6 addr show scope global | awk '/inet6/{print $2; exit}'"],
+               timeout=12)
+    addr = (out.strip().split("/")[0] if out.strip() else "")
+    parts = addr.split(":")
+    if len(parts) == 8:
+        return ":".join(parts[:4])
+    return None
+
+
+def prefixwatch(refresh: bool = False) -> dict:
+    """Recorded state of the delegated IPv6 prefix. ``changed`` means the
+    prefix moved since the last probe: paste the returned strings into the
+    router's IPv6 DNS fields (Advanced -> Advanced Setup -> IPv6)."""
+    def probe():
+        prev = ""
+        try:
+            prev = str(json.loads(PREFIX_STATE.read_text()).get("prefix") or "")
+        except (OSError, ValueError):
+            pass
+        prefix = _prefix_probe()
+        state = {"prefix": prefix, "changed": bool(prev and prefix and prev != prefix),
+                 "probed_at": time.time()}
+        if state["changed"]:
+            state["prev"] = prev
+            state["pastes"] = " / ".join(
+                f"{prefix}:{suf}" for suf in _PI_SUFFIXES.values())
+        try:
+            PREFIX_STATE.parent.mkdir(parents=True, exist_ok=True)
+            PREFIX_STATE.write_text(json.dumps(state))
+        except OSError:
+            pass
+        return state
+    return _cached("prefixwatch", probe, ttl=_NET_TTL, refresh=refresh)

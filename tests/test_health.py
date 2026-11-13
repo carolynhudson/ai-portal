@@ -702,3 +702,33 @@ def test_no_clang_means_the_probe_is_inert(client, tmp_path):
     assert j["hip_probe"]["clang_present"] is False
     assert not [a for a in j["advisories"] if "HIP" in a["text"]
                 and "llama.cpp updates" in a["text"]]
+
+
+# ---------------------------------------------------------------- prefix watch
+
+def test_prefixwatch_records_then_spots_rotation(tmp_path, monkeypatch):
+    """The watchdog's one job: notice the delegated prefix moved and hand
+    back the router paste-strings (PIHOLE_MESH_PLAN §14)."""
+    from app.core import health
+    monkeypatch.setattr(health, "PREFIX_STATE", tmp_path / "prefixwatch.json")
+    monkeypatch.setattr(health, "_prefix_probe", lambda: "2601:0602:057f:ee84")
+    health.reset_cache()
+    w = health.prefixwatch(refresh=True)
+    assert w["prefix"] == "2601:0602:057f:ee84" and not w["changed"]
+    monkeypatch.setattr(health, "_prefix_probe", lambda: "2601:0602:05a1:1234")
+    health.reset_cache()
+    w = health.prefixwatch(refresh=True)
+    assert w["changed"] and w["prev"] == "2601:0602:057f:ee84"
+    assert "2601:0602:05a1:1234:72c0:abdb:26c2:2a84" in w["pastes"]
+    assert "2601:0602:05a1:1234:9e38:e994:e647:24cf" in w["pastes"]
+
+
+def test_prefixwatch_offline_degrades_alone(tmp_path, monkeypatch):
+    """An unreachable Pi-hole is a row, never a 500 (module law)."""
+    from app.core import health
+    monkeypatch.setattr(health, "PREFIX_STATE", tmp_path / "prefixwatch.json")
+    monkeypatch.setattr(health, "_prefix_probe", lambda: None)
+    health.reset_cache()
+    w = health.prefixwatch(refresh=True)
+    assert w["prefix"] is None and not w["changed"]
+    assert "pastes" not in w
