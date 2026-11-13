@@ -8496,3 +8496,18 @@ canonical config now validated). Proof via forge-side capture next
 session; pihole.local deployment pending GO + proof. CAX80 OpenWrt
 verdict: nil (locked DOCSIS combo; RDNSS is the router's own RA;
 bridge mode = later option).
+
+**6.14.1zzc — router pages read: IPv6 override source FOUND.** The
+Netgear IPv6 page has "Use These DNS Servers" = Primary
+2601:602:57e:90ba:9618:65ff:fea5:2ba5 (router's own WAN IPv6 =
+Comcast relay) + Secondary 2601:602:57e:90ba:40a8:a573:196b:1154
+(Comcast resolver) -- exactly the RA RDNSS from our capture. THE
+OVERRIDE IS A SETTING, fixable. IPv4 side confirmed clean (WAN DNS =
+.11/.12; router DHCP OFF -> Pi-hole sole DHCP, no dual-DHCP). Pi MACs
+from Address Reservation: pi .11 2c:cf:67:70:3c:ae, pi2 .12
+e4:5f:01:a0:2c:44 (both pinned; D5 keepers). Fix (§13): router IPv6
+DNS -> Pi-hole STABLE link-local fe80::d6a3:4602:f25d:e171 /
+fe80::a828:a424:5673:846 (RFC6106 link-local RDNSS, prefix-rotation
+immune; both verified answering). Owner applies (router is theirs);
+verify RA + halo after. DDNS off, UPnP 3074->.162 (note), remote mgmt
+off, local-HTTPS = later. radvd becomes complementary.

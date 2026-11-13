@@ -345,3 +345,53 @@ deferred to a third-machine capture (sender's sniffer can't see own
 TX; box-side raw socket saw zero RAs including router's -- vantage
 unreliable). Next: capture from forge harness (RS solicitation,
 expect RA source fe80::a828 with RDNSS) before deploying to primary.
+
+## 12. Router (Netgear CAX80) pages read (owner screenshots, 2026-11-13)
+
+The IPv6 override's SOURCE is a settings page, not firmware -- fixable.
+
+- **Internet Setup (IPv4 WAN DNS)**: "Use These DNS Servers" =
+  Primary 192.168.1.11 / Secondary 192.168.1.12 = Pi-hole. CORRECT.
+  WAN IP dynamic; MTU 1500; firewall enabled. Nothing to change.
+- **LAN Setup**: **"Use Router as DHCP Server" is OFF** -> Pi-hole is
+  the SOLE DHCP server. That is why IPv4 is won (no router DHCP to
+  fight) and there is no router/Pi dual-DHCP risk. Address
+  Reservation confirms the Pi MACs:
+    pihole.local  .11  2c:cf:67:70:3c:ae   (Pi5/NVMe, primary)
+    pihole2.local .12  e4:5f:01:a0:2c:44   (Pi4/SD,  secondary)
+  Both MAC-pinned. These are D5 keepers; the Pi's dhcp.leases MUST
+  carry matching statics (verify next D5 step).
+- **IPv6 page (THE FIND)**: Auto Config (SLAAC); "Disable IPv6
+  Firewall" unchecked (firewall ON, good). Delegated prefix
+  2601:602:57f:ee84::/64. **"IPv6 DNS = Use These DNS Servers"**:
+  Primary 2601:602:57e:90ba:9618:65ff:fea5:2ba5 (the ROUTER's own
+  WAN IPv6 -- suffix 9618:65ff:fea5:2ba5 = router EUI-64 = Comcast's
+  relay), Secondary 2601:602:57e:90ba:40a8:a573:196b:1154 (Comcast
+  resolver). These two are exactly what the RA advertises as RDNSS
+  (our capture). **THE OVERRIDE IS SET HERE.** The fix: repoint
+  Primary/Secondary at Pi-hole IPv6 = the router's RA advertises
+  Pi-hole, Comcast RDNSS dies at the source.
+- **Dynamic DNS**: OFF (good). **UPnP**: ON, one map UDP 3074 ->
+  192.168.1.162 (a LAN device, not infra) -- note, leave.
+  **Web Service Mgmt**: Remote Management OFF (good; "Everyone" is
+  moot while off); Local "Force HTTPS" unchecked = later hardening.
+
+## 13. IPv6 DNS fix (router-side, the real D2 win)
+
+Router IPv6 DNS page -> enter Pi-hole's STABLE link-local (RDNSS via
+link-local is RFC 6106 legal; link-local is MAC-derived so it never
+rotates, immune to Comcast prefix churn -- the fragility of the
+owner's original GUA-based attempt):
+  Primary   fe80:0000:0000:0000:d6a3:4602:f25d:e171   (pihole.local)
+  Secondary fe80:0000:0000:0000:a828:a424:5673:846    (pihole2.local)
+Both VERIFIED answering IPv6 DNS (dig @fe80..%eth0 -> 8.8.8.8 /
+8.8.4.4). If Netgear firmware rejects fe80 in the field, fall back to
+the Pi GUAs (2601:0602:057f:ee84:72c0:abdb:26c2:2a84 /
+2601:0602:057f:ee84:9e38:e994:e647:24cf) -- work now, break on
+prefix rotation; durable fix then = radvd advertising a stable ULA.
+Applies: owner makes the router change (availability-touching, their
+box). On Apply the router re-issues RAs; clients repoint IPv6 DNS to
+Pi-hole within the RA interval, no client/Pi/router reboot. Verify:
+RA capture shows RDNSS = fe80 Pi addrs; halo resolvectl IPv6 DNS
+becomes Pi. Pi-hole IPv6 chain is already Quad9 DoT (D3). radvd on
+pihole2 becomes complementary (it advertises the same fe80 RDNSS).
