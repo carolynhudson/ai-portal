@@ -8485,3 +8485,14 @@ unchanged. Status: Google out everywhere; both Pis = FTL -> unbound
 -> Quad9 DoT, dns.dnssec on, configs backed up on-box. Next: D2
 (FTL IPv6 RA/RDNSS -- the ISP-override fight), ad-flag trace, D5
 keeper list, D4 VIP window.
+
+**6.14.1zzb — D2 radvd phase:** FTL 6.8 has no RA/RDNSS engine
+(DHCPv6-only; router RA has no M-flag = why the rush-job IPv6 never
+engaged). Deployed radvd RDNSS-only on pihole2 (no gateway claim;
+fe80 RDNSS; kernel gates: all.forwarding=1 global gate + accept_ra=2
+hybrid preserving SLAAC GUA; NM dispatcher persistence). Debtre: my
+sed substring-matched away AdvSendAdvert -> silent daemon (caught;
+canonical config now validated). Proof via forge-side capture next
+session; pihole.local deployment pending GO + proof. CAX80 OpenWrt
+verdict: nil (locked DOCSIS combo; RDNSS is the router's own RA;
+bridge mode = later option).

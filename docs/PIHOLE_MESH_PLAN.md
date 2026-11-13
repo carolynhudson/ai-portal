@@ -335,3 +335,13 @@ combo, no project exists); RDNSS injection is the ROUTER's own RA
 (Comcast DNS) -- Netgear firewall cannot be pointed at it. Bridge
 mode = documented later option (owner's troubleshooting objection
 is legitimate).
+
+PROOF STATUS FINAL (2026-11-13): root cause of silence found and
+fixed -- my earlier sed deleted AdvSendAdvert (substring match), and
+radvd defaults to NOT sending. Canonical config now on pihole2:
+AdvSendAdvert on + RDNSS fe80 + AdvDefaultLifetime 0, validated,
+service active, sysctl gates set + dispatcher-persisted. Wire proof
+deferred to a third-machine capture (sender's sniffer can't see own
+TX; box-side raw socket saw zero RAs including router's -- vantage
+unreliable). Next: capture from forge harness (RS solicitation,
+expect RA source fe80::a828 with RDNSS) before deploying to primary.
