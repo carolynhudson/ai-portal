@@ -8326,3 +8326,24 @@ honest limit: bearer tokens are visible to the user-process -- custody,
 not invisibility). Pihole pair next: Headscale + step-ca + mesh relay;
 dedicated ed25519 mesh-admin keypair generated (public -> owner for
 authorized_keys on pi+pi2, private 0600 halo, zero passwords in files).
+
+**6.14.1zzq — pihole CA + auth decisions (owner):** the Pi pair is
+primary (pihole) + backup (pihole2) CA -- accepted for the 3-device scale;
+halo verifies and caches, never signs; CA outage = no new joins, existing
+24h certs ride (owner: expansion unlikely soon). Access model: dedicated
+`meshops` account on each Pi (ssh key auth + NOPASSWD sudoers via
+visudo-validated drop-in, revocable in one file) -- the owner runs the
+snippet, no passwords on disk, go-between eliminated. Network-wide OS
+directory (FreeIPA/AD/LDAP) evaluated and DECLINED for this scale;
+the Pi CA instead issues SSH host+user certificates alongside mesh certs
+-- one root, 24h SSH logins, expiry-as-revocation, native on Linux/macOS,
+Windows OpenSSH validates user CAs. Safety law for the side quest:
+read-only inspection first, pihole2 (secondary) proven before pihole.local,
+DNS/DHCP configs untouched (mesh services additive), any step touching
+availability asks first, partner's workday is the acceptance test. Pi-hole
+replication/failover gaps (lease sync, settings, DHCP failover) = research
+task before the CA goes live on them. Future node named: the bird Pi5
+(Hailo/tensor + camera) joins as edge-npu node -- detection local,
+"unknown animal" crops schooled by the mesh into its local embedding
+library (open-set grow, not retraining); NPU may offer small specialty
+capacity to other IoT (lease-gated, the symmetry law).
