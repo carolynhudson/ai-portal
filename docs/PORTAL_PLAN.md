@@ -8464,3 +8464,16 @@ confirmed/extended (::1#5335 added), dns.dnssec true, FTL restarted
 unbound validator runs with fresh RFC5011 anchor but marks secure
 zones insecure (no ad/RRSIG) -- trace queued. pihole.local D3
 announced (all-client 2-5 s blip) and pending GO.
+
+**6.14.1zzz — upstream research + Quad9 DoT live on pihole2:** owner
+preference (no Google, no-log, real security) researches to: pure
+recursion = max privacy BUT measured ISP tampering on plain UDP/53
+(Quad9 direct loses ad flags -- same tamperer as the RDNSS override).
+Chosen + deployed on pihole2: FTL->unbound->Quad9 DoT (drop-in
+99-mesh-quad9dot.conf, tls-upstream, cert bundle; reload-only, zero
+blip; reload refusals by checkconf kept us safe through three syntax
+iterations). Root anchors: both KSKs VALID (2026 rollover completed
+here Oct 2025). ad-flag marking anomaly = open cosmetic task (validator
+provably processing: RRSIGs cached, logs clean; trace w/ verbosity 3 +
+proper flush next). pihole.local D3 (same config, FTL restart 2-5 s
+blip) pending GO. Google fully out of the chain.

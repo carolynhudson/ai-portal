@@ -252,3 +252,40 @@ Trace queued (suspects: outgoing-path fragmentation/IPv6 filtering of
 large DNSSEC replies). pihole.local D3 PENDING: FTL upstreams there
 are raw 8.8.8.8 -- change = ALL-client 2-5 s blip at restart; needs
 owner GO + backup-first.
+
+## 10. Upstream DNS research + config (owner preference: no Google,
+##     no-log privacy, real security, full Pi-hole features)
+
+MEASURED FACTS driving the choice:
+- unbound on the Pis runs PURE RECURSION (no forward zones) with
+  prefetch; the "Google upstreams" were illusory (8.8.8.8 = the
+  authoritative ANSWER for dns.google).
+- ISP TAMPERING CONFIRMED ON NEW SURFACE: direct +dnssec query to
+  Quad9 9.9.9.9 from pihole2 returns NO ad flag (tampered/stripped on
+  plain UDP/53); recursive path loses validation marks the same way.
+  Same enemy as the IPv6 RDNSS override -- this ISP edits DNS in
+  transit. Plaintext egress is not trustworthy on this link.
+- Anchor health EXCELLENT: root.key carries both KSKs (20326 old +
+  38696 new) state=VALID since Oct 2025 -- the 2026 global KSK
+  rollover completed on these boxes. RRSIGs land in cache (16),
+  validator module active, zero log warnings.
+
+DECISION (live on pihole2; pihole.local pending GO):
+  FTL -> unbound (loopback) -> Quad9 over DNS-over-TLS
+  (9.9.9.9@853 + 149.112.112.112@853, forward-tls-upstream,
+  tls-cert-bundle) via drop-in /etc/unbound/unbound.conf.d/
+  99-mesh-quad9dot.conf. Encrypted egress = the ONLY tamper-proof
+  choice against this ISP; Quad9 = Swiss nonprofit, no client-IP
+  logs, no ECS, malware blocking, DNSSEC-validating (2026 reviews:
+  best privacy-of-the-large-resolvers; Cloudflare 1.1.1.1 = faster,
+  audited-minimal-logs, no default blocking -- kept as documented
+  fallback). Pi-hole features unaffected: gravity blocks at FTL
+  layer; future: FTL-side DoT/DoQ SERVER for mesh clients (certs
+  from the Pi CA = LAN-encrypted DNS).
+OPEN TASK (cosmetic-class): responses lack ad flag despite
+  functioning validator (RRSIG cache, VALID anchors, clean logs);
+  Pi-hole UI lock may stay grey. Next trace: verbosity 3 + real
+  'flush' + fresh query; suspects: unbound 1.26 ad-marking policy,
+  cached pre-DoT insecure entries (flush cache after forwarder
+  switchover).
+Rollback: rm the drop-in + reload = pure recursion restored.
