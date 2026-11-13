@@ -8381,3 +8381,18 @@ rollback, the owner's validated-as-good suite), M3 Headscale+relay,
 M4 retire statics to CA identities. Cautions banked: v6.6 update gated,
 SD low-write discipline, no new ports beyond 443/53, reboots scheduled
 events (partner's workday).
+
+**6.14.1zzt — pihole.local read pass: roles inverted, drift quantified.**
+The primary is a **Pi 5 (4 GB) on NVMe** (Patriot P300 512G, noatime,
+445G free, zram, journal 8M, load 0.00, 19d) -- wear-safe; pihole2 (Pi 4
+8GB) is the micro-SD box the owner's caution targets. Same stack both
+sides (v6.5/6.6.1/6.8, FTL self-TLS 80/443, unbound, DNS answering).
+DHCP drift with numbers: **18 leases (primary) vs 27 (secondary)** -- the
+collision risk is real. SD-wear discipline: write-heavy mesh state (CA
+DB, relay store) lives on the NVMe primary; pihole2 = key replica/cold
+standby; noatime + journal cap 50M + reduced FTL query retention for the
+SD box; gravity sync nightly not hourly. M1 change list proposed for
+owner approval+scheduling: keepalived VIP .13 (+failover drill), DHCP
+consolidation to primary (+statics -- owner device list requested), DNS
+option-6 to VIP staged after drill, nightly rsync sync cron snapshot-
+first, pihole2 SD care (only reboot-needing item = noatime).

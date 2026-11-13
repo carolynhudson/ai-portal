@@ -98,3 +98,49 @@ beyond 443/53/853-tbd + tailscale; ACME and API over the pair's ssh/LAN
 only. Reboot windows (keepalived/step installs) need owner timing --
 partner's workday respected; the 19-day uptime says reboots are rare
 here, so each one is a scheduled event, not a surprise.
+
+## 5. pihole.local read pass (owner-approved, 2026-11-13) -- roles inverted
+
+**The primary is the stronger box AND the wear-safe one**: Raspberry Pi 5
+(4 GB), Debian 13 trixie, root on **NVMe** (Patriot P300 512 GB, ext4
+noatime, 445 G free), zram 2 G swap, journal 8 MB, load 0.00, 19 d
+uptime. pihole2 is the Pi 4 8 GB on micro SD (the wear-sensitive box).
+Same software stack (v6.5/6.6.1/6.8, FTL self-TLS on 80+443, unbound).
+**Drift confirmed with numbers: 18 DHCP leases on the primary vs 27 on
+the secondary -- the two lease databases are diverged, the IP-collision
+risk is real, M1 matters.**
+
+**SD wear discipline for pihole2 (the Pi 4/SD box):**
+- Write-heavy mesh state (relay store-and-forward, CA DB) lives on the
+  PRIMARY (NVMe); pihole2 holds the key replica + cold standby, not the
+  busy SQLite.
+- pihole2: add `noatime` to the root mount (fstab one-liner, effective
+  at the scheduled reboot), cap the journal (`SystemMaxUse=50M`), and
+  tune FTL query-DB retention (privacy + writes: pihole-FTL.db is the
+  biggest steady writer, 624 MB on the primary).
+- Gravity pushes (230 MB pulls on sync) ride the nightly cron, snapshot
+  rotation kept small -- SD-friendly cadence, not per-hour.
+
+## 6. M1 proposed change list (FOR OWNER APPROVAL + SCHEDULING)
+
+1. **keepalived VIP 192.168.1.13** on both Pis (apt install; drop-in
+   configs; primary priority 100 pre-empt, secondary 90). Acceptance:
+   VIP answers DNS; drill: `systemctl stop keepalived` on primary ->
+   VIP migrates <5 s, `dig` via VIP succeeds; rollback = disable the
+   service (one command).
+2. **DHCP consolidation**: primary's DHCP stays authoritative; pihole2's
+   FTL DHCP switched off (`pihole-FTL --config dhcp.active false`);
+   static reservations for critical devices on the primary (OWNER: give
+   me the device list -- printer, NAS, Pis, work gear). Secondary
+   takeover path documented (web UI toggle). Acceptance: leases continue,
+   renewal works, no collisions.
+3. **DNS handout to the VIP** (DHCP option 6 -> 192.168.1.13) staged
+   AFTER the VIP drill passes, at lease-renewal cadence (no forced
+   renew; clients pick it up gracefully).
+4. **Nightly sync cron on pihole2**: rsync gravity.db + pihole.toml +
+   adlists from the primary over the mesh ssh key; snapshot-first into
+   the v6 config_backups/gravity_backups; retention small.
+5. **SD care on pihole2**: noatime in fstab (applies at the next
+   scheduled reboot), journal cap 50 MB, FTL query retention reduced.
+6. Reboot needs: only #5 (noatime); everything else is hot. Suggested
+   window: any evening you name.
