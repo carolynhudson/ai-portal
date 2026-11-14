@@ -8589,3 +8589,11 @@ webserver.domain (caught twice); FTL 6.9 takes a single bare string
 there (6.8 accepted arrays) -- normalized per-box to mesh names, 0
 warnings. Both consoles padlock via halo system trust. Reboot ledger
 closed again.
+
+**6.14.1zzl — cert-lifetime hardening closed.** iPad expiry traced
+to 24h ACME default + renewal dead-zone (last-third rule vs 12h
+calendar pair). Both renew timers now phase-proof (monotonic 2h/5h
+triggers + calendars). Claims tuning on 0.30.2 flaky (seeds strip
+claims on pi; memory backend kills ACME; badger block shape has
+version-specific key) -> parked; 24h certs + 5h timers = supported.
+All pair witnesses green; root d570fecf unchanged.

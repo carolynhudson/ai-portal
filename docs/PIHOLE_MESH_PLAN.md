@@ -651,3 +651,60 @@ naive regex hits comments and the value silently stays default).
 Post-window: FTL warnings 0/0, consoles 302 from halo system trust,
 DNS .11/.12/.13 answering. Pair state: fully patched, v6.9-matched,
 HA-proven twice, CA + both HTTPS lanes live, timers on both.
+
+## 24. Trust day: iPad root + cert lifetime hardening (2026-11-14)
+
+Owner-side truth sequence (iOS): the installed root needs
+Settings -> General -> About -> Certificate Trust Settings ->
+ENABLE FULL TRUST. With the toggle on, *.home.lan padlocks in both
+Safari and Firefox iOS (Firefox iOS rides the system store). Root
+installed as plain profile without the toggle = SEC_ERROR_UNKNOWN_
+ISSUER-flavored distrust (Firefox shows its NSS strings). Root
+fingerprint to expect: d570fecf... (docs/mesh-root_ca.crt).
+STANDING LAW (now proven on clients): *.local and pi.hole show
+trust warnings FOREVER -- .local is shadowed by every Pi-hole (no
+CA can validate a challenge there) and pi.hole is loopback; FTL's
+self-signed default vhost serves them, correctly. Padlock names =
+pihole.home.lan / pihole2.home.lan. Convenience for the owner's
+typing speed: iOS Text Replacements ph -> pihole.home.lan,
+ph2 -> pihole2.home.lan.
+CERT LIFETIME: first expiry rode out on the 48h ACME default
+(step-ca 0.30.2) and bit the iPad exactly at window end -- caught
+fast, lesson kept. CA claims now set on the ACME provisioner:
+min 1h / max 8760h / DEFAULT 720h (30 days). Re-seed via ca.json +
+db wipe (accounts die with the wipe -> certbot caches dead account
+ids: clear /etc/letsencrypt/accounts/192.168.1.11:9000 on each box
+before re-issuing; certbot 4.0 does not auto re-register). Timers
+(02:30/14:30) renew inside certbot's last-third window with ~10
+days of slack. Re-issuance in flight with announced FTL windows.
+
+## 24.5 Cert-lifetime saga, closed (2026-11-14)
+
+The 48h->24h ACME default expired onto the owner's iPad; the fix
+hunt found: (1) step-ca 0.30.2 honors provisioner claims ONLY on
+some seed paths -- pi's DB seeds strip claims (provisioner list
+shows null) while pi2's honored them once; authority-global claims
+also ignored; db wipe+reseed cycles strip ACME accounts => certbot
+caches dead account ids (clear /etc/letsencrypt/accounts/<host>:9000
+before reissue). (2) apt has NO step-ca on either box (both
+RaspberryPi-OS trixie: pi2's 0.31 memory was wrong -- both run the
+0.30.2 tarball binary at /usr/local/bin/step-ca). (3) memory db
+backend = ACME unsupported (activating-loop trap). (4) badger db
+block in 0.30.2 = {"type":"badgerv2","dataSource":...,
+"badgerFileLoadingMode":""} -- "backend" key = "database not
+supported" boot fail. ACCEPTED STEADY STATE: 24-day certs are fine
+IF renewals are phase-proof; the 02:30/14:30 calendar pair can
+land in certbot's no-renewal dead zone (last-third rule) around a
+24h anchor -- that is exactly the trap that expired the iPad cert.
+Fix on BOTH timers: added monotonic triggers OnActiveSec=2h +
+OnUnitActiveSec=5h alongside the calendars; fires are no-ops
+unless renewal is due; max elapsed at first qualifying fire ~21h
+=> >=2h margin before expiry. PI unit now carries
+--password-file /etc/step-ca/secrets/password (mirrors pi2).
+Final: both consoles 302 via halo system trust, chain Verify 0,
+CA active on pi (ACME live, root d570fecf...), 10/10 services,
+DNS .13 answering. PARKED: claims tuning (needs newer step-ca),
+30-day certs (cosmetic; 24h+5h timers is a supported pattern).
+Note: /root/ca.json.* backups on pi vanished mid-session (un-
+explained; pihole.toml backups intact) -- keep durable CA config
+backups in the repo/~/ai/state, not only on-box /root.
