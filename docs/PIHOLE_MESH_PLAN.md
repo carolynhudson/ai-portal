@@ -518,3 +518,26 @@ client's next renewal shows DNS=192.168.1.13 (halo's pin and router
 WAN DNS stay .11 by design).
 Reboot ledger: pihole.local RTC DONE. Remaining: pihole2 noatime
 (+ DS3231 when owner builds it).
+
+## 19. pihole2 DS3231 RTC + SD-wear round (2026-11-13)
+
+Owner installed DS3231 on pihole2's I2C bus. Enabled in firmware
+(config.txt backed up .pre-rtc): dtparam=i2c_arm=on +
+dtoverlay=i2c-rtc,ds3231. First boot after overlay: chip found at
+0x68 (rtc-ds1307 1-0068, registered rtc0) but unseeded (kernel
+"SET TIME!", hctosys read refused -- factory state). Seeded with
+hwclock -wu; direct reads tick 1 s/s; SECOND reboot proved the
+whole chain: kernel "setting system clock to 2026-11-14T01:26:36
+UTC" from the battery at boot. fake-hwclock not installed (the
+classic shadow package absent -- nothing to disable). timesyncd
+enabled (writes RTC at shutdown); NTPSynchronized=yes.
+Cold-boot-1970 risk CLOSED on BOTH Pis. Pair now boots with true
+time with zero network: the CA's dependency chain is complete.
+
+SD-wear round (pihole2, same reboot window): noatime was ALREADY
+set on root (owner's prior care; ledger item closed as verified),
+journal capped SystemMaxUse=50M (usage now 8M), FTL query
+retention 91d -> 30d. Reboot ledger: COMPLETE (pi RTC done §18,
+pi2 RTC done §19, noatime verified, journal capped).
+Verification method note: /tmp scripts streamed via 'ssh bash -s'
+(nested-heredoc forms choke the portable shell scanner).

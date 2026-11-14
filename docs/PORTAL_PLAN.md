@@ -8552,3 +8552,11 @@ failover (pihole2 served DNS as primary rebooted, preempt clean
 after). Both Pis' IPv4 confirmed static in NM (no boot-time DHCP
 self-dependency). Pihole pair is now a genuine HA pair: DNS, console,
 NTP, IPv6 RDNSS all ride surviving-box addresses.
+
+**6.14.1zzh — pihole pair fully clocked + SD-wear round.** DS3231 on
+pihole2 enabled (i2c overlay), seeded, and proven booting the kernel
+clock off the battery; timesyncd writes it back at shutdown; both Pis
+now cold-start with true time. Folded in: journal cap 50M, FTL
+retention 30d, noatime verified already-set. Reboot ledger closed.
+The HA pair's foundation (DNS, VIP, time, IPv6 RDNSS, names, sync)
+is complete -- M2 (step-ca) is unblocked on its hardest prerequisite.
