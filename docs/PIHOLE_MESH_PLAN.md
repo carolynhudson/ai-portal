@@ -596,3 +596,12 @@ halo-home-mesh-ca.crt && sudo update-ca-certificates), Windows/Mac
 commands in announcement; owner browses https://pihole2.home.lan
 for the padlock; on his PASS -> same lane for pihole.local, then
 other services (Caddy via ACME for forge/portal-adjacent).
+
+Pilot polish (owner test day): FTL logged CERTIFICATE_DOMAIN_MISMATCH
+(cert lacks pi.hole, webserver.domain said pi.hole). pi.hole is a
+LOOPBACK name -> ACME can never issue for it (CA would validate its
+own box). Fix = the FTL side: webserver.domain ["pihole2.home.lan",
+"pi.hole","192.168.1.12"] on pi2 (toml backed up .pre-webdomain);
+warning gone; cert SAN pihole2.home.lan verified 0 from loopback,
+VIP-path and halo. Owner PASSes: installed root on halo + iPad,
+tested https://pihole2.home.lan = good.
