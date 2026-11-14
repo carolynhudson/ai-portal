@@ -8571,3 +8571,11 @@ kept. Awaiting owner padlock test on https://pihole2.home.lan before
 pihole.local and the fleet (directive 20). CA docs saga banked in
 PIHOLE_MESH_PLAN 21 (0.31 JWK-headless dead-end, ACME lane, certbot
 hook contract).
+
+**6.14.1zzj — mesh HTTPS pair complete.** pihole.local issued +
+deployed on the ACME lane (same drills green, one announced 15 s
+window); both consoles padlock from halo by system trust. Owner
+updated pihole2 (OS security updates + FTL v6.9) + rebooted;
+post-reboot battery all green incl. RTC boot proof and the TLS pair
+surviving FTL's upgrade untouched. Reboot ledger reopens trivially:
+primary FTL parity (v6.8->v6.9) is a queued permission-gated item.

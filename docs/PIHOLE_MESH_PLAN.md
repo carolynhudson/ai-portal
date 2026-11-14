@@ -605,3 +605,27 @@ own box). Fix = the FTL side: webserver.domain ["pihole2.home.lan",
 warning gone; cert SAN pihole2.home.lan verified 0 from loopback,
 VIP-path and halo. Owner PASSes: installed root on halo + iPad,
 tested https://pihole2.home.lan = good.
+
+## 22. Both Pi-hole consoles on mesh-CA HTTPS (2026-11-13)
+
+Directive 20 complete: pihole.local joined the lane (certbot + hooks
++ deploy + certbot-renew-mesh timer 02:40/14:40, CA-bundle env).
+Issuance for pihole.home.lan PASSED (one announced ~15 s FTL window
+on .11); webserver.domain ["pihole.home.lan","pi.hole","192.168.1.11"]
+(toml backup .pre-webdomain on pi too); FTL warnings 0 on both boxes.
+Witnesses: halo system-trust https://pihole.home.lan/admin -> 302
+(padlock, root already trusted on halo/iPad); VIP path -> 302;
+pihole2 -> 302; chain Verify 0 everywhere.
+NOTE (queued refinement): VIP SNI serves the cert of whoever holds
+.13 -- during failover, pihole-vip visitors get the survivor's name
+mismatch. Fix shape = coordinated multi-name certs (each box issues
+with -d for its own name AND the VIP name; http-01 per-identifier
+requires the challenge served at that identifier's IP, so the VIP
+name must resolve to BOTH boxes in turn -- dns-01 lane or staged
+co-issuance; documented, not built).
+Owner applied OS security updates + Pi-hole v6.5->v6.9 on pihole2 +
+reboot; post-reboot battery: RTC boot-from-battery proven (kernel
+line), VIP correctly 0, noatime/journal-cap survive, radvd TX, all
+six units enabled, TLS pair survived v6.9 intact (FTL did NOT
+self-regenerate). FTL v6.9 now on pi2 (primary stays v6.8 --
+update parity decision queued, permission-gated).
