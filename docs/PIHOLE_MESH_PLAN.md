@@ -556,3 +556,43 @@ owner's pass does the same land on pihole.local, and only after that
 do other services (router pages, forge, portal-adjacent) get pointed
 at the CA. Nothing self-signs, ever; the swap is reversible by
 restoring the kept backup.
+
+## 21. M2: the mesh CA is LIVE, and pihole2 is the HTTPS pilot (2026-11-13)
+
+step-ca 0.30.2 + step CLI 0.31 (arm64 tarballs from dl.smallstep.com /
+GitHub; hashes banked in memory 184) on BOTH Pis, systemd unit
+step-ca.service, port 9000 (additive; console/DNS untouched). Root
+fingerprint d570fecfd1a1c8ee3b0120426030b13d352d3fbbc944da1d4fce851d8a890ed5
+(public; copy in docs/mesh-root_ca.crt + ~/ai/state/mesh/). Key
+custody: root key on pihole (root-only 600), tree replicated to
+pihole2 (hot standby; same root, ACME+JWK provisioners live on both).
+CA lessons (0.31 reality, hard-won): standalone init puts NO
+provisioner key on disk and the CLI cannot decrypt encrypted JWK
+provisioners headless (JWE format unsupported) -> JWK-token issuance
+is dead headless; ACME (init --acme) is the working lane (passwordless
++ certbot renewals + Caddy-ready). ca.json provisioners seed the DB
+once (wipe db dir to re-seed). ACME http-01 needs resolvable names:
+FTL special-cases .local/.arpa/.internal/TLD-only; the working zone
+is TWO-LABEL home.lan via dns.localiseDomains=["lan"] + /etc/hosts
+entries (pihole/pihole2/halo/rainbowblock/prusa-xl .home.lan now
+resolve mesh-wide through FTL on both Pis + VIP). certbot 4.0 manual
+plugin: CERTBOT_VALIDATION/CERTBOT_TOKEN env (not KEY_AUTHORIZATION);
+serving docroot must contain .well-known/acme-challenge/ literally;
+background hook children must not inherit hook stdout (hangs certbot
+cleanup); hooks persisted in /etc/letsencrypt/renewal/*.conf.
+PILOT (directive 20): certbot (apt certbot 4.0) issues for
+pihole2.home.lan (ECDSA, ~48h validity, ACME default); deploy hook
+assembles FTL-style PEM (KEY-first, pihole:pihole 600) into
+/etc/pihole/tls.pem + FTL restart; FTL pauses ~15s per issuance/
+renewal window (auth-hook), announced. Renewal: certbot-renew-mesh
+.service/.timer (02:30/14:30 + jitter, REQUESTS_CA_BUNDLE env).
+DRILLS PASSED: issuance (Verify return code 0 against root from halo
++ loopback), FORCED RENEWAL (serial 8EAB->D24B, gen-2 archive, FTL
+serving new pair), rollback = self-signed pairs kept on-box
+(/root/tls.pem.pre-CA.*, regenerated FTL original).
+NEXT (owner gate per directive): owner installs root on halo
+(sudo cp docs/mesh-root_ca.crt /usr/local/share/ca-certificates/
+halo-home-mesh-ca.crt && sudo update-ca-certificates), Windows/Mac
+commands in announcement; owner browses https://pihole2.home.lan
+for the padlock; on his PASS -> same lane for pihole.local, then
+other services (Caddy via ACME for forge/portal-adjacent).

@@ -8560,3 +8560,14 @@ now cold-start with true time. Folded in: journal cap 50M, FTL
 retention 30d, noatime verified already-set. Reboot ledger closed.
 The HA pair's foundation (DNS, VIP, time, IPv6 RDNSS, names, sync)
 is complete -- M2 (step-ca) is unblocked on its hardest prerequisite.
+
+**6.14.1zzi — mesh CA live + pihole2 HTTPS pilot.** step-ca pair on
+the Pis (root d570fecf..., ACME + JWK provisioners, key custody
+pi->pi2 standby). LAN zone home.lan answers mesh-wide (FTL
+localiseDomains + hosts). pihole2 console now serves a CA-issued
+ECDSA cert (certbot ACME, deploy-hook PEM swap, renew timer 02:30/
+14:30); issuance + forced-renewal drills PASSED; self-signed rollback
+kept. Awaiting owner padlock test on https://pihole2.home.lan before
+pihole.local and the fleet (directive 20). CA docs saga banked in
+PIHOLE_MESH_PLAN 21 (0.31 JWK-headless dead-end, ACME lane, certbot
+hook contract).
