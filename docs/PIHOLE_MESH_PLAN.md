@@ -541,3 +541,18 @@ retention 91d -> 30d. Reboot ledger: COMPLETE (pi RTC done §18,
 pi2 RTC done §19, noatime verified, journal capped).
 Verification method note: /tmp scripts streamed via 'ssh bash -s'
 (nested-heredoc forms choke the portable shell scanner).
+
+## 20. Owner directive: HTTPS rollout order (2026-11-13)
+
+Once the CA can issue HTTPS-usable certs (M2): enable HTTPS on BOTH
+Pi-hole consoles, PILOT ORDER -- pihole2 first as the test.
+Procedure per box: back up the existing self-signed tls pair
+(/etc/pihole/tls.key/tls.crt, kept), swap in the CA-signed pair for
+that box's names (pihole2.local + VIP SANs), FTL serves 443 natively
+(no proxy), "Force HTTPS" decision left to owner after the padlock
+is seen. Gate: builder announces "pihole2 is on HTTPS" and STOPS;
+owner tests .12 from his machines (padlock + identity); only on
+owner's pass does the same land on pihole.local, and only after that
+do other services (router pages, forge, portal-adjacent) get pointed
+at the CA. Nothing self-signs, ever; the swap is reversible by
+restoring the kept backup.
