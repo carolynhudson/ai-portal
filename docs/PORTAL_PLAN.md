@@ -8579,3 +8579,13 @@ updated pihole2 (OS security updates + FTL v6.9) + rebooted;
 post-reboot battery all green incl. RTC boot proof and the TLS pair
 surviving FTL's upgrade untouched. Reboot ledger reopens trivially:
 primary FTL parity (v6.8->v6.9) is a queued permission-gated item.
+
+**6.14.1zzk — pair fully patched, v6.9-matched, HTTPS lanes hardened
+through upgrade.** Owner method (apt + pihole -up + reboot) applied
+to the primary with the same post-reboot battery: kernel patches
+running, RTC boot proof, VIP failover+preemption live-fire (2nd
+proving), cert pair untouched by FTL upgrade. pihole -up resets
+webserver.domain (caught twice); FTL 6.9 takes a single bare string
+there (6.8 accepted arrays) -- normalized per-box to mesh names, 0
+warnings. Both consoles padlock via halo system trust. Reboot ledger
+closed again.

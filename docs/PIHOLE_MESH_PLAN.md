@@ -629,3 +629,25 @@ line), VIP correctly 0, noatime/journal-cap survive, radvd TX, all
 six units enabled, TLS pair survived v6.9 intact (FTL did NOT
 self-regenerate). FTL v6.9 now on pi2 (primary stays v6.8 --
 update parity decision queued, permission-gated).
+
+## 23. Primary patched + v6.9 parity (owner method, 2026-11-14)
+
+Owner-recommended symmetry: apt update/upgrade + pihole -up + reboot
+on pihole.local (same as owner did on pihole2). Results: kernel
+6.18.50+rpt-rpi-2712 RUNNING (security patches live), FTL v6.9 on
+BOTH Pis, RTC boot proof, 18 leases intact, renew timer enabled,
+cert pair survived v6.9 untouched, and the reboot re-proved failover
+(VIP -> pi2, DNS answered on .13 throughout, preemption back clean;
+pi2 released). pihole -up QUIRKS caught: (a) the updater RESET
+webserver.domain to pi.hole; (b) FTL 6.9 semantics: webserver.domain
+is a SINGLE bare string via --config (JSON arrays and IPs rejected;
+6.8-era accepted arrays); set 'pihole.home.lan' on pi,
+'pihole2.home.lan' on pi2 (toml ### CHANGED live on both); pi.hole
+remains a built-in alias (302 loopback). (c) --config writes while
+FTL runs can be clobbered by FTL's own writer -- stop FTL for cold
+writes if a write must stick. (d) sed/regex on pihole.toml must
+target LIVE lines (the file's default-comment block mirrors keys;
+naive regex hits comments and the value silently stays default).
+Post-window: FTL warnings 0/0, consoles 302 from halo system trust,
+DNS .11/.12/.13 answering. Pair state: fully patched, v6.9-matched,
+HA-proven twice, CA + both HTTPS lanes live, timers on both.
