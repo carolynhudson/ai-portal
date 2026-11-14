@@ -708,3 +708,34 @@ DNS .13 answering. PARKED: claims tuning (needs newer step-ca),
 Note: /root/ca.json.* backups on pi vanished mid-session (un-
 explained; pihole.toml backups intact) -- keep durable CA config
 backups in the repo/~/ai/state, not only on-box /root.
+
+## 26. DNSSEC warnings demystified: zone probes, not CA trouble (2026-11-14)
+
+Owner saw FTL DNSMASQ_WARN "insecure DS reply received for
+pihole.home.lan" on pi2 and asked: is the CA foundation sound before
+we build the hub on it? Full forensics:
+- Warnings are 100% OUR private zone: 65/65 pi2 + 113 pi, all
+  home.lan/lan names; ZERO internet-name warnings.
+- Cause: home.lan has no DNSSEC chain (it cannot -- .lan is not a
+  delegated TLD; we are the authority). FTL 6.9's dnsmasq (with
+  dns.dnssec=true) probes DS for the zone, the internet answers
+  "no such zone" (proven insecure = a FACT about private zones),
+  dnsmasq logs it as a warning. Verbose, not broken.
+- delv (unbound's proof tool) on pi2: dns.google = "fully validated"
+  (fresh RRSIGs) -> the REAL DNSSEC security path (FTL -> unbound
+  validator -> Quad9 DoT) demonstrably works; root auto-anchor
+  files on BOTH boxes updated same-day (14:33/14:36).
+- delv on pihole.home.lan = "broken trust chain" (purist refuses
+  unsigned) while dig answers the right IP: the DNSSEC-true-for-
+  internet, unsigned-by-design for us split, exactly as designed.
+- Trust law for the CA era: name->identity binding is the CA's job
+  (padlock = cert verified vs mesh root); DNSSEC protects internet
+  chains; private-zone names are protected by TLS. DNSSEC is not a
+  dependency of the CA/hub/tailnet/ssh-cert work. CA foundation:
+  verified sound (chain Verify-0 everywhere, renewal drilled).
+PROPOSED (owner gate, not applied): FTL dns.dnssec=false on both
+Pis -- dnsmasq-layer validation is redundant theater when the sole
+upstream is a validating resolver over encrypted DoT (unbound IS
+our validator, proven by delv). Kills ALL 65/113 warnings;
+internet validation unchanged. Window: 4s FTL restart per box,
+DNS rides VIP + standby (drilled shape). Awaiting owner GO.
