@@ -8660,3 +8660,21 @@ starts owning its hot path); forge router URL derived 8188->8082
 (zero-JS sweep clean). Commit 65520b3. Stale test identities
 (labtop/macbook, expired leaves) ride the registry -- SILENCE=
 DEPARTED by design; a future meshctl unenroll verb is queued.
+
+**6.14.1zzq — push gate PAT lane + forge router task.** (a) The SSH
+lane proved dead on this box (agent refuses to sign the
+passphrase-locked key headless -- owner unlock: interactive
+`ssh-add ~/.ssh/id_ed25519`). The gate now auto-lanes: hub-held
+'github-pat' secret + https + GIT_ASKPASS reading a 0600 temp file
+(token never in argv/URL/logs/env-dumps; temps purged); status()
+probes ssh FIRST, pat SECOND, and the page names the live lane
+('lane ssh' + the verbatim refusal warning witnessed live). Owner
+PAT mint = one fine-grained token (contents:write on this repo) ->
+`scripts/mesh_migrate.py github-pat <file>` and the gate flips by
+itself. No token exists on halo today (verified; nothing printed).
+(b) bench #25 (promoted): forge router lane task (start_forge_router
+.ps1 + token-source cutover to meshctl at launch when enrollment
+lands). (c) pi2 renewal witness scheduled (due window 18:17 PST,
+13:31 timer + certbot delay -> rotation expected ~14:00-14:30 PST;
+background witness armed). Suite: pushgate 20/20; UI 119.
+Commit 3e85ef8.
