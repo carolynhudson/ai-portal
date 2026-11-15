@@ -879,3 +879,27 @@ root store-edit + manual mirror sync (operator lane; pi2 agrees).
 Registry final: halo + pihole2. meshctl reinstalled on pi, pi2,
 halo (~/.local/bin -- the halo binary staleness caught mid-test:
 reinstall after every build).
+
+## 25e. meshhub store backstop: claimed-not-deployed -> built + drilled (2026-11-15)
+
+Honesty catch: the HA build record claimed a "nightly meshhub store
+backstop". Investigation: root's 03:15 cron runs pihole-sync.sh, and that
+script contained ZERO meshhub lines -- the backstop was written in the
+journal, never deployed. Now built for real (mesh/hub/deploy/
+meshhub_snapshot.sh + meshhub_snap_apply.sh): nightly tar of the store +
+config, sha256-sealed, 7-deep rotation on pi AND off-primary on pi2
+(/root/meshhub-snapshots, root 0600) via the standard root->meshops
+staging + sudo apply lane; apply verifies the seal AND unpacks before
+declaring OK. Witnessed live: SNAP-OK on pi, sha256 OK + tar readable on
+pi2, restore drill unpacks a complete set (index.json, nodes.json,
+blobs/*.age, config.json). Why it matters: the per-mutation mirror
+survives disk death, not corruption that mirrors instantly -- the dated
+snapshot is the time machine. Restore = unpack newest into /var/lib/meshhub
+(root-owned) + systemctl restart meshhub: an owner-SCHEDULED event.
+Purely additive; no service touched; rides the already-approved nightly
+lane. LAWS LEARNED: (1) a script fed via stdin (sudo bash -s < file,
+heredoc) makes plain ssh CONSUME THE REST OF THE SCRIPT as its stdin --
+use ssh -n for command hops; (2) ssh -n BREAKS rsync-over-ssh (the
+protocol rides stdin) -- keep the SSH/RSH split like pihole-sync.sh;
+(3) nested heredoc + ssh -n = inner script silently empty (no output is
+a diagnosis).

@@ -12,8 +12,12 @@ the page must render the mesh with parts of it down.
 """
 from __future__ import annotations
 
+import datetime as _dt
+import email.utils
+import json
 import os
 import pathlib
+import ssl as _ssl
 import time
 
 import httpx
@@ -54,6 +58,36 @@ def _token() -> tuple[str, str]:
         return _TOK_FILE.read_text().strip(), "file"
     except OSError:
         return "", "none"
+
+
+def _leaf() -> dict:
+    """This node's own hub-leaf expiry. 24h expiry IS the revocation lane,
+    so the page counts it down: a dead re-enroll timer becomes a visible
+    number (amber) before the mesh lanes go dark with 401s. Degrades with
+    the reason -- a portal without a mesh identity is a normal state.
+    """
+    d = _meshdir()
+    try:
+        cfg = json.loads((d / "config.json").read_text())
+        cert = (d / str(cfg.get("cert", "cert.crt"))).expanduser()
+        not_after = _decode_not_after(cert)
+    except Exception as e:  # noqa: BLE001 -- lane shows its own truth
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    hours = (not_after - _dt.datetime.now(_dt.timezone.utc)).total_seconds() / 3600.0
+    return {"ok": True, "hours": round(hours, 1),
+            "notAfter": not_after.astimezone().strftime("%Y-%m-%d %H:%M %Z")}
+
+
+def _decode_not_after(path: pathlib.Path) -> _dt.datetime:
+    # stdlib's private PEM reader (what ssl uses for its own cert dumps):
+    # no dependency, parses exactly the two fields this lane needs.
+    d = _ssl._ssl._test_decode_cert(str(path))
+    return email.utils.parsedate_to_datetime(d["notAfter"])
+
+
+def _meshdir() -> pathlib.Path:
+    env = (os.environ.get("MESH_DIR") or "").strip()
+    return pathlib.Path(env).expanduser() if env else pathlib.Path.home() / ".mesh"
 
 
 def _router() -> dict:
@@ -116,6 +150,7 @@ def bundle(force: bool = False) -> dict:
     out = {
         "at": time.time(),
         "hub": hub,
+        "leaf": _leaf(),
         "router": _router(),
         "forge": fr,
         "forge_router": fr_router,

@@ -18,6 +18,7 @@
 .ms-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
 .ms-dot.ok{background:var(--ok)} .ms-dot.bad{background:var(--warn)}
 .ms-err{font-size:.82rem;color:#b26a2b;white-space:pre-wrap;overflow-wrap:anywhere}
+.ms-warn{color:#b26a2b}
 .ms-list{margin:6px 0;padding:0;list-style:none;font-size:.85rem}
 .ms-list li{padding:2px 0;overflow-wrap:anywhere}
 .ms-tok{font-size:.8rem;color:var(--mut)}
@@ -42,6 +43,9 @@
   {% else %}
     <p class="ms-err">hub down: {{ b.hub.error }}</p>
   {% endif %}
+  <div class="ms-facts {% if b.leaf.ok and b.leaf.hours < 6 %}ms-warn{% endif %}">node leaf:
+    {%- if b.leaf.ok %} expires in {{ b.leaf.hours }} h ({{ b.leaf.notAfter }}) · 24h expiry = revocation, the daily timer re-mints
+    {%- else %} {{ b.leaf.error }}{%- endif %}</div>
 </div>
 
 <div class="card">

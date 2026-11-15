@@ -118,6 +118,60 @@ def test_bundle_cache(lanes, monkeypatch):
     assert calls["n"] == 1
 
 
+# ---------------------------------------------------------------- leaf expiry
+
+def _openssl_or_skip():
+    import shutil
+    if not shutil.which("openssl"):
+        pytest.skip("openssl not on PATH")
+    return True
+
+
+def test_leaf_parses_real_cert(tmp_path, monkeypatch):
+    import subprocess
+    _openssl_or_skip()
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-keyout",
+                    str(tmp_path / "k.pem"), "-out", str(tmp_path / "cert.crt"),
+                    "-days", "2", "-nodes", "-subj", "/CN=leaf-test"],
+                   check=True, capture_output=True)
+    (tmp_path / "config.json").write_text('{"cert": "cert.crt"}')
+    monkeypatch.setenv("MESH_DIR", str(tmp_path))
+    leaf = meshstatus._leaf()
+    assert leaf["ok"] and 40 < leaf["hours"] < 50  # -days 2 => ~48h
+    assert leaf["notAfter"]
+
+
+def test_leaf_degrades_without_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESH_DIR", str(tmp_path / "absent"))
+    leaf = meshstatus._leaf()
+    assert leaf["ok"] is False and "FileNotFound" in leaf["error"]
+
+
+def test_leaf_in_bundle_and_page(client, lanes, monkeypatch):
+    monkeypatch.setattr(meshstatus, "_leaf",
+                        lambda: {"ok": True, "hours": 3.2, "notAfter": "2026-11-16 05:33 PST"})
+    lanes(hub=[{"name": "halo", "fp": "a" * 64, "agepub": "age1" + "q" * 40,
+                "roles": ["portal"], "last": time.time()}],
+          router={"ok": True, "models": []},
+          forge={"ok": True, "url": "u", "version": None},
+          fr={"ok": True, "url": "u", "models": []})
+    b = meshstatus.bundle(force=True)
+    assert b["leaf"]["ok"] and b["leaf"]["hours"] == 3.2
+    r = client.get("/mesh")
+    assert "node leaf:" in r.text and "expires in 3.2 h" in r.text
+    assert "ms-warn" in r.text  # <6h paints the countdown amber
+
+
+def test_leaf_degraded_text_renders(client, lanes, monkeypatch):
+    monkeypatch.setattr(meshstatus, "_leaf",
+                        lambda: {"ok": False, "error": "FileNotFoundError: no cert"})
+    lanes(hub=[], router={"ok": True, "models": []},
+          forge={"ok": True, "url": "u", "version": None},
+          fr={"ok": True, "url": "u", "models": []})
+    r = client.get("/mesh")
+    assert "node leaf:" in r.text and "no cert" in r.text
+
+
 @pytest.fixture()
 def client():
     c = TestClient(app)

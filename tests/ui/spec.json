@@ -2608,6 +2608,11 @@
         {
           "selector": ".ms-grid",
           "contains": "Hub (Pi pair registry)"
+        },
+        {
+          "_comment": "the leaf countdown renders in ok AND degraded states",
+          "selector": ".ms-grid",
+          "contains": "node leaf:"
         }
       ]
     }
