@@ -155,6 +155,19 @@ def test_redaction_of_token_shaped_secrets(fake):
 
 # ---------------------------------------------------------------- route gate
 
+def test_resolve_repo_env_override(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("AI_PORTAL_REPO", str(tmp_path))
+    assert pushgate.resolve_repo() == tmp_path
+
+
+def test_resolve_repo_code_tree_when_checkout(monkeypatch):
+    # the dev repo is a checkout: the code tree wins without env
+    monkeypatch.delenv("AI_PORTAL_REPO", raising=False)
+    if (pushgate.REPO / ".git").exists():
+        assert pushgate.resolve_repo() == pushgate.REPO
+
+
 @pytest.fixture()
 def client():
     c = TestClient(app)

@@ -341,6 +341,10 @@ def deploy(target: Path = TARGET_DEFAULT, ref: str = "HEAD", dry: bool = False,
 
     record = write_deployment({
         "sha": p["sha"], "ref": p["ref"], "target": str(target),
+        # the repo code is written in: the running tree is a git-less
+        # export, so anything that must talk to git (the push gate) reads
+        # this to find its checkout
+        "source_repo": p["source_repo"],
         "python": python, "unit": paths.PORTAL_UNIT,
         "deployed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "message": message, "previous_sha": p["current_sha"],

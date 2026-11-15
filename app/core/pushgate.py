@@ -17,6 +17,8 @@ message input is screened for common token shapes and screened-out.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
 import time
@@ -26,6 +28,33 @@ REPO = Path(__file__).resolve().parents[2]
 REMOTE = "origin"
 ALLOWED_BRANCH = "main"
 _T = 25  # seconds per git call; the network calls get this, not forever
+
+
+def _is_git(p: Path) -> bool:
+    return (p / ".git").exists()
+
+
+def resolve_repo() -> Path:
+    """Which checkout the gate acts on. The running tree (~/ai/ai-portal)
+    is a git-less export by design, so the answer is layered:
+    explicit env, then the code's own tree if it is a checkout (dev
+    runs), then the deploy record's source_repo (the repo code was
+    written in), and failing all, the code tree -- where status() says
+    so honestly."""
+    env = os.environ.get("AI_PORTAL_REPO")
+    if env and _is_git(Path(env)):
+        return Path(env)
+    if _is_git(REPO):
+        return REPO
+    try:
+        from . import paths
+        rec = json.loads((paths.PORTAL_STATE / "deployment.json").read_text())
+        src = rec.get("source_repo", "")
+        if src and _is_git(Path(src)):
+            return Path(src)
+    except (OSError, ValueError):
+        pass
+    return REPO
 
 # Common GitHub token shapes (classic PAT, fine-grained, GitHub App).
 _TOKEN_RE = re.compile(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[srouo]_[A-Za-z0-9]{20,})")
@@ -52,9 +81,10 @@ def _lines(out: str) -> list[str]:
     return [l for l in out.splitlines() if l.strip()]
 
 
-def status(repo: Path | str = REPO) -> dict:
+def status(repo: Path | str | None = None) -> dict:
     """A read of the repo's push state. Total: every field degrades to a
     reason string; nothing raises, the page must render honesty."""
+    repo = Path(repo) if repo else resolve_repo()
     rc, branch, _ = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
     if rc != 0:
         return {"ok": False, "why": f"not a git checkout? {redact(branch)}"}
@@ -86,13 +116,14 @@ def status(repo: Path | str = REPO) -> dict:
     }
 
 
-def push(message: str = "", repo: Path | str = REPO) -> dict:
+def push(message: str = "", repo: Path | str | None = None) -> dict:
     """The gated verb: stage, commit, push. Refusals are data, not traps.
 
     Called ONLY behind the confirm gate (route + browser confirm). The
     push itself is a fast-forward plain push: behind => refuse, non-main
     => refuse, remote default != main => refuse.
     """
+    repo = Path(repo) if repo else resolve_repo()
     st = status(repo)
     if not st["ok"]:
         return {"ok": False, "why": st["why"], "log": []}
