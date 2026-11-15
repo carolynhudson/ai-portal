@@ -186,6 +186,14 @@ fn main() {
             println!("deleted {name}");
             Ok(())
         }),
+        "unenroll" => load_cfg().and_then(|c| {
+            // Self-unenroll: the hub removes THIS identity (refuses if it
+            // still owns secrets). Local key files stay: the node can
+            // re-enroll later with a fresh mint, same age identity.
+            let v = need(&call(&c, true, "DELETE", "/nodes", None)?)?;
+            println!("unenrolled {}", v["unenrolled"].as_str().unwrap_or("?"));
+            Ok(())
+        }),
         _ => {
             println!(
                 "meshctl v{} -- mesh hub client (hub never sees plaintext)\n\
@@ -194,7 +202,7 @@ fn main() {
                  \t\t put NAME [--to a,b] [--from FILE|-] [--blob]\n\
                  \t\t get NAME [--out FILE]\n\
                  \t\t share NAME --to a,b   (owner; re-encrypts locally)\n\
-                 \t\t rm NAME",
+                 \t\t rm NAME   |   unenroll (self, from the registry)",
                 meshhub::VERSION
             );
             Ok(())

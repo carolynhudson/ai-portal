@@ -867,3 +867,15 @@ halo, pi2 hub healthz over mTLS {"ok":true}, DNS local+VIP green.
 Durable laws banked: wipe CA db -> clear certbot account caches on
 EVERY ACME client (pi, pi2); deploy hooks must derive from
 RENEWED_LINEAGE; probes of name-SAN certs use names, not IPs.
+
+## 25d. unenroll + registry hygiene (2026-11-15)
+
+Hub DELETE /nodes = SELF-unenroll only (an identity removes itself;
+nobody can cut another node). Ownership guard witnessed: halo
+attempt -> 409 "still owns secrets: subagent-key". Self-unenrolled
+the test macbook identity (root on pi, its home); dead labtop entry
+(key lost from the world when pi /root/.mesh was reused) pruned by
+root store-edit + manual mirror sync (operator lane; pi2 agrees).
+Registry final: halo + pihole2. meshctl reinstalled on pi, pi2,
+halo (~/.local/bin -- the halo binary staleness caught mid-test:
+reinstall after every build).

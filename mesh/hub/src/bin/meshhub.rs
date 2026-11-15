@@ -344,6 +344,28 @@ fn route(hub: &Hub, method: &str, path: &str, body: &[u8], fp: &str) -> (u16, Ve
             let mine: Vec<&Rec> = st.recs.values().filter(|r| can_read(r, fp, &name)).collect();
             return (200, j(&serde_json::json!({ "secrets": mine })));
         }
+        ("DELETE", "/nodes") => {
+            // Self-unenroll only: an identity removes ITSELF (nobody can
+            // cut another node from the registry). Ownership-safe: a node
+            // that still owns secrets must delete them first -- silent
+            // orphaning of ciphertext is how registries rot.
+            let mut st = hub.store.lock().unwrap();
+            let owned: Vec<String> = st.recs.values()
+                .filter(|r| r.owner == fp)
+                .map(|r| r.name.clone())
+                .collect();
+            if !owned.is_empty() {
+                return (409, err(409, &format!("still owns secrets: {} -- delete them first", owned.join(", "))));
+            }
+            st.nodes.remove(fp);
+            if let Err(er) = hub.persist_nodes(&st) {
+                return (500, err(500, &er));
+            }
+            drop(st);
+            hub.mirror("nodes");
+            audit("unenroll", &node.name, &format!("fp={}", &fp[..16]), "ok");
+            return (200, j(&serde_json::json!({ "unenrolled": node.name })));
+        }
         _ => {}
     }
 
