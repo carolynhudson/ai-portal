@@ -13,6 +13,7 @@
 .pg-list{margin:8px 0;padding-left:0;list-style:none;font-size:.88rem}
 .pg-list li{padding:3px 0;border-bottom:1px dashed var(--line);overflow-wrap:anywhere}
 .pg-warn{font-size:.85rem;color:#b26a2b;margin:8px 0}
+.pg-hint{font-size:.8rem;color:var(--mut);margin:2px 0 8px;overflow-wrap:anywhere}
 .pg-field{display:block;margin:10px 0;font-size:.95em}
 .pg-field input[type=text]{width:100%;box-sizing:border-box;font-family:inherit;margin-top:4px}
 .pg-result{font-size:.85rem;margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -37,6 +38,7 @@
   </div>
   {% if not st.remote_live %}
   <p class="pg-warn">remote not reachable right now: {{ st.remote_note }} — the gate will refuse to push until it answers.</p>
+  {% if st.hint %}<p class="pg-hint">{{ st.hint }}</p>{% endif %}
   {% endif %}
   {% if st.behind > 0 %}
   <p class="pg-warn">behind by {{ st.behind }}: pull/rebase first. This gate never force-pushes.</p>

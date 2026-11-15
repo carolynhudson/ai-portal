@@ -74,23 +74,19 @@ def _https_pair(ssh_url: str) -> str:
     return f"https://x-access-token@{m.group(1)}/{m.group(2)}"
 
 
-def _pat() -> tuple[str, str] | None:
-    """The GitHub PAT, hub-only (agent-use-not-see law). None when the
-    hub has no 'github-pat' secret -- SSH lane stays the default."""
-    try:
-        from . import meshhub
-        tok = meshhub.get_text("github-pat").strip()
-        return (tok, "hub") if tok and _TOKEN_RE.search(tok) else None
-    except Exception:  # noqa: BLE001 -- no hub, no secret: SSH lane
-        return None
-
-
-def _git_env_pat(tok: str) -> tuple[dict, str, str]:
-    """Env + askpass script reading a 0600 temp file. The token never
-    rides argv, the URL, the environment dump of any child (only the
-    file path does), or any log line."""
-    import os
-    import stat
+def _net_env(tok: str | None = None) -> tuple[dict, str, str]:
+    """Env for NETWORK git calls. BatchMode=yes: never prompt -- a dead
+    agent fails fast with 'Permission denied (publickey)' instead of
+    thrashing at ssh_askpass (this box has no askpass binary; the
+    resulting noise buried the real diagnosis). PAT lane adds the
+    GIT_ASKPASS temp-file pair; the token never rides argv, URL, logs,
+    or persistent env. Returns (env, tokpath, spath) with '' paths when
+    no token."""
+    env = dict(os.environ)
+    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    if not tok:
+        return env, "", ""
     import tempfile
     fd, tokpath = tempfile.mkstemp(prefix="mesh-pat-", text=True)
     os.write(fd, tok.encode() + b"\n")
@@ -101,10 +97,19 @@ def _git_env_pat(tok: str) -> tuple[dict, str, str]:
     os.write(fd, f"#!/bin/sh\ncat {tokpath}\n".encode())
     os.close(fd)
     os.chmod(spath, 0o700)
-    env = dict(os.environ)
     env["GIT_ASKPASS"] = spath
-    env["GIT_TERMINAL_PROMPT"] = "0"
     return env, tokpath, spath
+
+
+def _pat() -> tuple[str, str] | None:
+    """The GitHub PAT, hub-only (agent-use-not-see law). None when the
+    hub has no 'github-pat' secret -- SSH lane stays the default."""
+    try:
+        from . import meshhub
+        tok = meshhub.get_text("github-pat").strip()
+        return (tok, "hub") if tok and _TOKEN_RE.search(tok) else None
+    except Exception:  # noqa: BLE001 -- no hub, no secret: SSH lane
+        return None
 
 
 def _git(args: list[str], repo: Path | str = REPO, env: dict | None = None) -> tuple[int, str, str]:
@@ -140,14 +145,15 @@ def status(repo: Path | str | None = None) -> dict:
     # live remote check: the remote's own default branch (never assumed).
     # SSH first; if that lane is dead and the hub holds a PAT, probe the
     # https lane so the page reports the lane that actually works.
-    rc5, sym, err5 = _git(["ls-remote", "--symref", REMOTE, "HEAD"], repo)
+    env1, _, _ = _net_env(None)
+    rc5, sym, err5 = _git(["ls-remote", "--symref", REMOTE, "HEAD"], repo, env1)
     remote_branch = ""
     lane = "ssh"
     if rc5 != 0:
         pat = _pat()
         pair = _https_pair(remote_url) if pat else ""
         if pair:
-            env2, tokp2, sp2 = _git_env_pat(pat[0])  # type: ignore[index]
+            env2, tokp2, sp2 = _net_env(pat[0])  # type: ignore[index]
             try:
                 rc5, sym, err5 = _git(["ls-remote", "--symref", pair, "HEAD"], repo, env2)
             finally:
@@ -162,6 +168,18 @@ def status(repo: Path | str | None = None) -> dict:
         m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
         remote_branch = m.group(1) if m else ""
     dirty = len(_lines(porcelain)) if rc3 == 0 else -1
+    note = redact(err5)[:160] if rc5 != 0 else ""
+    # An agent/passphrase-shaped refusal has an exact owner remedy; the
+    # page should hand it over, not just the verbatim git complaint. The
+    # socket named is the one THIS service process rides (portal.env pin).
+    hint = ""
+    if note and remote_url.startswith("git@") and re.search(
+            r"publickey|agent|askpass|passphrase|Permission denied", note, re.I):
+        hint = (f"arm the lane the gate rides -- in a terminal: "
+                f"SSH_AUTH_SOCK={os.environ.get('SSH_AUTH_SOCK', '')} "
+                f"ssh-add ~/.ssh/id_ed25519 (once per boot); "
+                f"or mint a fine-grained PAT (contents:write) and store it in the hub: "
+                f"scripts/mesh_migrate.py github-pat <file>")
     return {
         "ok": True,
         "branch": branch,
@@ -169,7 +187,8 @@ def status(repo: Path | str | None = None) -> dict:
         "remote_branch": remote_branch,
         "remote_live": rc5 == 0,
         "lane": lane,
-        "remote_note": redact(err5)[:160] if rc5 != 0 else "",
+        "remote_note": note,
+        "hint": hint,
         "ahead": int(ahead) if rc == 0 and ahead.isdigit() else -1,
         "behind": int(behind) if rc2 == 0 and behind.isdigit() else -1,
         "dirty": dirty,
@@ -203,13 +222,12 @@ def push(message: str = "", repo: Path | str | None = None) -> dict:
         msg = f"portal: owner-gated push {time.strftime('%Y-%m-%d %H:%M')}"
     pat = _pat()
     use_https = bool(pat) and st["remote_url"].startswith("git@") and _https_pair(st["remote_url"])
-    env = tokpath = spath = None
-    if use_https:
-        env, tokpath, spath = _git_env_pat(pat[0])  # type: ignore[index]
+    env, tokpath, spath = _net_env(pat[0] if use_https else None)
     net_target = _https_pair(st["remote_url"]) if use_https else REMOTE
     try:
         if not use_https and not st["remote_live"]:
-            return {"ok": False, "why": f"remote unreachable: {st['remote_note']}", "log": log}
+            return {"ok": False, "why": f"remote unreachable: {st['remote_note']}",
+                    "hint": st.get("hint", ""), "log": log}
         if use_https:
             rc, sym, err5 = _git(["ls-remote", "--symref", net_target, "HEAD"], repo, env)
             if rc != 0:

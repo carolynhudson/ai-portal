@@ -29,6 +29,7 @@ with open(os.environ["FAKE_LOG"], "a") as f:
 with open(os.environ["FAKE_LOG"] + ".env", "a") as f:
     f.write(json.dumps({"argv": sys.argv[1:],
                         "askpass": os.environ.get("GIT_ASKPASS"),
+                        "sshcmd": os.environ.get("GIT_SSH_COMMAND"),
                         "term": os.environ.get("GIT_TERMINAL_PROMPT")}) + "\\n")
 key = " ".join(sys.argv[1:])
 for pat, rc, out, err in reversed(plan):
@@ -165,6 +166,56 @@ def test_redaction_of_token_shaped_secrets(fake):
     r = pushgate.push("msg")
     assert not r["ok"]
     assert "ghp_SECRET" not in json.dumps(r)
+
+
+# ---------------------------------------------------------------- net env + hints
+
+def test_net_env_batchmode_on_status_probe(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE)
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    st = pushgate.status()
+    assert st["ok"] and st["remote_live"]
+    lr = [e for e in g.envs() if e["argv"][:1] == ["ls-remote"]][0]
+    assert "BatchMode=yes" in (lr["sshcmd"] or "")
+    assert lr["askpass"] is None  # ssh lane: no askpass scaffolding
+
+
+def test_ssh_lane_push_rides_batchmode(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE + [
+        ["fetch --quiet origin", 0, "", ""],
+        ["add -A", 0, "", ""],
+        ["commit -q -m", 0, "", ""],
+        ["push origin HEAD:refs/heads/main", 0, "abc1234..def9999 main -> main", ""],
+        ["rev-parse --short HEAD", 0, "def9999", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    assert pushgate.push("msg")["ok"]
+    p = [e for e in g.envs() if e["argv"][:1] == ["push"]][0]
+    assert "BatchMode=yes" in (p["sshcmd"] or "")
+    assert p["term"] == "0"
+
+
+def test_hint_on_agent_refusal(fake, monkeypatch):
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "",
+         "sign_and_send_pubkey: signing failed for ED25519 from agent: "
+         "agent refused operation\ngit@github.com: Permission denied (publickey)."],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    st = pushgate.status()
+    assert not st["remote_live"] and st["lane"] == "ssh"
+    assert "ssh-add" in st["hint"] and "id_ed25519" in st["hint"]
+    assert "github-pat" in st["hint"]  # the terminal-free alternative
+
+
+def test_hint_absent_when_remote_live(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE)
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    assert pushgate.status()["hint"] == ""
 
 
 # ---------------------------------------------------------------- PAT lane
