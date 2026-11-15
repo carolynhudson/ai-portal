@@ -134,9 +134,9 @@ fn main() {
     let rest: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
     let r = match cmd {
         "enroll" => cmd_enroll(rest),
-        "nodes" | "ls" | "healthz" | "nodesjson" => load_cfg().and_then(|c| match cmd {
+        "nodes" | "ls" | "healthz" | "nodesjson" | "lsjson" => load_cfg().and_then(|c| match cmd {
             "nodes" => {
-                let v = need(&call(&c, true, "GET", "/nodes", None).unwrap())?;
+                let v = need(&call(&c, true, "GET", "/nodes", None)?)?;
                 let nodes: Vec<Node> = serde_json::from_value(v["nodes"].clone()).unwrap();
                 println!("{:<12} {:<14} {:<14} {:<14} last", "name", "identity:12", "agepub:12", "roles");
                 for n in nodes {
@@ -145,12 +145,17 @@ fn main() {
                 Ok(())
             }
             "nodesjson" => {
-                let v = need(&call(&c, true, "GET", "/nodes", None).unwrap())?;
+                let v = need(&call(&c, true, "GET", "/nodes", None)?)?;
+                println!("{v}");
+                Ok(())
+            }
+            "lsjson" => {
+                let v = need(&call(&c, true, "GET", "/secrets", None)?)?;
                 println!("{v}");
                 Ok(())
             }
             "ls" => {
-                let v = need(&call(&c, true, "GET", "/secrets", None).unwrap())?;
+                let v = need(&call(&c, true, "GET", "/secrets", None)?)?;
                 println!("{:<14} {:<6} {:>7} {:<14} recipients", "name", "kind", "size", "owner:12");
                 if let Some(arr) = v["secrets"].as_array() {
                     for s in arr {
@@ -167,7 +172,7 @@ fn main() {
                 Ok(())
             }
             _ => {
-                let v = need(&call(&c, false, "GET", "/healthz", None).unwrap())?;
+                let v = need(&call(&c, false, "GET", "/healthz", None)?)?;
                 println!("{v}");
                 Ok(())
             }
@@ -177,7 +182,7 @@ fn main() {
         "share" => cmd_share(rest),
         "rm" => load_cfg().and_then(|c| {
             let name = rest.first().ok_or("usage: meshctl rm NAME")?.clone();
-            need(&call(&c, true, "DELETE", &format!("/secrets/{name}"), None).unwrap())?;
+            need(&call(&c, true, "DELETE", &format!("/secrets/{name}"), None)?)?;
             println!("deleted {name}");
             Ok(())
         }),
@@ -214,9 +219,21 @@ fn cmd_enroll(args: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
 
-    let (idstr, pubstr) = gen_identity();
     let idpath = dir.join(format!("identity-{name}.key"));
-    std::fs::write(&idpath, format!("{idstr}\n")).map_err(|e| e.to_string())?;
+    // The age identity is STABLE across re-enrolls: grants key to the
+    // pubkey, so rotating the cert leaf must never rotate the key.
+    let (idstr, pubstr) = match std::fs::read_to_string(&idpath) {
+        Ok(existing) => {
+            let id: age::x25519::Identity =
+                existing.trim().parse().map_err(|e| format!("stored identity corrupt: {e}"))?;
+            (existing.trim().to_string(), id.to_public().to_string())
+        }
+        Err(_) => {
+            let pair = gen_identity();
+            std::fs::write(&idpath, format!("{}\n", pair.0)).map_err(|e| e.to_string())?;
+            pair
+        }
+    };
     chmod600(&idpath);
 
     let certp = dir.join("cert.crt");

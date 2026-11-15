@@ -183,6 +183,9 @@ fn main() {
     roots.add_parsable_certificates(root_certs);
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    // Every TLS connection requires a mesh-CA-valid client cert
+    // (rustls 0.23 offers no mixed mode); /healthz is anonymous at
+    // the HTTP layer and serves liveness to authenticated probes.
     let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().expect("client verifier");
     let sc = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS12, &rustls::version::TLS13])
@@ -267,18 +270,44 @@ fn route(hub: &Hub, method: &str, path: &str, body: &[u8], fp: &str) -> (u16, Ve
             audit("enroll", &e.name, "-", "refresh");
             return (200, j(&n));
         }
-        if st.nodes.values().any(|n| n.name == e.name) {
-            audit("enroll", &e.name, "-", "DENIED:name-taken");
-            return (409, err(409, "name already registered to a different identity (remove it first)"));
-        }
-        let n = Node { name: e.name.clone(), agepub: e.agepub, roles: e.roles, added: now(), last: now(), fp: fp.to_string() };
+        // CERT ROTATION: the same name may move to a new cert fp
+        // (daily re-enroll of 24h leaves). Authorization = the mesh CA
+        // itself (only an admin mint produces a CA-valid cert). The
+        // rotation migrates ownership of records from the old fp so
+        // re-enroll never orphans secrets; recipient grants are
+        // name-based and ride through untouched.
+        let old = st.nodes.iter().find(|(_, n)| n.name == e.name).map(|(f, _)| f.clone());
+        let added = match &old {
+            Some(of) => match st.nodes.get(of) {
+                Some(n) => n.added,
+                None => now(),
+            },
+            None => now(),
+        };
+        let n = Node { name: e.name.clone(), agepub: e.agepub, roles: e.roles, added, last: now(), fp: fp.to_string() };
         st.nodes.insert(fp.to_string(), n.clone());
+        if let Some(of) = &old {
+            st.nodes.remove(of);
+            let mut migrated = 0usize;
+            for r in st.recs.values_mut() {
+                if r.owner == *of {
+                    r.owner = fp.to_string();
+                    migrated += 1;
+                }
+            }
+            audit("enroll", &e.name, &format!("{}->{}", &of[..16], &fp[..16]), &format!("ROTATED owner-migrated={migrated}"));
+            if let Err(er) = hub.persist_index(&st) {
+                return (500, err(500, &er));
+            }
+        }
         if let Err(er) = hub.persist_nodes(&st) {
             return (500, err(500, &er));
         }
         drop(st);
         hub.mirror("nodes");
-        audit("enroll", &e.name, &format!("fp={}", &fp[..16]), "registered");
+        if old.is_none() {
+            audit("enroll", &e.name, &format!("fp={}", &fp[..16]), "registered");
+        }
         return (200, j(&n));
     }
 

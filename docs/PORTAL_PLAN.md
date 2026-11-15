@@ -8610,3 +8610,15 @@ expiry=revocation witnessed). Renewal hardening: certbot wrapper
 random delay) both boxes. Next: portal P0 (app/core/secrets.py
 client + subagent_key migration), forge enrollment bundle, node
 cert daily re-enroll automation.
+
+**6.14.1zzn — hub round 2: portal P0 + automation + migration.**
+app/core/meshhub.py client (meshctl as crypto agent; mutations =
+route-layer confirm-gate contract documented in docstring);
+identity rotation in the hub with ownership migration + stable age
+keys; daily re-enroll live on halo (user timer) + pihole2 (root
+cron on pi); subagent-key migrated to hub with verified roundtrip
+(file kept for agent cutover); forge enrollment kit (docs +
+forge_enroll.ps1). Suite: meshhub 8/8 incl live hub. Queue:
+confirm-gated git-push route consuming hub github-pat via
+GIT_ASKPASS (needs UI round); forge agent cutover (fetch at launch,
+retire file); MacBook node (partner scenario).

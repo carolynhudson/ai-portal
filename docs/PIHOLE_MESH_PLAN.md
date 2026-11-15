@@ -797,3 +797,30 @@ Renewal witness (forced, 2026-11-14 evening): pi serial 4E05->5A24
 throughout); pi2 NOT-due -> clean no-op (timer catches it in the
 last-third; phase-proof timers live). Hub battery green post-churn:
 enumeration + put/get/rm probe + DNS on VIP.
+
+## 25b. Hub round 2: rotation, automation, portal P0, migration (2026-11-14)
+
+- HUB ENROLL ROTATION: name may move to a new cert fp (daily 24h
+  re-enroll); authorized by the CA itself (only admin-mint yields a
+  valid cert); ownership of records MIGRATES on rotation (audit
+  "ROTATED owner-migrated=N"); recipient grants are name-based and
+  ride through. meshctl keeps the age identity key STABLE across
+  re-enrolls (grants key to the pubkey).
+- AUTOMATION: halo = systemd USER timer mesh-reenroll.timer
+  (daily 07:30 + boot 30m + Persistent; import lane: mint on pi via
+  ssh -> scp -> enroll -> purge). pi2 = root cron on pi
+  /etc/cron.d/mesh-reenroll 07:45 (mint+stage+enroll, purge). Both
+  run live tonight (halo fp 2c33->5c59, pi2 eb30->0f87).
+- PORTAL P0: app/core/meshhub.py (meshctl subprocess client: nodes/
+  listing/get/put/share/rm; put purges its temp file; probes are
+  authenticated -- hub TLS is client-cert-required by design, no
+  allow_anonymous in rustls 0.23.46). tests/test_meshhub.py: 8
+  green incl. LIVE hub e2e (put/get/list/rm).
+- MIGRATION: subagent-key IN the hub (owner halo, recipients
+  halo-only until forge enrolls), sha256 roundtrip verified, source
+  file untouched (retire at agent cutover).
+- FORGE KIT: docs/mesh-forge-enroll.md + deploy/forge_enroll.ps1
+  (ASCII PS5.1; bundle purge after enroll; meshctl.exe built by the
+  forge via the proven meshd relay route).
+- Scripts live in repo scripts/: mesh_migrate.py,
+  mesh_reenroll_{halo,pi2}.sh.
