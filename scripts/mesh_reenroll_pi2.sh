@@ -4,7 +4,10 @@
 # root->meshops staging channel, enroll on pi2. Identity age key on
 # pi2 is stable; the hub rotates the fingerprint, ownership migrates.
 set -e
-step certificate create pihole2 /tmp/mre.crt /tmp/mre.key \
+# cron PATH is /usr/bin:/bin only -- step lives in /usr/local/bin; cron
+# runs at 07:45 died with "step: not found" on 2026-11-15. Absolute path
+# law for every cron-invoked script.
+/usr/local/bin/step certificate create pihole2 /tmp/mre.crt /tmp/mre.key \
   --profile leaf --ca /etc/step-ca/certs/root_ca.crt \
   --ca-key /etc/step-ca/secrets/root_ca_key \
   --ca-password-file /etc/step-ca/secrets/password \

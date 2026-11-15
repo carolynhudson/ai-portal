@@ -8678,3 +8678,22 @@ lands). (c) pi2 renewal witness scheduled (due window 18:17 PST,
 13:31 timer + certbot delay -> rotation expected ~14:00-14:30 PST;
 background witness armed). Suite: pushgate 20/20; UI 119.
 Commit 3e85ef8.
+
+**6.14.1zzr — push lanes + agent archaeology; owner pushed 45.**
+The owner's manual push landed (gate reads 0/0). Agent truth on this
+box: sessions ride gcr-ssh-agent (/run/user/1000/gcr/ssh -- GNOME
+Keyring: stubs ~/.ssh keys, REFUSES to sign passphrase-locked ones
+headless: 'agent refused operation'); a real ssh-agent also runs
+(/usr/bin/ssh-agent -D, socket /run/user/1000/openssh_agent, zero
+identities). ssh-add must target it explicitly:
+`SSH_AUTH_SOCK=/run/user/1000/openssh_agent ssh-add ~/.ssh/id_ed25519`
+(once per boot) -- portal.env now pins SSH_AUTH_SOCK to that socket so
+the gate rides it the moment it has the key (verified: portal env
+carries it; warning line reports the lane state verbatim). PAT lane
+remains the no-terminal alternative (owner mint -> mesh_migrate
+github-pat). Cron law: pi2 node re-enroll cron died 07:45 'step: not
+found' (cron PATH = /usr/bin:/bin; step lives in /usr/local/bin) --
+absolute path on pi + repo script; manual run rotated pi2 node fp
+0f87->9739addc (age stable). Witness closed earlier: pi2 CONSOLE cert
+rotated ON SCHEDULE (4859->0E90, 443+9443 agree, console 302) -- the
+repaired lane proved end-to-end unattended.
