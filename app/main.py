@@ -35,6 +35,7 @@ from . import router as router_mod
 from .core import (
     agents,
     agentconfig,
+    meshstatus,
     svc_actions,
     db,
     harnessctl,
@@ -2026,6 +2027,19 @@ def create_app() -> FastAPI:
         if not res.get("ok"):
             raise HTTPException(422, res)
         return res
+
+    # ------------------------------------------------ mesh.status (P2, read-only)
+    # MESH_HARNESS_PLAN P2: mesh.status = read-only aggregation of the
+    # mesh's cards. Server-rendered; every lane degrades honestly. The
+    # forge-router row also shows WHERE the ONE-token came from (hub vs
+    # file) -- the cutover made visible.
+
+    @app.get("/mesh")
+    def mesh_page(request: Request, refresh: bool = False,
+                  _=Depends(_require_auth)):
+        b = meshstatus.bundle(force=refresh)
+        b["at_str"] = time.strftime("%H:%M:%S", time.localtime(b.get("at") or 0))
+        return templates.TemplateResponse(request, "mesh.html", {"b": b})
 
     @app.get("/api/workroom/bench")
     def api_workroom_bench(request: Request, _=Depends(_require_auth)):

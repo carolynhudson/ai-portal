@@ -2591,6 +2591,25 @@
           "contains": "ahead"
         }
       ]
+    },
+    {
+      "name": "mesh",
+      "path": "/mesh",
+      "expectTitle": "Mesh",
+      "_comment": [
+        "mesh.status (MESH_HARNESS_PLAN P2): pure server-render, zero page JS.",
+        "Every lane renders its own truth (in the sandbox all lanes are down",
+        "with reasons -- the page must still render). The hub card is the",
+        "page's spine, so it must appear by name."
+      ],
+      "expectRequests": [],
+      "expectVisible": [".ms-grid", ".ms-grid .card"],
+      "expectText": [
+        {
+          "selector": ".ms-grid",
+          "contains": "Hub (Pi pair registry)"
+        }
+      ]
     }
   ]
 }

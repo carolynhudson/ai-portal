@@ -1,0 +1,77 @@
+{# mesh.status (MESH_HARNESS_PLAN P2): the mesh's cards on one page,
+   read-only by construction. Server-rendered: the page has NO script at
+   all; the only control is a re-probe link. Every lane shows its own
+   truth, including "down, with the reason". The forge-router row names
+   where the ONE-token came from: hub vs file -- the cutover visible. #}
+{% extends "base.html" %}
+{% block title %}Mesh · HALO{% endblock %}
+{% block body %}
+<style>
+/* page-local only. */
+.ms-grid{display:grid;gap:12px;grid-template-columns:1fr;min-width:0}
+@media(min-width:760px){.ms-grid{grid-template-columns:1fr 1fr}}
+.ms-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:7px 10px;
+  border-bottom:1px dashed var(--line);align-items:baseline}
+.ms-row:last-child{border-bottom:0}
+.ms-name{font-weight:600}
+.ms-facts{font-size:.78rem;color:var(--mut);grid-column:1/-1}
+.ms-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
+.ms-dot.ok{background:var(--ok)} .ms-dot.bad{background:var(--warn)}
+.ms-err{font-size:.82rem;color:#b26a2b;white-space:pre-wrap;overflow-wrap:anywhere}
+.ms-list{margin:6px 0;padding:0;list-style:none;font-size:.85rem}
+.ms-list li{padding:2px 0;overflow-wrap:anywhere}
+.ms-tok{font-size:.8rem;color:var(--mut)}
+.ms-refresh{font-size:.85rem}
+</style>
+
+<div class="card">
+  <h3>Mesh status</h3>
+  <div class="ms-facts">read-only · probed {{ b.at_str or 'just now' }}
+    <a class="ms-refresh" href="/mesh?refresh=1">re-probe</a></div>
+</div>
+
+<div class="ms-grid">
+<div class="card">
+  <h3><span class="ms-dot {% if b.hub.ok %}ok{% else %}bad{% endif %}"></span>Hub (Pi pair registry)</h3>
+  {% if b.hub.ok %}
+    {% for n in b.hub.nodes %}
+    <div class="ms-row"><span class="ms-name">{{ n.name }}</span>
+      <span class="ms-facts">{{ n.roles | join(',') }} · fp {{ n.fp[:12] }} · age {{ n.agepub[:12] }}… · seen {{ n.ago }} ago</span></div>
+    {% endfor %}
+    {% if not b.hub.nodes %}<p class="ms-err">registry empty</p>{% endif %}
+  {% else %}
+    <p class="ms-err">hub down: {{ b.hub.error }}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3><span class="ms-dot {% if b.router.ok %}ok{% else %}bad{% endif %}"></span>Router · halo :8080</h3>
+  {% if b.router.ok %}
+    <ul class="ms-list">{% for m in b.router.models %}<li>{{ m }}</li>{% endfor %}
+      {% if not b.router.models %}<li>no models loaded</li>{% endif %}</ul>
+  {% else %}
+    <p class="ms-err">{{ b.router.error }}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3><span class="ms-dot {% if b.forge.ok %}ok{% else %}bad{% endif %}"></span>Forge · ComfyUI</h3>
+  {% if b.forge.ok %}
+    <div class="ms-facts">{{ b.forge.url }} · comfyui {{ b.forge.version or '?' }}</div>
+  {% else %}
+    <p class="ms-err">{{ b.forge.error }}{% if b.forge.url %} ({{ b.forge.url }}){% endif %}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3><span class="ms-dot {% if b.forge_router.ok %}ok{% else %}bad{% endif %}"></span>Forge · llama router</h3>
+  {% if b.forge_router.ok %}
+    <div class="ms-facts">{{ b.forge_router.url }} · <span class="ms-tok">token: {{ b.forge_router.token_src }}</span></div>
+    <ul class="ms-list">{% for m in b.forge_router.models %}<li>{{ m }}</li>{% endfor %}
+      {% if not b.forge_router.models %}<li>no models loaded</li>{% endif %}</ul>
+  {% else %}
+    <p class="ms-err">{{ b.forge_router.error }}{% if b.forge_router.url %} ({{ b.forge_router.url }}, token: {{ b.forge_router.token_src }}){% endif %}</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}
