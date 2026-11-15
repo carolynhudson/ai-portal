@@ -26,6 +26,10 @@ import json, os, sys
 plan = json.loads(os.environ["FAKE_GIT"])
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
+with open(os.environ["FAKE_LOG"] + ".env", "a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:],
+                        "askpass": os.environ.get("GIT_ASKPASS"),
+                        "term": os.environ.get("GIT_TERMINAL_PROMPT")}) + "\\n")
 key = " ".join(sys.argv[1:])
 for pat, rc, out, err in reversed(plan):
     if key.startswith(pat):
@@ -33,6 +37,22 @@ for pat, rc, out, err in reversed(plan):
         sys.exit(rc)
 sys.exit(0)
 """
+
+
+class FakeGit:
+    def __init__(self, plan_setter, log):
+        self._set_plan = plan_setter
+        self._log = log
+
+    def plan(self, plan):
+        self._set_plan(plan)
+
+    def calls(self):
+        return [json.loads(l) for l in self._log.read_text().splitlines()]
+
+    def envs(self):
+        p = self._log.parent / (self._log.name + ".env")
+        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
 
 
 @pytest.fixture()
@@ -44,13 +64,7 @@ def fake(tmp_path, monkeypatch):
     log.touch()
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_LOG", str(log))
-
-    def set_plan(plan):
-        monkeypatch.setenv("FAKE_GIT", json.dumps(plan))
-
-    def calls():
-        return [json.loads(l) for l in log.read_text().splitlines()]
-    return set_plan, calls
+    return FakeGit(lambda plan: monkeypatch.setenv("FAKE_GIT", json.dumps(plan)), log)
 
 
 OK_BASE = [
@@ -65,8 +79,8 @@ OK_BASE = [
 
 
 def test_status_fields(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE)
+    g = fake
+    g.plan(OK_BASE)
     st = pushgate.status()
     assert st["ok"] and st["branch"] == "main" and st["ahead"] == 3
     assert st["behind"] == 0 and st["remote_branch"] == "main"
@@ -74,45 +88,45 @@ def test_status_fields(fake):
 
 
 def test_status_degrades_honestly(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [["ls-remote", 128, "", "ssh: connect timeout"]])
+    g = fake
+    g.plan(OK_BASE + [["ls-remote", 128, "", "ssh: connect timeout"]])
     st = pushgate.status()
     assert st["ok"] and not st["remote_live"]
     assert "timeout" in st["remote_note"]
 
 
 def test_refuses_non_main(fake):
-    set_plan, _ = fake
-    set_plan([["rev-parse --abbrev-ref HEAD", 0, "feature", ""]] + OK_BASE[1:])
+    g = fake
+    g.plan([["rev-parse --abbrev-ref HEAD", 0, "feature", ""]] + OK_BASE[1:])
     r = pushgate.push("msg")
     assert not r["ok"] and "feature" in r["why"]
 
 
 def test_refuses_behind(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [["rev-list --count HEAD..origin/main", 0, "5", ""]])
+    g = fake
+    g.plan(OK_BASE + [["rev-list --count HEAD..origin/main", 0, "5", ""]])
     r = pushgate.push("msg")
     assert not r["ok"] and "behind" in r["why"]
 
 
 def test_refuses_dead_remote(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [["ls-remote", 128, "", "Permission denied (publickey)."]])
+    g = fake
+    g.plan(OK_BASE + [["ls-remote", 128, "", "Permission denied (publickey)."]])
     r = pushgate.push("msg")
     assert not r["ok"] and "remote" in r["why"].lower()
 
 
 def test_refuses_nonmain_remote_default(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [["ls-remote --symref origin HEAD", 0,
+    g = fake
+    g.plan(OK_BASE + [["ls-remote --symref origin HEAD", 0,
                          "ref: refs/heads/master\tHEAD\nabc\tHEAD", ""]])
     r = pushgate.push("msg")
     assert not r["ok"] and "master" in r["why"]
 
 
 def test_happy_path_stage_commit_push(fake):
-    set_plan, calls = fake
-    set_plan(OK_BASE + [
+    g = fake
+    g.plan(OK_BASE + [
         ["fetch --quiet origin", 0, "", ""],
         ["add -A", 0, "", ""],
         ["commit -q -m", 0, "", ""],
@@ -121,14 +135,14 @@ def test_happy_path_stage_commit_push(fake):
     ])
     r = pushgate.push("my message")
     assert r["ok"] and r["head"] == "def9999"
-    argv = calls()
+    argv = g.calls()
     assert ["push", "origin", "HEAD:refs/heads/main"] in argv
     assert any(a[:2] == ["commit", "-q"] and "my message" in a for a in argv)
 
 
 def test_nothing_to_commit_still_pushes(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [
+    g = fake
+    g.plan(OK_BASE + [
         ["fetch --quiet origin", 0, "", ""],
         ["add -A", 0, "", ""],
         ["commit -q -m", 1, "nothing to commit, working tree clean", ""],
@@ -140,8 +154,8 @@ def test_nothing_to_commit_still_pushes(fake):
 
 
 def test_redaction_of_token_shaped_secrets(fake):
-    set_plan, _ = fake
-    set_plan(OK_BASE + [
+    g = fake
+    g.plan(OK_BASE + [
         ["fetch --quiet origin", 0, "", ""],
         ["add -A", 0, "", ""],
         ["commit -q -m", 0, "", ""],
@@ -151,6 +165,65 @@ def test_redaction_of_token_shaped_secrets(fake):
     r = pushgate.push("msg")
     assert not r["ok"]
     assert "ghp_SECRET" not in json.dumps(r)
+
+
+# ---------------------------------------------------------------- PAT lane
+
+def test_pat_shape_from_hub(monkeypatch):
+    from app.core import meshhub
+    monkeypatch.setattr(meshhub, "get_text",
+                        lambda n: "ghp_" + "A" * 36 + "\n")
+    assert pushgate._pat() == ("ghp_" + "A" * 36, "hub")
+
+
+def test_pat_absent_is_none(monkeypatch):
+    from app.core import meshhub
+    monkeypatch.setattr(meshhub, "get_text", lambda n: "not-a-token")
+    assert pushgate._pat() is None
+
+
+def test_pat_lane_https_askpass_purge_and_no_token_in_argv(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE + [
+        ["fetch --quiet https://x-access-token@github.com/", 0, "", ""],
+        ["add -A", 0, "", ""],
+        ["commit -q -m", 0, "", ""],
+        ["push https://x-access-token@github.com/carolynhudson/ai-portal.git HEAD:refs/heads/main",
+         0, "abc1234..zzz main -> main", ""],
+        ["rev-parse --short HEAD", 0, "zzz9999", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: ("ghp_" + "S" * 36, "hub"))
+    r = pushgate.push("pat push")
+    assert r["ok"] and r["head"] == "zzz9999"
+    argv = g.calls()
+    assert any(a[:2] == ["push", "https://x-access-token@github.com/carolynhudson/ai-portal.git"]
+               for a in argv), "https lane not used"
+    assert all("ghp_" not in json.dumps(a) for a in argv), "token rode argv"
+    envs = g.envs()
+    ap = [e for e in envs if e["argv"][:1] == ["push"]][0]
+    assert ap["askpass"] and os.path.exists(ap["askpass"]) is False  # purged
+    assert ap["term"] == "0"
+    assert any("lane: pat/https" in l for l in r["log"])
+
+
+def test_status_reports_pat_lane_when_ssh_dead(fake, monkeypatch):
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "", "agent refused operation"],
+        ["ls-remote --symref https://x-access-token@github.com/carolynhudson/ai-portal.git HEAD",
+         0, "ref: refs/heads/main\tHEAD\nx\tHEAD", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: ("ghp_" + "S" * 36, "hub"))
+    st = pushgate.status()
+    assert st["ok"] and st["remote_live"] and st["lane"] == "pat/https"
+
+
+def test_status_ssh_lane_when_agent_ok(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE)
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    st = pushgate.status()
+    assert st["lane"] == "ssh"
 
 
 # ---------------------------------------------------------------- route gate

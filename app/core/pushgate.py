@@ -65,11 +65,53 @@ def redact(text: str) -> str:
     return _TOKEN_RE.sub("***redacted***", str(text))
 
 
-def _git(args: list[str], repo: Path | str = REPO) -> tuple[int, str, str]:
+def _https_pair(ssh_url: str) -> str:
+    """git@github.com:USER/REPO.git -> https://x-access-token@github.com/USER/REPO.git
+    (the username rides the URL; the PAT itself never does)."""
+    m = re.match(r"git@([^:]+):(.+)$", ssh_url.strip())
+    if not m:
+        return ""
+    return f"https://x-access-token@{m.group(1)}/{m.group(2)}"
+
+
+def _pat() -> tuple[str, str] | None:
+    """The GitHub PAT, hub-only (agent-use-not-see law). None when the
+    hub has no 'github-pat' secret -- SSH lane stays the default."""
+    try:
+        from . import meshhub
+        tok = meshhub.get_text("github-pat").strip()
+        return (tok, "hub") if tok and _TOKEN_RE.search(tok) else None
+    except Exception:  # noqa: BLE001 -- no hub, no secret: SSH lane
+        return None
+
+
+def _git_env_pat(tok: str) -> tuple[dict, str, str]:
+    """Env + askpass script reading a 0600 temp file. The token never
+    rides argv, the URL, the environment dump of any child (only the
+    file path does), or any log line."""
+    import os
+    import stat
+    import tempfile
+    fd, tokpath = tempfile.mkstemp(prefix="mesh-pat-", text=True)
+    os.write(fd, tok.encode() + b"\n")
+    os.fsync(fd)
+    os.close(fd)
+    os.chmod(tokpath, 0o600)
+    fd, spath = tempfile.mkstemp(prefix="mesh-askpass-", suffix=".sh", text=True)
+    os.write(fd, f"#!/bin/sh\ncat {tokpath}\n".encode())
+    os.close(fd)
+    os.chmod(spath, 0o700)
+    env = dict(os.environ)
+    env["GIT_ASKPASS"] = spath
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env, tokpath, spath
+
+
+def _git(args: list[str], repo: Path | str = REPO, env: dict | None = None) -> tuple[int, str, str]:
     """Run git, total: (rc, out, err), never raises."""
     try:
         p = subprocess.run(["git"] + args, cwd=str(repo),
-                           capture_output=True, timeout=_T, text=True)
+                           capture_output=True, timeout=_T, text=True, env=env)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except subprocess.TimeoutExpired:
         return 124, "", f"git {' '.join(args)}: timeout"
@@ -95,9 +137,27 @@ def status(repo: Path | str | None = None) -> dict:
     rc3, porcelain, _ = _git(["status", "--porcelain"], repo)
     rc4, log, _ = _git(["log", "--format=%h %s", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD",
                         "-n", "50"], repo)
-    # live remote check: the remote's own default branch (never assumed)
+    # live remote check: the remote's own default branch (never assumed).
+    # SSH first; if that lane is dead and the hub holds a PAT, probe the
+    # https lane so the page reports the lane that actually works.
     rc5, sym, err5 = _git(["ls-remote", "--symref", REMOTE, "HEAD"], repo)
     remote_branch = ""
+    lane = "ssh"
+    if rc5 != 0:
+        pat = _pat()
+        pair = _https_pair(remote_url) if pat else ""
+        if pair:
+            env2, tokp2, sp2 = _git_env_pat(pat[0])  # type: ignore[index]
+            try:
+                rc5, sym, err5 = _git(["ls-remote", "--symref", pair, "HEAD"], repo, env2)
+            finally:
+                for p in (tokp2, sp2):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+            if rc5 == 0:
+                lane = "pat/https"
     if rc5 == 0:
         m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
         remote_branch = m.group(1) if m else ""
@@ -108,6 +168,7 @@ def status(repo: Path | str | None = None) -> dict:
         "remote_url": remote_url,
         "remote_branch": remote_branch,
         "remote_live": rc5 == 0,
+        "lane": lane,
         "remote_note": redact(err5)[:160] if rc5 != 0 else "",
         "ahead": int(ahead) if rc == 0 and ahead.isdigit() else -1,
         "behind": int(behind) if rc2 == 0 and behind.isdigit() else -1,
@@ -122,6 +183,12 @@ def push(message: str = "", repo: Path | str | None = None) -> dict:
     Called ONLY behind the confirm gate (route + browser confirm). The
     push itself is a fast-forward plain push: behind => refuse, non-main
     => refuse, remote default != main => refuse.
+
+    Lanes: SSH (origin as configured) by default; when the hub holds a
+    'github-pat' secret and origin is an SSH github URL, network calls
+    ride https + GIT_ASKPASS (the token is read from a 0600 temp file
+    by the askpass script; it never touches argv, URL, logs, or the
+    persistent env -- agent-use-not-see, hub-fed).
     """
     repo = Path(repo) if repo else resolve_repo()
     st = status(repo)
@@ -134,39 +201,63 @@ def push(message: str = "", repo: Path | str | None = None) -> dict:
     msg = redact((message or "").strip())[:200]
     if not msg:
         msg = f"portal: owner-gated push {time.strftime('%Y-%m-%d %H:%M')}"
-    if not st["remote_live"]:
-        return {"ok": False, "why": f"remote unreachable: {st['remote_note']}", "log": log}
-    if st["remote_branch"] and st["remote_branch"] != ALLOWED_BRANCH:
-        return {"ok": False,
-                "why": f"remote default is {st['remote_branch']!r}; the gate pushes {ALLOWED_BRANCH} only",
+    pat = _pat()
+    use_https = bool(pat) and st["remote_url"].startswith("git@") and _https_pair(st["remote_url"])
+    env = tokpath = spath = None
+    if use_https:
+        env, tokpath, spath = _git_env_pat(pat[0])  # type: ignore[index]
+    net_target = _https_pair(st["remote_url"]) if use_https else REMOTE
+    try:
+        if not use_https and not st["remote_live"]:
+            return {"ok": False, "why": f"remote unreachable: {st['remote_note']}", "log": log}
+        if use_https:
+            rc, sym, err5 = _git(["ls-remote", "--symref", net_target, "HEAD"], repo, env)
+            if rc != 0:
+                return {"ok": False, "why": f"pat lane remote unreachable: {redact(err5)[:160]}", "log": log}
+            m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
+            if m and m.group(1) != ALLOWED_BRANCH:
+                return {"ok": False,
+                        "why": f"remote default is {m.group(1)!r}; the gate pushes {ALLOWED_BRANCH} only",
+                        "log": log}
+        elif st["remote_branch"] and st["remote_branch"] != ALLOWED_BRANCH:
+            return {"ok": False,
+                    "why": f"remote default is {st['remote_branch']!r}; the gate pushes {ALLOWED_BRANCH} only",
+                    "log": log}
+        # settle against the remote before deciding (fresh, not cached)
+        rc, out, err = _git(["fetch", "--quiet", net_target], repo, env)
+        if rc != 0:
+            return {"ok": False, "why": f"fetch failed: {redact(err)[:160]}", "log": [f"fetch rc={rc}"]}
+        rc, behind_s, _ = _git(["rev-list", "--count", f"HEAD..{REMOTE}/{ALLOWED_BRANCH}"], repo)
+        behind = int(behind_s) if behind_s.isdigit() else -1
+        if behind > 0:
+            return {"ok": False, "why": f"behind remote by {behind}; pull/rebase first (no force-push lane)",
+                    "log": log}
+        rc, out, err = _git(["add", "-A"], repo)
+        log.append(f"add: {'ok' if rc == 0 else redact(err)[:120]}")
+        if rc != 0:
+            return {"ok": False, "why": "git add failed", "log": log}
+        rc, out, err = _git(["commit", "-q", "-m", msg], repo)
+        if rc == 0:
+            log.append(f"commit: {msg}")
+        elif "nothing to commit" in out + err:
+            log.append("commit: nothing to commit (pushing existing)")
+        else:
+            return {"ok": False, "why": f"commit failed: {redact(err)[:160]}", "log": log}
+        rc, out, err = _git(["push", net_target, f"HEAD:refs/heads/{ALLOWED_BRANCH}"], repo, env)
+        tail = redact((out + "\n" + err).strip()).splitlines()[-4:] if (out + err).strip() else []
+        log.extend(f"push: {l}" for l in tail)
+        if rc != 0:
+            lane = "pat/https" if use_https else "ssh"
+            return {"ok": False, "why": f"push refused by remote ({lane}; see log)", "log": log}
+        _, head, _ = _git(["rev-parse", "--short", "HEAD"], repo)
+        _, ahead_s, _ = _git(["rev-list", "--count", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD"], repo)
+        log.append(f"lane: {'pat/https (token: hub)' if use_https else 'ssh'}")
+        return {"ok": True, "head": head, "remaining_ahead": int(ahead_s) if ahead_s.isdigit() else -1,
                 "log": log}
-    # settle against the remote before deciding (the fetch is the same one
-    # the status made; do it again so the decision is current, not cached)
-    rc, out, err = _git(["fetch", "--quiet", REMOTE], repo)
-    if rc != 0:
-        return {"ok": False, "why": f"fetch failed: {redact(err)[:160]}", "log": [f"fetch rc={rc}"]}
-    rc, behind_s, _ = _git(["rev-list", "--count", f"HEAD..{REMOTE}/{ALLOWED_BRANCH}"], repo)
-    behind = int(behind_s) if behind_s.isdigit() else -1
-    if behind > 0:
-        return {"ok": False, "why": f"behind remote by {behind}; pull/rebase first (no force-push lane)",
-                "log": log}
-    rc, out, err = _git(["add", "-A"], repo)
-    log.append(f"add: {'ok' if rc == 0 else redact(err)[:120]}")
-    if rc != 0:
-        return {"ok": False, "why": "git add failed", "log": log}
-    rc, out, err = _git(["commit", "-q", "-m", msg], repo)
-    if rc == 0:
-        log.append(f"commit: {msg}")
-    elif "nothing to commit" in out + err:
-        log.append("commit: nothing to commit (pushing existing)")
-    else:
-        return {"ok": False, "why": f"commit failed: {redact(err)[:160]}", "log": log}
-    rc, out, err = _git(["push", REMOTE, f"HEAD:refs/heads/{ALLOWED_BRANCH}"], repo)
-    tail = redact((out + "\n" + err).strip()).splitlines()[-4:] if (out + err).strip() else []
-    log.extend(f"push: {l}" for l in tail)
-    if rc != 0:
-        return {"ok": False, "why": "push refused by remote (see log)", "log": log}
-    _, head, _ = _git(["rev-parse", "--short", "HEAD"], repo)
-    _, ahead_s, _ = _git(["rev-list", "--count", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD"], repo)
-    return {"ok": True, "head": head, "remaining_ahead": int(ahead_s) if ahead_s.isdigit() else -1,
-            "log": log}
+    finally:
+        for p in (tokpath, spath):
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
