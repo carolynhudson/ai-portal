@@ -8697,3 +8697,24 @@ absolute path on pi + repo script; manual run rotated pi2 node fp
 0f87->9739addc (age stable). Witness closed earlier: pi2 CONSOLE cert
 rotated ON SCHEDULE (4859->0E90, 443+9443 agree, console 302) -- the
 repaired lane proved end-to-end unattended.
+
+**6.14.1zzs — leaf countdown + the backstop honesty catch.** (a) /mesh
+hub card now counts down THIS node's hub-leaf: "expires in 16.0 h
+(2026-11-16 07:42 PST) · 24h expiry = revocation, the daily timer
+re-mints" (verified against openssl enddate; <6h paints amber). The
+expiry-is-revocation law becomes a visible number: a dead
+mesh-reenroll.timer shows as a countdown before the hub lanes go dark
+401. stdlib PEM decode (no new deps), MESH_DIR override, degrades with
+reason (4 tests). (b) HONESTY CATCH: the HA record claimed a nightly
+"meshhub store backstop" -- pihole-sync.sh contained ZERO meshhub
+lines: claimed, never deployed. Built for real (mesh/hub/deploy/
+meshhub_snapshot.sh + meshhub_snap_apply.sh): nightly tar store+config,
+sha256, 7-deep on pi AND OFF-PRIMARY pi2 /root (root 0600) via the
+root->meshops staging lane; apply verifies seal + unpacks before OK.
+Witnessed: SNAP-OK, pi2 sha256 OK, DRILL-OK complete restore set.
+Mirror = disk-death survival; snapshot = the corruption time machine.
+Restore = unpack newest + meshhub restart (scheduled event, owner).
+Laws: ssh in a stdin-fed script eats the rest of the script (ssh -n);
+ssh -n BREAKS rsync-over-ssh (SSH/RSH split); nested heredoc + ssh -n
+= silently empty inner script. Commits 65dc3da (+ backstop scripts).
+Suite: meshstatus 12/12, UI 119. Memory 201.
