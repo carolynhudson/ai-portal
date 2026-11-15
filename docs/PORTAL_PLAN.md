@@ -8644,3 +8644,19 @@ staged at pi:/home/meshops/forge-bundle (24h leaf, re-mint at enroll
 time if window closes) + kit (docs/mesh-forge-enroll.md,
 forge_enroll.ps1). Owner press at /push when ready; forge answers
 the bench thread when it checks in.
+
+**6.14.1zzp — mesh.status LIVE (MESH_HARNESS_PLAN P2).** /mesh
+(Projects▸Mesh): server-rendered, zero-JS aggregation: hub registry
+(all enrolled nodes, roles, fp, agepub, last-seen bubbles), halo
+router lane (models as configured), forge ComfyUI (0.43.0 live),
+forge llama router (8082; down = honest ConnectTimeout). The
+forge-router probe fetches the ONE-token FROM THE HUB (meshctl
+client-side decrypt) -- provenance printed on the card: **token:
+hub** witnessed live = the portal-side cutover works; file is the
+documented fallback. Hub/token lanes degrade with reasons. app/core/
+meshstatus.py (20s TTL cache: a view polling the hub per request
+starts owning its hot path); forge router URL derived 8188->8082
+(port ledger), AIPP_FORGE_ROUTER_URL override. 8 tests + UI spec
+(zero-JS sweep clean). Commit 65520b3. Stale test identities
+(labtop/macbook, expired leaves) ride the registry -- SILENCE=
+DEPARTED by design; a future meshctl unenroll verb is queued.
