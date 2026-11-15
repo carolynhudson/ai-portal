@@ -1,0 +1,22 @@
+[package]
+name = "meshhub"
+version = "0.1.0"
+edition = "2021"
+description = "HALO mesh hub: node registry + mirrored secrets broker (ciphertext-only custody)"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+rustls-pemfile = "2"
+age = { version = "0.11", features = ["armor"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+rand = "0.8"
+
+[[bin]]
+name = "meshhub"
+path = "src/bin/meshhub.rs"
+
+[[bin]]
+name = "meshctl"
+path = "src/bin/meshctl.rs"

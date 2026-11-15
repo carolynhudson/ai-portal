@@ -739,3 +739,55 @@ upstream is a validating resolver over encrypted DoT (unbound IS
 our validator, proven by delv). Kills ALL 65/113 warnings;
 internet validation unchanged. Window: 4s FTL restart per box,
 DNS rides VIP + standby (drilled shape). Awaiting owner GO.
+
+## 25. MESH HUB LIVE: registry + mirrored secrets broker (2026-11-14)
+
+Owner GO "work on the pihole network services today" -> meshhub
+built + deployed on the pair (design: docs/MESH_HUB_DESIGN.md).
+TCP 9443, mTLS (mesh CA), additive; mesh/hub/ Rust crate in repo
+(meshhub daemon + meshctl client; halo + pair binaries built).
+
+Answered owner asks: (1) NO per-ACL duplication -- age
+multi-recipient: ONE ciphertext, N recipient wraps (measured: 694B
+-> 824B for 2 grants). (2) enumeration = GET /nodes + meshctl
+nodes; designate = put --to a,b; owner-scoped; share = client-side
+RE-ENCRYPT (hub never holds plaintext -> ACL lives in crypto, hub
+compromise cannot widen access). (3) GUID indirection: metadata
+index (id/name/owner/recipients/kind/size/sha) -> blobs/<id>.age;
+leaked id = inert ciphertext. Growth: kind=blob roundtripped 2 MiB
+byte-exact; max_bytes 32 MiB config.
+
+Pair law: WRITER marker (primary, OUTSIDE store dir), standby
+503s writes (TAKEOVER promotes), mirror = per-mutation rsync -aq
+--delete via root->meshops staging + sudo apply (proven nightly
+channel; pi2 root stays locked), store reload-per-request (disk =
+truth; standby registry advances with replication; deletions
+prune; stale blobs inert by design). Audit = journald metadata
+only (op/who/obj/res; no payloads -- witnessed). Node identities:
+admin-mint lane = root-signed 24h leaf (step certificate create
+--ca-key encrypted --ca-password-file; root key never
+plaintext-on-disk; step-kms-plugin 0.11.3 installed to satisfy
+0.31 crypto; token/JWK lane parked (plain mesh.json unreadable
+by LoadKey; CLI 0.31 sign needs plugin protocol this build
+lacks)). 24h node cert expiry = revocation: pi2 showed 401 on
+expiry mid-test (model proven). Enrolled trio: halo/labtop/pihole2.
+
+BONUS FINDING (renewal hardening): certbot units had
+Environment=REQUESTS_CA_BUNDLE in [Unit] (ignored) -> first real
+renewal would have failed TLS; renewal oneshots had default 90 s
+timeout vs certbot's 0-60min non-interactive random delay -> every
+real renewal would have been KILLED mid-delay. Both fixed:
+/usr/local/bin/certbot-renew-run.sh (env + renew + meshhub restart)
++ TimeoutSec=3600, on BOTH boxes; forced renewal in flight with
+serial rotation witness (background). Nightly pihole-sync.sh gains
+meshhub store backstop (snapshot tar + staging rsync).
+
+E2E witnessed: put/get/recipient-read/DENY-403/share/grant-read,
+standby-503, mirror witness on pi2, blob exactness, audit lines,
+enumeration, 401-after-cert-expiry. Hub code traps fixed during
+build: persist_nodes/index must serialize per-map (whole-Store
+write poisoned typed loads); Stream::new(&mut conn, &mut sock);
+WebPkiClientVerifier replaces AllowAnyAuthenticatedClient; age
+0.11.5 API (with_recipients(Iter), ArmoredWriter, Identity::
+generate, Decryptor::new(ArmoredReader)); standby memory staleness
+(reload per request).

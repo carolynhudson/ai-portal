@@ -8597,3 +8597,16 @@ triggers + calendars). Claims tuning on 0.30.2 flaky (seeds strip
 claims on pi; memory backend kills ACME; badger block shape has
 version-specific key) -> parked; 24h certs + 5h timers = supported.
 All pair witnesses green; root d570fecf unchanged.
+
+**6.14.1zzm — mesh hub BUILT and LIVE on the pair.** Registry +
+mirrored ciphertext-only secrets broker (docs/MESH_HUB_DESIGN.md;
+mesh/hub/). Owner trio answered: multi-recipient age (no dup),
+enumeration + owner-designated ACL with client-side re-encrypt,
+metadata indirection; blob kind 2MiB exact. Single-writer WRITER
+marker + standby 503 + staging/apply mirror (delete-pruning) +
+reload-per-request. Admin-mint enrollment (root-signed 24h leaves;
+expiry=revocation witnessed). Renewal hardening: certbot wrapper
+(CA bundle env was silently dead in units; 90s timeout vs 60min
+random delay) both boxes. Next: portal P0 (app/core/secrets.py
+client + subagent_key migration), forge enrollment bundle, node
+cert daily re-enroll automation.

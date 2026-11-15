@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/mime_guess/63ca761268733cb8/out/mime_types_generated.rs

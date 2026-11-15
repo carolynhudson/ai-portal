@@ -1,0 +1,11 @@
+/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/zeroize/37fd3fbc3c06cdb4/out/zeroize-37fd3fbc3c06cdb4.d: /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/lib.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/x86.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/barrier.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/stack.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/../README.md
+
+/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/zeroize/37fd3fbc3c06cdb4/out/libzeroize-37fd3fbc3c06cdb4.rlib: /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/lib.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/x86.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/barrier.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/stack.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/../README.md
+
+/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/zeroize/37fd3fbc3c06cdb4/out/libzeroize-37fd3fbc3c06cdb4.rmeta: /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/lib.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/x86.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/barrier.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/stack.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/../README.md
+
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/lib.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/x86.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/barrier.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/stack.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zeroize-1.9.1/src/../README.md:

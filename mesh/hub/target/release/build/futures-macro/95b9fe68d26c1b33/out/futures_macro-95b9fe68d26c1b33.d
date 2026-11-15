@@ -1,0 +1,9 @@
+/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/futures-macro/95b9fe68d26c1b33/out/futures_macro-95b9fe68d26c1b33.d: /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/lib.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/executor.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/join.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/select.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/stream_select.rs
+
+/home/cortana/ai-projects/ai-portal/mesh/hub/target/release/build/futures-macro/95b9fe68d26c1b33/out/libfutures_macro-95b9fe68d26c1b33.so: /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/lib.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/executor.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/join.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/select.rs /home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/stream_select.rs
+
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/lib.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/executor.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/join.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/select.rs:
+/home/cortana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/src/stream_select.rs:
