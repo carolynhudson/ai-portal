@@ -838,3 +838,32 @@ FTL: zero DS warnings since dns.dnssec=false (last 14:38, logs
 fresh 19:30 pairwide; file totals 158/118 = history). pi2 console
 cert due Nov 15 10:20 PST (monotonic timers armed). Registry:
 halo/labtop/macbook/pihole2.
+
+## 25c. pi2 cert-lane incident, closed (2026-11-15, owner GO)
+
+pi2 console cert (due 10:20 PST) failed to renew twice (02:52,
+07:52): ACME `accountDoesNotExist` -- the CA-db-wipe residue: pi's
+certbot account cache was cleared at the wipe; pi2's was NOT.
+Timers + phase-proof shape ACQUITTED (fired on time; account died).
+
+Repair lane (pi's proven reissue): clear account -> certonly
+--manual (auth-hook http-01, mesh CA dir, ecdsa, deploy hook).
+Three traps caught mid-repair:
+1) certonly landed lineage `pihole2.home.lan-0001` (bare-name
+   archive collision at the first attempt), and
+2) the deploy hook on BOTH boxes was PINNED to
+   /etc/letsencrypt/live/<bare name> -> wrote an EMPTY tls.pem ->
+   FTL TLS dead + meshhub crash-loop (DNS rode through; FTL stayed
+   active). Hook now RENEWED_LINEAGE-driven + refuses empty PEMs,
+   installed on pi AND pi2 (pi pinned = same latent trap).
+3) orphaned renewal conf (bare name, dead account) reappeared ->
+   would poison every timer run; removed; `certbot renew` now
+   passes clean on one lineage.
+Also: `set -e` + `is-active` 3 s after the deploy-hook FTL restart
+= recovery script died mid-window (transient state, not failure).
+Post-repair witness: serial AE9948->485931E9 (24h), tls.pem 2 certs
+KEY-first, FTL active, console 302 under full system trust from
+halo, pi2 hub healthz over mTLS {"ok":true}, DNS local+VIP green.
+Durable laws banked: wipe CA db -> clear certbot account caches on
+EVERY ACME client (pi, pi2); deploy hooks must derive from
+RENEWED_LINEAGE; probes of name-SAN certs use names, not IPs.
