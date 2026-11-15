@@ -8622,3 +8622,25 @@ forge_enroll.ps1). Suite: meshhub 8/8 incl live hub. Queue:
 confirm-gated git-push route consuming hub github-pat via
 GIT_ASKPASS (needs UI round); forge agent cutover (fetch at launch,
 retire file); MacBook node (partner scenario).
+
+**6.14.1zzo — push gate + portal P0 client round closed.** (a)
+app/core/meshhub.py (meshctl-as-crypto-agent client; 8 tests incl
+live hub) + subagent-key migrated (verified, file kept). (b) PUSH
+GATE: /push + /api/push (nav: Projects▸Push) makes "pushes
+owner-only" mechanical -- browser confirm + body confirm = the
+approval; refuses behind/non-main/dead-remote; never force-pushes;
+token-shape redaction on every returned line; refuses no-confirm
+with 400 (witnessed live). Deployed tree is a git-less export, so
+pushgate resolves its repo in layers (AI_PORTAL_REPO env > code
+checkout > deployment.json source_repo -- now recorded by
+app/deploy.py). Live: branch main, ahead 39, behind 0. UI: spec.json
+push page + destructive-shape contract; harness law learned:
+SYNTHETIC_OK.log is a STRING (normalize before join), and no
+setTimeout-reload in the sweep (jsdom navigation in a timer escapes
+the navigation catch -> node crash). Suite 1391/5. Commits 88cc9f0
+fd65672 8211ba7 5b64976 (unpushed -- gate is the vehicle now).
+(c) FORGE ENROLLMENT IN FLIGHT: bench task #24 (promoted) + bundle
+staged at pi:/home/meshops/forge-bundle (24h leaf, re-mint at enroll
+time if window closes) + kit (docs/mesh-forge-enroll.md,
+forge_enroll.ps1). Owner press at /push when ready; forge answers
+the bench thread when it checks in.
