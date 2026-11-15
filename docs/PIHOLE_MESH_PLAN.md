@@ -791,3 +791,9 @@ WebPkiClientVerifier replaces AllowAnyAuthenticatedClient; age
 0.11.5 API (with_recipients(Iter), ArmoredWriter, Identity::
 generate, Decryptor::new(ArmoredReader)); standby memory staleness
 (reload per request).
+
+Renewal witness (forced, 2026-11-14 evening): pi serial 4E05->5A24
+(24h window, full chain incl. meshhub TLS reload, console 302
+throughout); pi2 NOT-due -> clean no-op (timer catches it in the
+last-third; phase-proof timers live). Hub battery green post-churn:
+enumeration + put/get/rm probe + DNS on VIP.
