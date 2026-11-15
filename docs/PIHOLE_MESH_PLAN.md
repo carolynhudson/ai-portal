@@ -824,3 +824,17 @@ enumeration + put/get/rm probe + DNS on VIP.
   forge via the proven meshd relay route).
 - Scripts live in repo scripts/: mesh_migrate.py,
   mesh_reenroll_{halo,pi2}.sh.
+
+Round-2 witnesses (evening): PARTNER SCENARIO PROVEN with a
+enrolled 'macbook' node (roles=partner): node writes its own key
+(sole recipient itself) -> invisible in owner ls, owner get = 403
+not-in-recipient-set, hub journal = metadata only (who=macbook
+put; who=halo get DENIED), partner reads + deletes its own.
+Nuance documented: meshctl put ALWAYS includes the writer as a
+recipient (owner cannot lock self out); invisibility requires the
+partner to be the WRITER -- exactly the MacBook scenario. Mirror
+witness: subagent-key blob replicated to pi2 as armored age text.
+FTL: zero DS warnings since dns.dnssec=false (last 14:38, logs
+fresh 19:30 pairwide; file totals 158/118 = history). pi2 console
+cert due Nov 15 10:20 PST (monotonic timers armed). Registry:
+halo/labtop/macbook/pihole2.
