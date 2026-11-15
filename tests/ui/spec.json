@@ -2569,6 +2569,28 @@
           "contains": "Open a bench"
         }
       ]
+    },
+    {
+      "name": "push",
+      "path": "/push",
+      "expectTitle": "Push",
+      "_comment": [
+        "The push gate (mesh law: pushes owner-only): the page is the approval",
+        "surface. Server-rendered state (load must not fetch), and its one verb",
+        "is the confirm-gated POST. The sweep's dialog-refused pass must leave",
+        "nothing sent; the accepted pass is blocked by blockMutations, so only",
+        "the request shape is exercised (asserted in test_destructive_requests)."
+      ],
+      "expectRequests": [],
+      "expectNoRequests": ["/api/push"],
+      "expectVisible": [".pg-facts", "#pg-go"],
+      "expectText": [
+        {
+          "_comment": "the facts line is the page's honesty contract: it names the counts",
+          "selector": ".pg-facts",
+          "contains": "ahead"
+        }
+      ]
     }
   ]
 }

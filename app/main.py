@@ -56,6 +56,7 @@ from .core import (
     portalsettings,
     presets_store,
     projects,
+    pushgate,
     ratelimit,
     routerctl,
     serviceconf,
@@ -140,6 +141,14 @@ class PresetsRollbackBody(BaseModel):
     """Restore a named presets.ini snapshot. `confirm` for the same reason as above: this
     replaces a file the router reads and restarts the router."""
     stamp: str
+    confirm: bool = False
+
+
+class PushBody(BaseModel):
+    """Commit + push on the operator's word. `confirm` because the mesh
+    law is explicit: pushes to GitHub are owner-approved, so a request
+    that omits it is a refusal, never a push."""
+    message: str = ""
     confirm: bool = False
 
 
@@ -1993,6 +2002,30 @@ def create_app() -> FastAPI:
     def api_workroom(_=Depends(_require_auth)):
         workroom.ensure_seed()
         return {"benches": workroom.list_benches(), "count_pending": workroom.count_pending()}
+
+    # ------------------------------------------------- push gate (owner law)
+    # "pushes owner-only" made mechanical: the operator presses the button,
+    # the browser confirm AND the body's confirm are the approval, and no
+    # agent-facing route reaches pushgate. Status is server-rendered; the
+    # page's one verb is the POST.
+
+    @app.get("/push")
+    def push_page(request: Request, _=Depends(_require_auth)):
+        """What would go (ahead list, remote truth), and the gate's verb."""
+        return templates.TemplateResponse(request, "push.html",
+                                          {"st": pushgate.status()})
+
+    @app.post("/api/push")
+    def api_push(body: PushBody, _=Depends(_require_auth)):
+        if not body.confirm:
+            raise HTTPException(400, {"ok": False,
+                                      "why": "confirm required: the push gate moves code only on the operator's word"})
+        res = pushgate.push(message=body.message)
+        db.event("portal", "push",
+                 f"ok={res.get('ok')} head={res.get('head', '')} why={res.get('why', '')}")
+        if not res.get("ok"):
+            raise HTTPException(422, res)
+        return res
 
     @app.get("/api/workroom/bench")
     def api_workroom_bench(request: Request, _=Depends(_require_auth)):

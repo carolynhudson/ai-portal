@@ -1,0 +1,97 @@
+{# The push gate: pushes are owner-approved (mesh law). This page is the
+   approval surface — it shows exactly what would go, and the only verb is
+   behind a confirm the backend re-checks. Server-rendered (load must not
+   fetch); the POST is the page's one verb. #}
+{% extends "base.html" %}
+{% block title %}Push · HALO{% endblock %}
+{% block body %}
+<style>
+/* page-local only. */
+.pg-grid{display:grid;gap:12px;grid-template-columns:1fr;min-width:0}
+@media(min-width:760px){.pg-grid{grid-template-columns:1fr 1fr}}
+.pg-facts{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.8rem;color:var(--mut)}
+.pg-list{margin:8px 0;padding-left:0;list-style:none;font-size:.88rem}
+.pg-list li{padding:3px 0;border-bottom:1px dashed var(--line);overflow-wrap:anywhere}
+.pg-warn{font-size:.85rem;color:#b26a2b;margin:8px 0}
+.pg-field{display:block;margin:10px 0;font-size:.95em}
+.pg-field input[type=text]{width:100%;box-sizing:border-box;font-family:inherit;margin-top:4px}
+.pg-result{font-size:.85rem;margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.pg-result[data-tone="bad"]{color:#c44}
+.pg-result[data-tone="good"]{color:#2a8f5a}
+</style>
+
+{% if not st.ok %}
+<div class="card"><h3>Push gate</h3>
+  <p class="pg-warn">{{ st.why }}</p>
+</div>
+{% else %}
+<div class="card">
+  <h3>Push gate</h3>
+  <div class="pg-facts">
+    <span>branch <b>{{ st.branch }}</b></span>
+    <span>ahead <b>{{ st.ahead }}</b></span>
+    <span>behind <b>{{ st.behind }}</b></span>
+    <span>uncommitted <b>{{ st.dirty }}</b></span>
+    <span>remote {{ st.remote_url }}</span>
+  </div>
+  {% if not st.remote_live %}
+  <p class="pg-warn">remote not reachable right now: {{ st.remote_note }} — the gate will refuse to push until it answers.</p>
+  {% endif %}
+  {% if st.behind > 0 %}
+  <p class="pg-warn">behind by {{ st.behind }}: pull/rebase first. This gate never force-pushes.</p>
+  {% endif %}
+</div>
+
+<div class="pg-grid">
+<div class="card">
+  <h3>Ready to push ({{ st.ahead }})</h3>
+  <ul class="pg-list" id="pg-commits">
+    {% for c in st.commits %}<li>{{ c }}</li>{% endfor %}
+    {% if not st.commits %}<li>nothing ahead of {{ st.remote_branch or 'origin/main' }}</li>{% endif %}
+  </ul>
+  {% if st.dirty > 0 %}
+  <p class="pg-warn">{{ st.dirty }} uncommitted change(s): the gate stages them with <b>git add -A</b> into its own commit.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Commit &amp; push</h3>
+  <label class="pg-field">Commit message (for the uncommitted changes, if any)
+    <input type="text" id="pg-msg" maxlength="200" placeholder="portal: …">
+  </label>
+  <button id="pg-go" type="button">Commit &amp; push {{ st.ahead }}+ to GitHub</button>
+  <p class="pg-result" id="pg-out" role="status" aria-live="polite"></p>
+</div>
+</div>
+
+<script>
+async function j(url, opts){
+  const r = await fetch(url, Object.assign({credentials:'same-origin'}, opts || {}));
+  let d = null; try{ d = await r.json(); }catch(e){}
+  return {ok: r.ok, status: r.status, d};
+}
+async function pushGo(){
+  const n = {{ st.ahead }};
+  const msg = document.getElementById('pg-msg').value.trim();
+  const out = document.getElementById('pg-out');
+  const btn = document.getElementById('pg-go');
+  if(!confirm(`Push ${n} commit(s) to GitHub as approved by you?\n\nThis is the owner's push gate: nothing moves without this confirm.`)) return;
+  btn.disabled = true; out.dataset.tone = ''; out.textContent = 'pushing…';
+  const r = await j('/api/push', {method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({confirm:true, message: msg})});
+  btn.disabled = false;
+  const d = r.d || {};
+  const lines = Array.isArray(d.log) ? d.log.join('\n') : (d.log ? String(d.log) : '');
+  if(r.ok && d.ok){
+    out.dataset.tone = 'good';
+    out.textContent = 'pushed. head ' + (d.head || '?') + (d.remaining_ahead >= 0 ? ' · ahead now ' + d.remaining_ahead : '') + '\n' + lines + '\n(reload to refresh the list)';
+    btn.disabled = true;
+  } else {
+    out.dataset.tone = 'bad';
+    out.textContent = (d.detail && d.detail.why ? d.detail.why : (d.why || ('refused (http ' + r.status + ')'))) + (lines ? '\n' + lines : '');
+  }
+}
+document.getElementById('pg-go').addEventListener('click', pushGo);
+</script>
+{% endif %}
+{% endblock %}

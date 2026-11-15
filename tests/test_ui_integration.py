@@ -394,6 +394,11 @@ def test_destructive_requests_carry_what_the_backend_needs(ui_server):
             (r"^/api/settings/agents/issue$", {"name", "confirm"}),
             (r"^/api/settings/forge/test$", {"url", "confirm"}),
         ],
+        "push": [
+            # the owner's push gate: the confirm flag is the approval, so
+            # its presence in the wire shape is the whole contract
+            (r"^/api/push$", {"confirm", "message"}),
+        ],
         "models": [
             (r"^/api/models/search$", {"query", "service", "model_type", "limit"}),
             # 6.14.1zm: the add pane's filename/model_dir/category inputs were
