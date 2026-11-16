@@ -112,6 +112,37 @@ def _forge() -> dict:
         return {"ok": False, "url": url, "error": f"{type(e).__name__}"}
 
 
+def _meshd_url() -> str:
+    env = (os.environ.get("AIPP_FORGE_MESHD_URL") or "").strip()
+    if env:
+        return env.rstrip("/")
+    base = _forge_base()
+    if "8188" in base:
+        return base.replace("8188", "8092")  # meshd: the node's own door (port ledger)
+    return ""
+
+
+def _meshd() -> dict:
+    """The forge's node daemon. /healthz is OPEN by design (no token): node
+    facts + the resource verdict -- the cheap card. The MCP door (leases,
+    service control, 22 service cards) is the phase-2 portal integration;
+    this lane proves the door and the facts ride it."""
+    url = _meshd_url()
+    if not url:
+        return {"ok": False, "error": "meshd URL not derivable (set AIPP_FORGE_MESHD_URL)"}
+    try:
+        r = httpx.get(f"{url}/healthz", timeout=3.0)
+        if r.status_code != 200:
+            return {"ok": False, "url": url, "error": f"HTTP {r.status_code}"}
+        d = r.json()
+        return {"ok": True, "url": url, "node": d.get("node"), "version": d.get("version"),
+                "phase": d.get("phase"), "verdict": (d.get("verdict") or {}).get("state"),
+                "vram": d.get("vram_mib"), "ram": d.get("ram"),
+                "disk": d.get("disk_c"), "uptime_s": d.get("uptime_s")}
+    except Exception as e:  # noqa: BLE001 -- lane shows its own truth
+        return {"ok": False, "url": url, "error": f"{type(e).__name__}"}
+
+
 def _forge_router(tok_src: str) -> dict:
     url = _forge_router_url()
     if not url:
@@ -153,6 +184,7 @@ def bundle(force: bool = False) -> dict:
         "leaf": _leaf(),
         "router": _router(),
         "forge": fr,
+        "meshd": _meshd(),
         "forge_router": fr_router,
         "token_src": fr_router.get("token_src", "?"),
     }

@@ -2613,6 +2613,11 @@
           "_comment": "the leaf countdown renders in ok AND degraded states",
           "selector": ".ms-grid",
           "contains": "node leaf:"
+        },
+        {
+          "_comment": "meshd = the node-daemon card; renders its reason when the door is down",
+          "selector": ".ms-grid",
+          "contains": "meshd (node daemon)"
         }
       ]
     }

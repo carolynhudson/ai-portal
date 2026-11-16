@@ -28,17 +28,27 @@ def lanes(monkeypatch):
     """Replace every probe with a canned lane; the TTL cache starts cold."""
     monkeypatch.setattr(meshstatus, "_cache", (0.0, {}))
 
-    def set(hub=None, router=None, forge=None, fr=None):
-        if hub is not None:
-            monkeypatch.setattr(meshstatus.meshhub, "nodes", lambda: hub)
-        if router is not None:
-            monkeypatch.setattr(meshstatus, "_router", lambda: router)
-        if forge is not None:
-            monkeypatch.setattr(meshstatus, "_forge", lambda: forge)
+    def set(hub=None, router=None, forge=None, fr=None, meshd=None):
+        """Defaults are inert: no lane may reach a real host from the suite.
+        Lane values may be callables (they get called per probe) or plain
+        dicts (the canned answer)."""
+        inert = {"ok": False, "error": "not probed (test)", "token_src": "none"}
+
+        def val(v, fallback):
+            return v() if callable(v) else (fallback if v is None else v)
+
+        monkeypatch.setattr(meshstatus.meshhub, "nodes", lambda: hub if hub is not None else [])
+        monkeypatch.setattr(meshstatus, "_router",
+                            lambda: val(router, {"ok": False, "error": "not probed (test)"}))
+        monkeypatch.setattr(meshstatus, "_forge",
+                            lambda: val(forge, dict(inert, url="u")))
         if fr is not None:
             fr.setdefault("ok", True)
             fr.setdefault("token_src", "hub")
-            monkeypatch.setattr(meshstatus, "_forge_router", lambda _a: fr)
+        monkeypatch.setattr(meshstatus, "_forge_router",
+                            lambda _a: val(fr, dict(inert, url="u")))
+        monkeypatch.setattr(meshstatus, "_meshd",
+                            lambda: val(meshd, dict(inert, url="u")))
     return set
 
 
@@ -52,6 +62,8 @@ def test_all_down_renders_reasons(monkeypatch):
     monkeypatch.setattr(meshstatus, "_forge_router",
                         lambda _a: {"ok": False, "error": "ConnectError",
                                     "url": "http://f:8082", "token_src": "none"})
+    monkeypatch.setattr(meshstatus, "_meshd",
+                        lambda: {"ok": False, "error": "ConnectError", "url": "http://f:8092"})
     b = meshstatus.bundle(force=True)
     assert b["hub"]["ok"] is False and "not installed" in b["hub"]["error"]
     assert b["router"]["ok"] is False and b["forge"]["ok"] is False
@@ -109,8 +121,7 @@ def test_bundle_cache(lanes, monkeypatch):
     def count_router():
         calls["n"] += 1
         return {"ok": True, "models": []}
-    monkeypatch.setattr(meshstatus, "_router", count_router)
-    lanes(hub=[], forge={"ok": True, "url": "u", "version": None},
+    lanes(hub=[], router=count_router, forge={"ok": True, "url": "u", "version": None},
           fr={"ok": True, "url": "u", "models": []})
     meshstatus.bundle(force=True)
     meshstatus.bundle()
@@ -170,6 +181,39 @@ def test_leaf_degraded_text_renders(client, lanes, monkeypatch):
           fr={"ok": True, "url": "u", "models": []})
     r = client.get("/mesh")
     assert "node leaf:" in r.text and "no cert" in r.text
+
+
+def test_meshd_url_derivation(monkeypatch):
+    monkeypatch.setattr(meshstatus, "_forge_base",
+                        lambda: "http://RainbowBlock.local:8188")
+    monkeypatch.delenv("AIPP_FORGE_MESHD_URL", raising=False)
+    assert meshstatus._meshd_url() == "http://RainbowBlock.local:8092"
+    monkeypatch.setenv("AIPP_FORGE_MESHD_URL", "http://10.0.0.9:9123")
+    assert meshstatus._meshd_url() == "http://10.0.0.9:9123"
+
+
+def test_meshd_card_live_shape(client, lanes):
+    lanes(hub=[], router={"ok": True, "models": []},
+          forge={"ok": True, "url": "u", "version": None},
+          fr={"ok": True, "url": "u", "models": []},
+          meshd={"ok": True, "url": "http://f:8092", "node": "rainbowblock",
+                 "version": "0.3.0", "phase": "2 (status + leases + service control)",
+                 "verdict": "safe", "vram": {"total": 11264, "used": 2262},
+                 "ram": {"total_mib": 64628, "used_mib": 16346}, "uptime_s": 350296})
+    r = client.get("/mesh")
+    assert "meshd (node daemon)" in r.text
+    assert "meshd 0.3.0" in r.text and "safe" in r.text
+    assert "VRAM 2262/11264 MiB" in r.text and "RAM 16346/64628 MiB" in r.text
+    assert "up 4.1 d" in r.text
+
+
+def test_meshd_card_degrades(client, lanes):
+    lanes(hub=[], router={"ok": True, "models": []},
+          forge={"ok": True, "url": "u", "version": None},
+          fr={"ok": True, "url": "u", "models": []},
+          meshd={"ok": False, "url": "http://f:8092", "error": "ConnectError"})
+    r = client.get("/mesh")
+    assert "meshd (node daemon)" in r.text and "ConnectError" in r.text
 
 
 @pytest.fixture()
