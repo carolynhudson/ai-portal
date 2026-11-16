@@ -956,3 +956,15 @@ tcpdump not setuid here). Windows capture laws (mem 205): raw
 proto-58 sockets see ZERO ND; SIO_RCVALL v6 unsupported (26200); WFP
 drops inbound RA at tcpip; pktmon filter -e 0x86DD is the sanctioned
 lane; etl2pcap emits PCAPNG.
+
+## 25h. forge self-heal: portal-side mint lane built (2026-11-16)
+
+scripts/mesh_reenroll_forge.sh + halo user timer mesh-mint-forge
+(nightly 07:35+/-15m): mints the forge leaf on the pi (root CA), stages
+cert pair at ~/ai/state/mesh/forge-bundle/ (0600), purges pi temps.
+The forge's half (bench #41): pull at launch, swap into
+%USERPROFILE%\.mesh KEEPING identity-forge.key, verify nodes+get.
+Witness: staged fp 827F1C2A444D, 24h. LAW: never mute a CA mint --
+the first run failed silently (muted) and the bundle sat empty; a
+timer journal must show the reason. Docs: mesh-forge-enroll.md gains
+the self-heal section.

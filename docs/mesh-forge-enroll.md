@@ -56,3 +56,22 @@ lane as enrollment).
 
     meshctl.exe nodes            (registry enumeration)
     meshctl.exe get subagent-key (prints the key = grant works)
+
+## Re-enroll (self-heal) -- portal automates the mint (2026-11-16)
+
+The portal rotates a forge leaf EVERY NIGHT and stages it here (the
+mesh-mint-forge systemd user timer, ~07:35 PST +/-15m; the pair-side CA
+signs, the pi temps are purged, files land 0600):
+
+    cortana@halo.local:~/ai/state/mesh/forge-bundle/cert.crt
+    cortana@halo.local:~/ai/state/mesh/forge-bundle/cert.key
+
+Self-heal at the forge's launch (and after any long sleep): if
+`%USERPROFILE%\.mesh\cert.crt` has `notAfter` under ~6 h, pull the
+bundle (ssh/scp as the same identity that clones the repo), copy over
+`%USERPROFILE%\.mesh\cert.crt` + `cert.key` -- **keep
+`identity-forge.key` untouched** (grants key to the age pubkey; the hub
+migrates record ownership name -> new fingerprint). Verify:
+`meshctl.exe nodes` and `meshctl.exe get subagent-key`. Do not print
+the key. Staged leaf is short-lived (24 h) and carries no CA key
+material; expiry = revocation, so a stale bundle is simply refused.
