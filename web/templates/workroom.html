@@ -10,9 +10,21 @@
 /* page-local only. */
 .wr-benches{display:grid;gap:8px;margin:8px 0}
 .wr-bench{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;
-  padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+  padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  position:relative;min-height:44px;cursor:pointer}
 .wr-bench.on{border-color:var(--acc)}
 .wr-bench a{font-weight:600}
+/* stretched link: the WHOLE tile registers (owner ask: title-only clicks
+   made bench switching feel dead away from the text); 44px tap floor. */
+.wr-bench a::after{content:"";position:absolute;inset:0;border-radius:8px}
+.wr-bench a:focus-visible::after{outline:2px solid var(--acc);outline-offset:2px}
+.wr-win{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.8rem;color:var(--mut);margin:6px 0}
+.wr-old{margin:10px 0 4px;border:1px dashed var(--line);border-radius:8px;padding:6px 10px}
+.wr-old>summary{cursor:pointer;font-size:.85rem;color:var(--mut);min-height:28px}
+.wr-oldrow{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;font-size:.8rem;
+  padding:5px 0;border-top:1px dashed var(--line)}
+.wr-oldrow>a{white-space:nowrap;font-weight:600}
+.wr-oldtext{color:var(--mut);overflow-wrap:anywhere;flex:1;min-width:0}
 .wr-goal{color:var(--mut);font-size:.82rem;grid-column:1/-1}
 .wr-facts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.75rem;color:var(--mut);grid-column:1/-1}
 .wr-badge{font-size:.72rem;padding:2px 8px;border-radius:9px;background:rgba(210,153,34,.18);
@@ -62,6 +74,14 @@
   <h3>{{ bench.title }} <span class="mut mono" style="font-weight:400;font-size:.8em">{{ bench.slug }}</span></h3>
   {% if bench.goal %}<p class="mut">{{ bench.goal }}</p>{% endif %}
 
+  <div class="wr-win">
+    <span>newest first · {{ shown }} of {{ total }} shown</span>
+    {% if total > shown %}
+    <a href="/workroom?bench={{ bench.slug }}&n={{ [n + 15, total, 200]|min }}">show {{ [15, total - n]|min }} more</a>
+    {% endif %}
+    {% if opens %}<a href="/workroom?bench={{ bench.slug }}&n={{ n }}">collapse opened</a>{% endif %}
+  </div>
+
   {% for p in posts %}
   <div class="wr-post" data-status="{{ p.status }}"{% if p.thread %} data-reply="yes"{% endif %}>
     <div class="wr-head">
@@ -88,6 +108,19 @@
   {% endfor %}
   {% if not posts %}
   <span class="mut">no posts yet — the first word on this bench starts its record.</span>
+  {% endif %}
+
+  {% if older %}
+  <details class="wr-old">
+    <summary>older on this bench: {{ older|length }} collapsed to first lines
+      (age · kind · source) — click a row to expand it here</summary>
+    {% for p in older %}
+    <div class="wr-oldrow" data-id="{{ p.id }}">
+      <a href="/workroom?bench={{ bench.slug }}&n={{ n }}&open={{ (opens + [p.id]) | map('string') | join(',') }}">#{{ p.id }} {{ p.kind }} · {{ p.author }} · {{ p.ago }}{% if p.status == "pending" %} · pending{% endif %}</a>
+      <span class="wr-oldtext">{{ p.preview }}</span>
+    </div>
+    {% endfor %}
+  </details>
   {% endif %}
 </div>
 {% endif %}

@@ -1990,13 +1990,30 @@ def create_app() -> FastAPI:
         for b in benches:
             b["last_ago"] = (_ago(max(0.0, (time.time() - b["last_post"]) / 3600))
                              if b.get("last_post") else "")
-        slug = request.query_params.get("bench") or (benches[0]["slug"] if benches else None)
+        q = request.query_params
+        slug = q.get("bench") or (benches[0]["slug"] if benches else None)
         b = workroom.bench(slug) if slug else None
-        posts = workroom.posts(b["slug"]) if b else []
-        for p in posts:
+        # Newest-first window (owner ask): the newest n posts render in
+        # full; older ones collapse to one-line rows (age, kind, source,
+        # first line) that expand IN PLACE via ?open=id -- nothing is
+        # lost, the page just stops rendering every transcript per visit
+        # (the cost that made tile clicks feel slow as benches grew).
+        allp = workroom.posts(b["slug"], limit=200) if b else []
+        try:
+            n = max(5, min(int(q.get("n") or 15), 200))
+        except ValueError:
+            n = 15
+        opens = [int(x) for x in re.findall(r"\d+", q.get("open") or "")]
+        newest_first = list(reversed(allp))
+        expanded = {p["id"] for p in newest_first[:n]} | set(opens)
+        for p in allp:
             p["ago"] = _ago(max(0.0, (time.time() - (p.get("created_at") or 0)) / 3600))
+            p["preview"] = (p.get("text") or "").strip().split("\n")[0][:90]
+        rows = [p for p in newest_first if p["id"] in expanded]
+        older = [p for p in newest_first if p["id"] not in expanded]
         return templates.TemplateResponse(request, "workroom.html", {
-            "benches": benches, "bench": b, "posts": posts,
+            "benches": benches, "bench": b, "posts": rows, "older": older,
+            "shown": len(rows), "total": len(allp), "n": n, "opens": opens,
             "count_pending": workroom.count_pending(), "kinds": workroom.KINDS})
 
     @app.get("/api/workroom")
