@@ -8752,3 +8752,21 @@ the merge message) via the harness channel: opencode 2.2.7 API =
 (self-heal re-enroll, stable age identity). Owner-gated queue: radvd
 AdvRDNSSLifetime fix (§25g), ICS-advertiser hunt. Commits: 4c15dd7
 (meshd card + hygiene), d8db7d8 (merge), + this.
+
+**6.14.1zzv — workroom UX (the owner's two asks).** (a) Tiles were
+title-only anchors -> clicks felt dead away from the text; now the
+whole tile is the link (stretched `.wr-bench a::after` + 44 px tap
+floor, CSS only, keyboard focus outline kept). (b) The page rendered
+EVERY post of the bench per visit -> slow to click, slow to reach
+newest as benches grew. Now: newest-first window (default 15, ?n
+paging capped at total, "show N more"), older posts collapse to
+one-line index rows (id, kind, author, age, first-line preview,
+pending flag) that expand IN PLACE via ?open=id (multi-open +
+"collapse opened"); `.wr-win` names shown-of-total (honesty
+contract). Nothing is dropped -- every post stays reachable; zero new
+JS (server-rendered links; harness laws hold: no load-time fetch).
+Live: general bench 15 of 32 expanded, 17 rows, 18 ms render. 5 page
+tests (tests/test_workroom_page.py: private base via module-temp
+AI_PORTAL_HOME -- a thread-local conn patch is INVISIBLE to
+TestClient's worker thread, that's why page tests point the home env)
++ spec entry. Commit 90f3cc1.
