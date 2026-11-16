@@ -240,7 +240,7 @@ fn cmd_enroll(args: &[String]) -> Result<(), String> {
     let idpath = dir.join(format!("identity-{name}.key"));
     // The age identity is STABLE across re-enrolls: grants key to the
     // pubkey, so rotating the cert leaf must never rotate the key.
-    let (idstr, pubstr) = match std::fs::read_to_string(&idpath) {
+    let (_idstr, pubstr) = match std::fs::read_to_string(&idpath) {
         Ok(existing) => {
             let id: age::x25519::Identity =
                 existing.trim().parse().map_err(|e| format!("stored identity corrupt: {e}"))?;
