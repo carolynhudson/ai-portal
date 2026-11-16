@@ -8770,3 +8770,23 @@ tests (tests/test_workroom_page.py: private base via module-temp
 AI_PORTAL_HOME -- a thread-local conn patch is INVISIBLE to
 TestClient's worker thread, that's why page tests point the home env)
 + spec entry. Commit 90f3cc1.
+
+**6.14.1zzw -- PAT lane LIVE (owner minted, 90 d); boot-path truth.**
+Owner minted a fine-grained PAT (repo-scoped, contents:write, 90 d),
+migrated via scripts/mesh_migrate.py github-pat -> hub (recipients:
+halo only), file shredded after verification (shred -u
+github-pat.txt). /push: `lane pat/https`, remote live, no ssh
+dependency -- the ssh-add-per-boot requirement is RETIRED. Gate now
+prints `hub pat N d` (observed age stamp file, no GitHub API) and at
+>=75 d a pg-warn naming the rotation command: expiry as a number, not
+a failed push. TEST LAW (caught live): the real hub's new github-pat
+secret leaked into pushgate unit tests and flipped their lane -- the
+suite was green only because the secret didn't exist yet; the fake
+fixture now neutralizes _pat by default, lane tests opt in. Suite
+must never read live infra state. BOOT PATH (the owner's server
+goal): Linger=yes -> user manager starts at boot WITHOUT login;
+ai-portal + mesh-reenroll.timer (OnBootSec=30m, Persistent) +
+mesh-mint-forge.timer all enabled; BatchMode law = zero prompt
+paths; hub leaf valid 24h so mesh lanes work instantly after reboot
+and re-mint within 30 m. Remote restart -> fully functional, no
+human in the loop. Commit b4d3937.
