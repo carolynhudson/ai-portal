@@ -65,6 +65,9 @@ def fake(tmp_path, monkeypatch):
     log.touch()
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_LOG", str(log))
+    # the hub is REAL for this suite (it holds github-pat now): unit tests
+    # must not inherit its state -- lane tests set _pat explicitly.
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
     return FakeGit(lambda plan: monkeypatch.setenv("FAKE_GIT", json.dumps(plan)), log)
 
 
@@ -275,6 +278,41 @@ def test_status_ssh_lane_when_agent_ok(fake, monkeypatch):
     monkeypatch.setattr(pushgate, "_pat", lambda: None)
     st = pushgate.status()
     assert st["lane"] == "ssh"
+
+
+def test_pat_age_first_sight(fake, tmp_path, monkeypatch):
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "", "agent refused operation"],
+        ["ls-remote --symref https://x-access-token@github.com/carolynhudson/ai-portal.git HEAD",
+         0, "ref: refs/heads/main\tHEAD\nx\tHEAD", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: ("ghp_" + "S" * 36, "hub"))
+    seen = tmp_path / "github-pat-seen"
+    monkeypatch.setattr(pushgate, "_PAT_SEEN", seen)
+    st = pushgate.status()
+    assert st["lane"] == "pat/https" and st["pat_age_d"] == 0
+    assert seen.exists() and st["pat_note"] == ""
+
+
+def test_pat_nudge_at_75_days(fake, tmp_path, monkeypatch):
+    import os as _os
+    import time as _t
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "", "agent refused operation"],
+        ["ls-remote --symref https://x-access-token@github.com/carolynhudson/ai-portal.git HEAD",
+         0, "ref: refs/heads/main\tHEAD\nx\tHEAD", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: ("ghp_" + "S" * 36, "hub"))
+    seen = tmp_path / "github-pat-seen"
+    seen.touch()
+    old = _t.time() - 80 * 86400
+    _os.utime(seen, (old, old))
+    monkeypatch.setattr(pushgate, "_PAT_SEEN", seen)
+    st = pushgate.status()
+    assert st["pat_age_d"] == 80
+    assert "80 d old" in st["pat_note"] and "mesh_migrate.py github-pat" in st["pat_note"]
 
 
 # ---------------------------------------------------------------- route gate

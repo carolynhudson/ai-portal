@@ -24,6 +24,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import paths
+
 REPO = Path(__file__).resolve().parents[2]
 REMOTE = "origin"
 ALLOWED_BRANCH = "main"
@@ -101,6 +103,25 @@ def _net_env(tok: str | None = None) -> tuple[dict, str, str]:
     return env, tokpath, spath
 
 
+_PAT_SEEN = paths.PORTAL_STATE / "github-pat-seen"
+
+
+def _pat_age_days() -> int:
+    """Observed age of the hub's github-pat secret (first seen on THIS
+    box). Approximate by design -- GitHub mints the expiry, the hub only
+    knows the secret; the nudge exists so a 90-day token announces
+    itself as a number before pushes start failing."""
+    try:
+        if not _PAT_SEEN.parent.exists():
+            return -1
+        if not _PAT_SEEN.exists():
+            _PAT_SEEN.touch()
+            return 0
+        return int((time.time() - _PAT_SEEN.stat().st_mtime) / 86400)
+    except OSError:
+        return -1
+
+
 def _pat() -> tuple[str, str] | None:
     """The GitHub PAT, hub-only (agent-use-not-see law). None when the
     hub has no 'github-pat' secret -- SSH lane stays the default."""
@@ -149,8 +170,10 @@ def status(repo: Path | str | None = None) -> dict:
     rc5, sym, err5 = _git(["ls-remote", "--symref", REMOTE, "HEAD"], repo, env1)
     remote_branch = ""
     lane = "ssh"
+    has_pat = False
     if rc5 != 0:
         pat = _pat()
+        has_pat = pat is not None
         pair = _https_pair(remote_url) if pat else ""
         if pair:
             env2, tokp2, sp2 = _net_env(pat[0])  # type: ignore[index]
@@ -169,6 +192,13 @@ def status(repo: Path | str | None = None) -> dict:
         remote_branch = m.group(1) if m else ""
     dirty = len(_lines(porcelain)) if rc3 == 0 else -1
     note = redact(err5)[:160] if rc5 != 0 else ""
+    # The hub cannot know GitHub's expiry stamp, only the age of the
+    # secret we observed: a 90-day token gets a number, not a surprise.
+    pat_age = _pat_age_days() if (has_pat or lane == "pat/https") else -1
+    pat_note = ""
+    if pat_age >= 75:
+        pat_note = (f"hub github-pat observed {pat_age} d old (90 d life): rotate on GitHub, "
+                    f"then scripts/mesh_migrate.py github-pat <file>")
     # An agent/passphrase-shaped refusal has an exact owner remedy; the
     # page should hand it over, not just the verbatim git complaint. The
     # socket named is the one THIS service process rides (portal.env pin).
@@ -189,6 +219,8 @@ def status(repo: Path | str | None = None) -> dict:
         "lane": lane,
         "remote_note": note,
         "hint": hint,
+        "pat_age_d": pat_age,
+        "pat_note": pat_note,
         "ahead": int(ahead) if rc == 0 and ahead.isdigit() else -1,
         "behind": int(behind) if rc2 == 0 and behind.isdigit() else -1,
         "dirty": dirty,

@@ -34,12 +34,14 @@
     <span>behind <b>{{ st.behind }}</b></span>
     <span>uncommitted <b>{{ st.dirty }}</b></span>
     <span>lane {{ st.lane }}</span>
+    {% if st.pat_age_d >= 0 %}<span>hub pat {{ st.pat_age_d }} d</span>{% endif %}
     <span>remote {{ st.remote_url }}</span>
   </div>
   {% if not st.remote_live %}
   <p class="pg-warn">remote not reachable right now: {{ st.remote_note }} — the gate will refuse to push until it answers.</p>
   {% if st.hint %}<p class="pg-hint">{{ st.hint }}</p>{% endif %}
   {% endif %}
+  {% if st.pat_note %}<p class="pg-warn">{{ st.pat_note }}</p>{% endif %}
   {% if st.behind > 0 %}
   <p class="pg-warn">behind by {{ st.behind }}: pull/rebase first. This gate never force-pushes.</p>
   {% endif %}
