@@ -3,6 +3,7 @@
 // age ciphertext. ACLs therefore live in cryptography, not hub config.
 use std::io::{Read, Write};
 use std::net::TcpStream;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +23,10 @@ struct Cfg {
 }
 
 fn meshdir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    // HOME on unix; Windows has USERPROFILE (HOME unset for most processes)
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
     Path::new(&home).join(".mesh")
 }
 
@@ -120,8 +124,13 @@ fn encrypt_for(c: &Cfg, plain: &[u8], to: &[String], nodes: &[Node]) -> Result<S
     age_encrypt(plain, &keys)
 }
 
+#[cfg(unix)]
 fn chmod600(p: &Path) {
     let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn chmod600(_p: &Path) {
+    // Windows: files created under %USERPROFILE% are user-private by ACL inheritance
 }
 
 fn arg(args: &[String], flag: &str) -> Option<String> {
@@ -225,6 +234,7 @@ fn cmd_enroll(args: &[String]) -> Result<(), String> {
 
     let dir = meshdir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
 
     let idpath = dir.join(format!("identity-{name}.key"));
