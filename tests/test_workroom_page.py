@@ -54,8 +54,10 @@ def test_window_newest_first_with_collapsed_index(client):
     # the newest post is expanded; the oldest lives as an index row
     assert ordered[0]["text"][:40] in t
     assert 'class="wr-oldtext"' in t and "post 1 body" in t
-    # the index row names age, kind, source, and links expand-in-place
-    assert "&open=" in t and "#1 note" in t
+    # the index row names age, kind, source, and links expand-in-place.
+    # ids are GLOBAL in the shared suite base (other modules post first),
+    # so never assert an id literal -- derive it.
+    assert "&open=" in t and f"#{ordered[-1]['id']} note" in t
 
 
 def test_open_expands_in_place(client):
