@@ -8807,3 +8807,16 @@ the PAT-leak law generalized); spec entry state-agnostic. app/core/
 meshplace.py. Commit 0441d52. Next consumer step (owner GO): the
 -ngl 99 small-model offload as an actual mesh_lease client (the
 forge's phase-2b ledger gates its admission; presets stay -ngl 0).
+
+**6.14.1zzy -- /place lease panel + the owner RA scanner.** Every door
+now also answers mesh_status: the leases block (count, committed
+VRAM/RAM, per-lease rows id/job/MiB/ttl) renders under the cards; a
+status failure degrades ONLY the lease lane (cards survive; the lane
+names its truth). Summary counts leases + committed (live: "leases 0
+(0 MiB committed)" -- the forge ledger is clean). Wire-shape lesson:
+mesh_status returns the block UNDER 'leases' (my fixture caught the
+double-unwrap). scripts/lan_ra_scan.sh: owner-run sudo RA sniffer for
+the bench-#27 hunt -- per-sender summary (RA count, RDNSS servers,
+lifetime-0 RFC6106 warning, OURS/gateway/UNKNOWN tagging), raw kept;
+parser verified on synthetic capture. 3 tests; MCP transport stays
+injected. Commits d7f6f09 + banking.
