@@ -8718,3 +8718,23 @@ Laws: ssh in a stdin-fed script eats the rest of the script (ssh -n);
 ssh -n BREAKS rsync-over-ssh (SSH/RSH split); nested heredoc + ssh -n
 = silently empty inner script. Commits 65dc3da (+ backstop scripts).
 Suite: meshstatus 12/12, UI 119. Memory 201.
+
+**6.14.1zzt — net-env law + actionable hint (self-correction).** My
+previous round claimed "SSH lane live, no warning" from the page's
+'lane ssh' label. Label != liveness: 'ssh' is the DEFAULT label; the
+truth is remote_live, and the warning was present all along (fetched
+facts div, never checked pg-warn). Honesty catch on my own report.
+Real state: portal rides openssh_agent (portal.env pin) which holds
+zero identities -> ssh fell to passphrase prompts -> ssh_askpass thrash
+(no askpass binary on the box) buried the diagnosis. Fix: every network
+git call now rides GIT_SSH_COMMAND='ssh -o BatchMode=yes' +
+GIT_TERMINAL_PROMPT=0 (fails fast: clean 'Permission denied
+(publickey)'); on agent/passphrase-shaped refusals status() attaches a
+hint naming THE SOCKET THIS SERVICE RIDES + the PAT alternative, and
+/push renders it: "SSH_AUTH_SOCK=/run/user/1000/openssh_agent ssh-add
+~/.ssh/id_ed25519 (once per boot); or ... mesh_migrate.py github-pat".
+_net_env unifies ssh/pat env (PAT 0600 temp pair unchanged, purged in
+finally). Witnessed live: crisp warning + exact hint. 4 tests;
+pushgate 24/24, UI 119. Commit fab7dc3. LAW: lane label is a name,
+liveness is a probe -- pages must gate on the probe, reports must quote
+the warning line.
