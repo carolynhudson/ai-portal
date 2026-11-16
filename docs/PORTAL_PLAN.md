@@ -8790,3 +8790,20 @@ mesh-mint-forge.timer all enabled; BatchMode law = zero prompt
 paths; hub leaf valid 24h so mesh lanes work instantly after reboot
 and re-mint within 30 m. Remote restart -> fully functional, no
 human in the loop. Commit b4d3937.
+
+**6.14.1zzx — /place LIVE (mesh.place P3, read-only).** Service cards
+(NODE_CONTRACT v0) from every meshd door via MCP node_caps (ONE-token
+bearer, hub-first; doors = forge derivation + AIPP_MESH_DOORS env for
+future nodes). The owner's placement policy (mem 210: forge = MINOR
+ASSISTANT until the GPU upgrade) is applied as VISIBLE data: idle
+non-cuda cards rank high, idle cuda-heavy on minor-assistant nodes rank
+med, busy low; the node carries the named marker "minor-assistant
+(owner, mem 210)" -- preference the operator can audit, never a hidden
+bias. No verbs, no leases granted from the page; doors degrade with
+reasons; zero page JS. Witnessed live: 22 cards from 1 door, token:
+hub, ranking honest (chroma_key/cpu high; birefnet/cuda med). 5 tests
+with the MCP transport INJECTED (suite never touches a live door --
+the PAT-leak law generalized); spec entry state-agnostic. app/core/
+meshplace.py. Commit 0441d52. Next consumer step (owner GO): the
+-ngl 99 small-model offload as an actual mesh_lease client (the
+forge's phase-2b ledger gates its admission; presets stay -ngl 0).
