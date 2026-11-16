@@ -35,6 +35,7 @@ from . import router as router_mod
 from .core import (
     agents,
     agentconfig,
+    meshplace,
     meshstatus,
     svc_actions,
     db,
@@ -2057,6 +2058,17 @@ def create_app() -> FastAPI:
         b = meshstatus.bundle(force=refresh)
         b["at_str"] = time.strftime("%H:%M:%S", time.localtime(b.get("at") or 0))
         return templates.TemplateResponse(request, "mesh.html", {"b": b})
+
+    # ------------------------------------------------ mesh.place (P3, read-only)
+    # Service cards (NODE_CONTRACT v0) from every known meshd door, with the
+    # owner's placement policy rendered as a named marker, never hidden.
+
+    @app.get("/place")
+    def place_page(request: Request, refresh: bool = False,
+                   _=Depends(_require_auth)):
+        b = meshplace.bundle(force=refresh)
+        b["at_str"] = time.strftime("%H:%M:%S", time.localtime(b.get("at") or 0))
+        return templates.TemplateResponse(request, "place.html", {"b": b})
 
     @app.get("/api/workroom/bench")
     def api_workroom_bench(request: Request, _=Depends(_require_auth)):

@@ -2578,6 +2578,26 @@
       ]
     },
     {
+      "name": "place",
+      "path": "/place",
+      "expectTitle": "Place",
+      "_comment": [
+        "mesh.place (P3): service cards aggregated from meshd doors, read-only,",
+        "zero page JS. Expectations are state-agnostic on purpose: the summary",
+        "line names the card count and door count in BOTH worlds (doors live, or",
+        "all down with reasons) -- the page must render the mesh with parts down."
+      ],
+      "expectRequests": [],
+      "expectVisible": [".card"],
+      "expectText": [
+        {
+          "_comment": "the summary is the honesty contract: cards and doors counted",
+          "selector": ".card",
+          "contains": "cards from"
+        }
+      ]
+    },
+    {
       "name": "push",
       "path": "/push",
       "expectTitle": "Push",

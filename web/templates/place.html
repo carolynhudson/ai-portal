@@ -1,0 +1,68 @@
+{# mesh.place (P3): service cards from every meshd door, read-only, zero JS.
+   The cards are the NODE_CONTRACT v0 unit; the owner's placement policy
+   (minor-assistant, mem 210) is rendered as a named marker on the node --
+   preference is visible, never a hidden bias. Every door degrades with its
+   reason; the page must render with the mesh down. #}
+{% extends "base.html" %}
+{% block title %}Place · HALO{% endblock %}
+{% block body %}
+<style>
+/* page-local only. */
+.pl-sum{font-size:.82rem;color:var(--mut)}
+.pl-node{margin-top:10px}
+.pl-scroll{overflow-x:auto}
+table.pl{border-collapse:collapse;width:100%;font-size:.82rem}
+table.pl th,table.pl td{text-align:left;padding:5px 8px;border-bottom:1px dashed var(--line);
+  vertical-align:top}
+table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);
+  white-space:nowrap}
+.pl-pref{font-weight:600;white-space:nowrap}
+.pl-pref.high{color:#2a8f5a} .pl-pref.med{color:#b26a2b} .pl-pref.low{color:var(--mut)}
+.pl-err{font-size:.82rem;color:#b26a2b;white-space:pre-wrap;overflow-wrap:anywhere}
+.pl-tag{font-size:.72rem;padding:2px 8px;border-radius:9px;background:rgba(210,153,34,.18);
+  color:#d29922;white-space:nowrap}
+.pl-refresh{font-size:.85rem}
+</style>
+
+<div class="card">
+  <h3>Place · service cards</h3>
+  <div class="pl-sum">{{ b.cards }} cards from {{ b.nodes|length }} door(s) · probed {{ b.at_str or 'just now' }}
+    · ONE-token: {{ b.token_src }} · policy: {{ b.policy }}
+    <a class="pl-refresh" href="/place?refresh=1">re-probe</a></div>
+  <p class="pl-sum">Read-only: cards describe what each node can serve (schema v0).
+    Preference marks idle + the owner's minor-assistant policy; nothing is
+    granted, moved, or started from this page.</p>
+</div>
+
+{% for n in b.nodes %}
+<div class="card pl-node">
+  {% if n.ok %}
+    <h3>{{ n.node }} <span class="pl-tag">cards {{ n.cards|length }}</span>
+      {% if n.policy %}<span class="pl-tag">{{ n.policy }}</span>{% endif %}</h3>
+    <div class="pl-scroll">
+      <table class="pl">
+        <tr><th>service</th><th>fills</th><th>kind</th><th>backend</th><th>vram min</th>
+            <th>conc</th><th>timeout s</th><th>state</th><th>pref</th></tr>
+        {% for c in n.cards|sort(attribute='pref') %}
+        <tr>
+          <td><b>{{ c.service }}</b><div class="pl-sum">{{ c.tier or '' }}</div></td>
+          <td>{{ c.fills|join(', ') if c.fills else '-' }}</td>
+          <td>{{ c.kind }}</td>
+          <td>{{ (c.requires or {}).get('backend', '-') }}</td>
+          <td>{{ (c.requires or {}).get('vram_gb_min', '-') }} GB</td>
+          <td>{{ (c.limits or {}).get('concurrency', '-') }}</td>
+          <td>{{ ((c.limits or {}).get('timeout_s') or ['?','?'])|join('–') }}</td>
+          <td>{{ c.state }}</td>
+          <td class="pl-pref {{ c.pref }}">{{ c.pref }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    <div class="pl-sum">{{ n.url }} · MCP door (node_caps)</div>
+  {% else %}
+    <h3>meshd door {{ n.url }}</h3>
+    <p class="pl-err">{{ n.error }}</p>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}
