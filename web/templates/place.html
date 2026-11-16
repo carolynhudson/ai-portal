@@ -27,7 +27,8 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
 <div class="card">
   <h3>Place · service cards</h3>
   <div class="pl-sum">{{ b.cards }} cards from {{ b.nodes|length }} door(s) · probed {{ b.at_str or 'just now' }}
-    · ONE-token: {{ b.token_src }} · policy: {{ b.policy }}
+    · ONE-token: {{ b.token_src }} · leases {{ b.leased }} ({{ b.committed_vram_mib }} MiB committed)
+    · policy: {{ b.policy }}
     <a class="pl-refresh" href="/place?refresh=1">re-probe</a></div>
   <p class="pl-sum">Read-only: cards describe what each node can serve (schema v0).
     Preference marks idle + the owner's minor-assistant policy; nothing is
@@ -58,7 +59,17 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
         {% endfor %}
       </table>
     </div>
-    <div class="pl-sum">{{ n.url }} · MCP door (node_caps)</div>
+    {% if n.leases %}
+    <div class="pl-sum">leases: {{ n.leases.get('count', 0) }} · committed VRAM
+      {{ n.leases.get('committed_vram_mib', 0) }} MiB · RAM
+      {{ n.leases.get('committed_ram_mib', 0) }} MiB
+      {%- if n.leases.get('error') %} · {{ n.leases.get('error') }}{% endif %}</div>
+    {% for l in n.leases.get('leases', []) %}
+    <div class="pl-sum mono">#{{ l.get('id', '?') }} {{ l.get('job', '') }} · {{ l.get('vram_mib', 0) }} MiB
+      {%- if l.get('ttl_s') %} · ttl {{ l.get('ttl_s') }}s{% endif %}</div>
+    {% endfor %}
+    {% endif %}
+    <div class="pl-sum">{{ n.url }} · MCP door (node_caps · mesh_status)</div>
   {% else %}
     <h3>meshd door {{ n.url }}</h3>
     <p class="pl-err">{{ n.error }}</p>

@@ -32,6 +32,10 @@ CAPS = {
     ],
 }
 
+LEASES = {"leases": {"count": 2, "committed_vram_mib": 4096, "committed_ram_mib": 0,
+          "leases": [{"id": "abc", "job": "offload qwen3-4b", "vram_mib": 4096, "ttl_s": 300},
+                     {"id": "def", "job": "render", "vram_mib": 0}]}}
+
 
 @pytest.fixture()
 def doors(monkeypatch):
@@ -39,8 +43,10 @@ def doors(monkeypatch):
     monkeypatch.setattr(meshplace, "_doors", lambda: ["http://f:8092"])
     monkeypatch.setattr(meshstatus, "_token", lambda: ("TOK", "hub"))
 
-    def set_caps(caps=CAPS):
-        monkeypatch.setattr(meshplace, "mcp_tool", lambda u, t, a, tok: caps)
+    def set_caps(caps=CAPS, leases=LEASES):
+        def call(u, t, a, tok):
+            return caps if t == "node_caps" else leases
+        monkeypatch.setattr(meshplace, "mcp_tool", call)
 
     def set_raise(exc):
         def boom(*a, **k):
@@ -88,7 +94,39 @@ def test_cache(doors):
     meshplace.bundle(force=True)
     meshplace.bundle()
     meshplace.bundle()
-    assert calls["n"] == 1
+    assert calls["n"] == 2  # two tools per door (caps + status), then cache holds
+
+
+def test_leases_aggregate(doors):
+    set_caps, _, _ = doors
+    set_caps()
+    b = meshplace.bundle(force=True)
+    assert b["leased"] == 2 and b["committed_vram_mib"] == 4096
+
+
+def test_mesh_status_failure_keeps_cards(doors):
+    set_caps, _, monkeypatch = doors
+
+    def call(u, t, a, tok):
+        if t == "mesh_status":
+            raise RuntimeError("status door down")
+        return CAPS
+    monkeypatch.setattr(meshplace, "mcp_tool", call)
+    b = meshplace.bundle(force=True)
+    n = b["nodes"][0]
+    assert n["ok"] and len(n["cards"]) == 3          # cards survive
+    assert "status door down" in n["leases"]["error"]  # the lane names its truth
+
+
+def test_page_shows_lease_rows(doors):
+    set_caps, _, _ = doors
+    set_caps()
+    c = TestClient(app)
+    assert c.post("/login", data={"password": os.environ["AI_PORTAL_PASSWORD"]},
+                  follow_redirects=False).status_code == 302
+    t = c.get("/place").text
+    assert "leases 2 (4096 MiB committed)" in t
+    assert "#abc offload qwen3-4b · 4096 MiB · ttl 300s" in t
 
 
 def test_page_renders_live_and_degraded(doors, monkeypatch):

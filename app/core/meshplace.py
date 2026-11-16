@@ -93,8 +93,13 @@ def _node(url: str, tok: str) -> dict:
         cards = caps.get("cards") or []
         for c in cards:
             c["pref"] = _pref(c)
+        leases = {}
+        try:  # a status failure must not kill the cards -- lanes degrade alone
+            leases = (mcp_tool(url, "mesh_status", {}, tok) or {}).get("leases") or {}
+        except Exception as e:  # noqa: BLE001 -- the lane names its own truth
+            leases = {"error": f"{type(e).__name__}: {e}"[:120]}
         return {"ok": True, "url": url, "node": caps.get("node") or url,
-                "cards": cards,
+                "cards": cards, "leases": leases,
                 "policy": "minor-assistant (owner, mem 210)"
                           if (caps.get("node") in _MINOR_ASSISTANT) else ""}
     except Exception as e:  # noqa: BLE001 -- doors degrade with reasons
@@ -109,8 +114,12 @@ def bundle(force: bool = False) -> dict:
     nodes = [_node(u, tok) for u in _doors()] if tok else [
         {"ok": False, "url": "-", "error": "no ONE-token (hub and file both empty)"}]
     n_cards = sum(len(n.get("cards", [])) for n in nodes)
+    leased = sum((n.get("leases") or {}).get("count", 0) for n in nodes if n.get("ok"))
+    committed = sum((n.get("leases") or {}).get("committed_vram_mib", 0)
+                    for n in nodes if n.get("ok"))
     out = {"at": time.time(), "token_src": src, "nodes": nodes,
-           "cards": n_cards, "policy": "minor-assistant nodes: "
+           "cards": n_cards, "leased": leased, "committed_vram_mib": committed,
+           "policy": "minor-assistant nodes: "
            + ", ".join(sorted(_MINOR_ASSISTANT))}
     _cache = (time.time(), out)
     return out
