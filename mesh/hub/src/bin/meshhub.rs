@@ -209,7 +209,7 @@ fn main() {
 
 fn handle(hub: Arc<Hub>, sc: Arc<ServerConfig>, mut tcp: std::net::TcpStream) -> std::io::Result<()> {
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(15)))?;
-    tcp.set_nodelay(true);
+    let _ = tcp.set_nodelay(true); // best-effort: mesh frames are tiny, no Nagle
     let mut conn = rustls::ServerConnection::new(sc)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let mut stream = rustls::Stream::new(&mut conn, &mut tcp);

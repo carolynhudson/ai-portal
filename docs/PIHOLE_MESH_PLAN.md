@@ -903,3 +903,56 @@ use ssh -n for command hops; (2) ssh -n BREAKS rsync-over-ssh (the
 protocol rides stdin) -- keep the SSH/RSH split like pihole-sync.sh;
 (3) nested heredoc + ssh -n = inner script silently empty (no output is
 a diagnosis).
+
+## 25f. the forge wave: meshd enters the tree (2026-11-16)
+
+RainbowBlock, in one day, went from bench-quiet to: enrolled hub node
+(forge, age137mkrudu..., fp e2e86062), meshctl Windows portability
+(aea7d12) + hygiene (074324d) [owner ff-merged, pushed], and meshd
+0.1->0.3.0 LIVE on 8092 (7 MCP tools: mesh_status/node_health/
+node_services/node_caps + mesh_lease/lease_release/mesh_service; TTL
+lease ledger, single-writer, deny-list protecting router/agent/meshd;
+service-card schema v0: 22 cards). Lease-yield physics E2E (phase 2b:
+comfyui yields VRAM to committed leases; router does NOT read the
+ledger -- presets stay -ngl 0). OWNER POLICY (mem 210): forge = MINOR
+ASSISTANT node; portal mesh.place must rank it below bigger GPUs.
+
+SYNC (the user's nudge): the tree had NO meshd (clone-local work).
+Portal posted bench #39, then drove the forge's OWN opencode harness
+(POST /api/session/<id>/prompt, body {text}, Basic auth
+opencode:<ONE-token> -- the registry's OPENCODE_SERVER_PASSWORD note;
+GET /api/session reads work; /api prefix, SPA swallows un-prefixed
+paths; POST /message 404, /prompt is the route). Forge pushed branch
+mesh-meshd (a262436); portal validated (source-only, no secret shapes,
+PS1 pure ASCII, standalone Cargo, ONE-token hub-first w/ honest 503/401,
+binds 127.0.0.1 + firewall gate) and merged --no-ff (d8db7d8). Hub
+build = 0 source warnings halo AND pi (my set_nodelay warning fixed);
+pair binaries redeployed, both hubs active; mesh/hub/target/ untracked
+(1680 artifacts) per the forge's flag. Portal /mesh consumes meshd
+(healthz card) + 8082 lane green with 'token: hub'.
+
+FINDING: forge node leaf EXPIRED (~14.5 h silent in registry; 24h
+expiry = revocation working as designed). meshd degrades to the file
+fallback (by design). Queued forge-side (bench #41): launch-time
+self-heal mirroring halo's import lane (pull minted bundle from halo,
+re-enroll when notAfter < 6h, KEEP the stable age identity).
+
+## 25g. RA capture findings (forge, bench #27) -- owner-gated fixes
+
+External-observer pktmon capture (forge): (1) Comcast gateway
+fe80::9618:65ff:fea5:2ba5 advertises ITS RDNSS (3 Comcast servers)
+185 RAs/110 s -- the upstream competes for IPv6 DNS on every SLAAC
+client, on our LAN. (2) pihole2 radvd TX PROVEN (RDNSS = itself,
+DNS-only, no prefix option) ~11 s period, BUT its RDNSS option parses
+LIFETIME = 0: RFC 6106 says lifetime 0 = "REMOVE this server" -- stubs
+will not KEEP pihole2's DNS. FIX: radvd.conf AdvRDNSSLifetime 1800
+(pi + pi2 wherever RDNSS is advertised; PIHOLE SAFETY LAW: announce +
+ask; radvd restart only). Also zero solicited RA replies (14 RS -> 0)
+-> AdvRASolicitedParam consideration. (3) THIRD advertiser:
+fe80::d6a3:4602:f25d:e171, RDNSS=itself, lifetime 0, ~11 s period =
+Windows-ICS-shaped (ICSHwD): a connection-sharing box advertising DNS
+on the LAN -- hunt it (owner-side; halo-side RA sniff needs sudo --
+tcpdump not setuid here). Windows capture laws (mem 205): raw
+proto-58 sockets see ZERO ND; SIO_RCVALL v6 unsupported (26200); WFP
+drops inbound RA at tcpip; pktmon filter -e 0x86DD is the sanctioned
+lane; etl2pcap emits PCAPNG.

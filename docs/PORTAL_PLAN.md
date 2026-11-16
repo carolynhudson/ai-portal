@@ -8738,3 +8738,17 @@ finally). Witnessed live: crisp warning + exact hint. 4 tests;
 pushgate 24/24, UI 119. Commit fab7dc3. LAW: lane label is a name,
 liveness is a probe -- pages must gate on the probe, reports must quote
 the warning line.
+
+**6.14.1zzu -- the forge wave lands in the tree.** /mesh consumes
+meshd (open healthz card: node/version/phase/verdict/VRAM/RAM/uptime;
+URL 8188->8092 derivation, AIPP_FORGE_MESHD_URL). Lanes fixture: every
+lane defaults INERT (the suite touches zero real hosts) + lane values
+may be callables. Repo: mesh/hub/target/ UNTRACKED (1680 files) +
+.gitignore; hub 0 source warnings (set_nodelay -> let _ =); pair
+binaries redeployed (rebuild law). meshd merge d8db7d8 (validation in
+the merge message) via the harness channel: opencode 2.2.7 API =
+/api prefix + Basic opencode:<ONE-token> + POST /api/session/<id>/prompt
+{text} (POST /message = 404). Forge leaf EXPIRED finding -> bench #41
+(self-heal re-enroll, stable age identity). Owner-gated queue: radvd
+AdvRDNSSLifetime fix (§25g), ICS-advertiser hunt. Commits: 4c15dd7
+(meshd card + hygiene), d8db7d8 (merge), + this.
