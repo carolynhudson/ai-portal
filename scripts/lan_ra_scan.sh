@@ -17,7 +17,10 @@ IF="${2:-any}"
 RAW=/tmp/ra_scan_raw.txt
 command -v tcpdump >/dev/null || { echo "tcpdump missing (apt install tcpdump)"; exit 1; }
 echo "RA scan: ${SEC}s on -i ${IF} (raw -> ${RAW})"
-timeout "$((SEC + 5))" tcpdump -i "$IF" -l -nn -vv 'ip6[53] == 134' 2>/dev/null | tee "$RAW" | python3 - <<'PY'
+# RA type byte sits at IPv6-payload offset 40 (IPv6 hdr 40B, ICMP type
+# first). 'ip6[53]' is the IPv4 fragment-offset trick -- on IPv6 it reads
+# junk, which is why an earlier sniff "saw no RAs" while they flooded.
+timeout "$((SEC + 5))" tcpdump -i "$IF" -l -nn -vv 'ip6[40] == 134' 2>/dev/null | tee "$RAW" | python3 - <<'PY'
 import re, sys, collections
 senders = collections.Counter()
 rdnss = collections.defaultdict(set)
@@ -46,7 +49,8 @@ for block in re.split(r"\n(?=\S+\s+IP6\s+)", txt):
 if not senders:
     print("no RAs seen (root needed for raw sockets? iface up? IPv6 enabled?)")
 for s, n in senders.most_common():
-    tag = "OURS (pihole2 lane)" if s == "fe80::a828:a424:5673:846" else \
+    tag = "OURS (pi2 RDNSS)" if s == "fe80::a828:a424:5673:846" else \
+          "OURS (pi RDNSS)" if s == "fe80::d6a3:4602:f25d:e171" else \
           "gateway" if "9618:65ff" in s else "UNKNOWN -- identify this box"
     print(f"{n:4d} RA  {s:42s} {tag}")
     if rdnss.get(s):

@@ -968,3 +968,36 @@ Witness: staged fp 827F1C2A444D, 24h. LAW: never mute a CA mint --
 the first run failed silently (muted) and the bundle sat empty; a
 timer journal must show the reason. Docs: mesh-forge-enroll.md gains
 the self-heal section.
+
+**25i — RA truth-hunt CLOSED; pair RDNSS 1800 LIVE on the wire.** The
+bench-#27 "third Windows-ICS-shaped advertiser" was **pi itself**:
+fe80::d6a3:4602:f25d:e171 is pi's own link-local, and the RDNSS
+"lifetime 0" the forge pktmon'd was the transient RFC 4861 flush RA
+radvd sends when its interface restarts. No intruder; case closed.
+Real findings, all from the BYTES (config lies, the wire doesn't):
+1. **radvd 2.20 transmits AdvRDNSSLifetime verbatim** (1800 on the
+   wire; no silent clamp) -- the forge's 0 was the flush, not a clamp.
+2. **pi's radvd was SILENT** -- active, running, zero RAs on the wire
+   for 2 days (started at boot and stopped advertising; a restart
+   fixes it, root cause of the silence not chased because the fix is
+   a restart and radvd survived). pi2 is NOT IPv6-DNS-solo anymore.
+3. **pi2's RAs carried NO RDNSS option at all** (config said 600,
+   wire said nothing) -- same silent-radvd family of failure.
+4. **Comcast gateway floods RAs every ~3 s** with 3 global RDNSS
+   servers at ttl 180 -- it dominates IPv6 DNS placement on the LAN
+   by volume; our 1800-ttl pair RDNSS is the stable counterweight.
+   (Owner's no-Google chain applies to OURs: FTL->unbound->Quad9.)
+5. pi2 forwarding = 1 now (Nov 13 radvd warning was stale).
+Fix applied pair-wide (owner GO, announce-clean): config 600->1800,
+timestamped .bak, `radvd -c` check, restart; witnessed on the wire
+from the PEER's NIC: pi `RDNSS fe80::d6a3 ttl 1800`, pi2
+`RDNSS fe80::a828 ttl 1800`. Tools banked: scripts/ra_sniff.py
+(dependency-free AF_PACKET RA sniffer for the Pis -- no tcpdump
+there, apt owner-method; correct offsets: IPv6 src at pkt[22:38], RA
+lifetime icmp[6:8], options at icmp[16:], RDNSS type 25, addrs at
+opt+8; 'rdns' arg filters to DNS-bearing RAs) and scripts/
+lan_ra_scan.sh bpf fix: RA type is ip6[40], NOT ip6[53] (the 53 is
+the IPv4 fragment trick -- it read junk and made the earlier halo
+sniff blind). Sniffer laws banked: parse from the RFC, verify on the
+wire, and the parser itself is a hypothesis (it was wrong twice
+today before it was right).
