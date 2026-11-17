@@ -1001,3 +1001,19 @@ the IPv4 fragment trick -- it read junk and made the earlier halo
 sniff blind). Sniffer laws banked: parse from the RFC, verify on the
 wire, and the parser itself is a hypothesis (it was wrong twice
 today before it was right).
+
+**25j — gateway IPv6 DNS fields identified (owner screenshot).** The
+CAX80 (NETGEAR, Comcast-managed) Advanced->IPv6 page has "Use These
+DNS Servers" -- the takeover session entered the Pis' SLAAC TEMPORARY
+privacy addresses (pi 72c0:abdb:26c2:2a84, pi2 9e38:e994:e647:24cf;
+both confirmed = the noprefixroute addrs Linux rotates every few
+days). Gateway RDNSS = [gateway self (firmware-fixed, the Comcast
+foothold)] + Primary + Secondary. The 3s RA flood is fixed firmware
+behavior, not configurable on this unit. Fix (owner pastes): the EUI-64
+addrs -- pi 2601:602:57f:ee84:2ecf:67ff:fe70:3cae, pi2
+2601:602:57f:ee84:e65f:1ff:fea0:2c44; FTL verified answering on both
+(pihome.lan local + external ok). Prefix-rotation caveat: the four
+interface groups are permanent; only the 2601:602:57f:ee84 prefix can
+change -> repair is mechanical. LAW: NEVER put SLAAC temp addresses in
+any config/registry/UI -- they rotate; use EUI-64 (stable), link-local
+fe80 (prefix-proof, what radvd RDNSS uses), names, or v4 statics.
