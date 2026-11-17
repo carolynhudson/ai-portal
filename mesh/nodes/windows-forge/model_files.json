@@ -67,6 +67,7 @@
     {
       "repo": "madebyollin/texture-fix-vae-for-qwen-image-2.1",
       "file": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+      "dest": "vae\\texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
       "size_gb": 0.63,
       "why": "decode VAE fix by the int8-convrot author; A/B 2026-11-09 sharpness +50 pct (2890 vs 1931), same seed/content. Now the decode VAE in ALL qwen21 contracts. bf16 = hardware-portable (shareable with halo). Lands in models/vae/."
     },
@@ -91,6 +92,7 @@
     {
       "repo": "lightx2v/Qwen-Image-2.1-Lightning-v2-RL",
       "file": "qwen_image_21_lightning_v2_rl_4steps_lora_rank64.safetensors",
+      "dest": "loras\\qwen_image_21_lightning_v2_rl_4steps_lora_rank64.safetensors",
       "size_gb": 0.64,
       "why": "Lightning-v2-RL 4-step distill (from portal research). VALIDATED 2026-11-09: 4 steps = 7 s warm, sharpness 3343 = best of the A/B set -> workflows/qwen21_t2i_lightning4.json is the FASTEST draft lane. Public repo. models/loras/."
     }

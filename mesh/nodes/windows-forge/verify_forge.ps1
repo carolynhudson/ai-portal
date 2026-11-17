@@ -22,6 +22,12 @@ $Inv = Get-Content (Join-Path $PSScriptRoot "model_files.json") -Raw | ConvertFr
 foreach ($row in ($Inv.hf + $Inv.hf_extra + $Inv.copy_from_halo)) {
     # copy rows carry no 'file': the path is the row's 'to' folder + leaf of 'from'
     $f = if ($row.file) { $row.file } else { (Join-Path ($row.to -replace '/', '\') (Split-Path $row.from -Leaf)) }
+    # SAME rule as the installer and tools/fetch_models.ps1: a row's 'dest' is
+    # where the file LANDS. ComfyUI lists models only inside typed folders
+    # (vae, loras, ...), so checking models/<file> for a dest row reports FAIL
+    # on a healthy node (seen 2026-11-16 on the texture-fix VAE + lightning4
+    # LoRA: installed in vae\ and loras\ since 2026-11-09, verify said FAIL).
+    if ($row.dest) { $f = $row.dest }
     $p = Join-Path (Join-Path $Root "ComfyUI\models") $f
     Check ("model: " + $f) (Test-Path $p)
 }
