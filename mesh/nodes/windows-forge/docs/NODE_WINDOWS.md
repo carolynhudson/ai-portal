@@ -83,18 +83,35 @@ is generated on the portal box.
 verify the tool set, then `-Swap` with a `.bak` of the previous release.
 On demand only, never scheduled; a full CUDA build takes a long while, so
 run it in the background. Rollback = restore the `.b<build>` backup.
-BUILD.md records the measured lanes. Report the installed version so the
-portal can compare llama.cpp versions across nodes.
+
+The update writes a version record (`C:\forge\llama\version.json`, from the
+ref it built) and meshd reports it at `GET /healthz` under `"llama"` --
+that field is how the portal compares llama.cpp versions across nodes. No
+file = `null`, so a node never claims a build it does not run; a hand-made
+install records itself with `.\tools\llama_version.ps1`. After any update,
+re-measure (`.\tools\bench_llama.ps1` runs the BUILD.md lanes: GPU home lane
++ CPU lane); BUILD.md keeps the measured baselines.
+
+Smoke the router with `.\tools\router_smoke.ps1 -Ids flint` (load time and
+tok/s for named ids). The router runs `--models-max 1`, so naming ids
+matters: a broad smoke forces model swaps and costs minutes each.
 
 ## 4. Join the mesh (meshd)
 
 Build the node daemon from the repo (source lives in `mesh/meshd`;
 Windows needs a Rust toolchain -- `tools/install_buildtools.ps1`,
-`tools/rust_env_setup.ps1`, then `cargo build --release` in `mesh/meshd`):
+`tools/rust_env_setup.ps1`, then `cargo build --release` in `mesh/meshd`).
+Deploy with `.\tools\deploy_meshd.ps1`: it stops the listener, backs up the
+exe, replaces it, restarts the task and proves the new version answers --
+that order, because Windows refuses to overwrite a running image:
 
-    copy target\release\meshd.exe  C:\forge\bin\
-    .\register_forge_meshd_autostart.ps1
-    .\start_forge_meshd.ps1                 # 8092, MCP, ONE-token bearer
+    .\tools\deploy_meshd.ps1
+    .\register_forge_meshd_autostart.ps1     # task at logon
+    .\start_forge_meshd.ps1                  # 8092, MCP, ONE-token bearer
+
+The door reads the node registry at `C:\forge\etc\services.json` (rows,
+ports, auth mode, idle policy -- it names token FILES, never values). The
+kit carries `services.json` as the template to install there.
 
 Enroll per `docs/mesh-forge-enroll.md` (bundle in `C:\forge\etc\mesh\`,
 `meshctl enroll --name <node>`). Three laws the cheap way:
