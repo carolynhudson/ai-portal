@@ -60,6 +60,7 @@ if ($nvcc) {
     # silent installs can leave InstallDir empty (seen 2026-11-12 with winget
     # Nvidia.CUDA). Inject it as a VS global so the build is registry-independent.
     $cudaRoot = Split-Path (Split-Path $nvcc -Parent) -Parent
+    $cudaBin = $cudaRoot
     $cudaArgs = @("-DGGML_CUDA=ON", ("-DCMAKE_CUDA_ARCHITECTURES=" + $CudaArch), ("-DCMAKE_VS_GLOBALS=CudaToolkitDir=" + $cudaRoot), ("-DCMAKE_CUDA_COMPILER=" + $nvcc))
 } else {
     Write-Output "CUDA toolkit not found - CPU-only build (install CUDA, re-run for GPU path)"
@@ -92,11 +93,45 @@ foreach ($t in $tools) {
     if (-not (Test-Path (Join-Path $binDir $t))) { throw ("staged release missing " + $t) }
 }
 # --version lands on stderr; PS 5.1 + ErrorActionPreference=Stop turns native
-# stderr into a terminating NativeCommandError, so relax the preference for probes
+# stderr into a terminating NativeCommandError, so relax the preference for probes.
+# ggml-cuda.dll needs the CUDA toolkit bin on PATH (CUDA LAW, see launcher) or
+# the probe dies 0xC0000135 (DLL_NOT_FOUND) and reports nothing.
+if ($cudaBin) { $env:PATH = (Join-Path $cudaBin "bin\x64") + ";" + (Join-Path $cudaBin "bin") + ";" + $env:PATH }
 $ua = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& (Join-Path $binDir "llama-cli.exe") --version 2>&1 | Select-Object -First 1 | Out-String
+# PS 5.1 wraps native stderr into error records EVEN UNDER REDIRECTION, giving
+# "llama-cli.exe : version: ..." - so the match must not be anchored at line start.
+$verFile = Join-Path $env:TEMP "llama_ver_probe.txt"
+& (Join-Path $binDir "llama-cli.exe") --version *> $verFile
 $ErrorActionPreference = $ua
+$printed = ""
+if (Test-Path $verFile) {
+    foreach ($ln in (Get-Content $verFile -ErrorAction SilentlyContinue)) {
+        if ($ln -match 'version:\s*(.+)$') { $printed = $Matches[1].Trim(); break }
+    }
+    Remove-Item $verFile -Force -ErrorAction SilentlyContinue
+}
+Write-Output ("built version string: " + $printed)
+
+# --- version record (CROSS-NODE VERSION SYNC, owner ask 2026-11-16) ----------
+# Each node records the llama.cpp build it ACTUALLY built, next to the install.
+# meshd reports this file at GET /healthz under "llama" (null when absent), so
+# the portal can compare llama.cpp versions across nodes and place work with it.
+# Rule: the record is written by the builder from the ref it built - never by
+# hand, and a staged (undeployed) release carries its own copy in its own dir.
+$verObj = [ordered]@{
+    version         = $(if ($printed) { $printed } else { $ver })
+    printed_version = $printed
+    sha             = $sha
+    ref             = $Ref
+    cuda_arch       = $CudaArch
+    node            = $env:COMPUTERNAME
+    source          = "updater"
+    built_utc       = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+}
+$verPath = Join-Path $stage "version.json"
+$verObj | ConvertTo-Json -Compress | Set-Content -Path $verPath -Encoding ASCII
+Write-Output ("version record: " + $ver + " (" + $sha + ") -> " + $verPath)
 
 if (-not $Swap) {
     Write-Output ("STAGED ONLY at " + $stage + " - re-run with -Swap to deploy")
@@ -117,6 +152,7 @@ foreach ($t in $tools) {
     if (Test-Path $cur) { Copy-Item $cur (Join-Path $active ($t + "." + $stampTag + ".bak")) -Force }
 }
 Copy-Item (Join-Path $binDir "*") $active -Recurse -Force
+Copy-Item $verPath (Join-Path $active "version.json") -Force
 Write-Output ("binaries swapped; old ones saved as *." + $stampTag + ".bak in " + $active)
 $ua = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

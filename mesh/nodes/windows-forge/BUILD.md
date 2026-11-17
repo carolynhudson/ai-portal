@@ -109,6 +109,51 @@ Runtime lane switch, NO rebuild: `-ngl 0` = CPU lane (the router's law today);
   current build, no fork. PQ/PTQ types are not mainlined (PTQ1_0 PR#29672
   open; PQ has no PR).
 
+## Version record (CROSS-NODE VERSION SYNC, owner ask 2026-11-16)
+
+Every node records the llama.cpp build it RUNS, next to the install, and its
+mesh door reports it:
+
+    C:\forge\llama\version.json   ->  meshd GET /healthz  "llama" field
+
+Written by the builder, from the ref it built: update_llama.ps1 writes it into
+the staged release dir (and lands it in the active dir on -Swap);
+tools/llama_version.ps1 writes it for installs the updater did not make (hand
+build, fresh node). meshd 0.3.1 passes the file through verbatim and reports
+NULL when it is absent - no version is claimed that was not measured.
+MESHD_LLAMA_VERSION_FILE points a non-Windows node at its own record, so the
+portal compares versions across nodes from one field. The record carries
+"source": "updater" (built by the updater), "release-match" (active exe matched
+by size+mtime against a staged release dir), "exe-mtime" (nothing to match).
+Law: never read the version off the BUILD repo - after a staged build the repo
+sits at the incoming ref, not at what is running (that probe would lie).
+
+Windows probe law (cured 2026-11-16, cost two rounds): llama tools print
+--version to STDERR, and PS 5.1 wraps native stderr into an error record EVEN
+UNDER REDIRECTION ("llama-server.exe : version: 1.0.0-dev (...)"), so a
+line-anchored regex matches nothing - match unanchored. The probe also needs
+the CUDA bin\x64 PATH prefix (see the runtime path law) or it dies 0xc0000135
+and yields an empty string.
+
+## Measured - build 9581154 (1.0.0-dev build 50, CUDA sm_75, live 2026-11-16)
+
+Master tip, built MSVC 19.44 + CUDA 13.5, swapped over 8ca5a80 (backups
+*.pre-20261116-192835.bak). tools/bench_llama.ps1, -t 16, -pg 512,128, r=2:
+
+- Qwen3-4b Q4_K_M **-ngl 99 (GPU)**: pp512 **4528**, tg128 **135.3 +- 0.7**
+  (baseline 8ca5a80: tg64 128, pp256 3723 - GPU lane improved, same home lane).
+- flint Q4_K_M **-ngl 0 (CPU)**: pp512 **156.9**, tg128 **18.14 +- 0.08**
+  (baseline 19.15 tg128, 164 pp512) - a real ~5 pct CPU-lane regression on this
+  host. Watch it: if the next build does not recover it, the CPU decode law
+  for this box moves to ~18 t/s and the flint/nemotron preset budget follows.
+- Router E2E on the new build (tools/router_smoke.ps1, cold loads, 6 ids
+  listed): flint 24.4 s / 20 tok, nemotron 37.3 s / 64 tok. Those are
+  load-dominated, NOT throughput. nemotron content came back empty with
+  reasoning generated - the thinking-template law, not a bug (see baseline
+  note above). Router presets accepted all keys (no presets.ini rejection).
+- Lane discipline for smokes: the router is --models-max 1, so a multi-id smoke
+  forces swaps (minutes each). tools/router_smoke.ps1 asks for named ids only.
+
 ## PENDING (owner gates)
 
 - CUDA toolkit 13.5: DONE 2026-11-12 (winget Nvidia.CUDA + registry
