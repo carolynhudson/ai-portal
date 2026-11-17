@@ -1044,3 +1044,56 @@ pending owner's word. PORTAL HALF LIVE (2f624bc): /mesh renders the
 node-recorded llama build; drift warning withheld (halo exposes no
 /version -- one-sided comparison is not a truth). Cargo.lock law
 answered: binary crates COMMIT their lock (reproducible kit builds).
+
+**25l -- Linux nodes live; halo joins as a node; ONE-code node
+controller law.** Owner asked for meshd + image-forge kits for Linux
+subordinates (Ubuntu-compatible; a Pi5-with-AI-co-processor named as
+the future example) and reiterated the architecture rule: the portal's
+node controller SHOULD be the same code as a subordinate's, config
+only -- a fork is acceptable only if security demands it. VERDICT: no
+fork needed. meshd runs on halo as THE SAME BINARY the forge runs
+(0.3.3, same tree, built clean on x86_64-linux -- which also closes
+the forge's long-unverified cross-compile claim; Cargo.lock now
+committed per law). Linux port is env over forge defaults
+(MESHD_ROOT/MESHCTL/NODE_NAME/ROUTER_URL/MCP_URL/SERVICES_FILE/
+LEASES_FILE), cross-platform path joins (backslash joins broke
+Linux), ss -ltnp listener probe, kill -KILL, bash launchers; Windows
+behavior untouched (defaults byte-identical). Five hardcoded
+rainbowblock card sites found by wire (halo's /place rows rendered as
+'rainbowblock' until node_name() covered every site). THE PORTAL'S
+SPECIALNESS IS NOT IN MESHD: it is hub-side (meshctl + mTLS identity,
+ACL'd secret grants -- github-pat rides to halo alone), portal-side
+code (app/core/*), and the deny-list (DENY_STOP gains 'portal': a
+mesh command can never stop the brain riding the box). KIT:
+mesh/nodes/linux/ (install / systemd-user register / selfheal port of
+mesh_selfheal.ps1 (temp-copy enroll, stale-bundle refusal, roles) /
+verify / observation-only services template (Pi-hole pair nodes:
+launcher-less rows ONLY, Pi-hole safety law) / llama_version.sh
+(release-dir match; never reads the build repo)) and
+mesh/nodes/linux-forge/ (lane-detect installer + start_comfy.sh with
+the OWNER RAM LAW IN CODE: refuses <24 GiB available, refuses while
+llama-server RSS > 4 GiB -- witnessed live: 26 GiB router resident ->
+REFUSED; gates never unload, never kill: unloading = owner migration
+lane). HALO IS A MESH NODE: ~/forge layout, systemd user meshd, llama
+record b12359 gfx1151 (release-dir-match + lspci-strix, source
+disclosed), /healthz + MCP door live, /place = 44 cards / 2 doors,
+halo's 22 router cards state 'catalog', no image cards (no forge-mcp
+= honest, not fake-idle). MESHD_BIND LAW: meshd CLI default stays
+0.0.0.0 (forge: LAN door + firewall gate) but the LINUX KIT writes
+127.0.0.1 -- halo has no host firewall, and 0.0.0.0:8092 was
+witnessed open on halo the same session it joined; closed before this
+journal ran. LAN exposure on a Linux node = opt-in + firewall gate to
+the portal IP. systemd laws banked: ExecStart expands plain ${VAR}
+from EnvironmentFile but NOT bash-style ${VAR:-default}; a kit
+heredoc template must escape \${VAR} to survive generation (unescaped
++ set -u killed the generator live). Kit register fixes proven:
+status-server subcommand, logs dir pre-created (209/STDOUT), escaped
+bind. cert self-heal witnessed unattended: 23 h left at verify (was
+3 h the evening before -- the nightly mint lane carried halo). ONE
+llama api key audit lane: hub secret 'llama-api-key' (recipients
+halo,forge; source shredded) + llamakey.bundle() probes every mesh
+router with/without the key (guarded / open / guarded-mismatch /
+down); LIVE TRUTH: halo :8080 OPEN (unguarded), forge :8082
+guarded-mismatch (the ONE-token guards it today). READ-ONLY by law:
+setting the key restarts a router = model swap = owner lane; the SET
+verb rides meshd's confirm-gated path (bench ask).

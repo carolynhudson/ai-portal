@@ -8834,3 +8834,29 @@ the refspec too; dead remote skips the fetch (counts local, page says
 so). 4 tests (refresh-before-count ordering, pat refresh token-free,
 dead-remote skip, push refspec). Live witness: gate healed from the
 stale "ahead 2" to honest "ahead 1" (the fix commit itself).
+
+**6.14.1zzza -- mesh API-key audit card; the clobber law.** Owner
+goal: when the portal routes llama.cpp traffic, ONE api key guards
+every network-accessible router in the mesh. The halo half ALREADY
+EXISTED (e4b3428: llamakey.generate/revoke/reveal/live_state/
+request_headers/web_ui_url -- --api-key-file wiring + live probe).
+New mesh half lives IN that module: canonical() = hub secret
+'llama-api-key' (hub down says so); _probe classifies guarded/open/
+guarded-mismatch/down per router; bundle() aggregates halo + forge
+router (local_match as bool only, 60 s cache). /mesh renders the card
+(source + length + policy, per-router verdict); the hazard state is
+NAMED: halo :8080 = 'OPEN (unguarded)', forge :8082 = guarded
+key-mismatch (the ONE-token guards it today). Read-only by law:
+applying the key = router restart = model swap = owner migration
+lane; remote SET = meshd confirm-gated verb (bench ask). AIPP_MESH_
+DOORS now lists halo's own door (http://127.0.0.1:8092) beside the
+forge's -- /place: 44 cards, 2 doors. TWO LAWS BANKED THE HARD WAY:
+(1) Jinja bundle keys must not collide with dict METHODS -- 'keys'
+made b.keys resolve to the bound method, rows silently vanished;
+renamed 'keyaudit'. (2) NEVER write over a tracked path without
+reading it first: my new 'llamakey.py' write CLOBBERED the existing
+module, app/router.py's web_ui_url call exploded, the dashboard pulse
+rendered empty -- deterministic, bisected, caught by the UI suite
+before any commit. Restore-from-HEAD + merge-append restored the
+original intact (+42 network tests pass). The UI suite is the net:
+it caught a crash my unit tests did not model.

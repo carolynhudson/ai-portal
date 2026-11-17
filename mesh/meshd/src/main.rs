@@ -722,7 +722,7 @@ impl Meshd {
     }
 }
 
-#[tool_handler(name = "meshd", version = "0.3.2",
+#[tool_handler(name = "meshd", version = "0.3.3",
                instructions = "Forge node controller (meshd phase 2): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd). All tools bearer-gated (ONE-token, hub-first).")]
 impl ServerHandler for Meshd {}
 

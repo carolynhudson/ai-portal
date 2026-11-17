@@ -27,6 +27,7 @@ layout, behavior unchanged).
 |---|---|---|
 | MESHD_ROOT | node home | `C:\forge` -> set to `~/forge` |
 | MESHD_MESHCTL | meshctl binary (absolute -- cron/systemd PATH law) | `<root>/etc/mesh/meshctl.exe` / `meshctl` |
+| MESHD_BIND | MCP-door bind (consumed by the systemd unit as `--bind`) | CLI default `0.0.0.0` (forge: LAN door + firewall gate). **The Linux kit writes `127.0.0.1`** - a box without a host firewall must not expose the door; LAN exposure is opt-in and only with a firewall gate to the portal IP |
 | MESHD_NODE_NAME | name on service cards | `rainbowblock` |
 | MESHD_ROUTER_URL | llama.cpp router to list ids from | `http://127.0.0.1:8082` |
 | MESHD_MCP_URL | forge-mcp door (image contracts) | `http://127.0.0.1:8096` |

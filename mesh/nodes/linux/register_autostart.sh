@@ -13,7 +13,7 @@ After=network-online.target
 
 [Service]
 EnvironmentFile=$MESHD_ROOT/etc/meshd.env
-ExecStart=$MESHD_ROOT/bin/meshd status-server --port 8092
+ExecStart=$MESHD_ROOT/bin/meshd status-server --bind \${MESHD_BIND} --port 8092
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:$MESHD_ROOT/logs/meshd.log
