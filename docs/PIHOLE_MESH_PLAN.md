@@ -1017,3 +1017,30 @@ interface groups are permanent; only the 2601:602:57f:ee84 prefix can
 change -> repair is mechanical. LAW: NEVER put SLAAC temp addresses in
 any config/registry/UI -- they rotate; use EUI-64 (stable), link-local
 fe80 (prefix-proof, what radvd RDNSS uses), names, or v4 statics.
+
+**25k — forge wave validated (bench #43-#48).** The forge landed a
+full node-generation in one night, portal-validated: (1) SELF-HEAL
+DONE -- expired leaf healed from the staged bundle; mesh_selfheal.ps1
+wired at launch (6 h floor, refuses stale bundle notAfter<1 h, enrolls
+from TEMP copies, purges); Windows laws banked: file-copy !=
+registration (fingerprint keys the hub), enroll source != destination,
+X509Certificate2 keeps a handle (.Dispose() before Move-Item). (2)
+WINDOWS NODE KIT in-tree: mesh/nodes/windows-forge/ (75 files:
+install/verify/launchers/autostart/firewall/selfheal/tools) +
+docs/NODE_WINDOWS.md = bare Windows -> verified mesh node. (3) llama.cpp
+UPDATED on the node via the build law (9581154, build 50): GPU lane
+IMPROVED (qwen3-4b tg128 135.3 t/s), CPU lane ~5% REGRESSION recorded
+not waved away (flint 18.14). (4) MESHD 0.3.1/0.3.2: cross-node
+version sync (healthz 'llama' block: printed_version/sha/cuda_arch,
+no file = no claim) + PACK LAW (owner picked (b)): pack=null while
+mesh/contracts/ is plan-only; probe step 13b FAILS any card claiming
+a pack that does not exist -- honesty enforced by kit, not intent.
+(5) #46 retraction: verify_forge gate bug (installer/verifier resolved
+model_files.json rows differently; healthy node failed its own gate)
+-- LAW: a gate FAIL is a hypothesis, check the artifact + read the
+gate's own resolution rule; installer and verifier must resolve rows
+identically (typed folder or dest). 1.3 GB duplicates left in place
+pending owner's word. PORTAL HALF LIVE (2f624bc): /mesh renders the
+node-recorded llama build; drift warning withheld (halo exposes no
+/version -- one-sided comparison is not a truth). Cargo.lock law
+answered: binary crates COMMIT their lock (reproducible kit builds).
