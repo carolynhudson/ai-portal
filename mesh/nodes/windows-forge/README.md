@@ -1,0 +1,115 @@
+# Windows agent — opencode on RainbowBlock, brain in the Halo router
+
+> **The node architecture (services, ports, tokens, idle law, meshd contract)
+> is documented in [ARCHITECTURE.md](ARCHITECTURE.md); the machine-readable
+> service registry is `C:\forge\etc\services.json`. Start there.**
+
+The second lane of the forge plan: the Windows box gets **its own agent**
+(opencode) that thinks with the Halo box's llama.cpp router over the LAN.
+The kit in `../windows-forge` remains the human path; this lane is for
+everything after: parse-error archaeology, install babysitting, upkeep —
+the agent reads `AGENTS.md` (the mission brief: what to do, the hard
+rules, the definition of done) and fixes the box itself.
+
+## Why there is no "llama.cpp" provider in opencode
+
+opencode ships a list of known providers; llama.cpp is not one of them,
+and it doesn't need to be: a llama.cpp server (which is what the router
+is) speaks the OpenAI wire protocol, so you **declare** it as an
+OpenAI-compatible provider. `opencode.json` in this folder is exactly
+that declaration — provider name `llamarouter`, `@ai-sdk/openai-compatible`,
+`baseURL http://192.168.1.228:8080/v1`, four models (the small coders
+that coexist with the portal; the 84 GB resident model is deliberately
+absent, see below). The Desktop app and the TUI read the same config.
+
+## Setup on RainbowBlock.local
+
+1. **CLI** (the Desktop app is beta; the TUI shares its config and is the
+   best-tested path with custom providers):
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   npm install -g opencode-ai
+   ```
+2. **Copy this folder's `opencode.json` and `AGENTS.md` into
+   `C:\forge\kit`** (the forge kit folder). Project-local `opencode.json`
+   scopes the config to the forge work; `AGENTS.md` is picked up the same
+   way. For a global config, put `opencode.json` at
+   `%USERPROFILE%\.config\opencode\opencode.json` instead.
+3. **Link check:**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\check_agent_link.ps1
+   ```
+   Expect the model list. (The router is already bound `0.0.0.0:8080` on
+   this network — `ss` on the Halo box says so. If TCP fails, the router
+   bind is the owner's Settings page, confirm-gated by design.)
+4. **Start the session:**
+   ```powershell
+   cd C:\forge\kit
+   opencode
+   ```
+   Model: the config default - the router's resident model
+   (`ukisai/Swift-1.5-Qwen3.8-Flash-Next…:IQ3_S` as of generation;
+   the config is generated from the live router, see below).
+   First message: `Read AGENTS.md and carry out the mission. Report at the end.`
+
+## The honest trade-offs
+
+* **The agent's brain is the resident model - the owner's choice.** The
+  router runs `--models-max 1` (one resident model; every other catalog
+  id is a swap, not a co-resident). The config is GENERATED from the
+  live router (`tools/sync_agent_models.py` on the portal box): it
+  lists the resident model and nothing else, at its real context -
+  no hand-picked favorites, no invented caps. In the owner's
+  workflow the agent runs while the portal chat is idle, so the
+  shared KV costs nothing, and the box's best model drives the install.
+* **No secrets on this box**: the router is unauthenticated by design
+  (LAN-only trust, the same rule as ComfyUI's firewall pin).
+  `"apiKey": "local"` is a placeholder llama.cpp ignores. Nothing here
+  is worth stealing, so nothing here can leak.
+* **8080 is open to the LAN** (owner's long-standing bind): every LAN
+  device can spend the models. Accepted state, noted in the portal's
+  amber hero pill.
+* **Regenerate, never hand-edit:** if the owner swaps the resident
+  model (portal dashboard), re-run the sync script and re-copy
+  `opencode.json`. A hand-typed model id in this config is a
+  future swap.
+
+## Reading what the Halo box learned (the KB door)
+
+The portal serves its knowledge base as an MCP door over HTTP
+(`docs/MESH_PROPOSAL.md`). The Windows box is the second machine to hold a
+key, and the first one to be able to skip lessons already paid for.
+
+1. On the **Halo box**, issue an identity for this one:
+   ```bash
+   python3 tools/issue_agent_token.py rainbowblock-forge --machine RainbowBlock.local
+   ```
+   The token is printed **once** (the portal stores its hash); the command
+   prints the `mcp` block ready to paste, token included.
+2. Paste that block into `opencode.json` — `opencode.json` in this folder
+   is the shape, with the token left as a placeholder because **secrets
+   never live in kit files**:
+   ```json
+   "mcp": {
+     "halo-kb": {
+       "type": "remote",
+       "url": "http://192.168.1.228:8090/api/mcp",
+       "headers": { "Authorization": "Bearer <token from the command above>" }
+     }
+   }
+   ```
+3. `AGENTS.md`'s boot etiquette then applies: `kb_search` before
+   improvising, cite refs, record one durable fact per fix, never write a
+   secret. A read identity sees four tools; `memory_remove` is on no token.
+
+Rotate by revoking (`python3 -c "from app.core.agents import revoke; print(revoke('rainbowblock-forge'))"`)
+and re-issuing; `last_seen` on the portal shows when the identity last
+passed through the door.
+
+## Files
+
+| file | what |
+|---|---|
+| `opencode.json` | GENERATED by `tools/sync_agent_models.py` (portal box) from the live router: the resident model, real context, capability flags - regenerate after any model swap |
+| `AGENTS.md` | the mission brief: steps, hard rules, definition of done |
+| `check_agent_link.ps1` | TCP + `/v1/models` reachability from Windows |

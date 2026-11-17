@@ -1,0 +1,129 @@
+{
+  "_comment": [
+    "The image-forge remote backend's model inventory. install_forge.ps1 downloads",
+    "the 'hf' rows from Hugging Face; the 'copy' rows come from halo.local over SFTP",
+    "(paths under 'from' are on the Halo box) - they are already paid for, no re-download.",
+    "Dest folders are relative to the ComfyUI root (C:\\forge\\ComfyUI by default);",
+    "a 'dest' field downloads the file from the repo path in 'file' and moves it to 'dest'.",
+    "Qwen-Image-2.1 REPOS ARE PUBLIC (Comfy-Org mirrors): all rows download anonymously - verified",
+    "2026-11-07 (19 GB pulled with no token; 'unauthenticated requests' warning is rate-limit only).",
+    "Only qwen-research ORIGINAL repos (Qwen/Qwen-Image-2.1) need sign-in + license accept.",
+    "Sizes verified against the repos 2026-10-28; PE + BiRefNet sizes verified 2026-11-07."
+  ],
+  "hf": [
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+      "size_gb": 7.3,
+      "why": "Qwen-Image-2.1 unified gen+edit+native-RGBA, int8 (Unsloth: int8 > fp8 by LPIPS; Turing has int8 tensor cores)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+      "size_gb": 7.3,
+      "why": "official Turbo distill \u2014 8-step fast path (drafts)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+      "size_gb": 9.4,
+      "why": "Qwen-Image-2.1's text encoder (Qwen3-VL-8B, int8 tier)"
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "vae/qwen_image_2.1_vae_bf16.safetensors",
+      "size_gb": 0.3,
+      "why": "2.1's dedicated VAE (16x spatial: legal sizes are 32-multiples)"
+    }
+  ],
+  "hf_optional_gguf": [
+    {
+      "repo": "unsloth/Qwen-Image-2.1-GGUF",
+      "file": "qwen-image-2.1-Q4_K_M.gguf",
+      "size_gb": 4.2,
+      "why": "RAM tier for the 11 GiB card (needs ComfyUI-GGUF, installed); repo-root file, lands in models/gguf/ where the loader looks",
+      "dest": "gguf/qwen-image-2.1-Q4_K_M.gguf"
+    }
+  ],
+  "hf_extra": [
+    {
+      "repo": "Comfy-Org/BiRefNet",
+      "file": "background_removal/birefnet.safetensors",
+      "size_gb": 0.42,
+      "why": "local background removal / cutout (RemoveBackground node, public repo). Feeds workflows/birefnet_cutout.json. Lands in models/background_removal/ where LoadBackgroundRemovalModel looks."
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+      "size_gb": 8.82,
+      "why": "official Qwen-Image-2.1 prompt enhancer (t2i). Drives the 'refine on' rewrite in qwen21_t2i_pe.json AND the local LLM->SVG writer (TextGenerate). Public Comfy-Org repo, no token."
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
+      "size_gb": 8.82,
+      "why": "official Qwen-Image-2.1 prompt enhancer (image/edit). For the 'refine on' edit rewrite. Public repo, no token."
+    },
+    {
+      "repo": "madebyollin/texture-fix-vae-for-qwen-image-2.1",
+      "file": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+      "dest": "vae\\texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+      "size_gb": 0.63,
+      "why": "decode VAE fix by the int8-convrot author; A/B 2026-11-09 sharpness +50 pct (2890 vs 1931), same seed/content. Now the decode VAE in ALL qwen21 contracts. bf16 = hardware-portable (shareable with halo). Lands in models/vae/."
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "loras/p_q_image_2.1_5_steps_v0.1_comfyui_bf16.safetensors",
+      "size_gb": 0.31,
+      "why": "official 5-step distill LoRA; validated on-box (10 s warm, sharpness 2905). Feeds workflows/qwen21_t2i_pq5.json. Lands in models/loras/."
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "loras/p_q_image_2.1_8_steps_v0.1_comfyui_bf16.safetensors",
+      "size_gb": 0.31,
+      "why": "official 8-step distill LoRA (on disk, untested; 8-step sigmas noted in pq5 contract meta). models/loras/."
+    },
+    {
+      "repo": "Comfy-Org/Qwen-Image-2.1",
+      "file": "loras/qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors",
+      "size_gb": 0.85,
+      "why": "turbo-as-LoRA (avg rank 178): ANSWERS portal research Q4.1 - base int8 + this lora + official 8-step turbo sigmas RENDERS VALID (sharpness 1444, softer than turbo-int8 weights which stay the mid lane). On disk for base+turbo experiments. models/loras/."
+    },
+    {
+      "repo": "lightx2v/Qwen-Image-2.1-Lightning-v2-RL",
+      "file": "qwen_image_21_lightning_v2_rl_4steps_lora_rank64.safetensors",
+      "dest": "loras\\qwen_image_21_lightning_v2_rl_4steps_lora_rank64.safetensors",
+      "size_gb": 0.64,
+      "why": "Lightning-v2-RL 4-step distill (from portal research). VALIDATED 2026-11-09: 4 steps = 7 s warm, sharpness 3343 = best of the A/B set -> workflows/qwen21_t2i_lightning4.json is the FASTEST draft lane. Public repo. models/loras/."
+    }
+  ],
+  "pip_extra": [
+    "vtracer", "svglib", "reportlab", "rlPyCairo"
+  ],
+  "pip_extra_why": "local SVG/vector lane (tools/svg_tools.py): vtracer raster->SVG, svglib+reportlab+rlPyCairo SVG->PNG verify (Edge headless is the primary rasterizer, no pip needed).",
+  "copy_from_halo": [
+    {
+      "from": "~/ai/comfyui/models/diffusion_models/z_image_turbo_bf16.safetensors",
+      "to": "diffusion_models/",
+      "size_gb": 12.0,
+      "why": "zero-download bring-up pipeline (works before any HF download)"
+    },
+    {
+      "from": "~/ai/comfyui/models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+      "to": "text_encoders/",
+      "size_gb": 4.9,
+      "why": "z-image-turbo's text encoder"
+    },
+    {
+      "from": "~/ai/comfyui/models/vae/ae.safetensors",
+      "to": "vae/",
+      "size_gb": 0.3,
+      "why": "Flux ae VAE (z-image family)"
+    }
+  ],
+  "verify": {
+    "endpoint": "http://127.0.0.1:8188",
+    "probe": "GET /system_stats",
+    "from_halo": "curl -s http://RainbowBlock.local:8188/system_stats"
+  }
+}
