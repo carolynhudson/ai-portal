@@ -8860,3 +8860,44 @@ rendered empty -- deterministic, bisected, caught by the UI suite
 before any commit. Restore-from-HEAD + merge-append restored the
 original intact (+42 network tests pass). The UI suite is the net:
 it caught a crash my unit tests did not model.
+
+**6.14.1zzzb -- mesh_lease client: the portal becomes a placement ACTOR**
+(owner GO). /place grows the VRAM-offload lane, built on four laws:
+(1) ADMISSION IS THE LEDGER -- mesh_lease grants (measured free minus
+committed) BEFORE mesh_router_offload applies -ngl 99; meshd refuses
+apply with no live lease, a RAM-only lease, an expired lease (wire-
+proven on halo 0.3.4: 'commits no VRAM' + dead-lease refusals);
+(2) PRESETS STAY -ngl 0 -- the offload is a per-placement patch on the
+NODE (meshd -> forge-mcp: section-scoped presets.ini edit, timestamped
+.bak, warm ping, measured warm_ms), release reverts the preset; GPU
+weights free at the router's own idle-sleep (900 s) / next model
+switch -- nothing is ever force-unloaded (owner migration law);
+(3) CONFIRM-GATE TWO-PHASE, route-side, zero JS -- phase=gate renders
+the exact effect + nonce; ONLY the nonce's apply runs a verb; nonce is
+single-use, 15 min TTL, memory-only (a restart drops pending gates; a
+stale tab cannot fire); (4) HALO IS NEVER A TARGET -- loopback doors
+refused in the client; halo's router stays the portal's own migration
+lane. New app/core/meshllama.py (offload/release/tracked; state at
+$MESH_DIR/offloads.json; failures UN-ADMIT: a failed apply releases
+the fresh lease immediately -- admission is never stranded).
+meshd 0.3.4: mesh_router_offload verb + forge_mcp_call helper (JSON-
+RPC envelope parse). Kit forge_mcp.py: forge_router_offload(+_revert).
+Rust law banked: std MutexGuard dtors run at SCOPE END, not at
+drop(g) -- a guard held across an await kills the Send future
+(#[tool] futures must be Send): scope guards in blocks. /place: Offload
+button per router card, confirm banner, held-offloads panel with lease
+clock ('expired says so'; renewal = re-offload by law). Bench #49 =
+the forge's E2E task + asked measurement (flint -ngl 99 t/s vs CPU
+135.3 record; yield-physics confirmation). 9 tests; spec gained the
+state-agnostic 'offload' law line. UI-RUNNER LAW learned the hard way:
+the sweep drives listInteractables, which skipped FORM (driven via its
+submit button) but NOT input[type=hidden] -- the gate banner's
+nonce/payload inputs were flagged 'dead control [select-case]'
+(deterministic in the FULL suite, invisible alone: the shared sandbox
+server carried the gate banner onto the later [place] load). Runner
+fixed: hidden inputs are form CARRIER data, no human drives them, the
+sweep skips them. Flake protocol banked: 'passes alone, fails in
+suite' -> reproduce with the full run and read the failures block;
+isolation reruns teach nothing. DEPLOY LAW re-proven: install.sh ships
+git HEAD, not the working tree -- a pre-commit deploy rendered a
+zero-surface page; commit first, deploy second.

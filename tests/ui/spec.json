@@ -2594,6 +2594,11 @@
           "_comment": "the summary is the honesty contract: cards and doors counted",
           "selector": ".card",
           "contains": "cards from"
+        },
+        {
+          "_comment": "the actor law is stated on the page (lease-backed offload), state-agnostic",
+          "selector": ".card",
+          "contains": "offload"
         }
       ]
     },

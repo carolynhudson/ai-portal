@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -675,6 +676,95 @@ def tool_router_stop(a):
             "note": "router process stopped (RAM freed for renders); router_start tool brings it back; the logon task restarts it at next logon"}
 
 
+# VRAM OFFLOAD (mesh_lease actor lane, owner 2026-11-17): mesh presets stay
+# -ngl 0 by law; -ngl 99 happens ONLY as a lease-backed placement, and the
+# admission ticket is checked by meshd (live lease) BEFORE this runs. We edit
+# the node's OWN presets.ini (timestamped backup; section-scoped -ngl), warm
+# the model on demand (router --models-max 1: the switch IS the unload path),
+# and revert to -ngl 0 on release. The token is never printed.
+ROUTER_PRESETS = os.environ.get("FORGE_ROUTER_PRESETS") or r"C:\forge\llama\router\presets.ini"
+
+
+def _presets_set_ngl(model, ngl):
+    """Section-scoped -ngl patch of presets.ini; timestamped .bak. Returns
+    (changed, backup_path). INI sections are [name]; args are one per line."""
+    if not ROUTER_NAME_RE.match(model or ""):
+        raise ValueError("model: id required ([A-Za-z0-9_-])")
+    if not os.path.isfile(ROUTER_PRESETS):
+        raise ValueError("presets file missing: " + ROUTER_PRESETS)
+    lines = open(ROUTER_PRESETS, encoding="utf-8").read().splitlines()
+    sec = None
+    for i, ln in enumerate(lines):
+        t = ln.strip()
+        if t.startswith("[") and t.endswith("]"):
+            if sec is not None:
+                break
+            if t[1:-1].strip() == model:
+                sec = i
+    if sec is None:
+        raise ValueError("no preset section [%s] in %s" % (model, ROUTER_PRESETS))
+    end = len(lines)
+    for j in range(sec + 1, len(lines)):
+        if lines[j].strip().startswith("["):
+            end = j
+            break
+    changed = False
+    for j in range(sec + 1, end):
+        t = lines[j].strip()
+        if t.startswith("-ngl") or t.startswith("--n-gpu-layers"):
+            want = str(ngl)
+            cur = t.split()[-1]
+            if cur != want:
+                indent = lines[j][:len(lines[j]) - len(lines[j].lstrip())]
+                lines[j] = indent + t.split()[0] + " " + want
+                changed = True
+            break
+    else:
+        lines.insert(sec + 1, "-ngl %d" % ngl)
+        changed = True
+    bak = ROUTER_PRESETS + ".bak." + str(int(time.time()))
+    if changed:
+        shutil.copy2(ROUTER_PRESETS, bak)
+        open(ROUTER_PRESETS, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    return changed, (bak if changed else "")
+
+
+def tool_router_offload(a):
+    model = a.get("model")
+    ngl = int(a.get("ngl", 99))
+    ngl = max(1, min(99, ngl))
+    if not ROUTER_NAME_RE.match(model or ""):
+        raise ValueError("model: id required ([A-Za-z0-9_-])")
+    ids = [m["id"] for m in _router_models()]
+    if model not in ids:
+        raise ValueError("unknown model id: %s (known: %s)" % (model, ids))
+    changed, bak = _presets_set_ngl(model, ngl)
+    t0 = time.time()
+    with ROUTER_LOCK:
+        r = requests.post(ROUTER + "/v1/chat/completions",
+                          headers={"Authorization": "Bearer " + _router_key()},
+                          json={"model": model,
+                                "messages": [{"role": "user",
+                                              "content": "Reply with exactly: READY"}],
+                                "max_tokens": 64}, timeout=600)
+        if r.status_code != 200:
+            raise ValueError("offload warm failed: %s %s" % (r.status_code, r.text[:300]))
+        ms = int((time.time() - t0) * 1000)
+    return {"ok": True, "model": model, "ngl": ngl, "preset_changed": changed,
+            "preset_backup": bak, "warm_ms": ms,
+            "models": _router_models(), "free_ram_gb": _free_ram_gb()}
+
+
+def tool_router_offload_revert(a):
+    model = a.get("model")
+    changed, bak = _presets_set_ngl(model, 0)
+    return {"ok": True, "model": model, "ngl": 0, "preset_changed": changed,
+            "preset_backup": bak,
+            "note": "preset back to -ngl 0 (mesh law restored); GPU weights "
+                    "release at the router idle-sleep (900 s) or next model "
+                    "switch; release the meshd lease separately (lease_release)"}
+
+
 TOOLS = {
     "forge_health": {
         "description": "Engine/queue/VRAM/prose/agent liveness, supervisor state, and "
@@ -782,6 +872,24 @@ TOOLS = {
                        "forge_router_start revives it now. No arguments.",
         "schema": {"type": "object", "properties": {}},
         "fn": tool_router_stop},
+    "forge_router_offload": {
+        "description": "Lease-backed VRAM offload: set the preset's -ngl (mesh law: 0 by "
+                       "default; meshd passes 99 ONLY with a live lease) and warm-load the "
+                       "model on demand (measured warm_ms). meshd mesh_router_offload is "
+                       "the authorized caller (admission checked at the ledger).",
+        "schema": {"type": "object", "properties": {
+            "model": {"type": "string"}, "ngl": {"type": "integer"},
+            "ctx": {"type": "integer"}, "lease_id": {"type": "string"}},
+            "required": ["model"]},
+        "fn": tool_router_offload},
+    "forge_router_offload_revert": {
+        "description": "Set the preset back to -ngl 0 (mesh law restored). GPU weights "
+                       "release at the router idle-sleep (900 s) or next model switch; "
+                       "the meshd lease is released separately. mesh_router_offload "
+                       "action=revert is the authorized caller.",
+        "schema": {"type": "object", "properties": {"model": {"type": "string"}},
+                   "required": ["model"]},
+        "fn": tool_router_offload_revert},
 }
 
 

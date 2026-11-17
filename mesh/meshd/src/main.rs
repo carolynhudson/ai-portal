@@ -238,6 +238,40 @@ async fn router_models() -> Value {
     }
 }
 
+// one tools/call to the LOCAL forge-mcp door; parse the JSON-RPC envelope
+// (payload rides result.content[0].text as json; errors -> {ok:false}).
+async fn forge_mcp_call(tool: &str, args: Value) -> Value {
+    let client = reqwest::Client::new();
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": { "name": tool, "arguments": args } });
+    let r = match client
+        .post(format!("{}/mcp", mcp_base()))
+        .header("Accept", "application/json")
+        .json(&body)
+        .timeout(Duration::from_secs(300))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let v = match r.json::<Value>().await {
+        Ok(v) => v,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    if let Some(e) = v.get("error") {
+        return json!({"ok": false, "error": e
+            .get("message").and_then(|m| m.as_str()).unwrap_or("jsonrpc error")});
+    }
+    match v
+        .pointer("/result/content/0/text")
+        .and_then(|t| serde_json::from_str::<Value>(t.as_str().unwrap_or("")).ok())
+    {
+        Some(p) => p,
+        None => json!({"ok": false, "error": "forge-mcp envelope unparseable"}),
+    }
+}
+
 async fn forge_caps() -> Value {
     let client = reqwest::Client::new();
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -586,6 +620,15 @@ struct ServiceArgs {
     action: String, // status | start | stop | restart
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+struct OffloadArgs {
+    model: String,
+    lease_id: String,
+    ctx: Option<u64>,
+    ngl: Option<u64>,   // apply: clamp 1..99 (99 = full offload, owner law)
+    action: String,     // apply | revert
+}
+
 // ---------------- MCP server ----------------
 
 #[derive(Clone)]
@@ -720,10 +763,49 @@ impl Meshd {
         };
         Ok(CallToolResult::success(vec![ContentBlock::json(v)?]))
     }
+
+    #[tool(description = "VRAM offload of ONE router model on THIS node (owner law 2026-11-17: mesh presets stay -ngl 0; -ngl 99 only as a lease-backed placement). action=apply requires a LIVE mesh_lease id (the admission ticket: no lease, no GPU; expired lease, no renewal) and forwards forge-mcp forge_router_offload (preset -ngl patch + on-demand load + measured report). action=revert sets the preset back to -ngl 0 and releases GPU weights at the router's idle sleep / next model switch; release the lease with lease_release. Never touches halo: this is the node's own file, launcher and router.")]
+    async fn mesh_router_offload(&self, Parameters(a): Parameters<OffloadArgs>) -> Result<CallToolResult, McpError> {
+        let ok_model = !a.model.is_empty()
+            && a.model.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !ok_model {
+            return Ok(CallToolResult::success(vec![ContentBlock::json(
+                json!({"ok": false, "state": "refused", "reason": "model id required ([A-Za-z0-9_-])"}))?]));
+        }
+        // guard in a block: std MutexGuard dtors run at scope end, and the
+        // await below needs a Send future (guard must die before it)
+        let lease = {
+            let mut g = LEDGER.lock().unwrap();
+            prune(&mut g);
+            g.iter().find(|l| l.id == a.lease_id).cloned()
+        };
+        let tool = if a.action == "revert" { "forge_router_offload_revert" } else { "forge_router_offload" };
+        if a.action != "revert" {
+            match &lease {
+                None => return Ok(CallToolResult::success(vec![ContentBlock::json(
+                    json!({"ok": false, "state": "refused",
+                           "reason": format!("no live lease {} - mesh_lease is the admission ticket (expired leases are refused; re-grant first)", a.lease_id)}))?])),
+                Some(l) if l.vram_mib == 0 => return Ok(CallToolResult::success(vec![ContentBlock::json(
+                    json!({"ok": false, "state": "refused",
+                           "reason": format!("lease {} commits no VRAM - apply needs a vram_mib lease", a.lease_id)}))?])),
+                Some(_) => {}
+            }
+        }
+        let mut args = json!({"model": a.model, "lease_id": a.lease_id});
+        if a.action != "revert" {
+            args["ngl"] = json!(a.ngl.unwrap_or(99).clamp(1, 99));
+            args["ctx"] = json!(a.ctx.unwrap_or(8192));
+        }
+        let out = forge_mcp_call(tool, args).await;
+        Ok(CallToolResult::success(vec![ContentBlock::json(json!({
+            "node": node_name(), "model": a.model, "lease_id": a.lease_id,
+            "lease_vram_mib": lease.map(|l| l.vram_mib).unwrap_or(0),
+            "forge": out }))?]))
+    }
 }
 
-#[tool_handler(name = "meshd", version = "0.3.3",
-               instructions = "Forge node controller (meshd phase 2): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd). All tools bearer-gated (ONE-token, hub-first).")]
+#[tool_handler(name = "meshd", version = "0.3.4",
+               instructions = "Node controller (phase 2+): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_router_offload applies/reverts lease-backed VRAM offload via forge-mcp (presets stay -ngl 0; apply requires a live lease); mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd, portal). All tools bearer-gated (ONE-token, hub-first).")]
 impl ServerHandler for Meshd {}
 
 // ---------------- main ----------------

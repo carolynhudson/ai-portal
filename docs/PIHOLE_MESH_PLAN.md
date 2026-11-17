@@ -1097,3 +1097,18 @@ down); LIVE TRUTH: halo :8080 OPEN (unguarded), forge :8082
 guarded-mismatch (the ONE-token guards it today). READ-ONLY by law:
 setting the key restarts a router = model swap = owner lane; the SET
 verb rides meshd's confirm-gated path (bench ask).
+
+**25m -- VRAM offload lane (meshd 0.3.4): admission is the ledger.**
+Owner GO made the portal a placement ACTOR: small models get -ngl 99
+on the forge, paid through the forge's OWN lease ledger. The verb
+mesh_router_offload lives on meshd (the node's door): apply REQUIRES a
+live vram lease (wire-proven refusals on halo: RAM-only lease, dead
+lease), forwards the node-local forge-mcp (kit: presets.ini -ngl
+patch, timestamped .bak, warm ping, measured). Presets stay -ngl 0 by
+law; release reverts; GPU weights free at the router's idle-sleep /
+model switch -- never a forced unload (owner migration law), and halo
+is never a target (loopback doors refused by the portal client; halo's
+router = the portal's own lane). Bench #49 carries the forge's E2E
+task + the asked measurement (flint offloaded t/s vs the CPU 135.3
+record, yield-physics coexistence proof). The confirm-gate is the
+portal's (two-phase, nonce, zero JS) -- see PORTAL_PLAN 6.14.1zzzb.

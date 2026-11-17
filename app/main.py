@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from .core import (
     agents,
     agentconfig,
     llamakey,
+    meshllama,
     meshplace,
     meshstatus,
     svc_actions,
@@ -2067,10 +2069,66 @@ def create_app() -> FastAPI:
 
     @app.get("/place")
     def place_page(request: Request, refresh: bool = False,
-                   _=Depends(_require_auth)):
+                   gate: str = "", res: str = "", _=Depends(_require_auth)):
         b = meshplace.bundle(force=refresh)
         b["at_str"] = time.strftime("%H:%M:%S", time.localtime(b.get("at") or 0))
-        return templates.TemplateResponse(request, "place.html", {"b": b})
+        b["tracked"] = meshllama.tracked()
+        g = None
+        if gate and "|" in gate:
+            try:
+                parts = gate.split("|", 5)
+                n, op, node, model = parts[:4]
+                vram = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 2048
+                ctx = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else meshllama.DEFAULT_CTX
+                if op in ("offload", "release") and node and model:
+                    g = {"nonce": n, "op": op, "node": node, "model": model,
+                         "vram_mib": max(0, min(262144, vram)),
+                         "ctx": max(512, min(262144, ctx))}
+            except ValueError:
+                g = None
+        return templates.TemplateResponse(
+            request, "place.html", {"b": b, "gate": g, "res": res})
+
+    # mesh.place ACTOR lane (owner GO 2026-11-17): lease-backed VRAM
+    # offload of remote router models. Two-phase confirm-gate: this route
+    # with phase=gate registers the intended effect and renders it; ONLY
+    # the nonce's apply runs a verb. halo is never a target (loopback
+    # doors refused in meshllama); admission is the node's ledger.
+
+    @app.post("/place")
+    def place_action(request: Request,
+                     node: str = Form(...), model: str = Form(...),
+                     op: str = Form("offload"), phase: str = Form("gate"),
+                     vram_mib: int = Form(0), ctx: int = Form(meshllama.DEFAULT_CTX),
+                     nonce: str = Form(""), _=Depends(_require_auth)):
+        node, model = node.strip(), model.strip()
+        if op not in ("offload", "release") or not node or not model:
+            return RedirectResponse("/place", status_code=302)
+        if phase == "apply" and nonce:
+            v = meshllama.take(nonce)
+            if not v or v["node"] != node or v["model"] != model or v["op"] != op:
+                return RedirectResponse(
+                    "/place?res=gate+expired%3A+re-gate+on+the+page+before+applying",
+                    status_code=302)
+            try:
+                if op == "offload":
+                    r = meshllama.offload(node, model, v["vram_mib"], v["ctx"])
+                else:
+                    r = meshllama.release(node, model)
+            except Exception as e:  # noqa: BLE001 -- the flash names the lane's truth
+                r = {"ok": False, "state": "error", "reason": f"{type(e).__name__}: {e}"}
+            bits = [r.get("state", "?"), r.get("reason", "")[:140],
+                    f"lease {r.get('lease_id')}" if r.get("lease_id") else "",
+                    f"warm {r['warm_ms']} ms" if r.get("warm_ms") else "",
+                    f"{r.get('vram_mib', 0)} MiB" if r.get("vram_mib") else ""]
+            return RedirectResponse(
+                "/place?res=" + urllib.parse.quote(" | ".join(x for x in bits if x)),
+                status_code=302)
+        n = meshllama.gate(node, model, op, vram_mib, ctx)
+        return RedirectResponse(
+            "/place?gate=" + urllib.parse.quote(
+                f"{n}|{op}|{node}|{model}|{vram_mib}|{ctx}"),
+            status_code=302)
 
     @app.get("/api/workroom/bench")
     def api_workroom_bench(request: Request, _=Depends(_require_auth)):

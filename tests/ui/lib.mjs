@@ -444,6 +444,9 @@ export function listInteractables(ctx) {
   const out = [];
   for (const el of ctx.win.document.querySelectorAll(ctx.INTERACTABLE)) {
     if (el.tagName === "FORM") continue; // driven through its submit button
+    // A hidden input is form CARRIER data (nonce, gate payload), not a control:
+    // no human drives it, so the sweep must not demand an effect from it.
+    if (el.tagName === "INPUT" && (el.getAttribute("type") || "").toLowerCase() === "hidden") continue;
     if (el.tagName === "A" && /^(javascript|mailto):/i.test(el.getAttribute("href") || "")) continue;
     if (!ctx.isVisible(el)) continue;
     out.push(el);

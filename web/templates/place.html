@@ -1,8 +1,11 @@
-{# mesh.place (P3): service cards from every meshd door, read-only, zero JS.
-   The cards are the NODE_CONTRACT v0 unit; the owner's placement policy
-   (minor-assistant, mem 210) is rendered as a named marker on the node --
-   preference is visible, never a hidden bias. Every door degrades with its
-   reason; the page must render with the mesh down. #}
+{# mesh.place (P3 + actor lane): service cards from every meshd door, zero
+   JS. Cards are the NODE_CONTRACT v0 unit; the owner's placement policy
+   (minor-assistant, mem 210) renders as a named marker on the node --
+   preference is visible, never a hidden bias. The actor lane (owner GO
+   2026-11-17) is the VRAM offload: two-phase confirm-gate here, admission
+   at the node's ledger (mesh_lease), the -ngl patch on the node (meshd ->
+   forge-mcp); halo/loopback doors are never targets. Every door degrades
+   with its reason; the page must render with the mesh down. #}
 {% extends "base.html" %}
 {% block title %}Place · HALO{% endblock %}
 {% block body %}
@@ -30,10 +33,65 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
     · ONE-token: {{ b.token_src }} · leases {{ b.leased }} ({{ b.committed_vram_mib }} MiB committed)
     · policy: {{ b.policy }}
     <a class="pl-refresh" href="/place?refresh=1">re-probe</a></div>
-  <p class="pl-sum">Read-only: cards describe what each node can serve (schema v0).
-    Preference marks idle + the owner's minor-assistant policy; nothing is
-    granted, moved, or started from this page.</p>
+  <p class="pl-sum">Cards describe what each node can serve (schema v0).
+    Preference marks idle + the owner's minor-assistant policy; nothing moves without
+    your click. <b>VRAM offload</b> = lease-backed: the node's ledger admits
+    (<span class="mono">mesh_lease</span>), then the node applies
+    <span class="mono">-ngl 99</span> (<span class="mono">mesh_router_offload</span>);
+    presets stay <span class="mono">-ngl 0</span>, releases revert, the local (halo)
+    router is never a target, and models are never unloaded by force.</p>
 </div>
+
+{% if gate %}
+<div class="card">
+  <h3>Confirm: {{ gate.op }} · {{ gate.node }} · {{ gate.model }}</h3>
+  {% if gate.op == 'offload' %}
+  <p class="pl-err">The node ledger is asked for {{ gate.vram_mib }} MiB VRAM
+    (ttl 4 h); only a grant applies <span class="mono">-ngl {{ 99 }}</span> to
+    preset [{{ gate.model }}] and warm-loads it on the node's router. A denial is
+    honest (measured headroom) and reserves nothing. The node's own launcher, file
+    and router do the work; presets revert on release.</p>
+  {% else %}
+  <p class="pl-err">Preset [{{ gate.model }}] returns to <span class="mono">-ngl 0</span>;
+    GPU weights release at the router's idle-sleep (900 s) or next model switch
+    (no forced unload); the tracked lease is released.</p>
+  {% endif %}
+  <form method="post" action="/place">
+    <input type="hidden" name="node" value="{{ gate.node }}">
+    <input type="hidden" name="model" value="{{ gate.model }}">
+    <input type="hidden" name="op" value="{{ gate.op }}">
+    <input type="hidden" name="vram_mib" value="{{ gate.vram_mib }}">
+    <input type="hidden" name="ctx" value="{{ gate.ctx }}">
+    <input type="hidden" name="nonce" value="{{ gate.nonce }}">
+    <input type="hidden" name="phase" value="apply">
+    <button type="submit" class="btn">Apply (confirmed)</button>
+  </form>
+  <a class="pl-refresh" href="/place">cancel (no verb has run)</a>
+</div>
+{% endif %}
+
+{% if res %}
+<div class="card"><h3>Last mesh action</h3><p class="pl-err">{{ res }}</p></div>
+{% endif %}
+
+{% if b.tracked %}
+<div class="card">
+  <h3>VRAM offloads held by this portal</h3>
+  {% for t in b.tracked %}
+  <div class="pl-sum mono">{{ t.node }} · {{ t.model }} · {{ t.vram_mib }} MiB ·
+    lease {{ t.lease_id }} ·
+    {% if t.lease_expired %}<b>lease expired {{ (-t.hours_left)|round(1) }} h ago</b>
+      (GPU law renewal: re-offload; the node's ledger no longer vouches){% else %}{{ t.hours_left }} h left{% endif %}</div>
+  <form method="post" action="/place">
+    <input type="hidden" name="node" value="{{ t.node }}">
+    <input type="hidden" name="model" value="{{ t.model }}">
+    <input type="hidden" name="op" value="release">
+    <input type="hidden" name="phase" value="gate">
+    <button type="submit" class="btn">Release (revert -ngl 0)</button>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% for n in b.nodes %}
 <div class="card pl-node">
@@ -43,7 +101,7 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
     <div class="pl-scroll">
       <table class="pl">
         <tr><th>service</th><th>fills</th><th>kind</th><th>backend</th><th>vram min</th>
-            <th>conc</th><th>timeout s</th><th>state</th><th>pref</th></tr>
+            <th>conc</th><th>timeout s</th><th>state</th><th>pref</th><th>action</th></tr>
         {% for c in n.cards|sort(attribute='pref') %}
         <tr>
           <td><b>{{ c.service }}</b><div class="pl-sum">{{ c.tier or '' }}</div></td>
@@ -55,6 +113,20 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
           <td>{{ ((c.limits or {}).get('timeout_s') or ['?','?'])|join('–') }}</td>
           <td>{{ c.state }}</td>
           <td class="pl-pref {{ c.pref }}">{{ c.pref }}</td>
+          <td>
+            {% if c.kind == 'llm-router' %}
+            <form method="post" action="/place">
+              <input type="hidden" name="node" value="{{ n.node }}">
+              <input type="hidden" name="model" value="{{ c.service }}">
+              <input type="hidden" name="op" value="offload">
+              <input type="hidden" name="phase" value="gate">
+              <input type="hidden" name="vram_mib"
+                     value="{{ ((c.requires or {}).get('vram_gb_min') or 2) * 1024 }}">
+              <input type="hidden" name="ctx" value="8192">
+              <button type="submit" class="btn" title="lease admission first, then -ngl 99 on the node">Offload</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </table>
