@@ -265,6 +265,7 @@ fn health_json() -> Value {
             "free_gib": d.available_space() / 1_073_741_824,
         })),
         "vram_mib": vram,
+        "llama": llama_version(),
         "verdict": { "state": verdict, "free_vram_mib": fv, "free_ram_mib": fr,
                      "policy": { "vram_free_min_mib": VRAM_FREE_MIN_MIB, "ram_free_min_mib": RAM_FREE_MIN_MIB } },
         "phase": "2 (status + leases + service control)",
@@ -276,6 +277,21 @@ fn nvml_vram() -> Option<Value> {
     let dev = nvml.device_by_index(0).ok()?;
     let mem = dev.memory_info().ok()?;
     Some(json!({ "used": mem.used / 1_048_576, "total": mem.total / 1_048_576 }))
+}
+
+// llama_version - the node's active llama.cpp build, measured from the file its
+// updater writes (update_llama.ps1 / the portal's equivalent). Cross-node
+// version SYNC (owner ask 2026-11-16): the portal compares this field across
+// nodes. Absent file = null - no version is claimed that was not measured.
+// MESHD_LLAMA_VERSION_FILE points a non-Windows node at its own record.
+fn llama_version() -> Value {
+    let path = std::env::var("MESHD_LLAMA_VERSION_FILE")
+        .unwrap_or_else(|_| "C:\\forge\\llama\\version.json".to_string());
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s)
+            .unwrap_or(json!({ "ok": false, "error": "version.json unparseable" })),
+        Err(_) => Value::Null,
+    }
 }
 
 fn services_registry() -> Value {
@@ -630,7 +646,7 @@ impl Meshd {
     }
 }
 
-#[tool_handler(name = "meshd", version = "0.3.0",
+#[tool_handler(name = "meshd", version = "0.3.1",
                instructions = "Forge node controller (meshd phase 2): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd). All tools bearer-gated (ONE-token, hub-first).")]
 impl ServerHandler for Meshd {}
 
