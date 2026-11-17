@@ -67,8 +67,18 @@ The advertisement unit, one per capability/service, JSON, served by
   "requires": { "vram_gb_min": 10, "backend": "cuda" },
   "limits": { "w32": [256,1536], "concurrency": 1, "timeout_s": [30,1800] },
   "idle_policy": { "free_after_s": 1200 }, "state": "idle",
-  "measured": { "warm_s": 10.1, "sharpness": 3343 }, "pack": "mesh/contracts/image-forge@<ver>" }
+  "measured": { "warm_s": 10.1, "sharpness": 3343 }, "pack": null }
 ```
+
+The `pack` field is the contract-pack this card is implemented from, and it
+is **nullable** (owner decision 2026-11-16, bench #44): a node reports the
+real pack path@version when it has materialized one, and `null` when it has
+not. A card MUST NOT name a pack path that is not present in this repo —
+the field is consumed by `mesh.place`, so a claim to a nonexistent pack is
+a routing lie. Rule: a pack earns its version when its verifiers print
+measured values; until then the honest value is `null`. (The forge shipped
+22 cards claiming `image-forge@v0` / `llm-router@v0` while `mesh/contracts/`
+was README-only; flipped to `null` in meshd 0.3.2.)
 
 `mesh.status` = read-only aggregation (services.json + caps + /v1/models
 per node) — the forge's ordered path, agreed: status -> leases+idle
@@ -84,14 +94,16 @@ subagent token today; P1 replaces with CA certs — the forge's ONE-token
 law is the migration shape). Secrets ride env/broker, never config files
 (broker pending owner GO).
 
-## Contract packs (claimed: `mesh/contracts/` in the portal repo)
+## Contract packs (`mesh/contracts/` in the portal repo; plan, not yet cut)
 
 The shareable unit for engine capabilities: workflow JSONs + post-tools +
 verifier specs + requirements, versioned; nodes materialize per-OS
 launchers. The image-forge icon suite (plate/scale/verify) and the sprite-
 cell suite (deterministic slice/normalize — the plate-law split) grow as
 packs, not as node code. Portal hosts the repo (it is the repo); nodes
-pull.
+pull. Until a pack exists here, service cards report `pack: null` — see
+the service-card law above; nodes do not advertise a pack into a directory
+that holds only this README.
 
 ## VRAM sharing policy (portal position, forge ask)
 
