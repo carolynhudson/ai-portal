@@ -8820,3 +8820,17 @@ the bench-#27 hunt -- per-sender summary (RA count, RDNSS servers,
 lifetime-0 RFC6106 warning, OURS/gateway/UNKNOWN tagging), raw kept;
 parser verified on synthetic capture. 3 tests; MCP transport stays
 injected. Commits d7f6f09 + banking.
+
+**6.14.1zzz -- push gate tracking-ref honesty.** The owner's screenshot
+was a genuine bug: "ahead 2" listing commits GitHub already had, while
+push said "Everything up-to-date". Root cause: the PAT lane's
+`git fetch <bare-url>` (push() settle) updates only FETCH_HEAD --
+origin/main went stale and every count/list keyed off the dead ref;
+the SSH lane's `fetch origin` masked this for months. LAW: refresh the
+tracking ref through the LIVE lane with an explicit refspec
+(`+refs/heads/main:refs/remotes/origin/main`) BEFORE counting --
+status() probes the lane first, fetches, then counts; push() carries
+the refspec too; dead remote skips the fetch (counts local, page says
+so). 4 tests (refresh-before-count ordering, pat refresh token-free,
+dead-remote skip, push refspec). Live witness: gate healed from the
+stale "ahead 2" to honest "ahead 1" (the fix commit itself).
