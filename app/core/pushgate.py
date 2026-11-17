@@ -158,38 +158,51 @@ def status(repo: Path | str | None = None) -> dict:
         return {"ok": False, "why": f"not a git checkout? {redact(branch)}"}
     rc, url, _ = _git(["remote", "get-url", REMOTE], repo)
     remote_url = redact(url) if rc == 0 else ""
-    rc, ahead, _ = _git(["rev-list", "--count", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD"], repo)
-    rc2, behind, _ = _git(["rev-list", "--count", f"HEAD..{REMOTE}/{ALLOWED_BRANCH}"], repo)
-    rc3, porcelain, _ = _git(["status", "--porcelain"], repo)
-    rc4, log, _ = _git(["log", "--format=%h %s", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD",
-                        "-n", "50"], repo)
-    # live remote check: the remote's own default branch (never assumed).
-    # SSH first; if that lane is dead and the hub holds a PAT, probe the
-    # https lane so the page reports the lane that actually works.
+    # live remote check FIRST: ahead/behind are computed against the
+    # tracking ref, so the ref is refreshed through the LIVE lane before
+    # counting. Law: a fetch from a bare URL with no refspec updates
+    # only FETCH_HEAD -- the PAT lane's refspec-less fetch left
+    # origin/main stale and the page showed "ahead 2" of commits that
+    # GitHub already had (owner screenshot 2026-11-16).
     env1, _, _ = _net_env(None)
     rc5, sym, err5 = _git(["ls-remote", "--symref", REMOTE, "HEAD"], repo, env1)
     remote_branch = ""
     lane = "ssh"
     has_pat = False
-    if rc5 != 0:
-        pat = _pat()
-        has_pat = pat is not None
-        pair = _https_pair(remote_url) if pat else ""
-        if pair:
-            env2, tokp2, sp2 = _net_env(pat[0])  # type: ignore[index]
-            try:
-                rc5, sym, err5 = _git(["ls-remote", "--symref", pair, "HEAD"], repo, env2)
-            finally:
-                for p in (tokp2, sp2):
-                    try:
-                        os.unlink(p)
-                    except OSError:
-                        pass
-            if rc5 == 0:
-                lane = "pat/https"
-    if rc5 == 0:
-        m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
-        remote_branch = m.group(1) if m else ""
+    pair = ""
+    env2 = tokp2 = sp2 = None
+    try:
+        if rc5 != 0:
+            pat = _pat()
+            has_pat = pat is not None
+            pair = _https_pair(remote_url) if pat else ""
+            if pair:
+                env2, tokp2, sp2 = _net_env(pat[0])  # type: ignore[index]
+                rc5, sym, err5 = _git(["ls-remote", "--symref", pair, "HEAD"],
+                                      repo, env2)
+                if rc5 == 0:
+                    lane = "pat/https"
+        if rc5 == 0:
+            m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
+            remote_branch = m.group(1) if m else ""
+            rb = remote_branch or ALLOWED_BRANCH
+            if rb == ALLOWED_BRANCH:  # non-main remotes: count stays local, page says so
+                tgt = pair if lane == "pat/https" else REMOTE
+                _git(["fetch", "--quiet", tgt,
+                      f"+refs/heads/{rb}:refs/remotes/{REMOTE}/{rb}"],
+                     repo, env2 if lane == "pat/https" else env1)
+    finally:
+        for p in (tokp2, sp2):
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+    rc, ahead, _ = _git(["rev-list", "--count", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD"], repo)
+    rc2, behind, _ = _git(["rev-list", "--count", f"HEAD..{REMOTE}/{ALLOWED_BRANCH}"], repo)
+    rc3, porcelain, _ = _git(["status", "--porcelain"], repo)
+    rc4, log, _ = _git(["log", "--format=%h %s", f"{REMOTE}/{ALLOWED_BRANCH}..HEAD",
+                        "-n", "50"], repo)
     dirty = len(_lines(porcelain)) if rc3 == 0 else -1
     note = redact(err5)[:160] if rc5 != 0 else ""
     # The hub cannot know GitHub's expiry stamp, only the age of the
@@ -273,8 +286,12 @@ def push(message: str = "", repo: Path | str | None = None) -> dict:
             return {"ok": False,
                     "why": f"remote default is {st['remote_branch']!r}; the gate pushes {ALLOWED_BRANCH} only",
                     "log": log}
-        # settle against the remote before deciding (fresh, not cached)
-        rc, out, err = _git(["fetch", "--quiet", net_target], repo, env)
+        # settle against the remote before deciding (fresh, not cached);
+        # the explicit refspec keeps the tracking ref honest -- a bare-URL
+        # fetch writes only FETCH_HEAD (the stale-"ahead" bug, 2026-11-16).
+        rc, out, err = _git(["fetch", "--quiet", net_target,
+                             f"+refs/heads/{ALLOWED_BRANCH}:refs/remotes/{REMOTE}/{ALLOWED_BRANCH}"],
+                            repo, env)
         if rc != 0:
             return {"ok": False, "why": f"fetch failed: {redact(err)[:160]}", "log": [f"fetch rc={rc}"]}
         rc, behind_s, _ = _git(["rev-list", "--count", f"HEAD..{REMOTE}/{ALLOWED_BRANCH}"], repo)

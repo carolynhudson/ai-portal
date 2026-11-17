@@ -272,6 +272,74 @@ def test_status_reports_pat_lane_when_ssh_dead(fake, monkeypatch):
     assert st["ok"] and st["remote_live"] and st["lane"] == "pat/https"
 
 
+# ------------------------------------------------- tracking-ref honesty (2026-11-16)
+# The PAT lane's bare-URL fetch updated only FETCH_HEAD: origin/main went
+# stale and the page showed "ahead 2" of commits GitHub already had.
+# Law: refresh the tracking ref (explicit refspec) through the LIVE lane
+# BEFORE counting.
+
+def test_status_refreshes_ref_before_counting(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE + [
+        ["fetch --quiet origin +refs/heads/main:refs/remotes/origin/main", 0, "", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    st = pushgate.status()
+    assert st["ok"]
+    argv = g.calls()
+    fi = next(i for i, a in enumerate(argv) if a[:1] == ["fetch"])
+    ri = next(i for i, a in enumerate(argv) if a[:2] == ["rev-list", "--count"])
+    assert fi < ri, "ahead must be computed on a refreshed ref"
+    assert argv[fi] == ["fetch", "--quiet", "origin",
+                        "+refs/heads/main:refs/remotes/origin/main"]
+
+
+def test_pat_lane_refresh_rides_https_no_token_in_argv(fake, monkeypatch):
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "", "agent refused operation"],
+        ["ls-remote --symref https://x-access-token@github.com/carolynhudson/ai-portal.git HEAD",
+         0, "ref: refs/heads/main\tHEAD\nx\tHEAD", ""],
+        ["fetch --quiet https://x-access-token@github.com/carolynhudson/ai-portal.git "
+         "+refs/heads/main:refs/remotes/origin/main", 0, "", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: ("ghp_" + "S" * 36, "hub"))
+    st = pushgate.status()
+    assert st["ok"] and st["lane"] == "pat/https"
+    argv = g.calls()
+    f = [a for a in argv if a[:1] == ["fetch"]]
+    assert f and f[0][2] == "https://x-access-token@github.com/carolynhudson/ai-portal.git"
+    assert f[0][3] == "+refs/heads/main:refs/remotes/origin/main"
+    assert all("ghp_" not in json.dumps(a) for a in argv), "token rode argv"
+
+
+def test_dead_remote_skips_refresh_fetch(fake, monkeypatch):
+    g = fake
+    g.plan([p for p in OK_BASE if not p[0].startswith("ls-remote")] + [
+        ["ls-remote --symref origin HEAD", 128, "", "Permission denied (publickey)."],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    st = pushgate.status()
+    assert not st["remote_live"]
+    assert not [a for a in g.calls() if a[:1] == ["fetch"]], "no fetch on a dead remote"
+
+
+def test_push_fetch_carries_refspec(fake, monkeypatch):
+    g = fake
+    g.plan(OK_BASE + [
+        ["fetch --quiet origin", 0, "", ""],
+        ["add -A", 0, "", ""],
+        ["commit -q -m", 0, "", ""],
+        ["push origin HEAD:refs/heads/main", 0, "abc1234..def9999 main -> main", ""],
+        ["rev-parse --short HEAD", 0, "def9999", ""],
+    ])
+    monkeypatch.setattr(pushgate, "_pat", lambda: None)
+    assert pushgate.push("msg")["ok"]
+    f = [a for a in g.calls() if a[:1] == ["fetch"]]
+    assert f[0] == ["fetch", "--quiet", "origin",
+                    "+refs/heads/main:refs/remotes/origin/main"]
+
+
 def test_status_ssh_lane_when_agent_ok(fake, monkeypatch):
     g = fake
     g.plan(OK_BASE)
