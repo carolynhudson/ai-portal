@@ -55,6 +55,16 @@ def doors(monkeypatch):
     return set_caps, set_raise, monkeypatch
 
 
+def test_door_discovery_env_plus_ledger(monkeypatch):
+    monkeypatch.setenv("AIPP_MESH_DOORS", "http://node-a:8092, http://node-b:8092")
+    monkeypatch.setattr(meshstatus, "_meshd_url", lambda: "http://RainbowBlock.local:8092")
+    doors = meshplace._doors()
+    assert doors == ["http://node-a:8092", "http://node-b:8092",
+                     "http://RainbowBlock.local:8092"]
+    monkeypatch.delenv("AIPP_MESH_DOORS")
+    assert meshplace._doors() == ["http://RainbowBlock.local:8092"]
+
+
 def test_cards_and_policy_ranking(doors):
     set_caps, _, _ = doors
     set_caps()

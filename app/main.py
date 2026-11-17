@@ -35,6 +35,7 @@ from . import router as router_mod
 from .core import (
     agents,
     agentconfig,
+    llamakey,
     meshplace,
     meshstatus,
     svc_actions,
@@ -2057,6 +2058,7 @@ def create_app() -> FastAPI:
                   _=Depends(_require_auth)):
         b = meshstatus.bundle(force=refresh)
         b["at_str"] = time.strftime("%H:%M:%S", time.localtime(b.get("at") or 0))
+        b["keyaudit"] = llamakey.bundle(force=refresh)
         return templates.TemplateResponse(request, "mesh.html", {"b": b})
 
     # ------------------------------------------------ mesh.place (P3, read-only)

@@ -1,0 +1,10 @@
+{
+  "_comment": "Linux node service registry template. Rows are OBSERVATION by default: an empty launcher makes mesh_service start refuse, and ids llama-router/opencode-agent/meshd/portal are deny-listed for stop. Pi-hole pair nodes: launcher-less rows ONLY (Pi-hole safety law - production control is owner-lane).",
+  "services": [
+    { "id": "llama-router", "kind": "compute", "port": 8082, "launcher": "" },
+    { "id": "comfyui", "kind": "engine", "port": 8188, "launcher": "" },
+    { "id": "forge-mcp", "kind": "gateway", "port": 8096, "launcher": "" },
+    { "id": "meshd", "kind": "node-controller", "port": 8092, "launcher": "" },
+    { "id": "portal", "kind": "gateway", "port": 8090, "launcher": "" }
+  ]
+}

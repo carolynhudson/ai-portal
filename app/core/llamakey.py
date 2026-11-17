@@ -20,6 +20,18 @@ Design notes
   action, because the agent session riding the router would drop.
 * :func:`live_state` probes the running router (with and without the key) so
   the UI can tell "configured" from "actually enforced".
+
+Mesh scope (owner 2026-11-17): when the portal routes llama.cpp requests
+across nodes, ONE api key guards every network-accessible router in the
+mesh. The canonical value lives in the HUB (secret ``llama-api-key``:
+recipients halo + every router node; the hub never sees plaintext,
+agents use-not-see). :func:`bundle` is the READ-ONLY mesh audit: each
+known router is probed with and without the hub key and classified
+(guarded / open / guarded-mismatch / down). The SET half for remote
+nodes is meshd's confirm-gated verb (bench ask); this module's
+:func:`generate` is halo's local half. Nothing in this file restarts
+anything -- a router restart swaps the loaded model, and that is the
+owner's migration lane.
 """
 from __future__ import annotations
 
@@ -178,3 +190,74 @@ def status() -> dict:
         "note": ("clients send: Authorization: Bearer <key> (or ?api_key=<key>); "
                  "restart the router to apply"),
     }
+
+
+# ---------------------------------------------------------------- mesh audit
+# Read-only: what the whole mesh's routers enforce today, against the ONE
+# hub-canonical key. The hub is the canonical store; the local key file is
+# halo's live value. bundle() never writes, never restarts.
+
+_MESH_TTL = 60.0
+_mesh_cache: tuple[float, dict] = (0.0, {})
+
+
+def canonical() -> tuple[str, str]:
+    """(key, source) of the mesh-canonical api key. The hub secret is the
+    ONLY canonical value; '' = unset. Never raises: hub down says so."""
+    try:
+        from . import meshhub
+        tok = meshhub.get_text("llama-api-key").strip()
+        return (tok, "hub") if tok else ("", "none")
+    except Exception:  # noqa: BLE001 -- hub down is a state, not a crash
+        return ("", "hub-down")
+
+
+def _probe(url: str, key: str) -> dict:
+    """GET /v1/models with and without the key; classify. 'open' = serves
+    WITHOUT any key (halo's state today: the hazard this lane exists to
+    close). Mirrors live_state() for a remote router, on the OpenAI face."""
+    base = url.rstrip("/")
+    hdr = {"Authorization": f"Bearer {key}"} if key else {}
+    out = {"url": base}
+    for label, h in (("with_key", hdr), ("no_key", {})):
+        try:
+            r = httpx.get(f"{base}/v1/models", timeout=4.0, headers=h)
+            out[label] = r.status_code
+        except Exception as e:  # noqa: BLE001 -- the lane names its truth
+            out[label] = type(e).__name__
+    w, n = out["with_key"], out["no_key"]
+    if isinstance(w, str) and isinstance(n, str):
+        out["state"] = "down"
+    elif n == 200:
+        out["state"] = "open"
+    elif w == 200 and n == 401:
+        out["state"] = "guarded"
+    elif w == 401 and n == 401:
+        out["state"] = "guarded-mismatch"
+    else:
+        out["state"] = f"odd ({w}/{n})"
+    return out
+
+
+def bundle(force: bool = False) -> dict:
+    """The mesh router-auth audit for /mesh. Cached 60 s. 'key_match'
+    compares hub vs halo-local WITHOUT disclosing either (bool only)."""
+    global _mesh_cache
+    if not force and time.time() - _mesh_cache[0] < _MESH_TTL and _mesh_cache[1]:
+        return _mesh_cache[1]
+    key, src = canonical()
+    local = reveal() or ""
+    routers = [("halo", _probe(serviceconf.base_url("llamacpp", 8080), key))]
+    try:
+        from . import meshstatus
+        fr = meshstatus._forge_router_url()
+        if fr:
+            routers.append(("forge", _probe(fr, key)))
+    except Exception:  # noqa: BLE001 -- derivation absent = fewer routers
+        pass
+    out = {"at": time.time(), "key_src": src, "key_len": len(key),
+           "local_match": bool(key) and key == local,
+           "routers": [{"node": n, **p} for n, p in routers],
+           "policy": "one key, hub-canonical (llama-api-key); guarded = 200/401"}
+    _mesh_cache = (time.time(), out)
+    return out

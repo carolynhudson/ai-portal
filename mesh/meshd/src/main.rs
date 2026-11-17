@@ -42,15 +42,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const ROOT: &str = "C:\\forge";
-const LEASES_PATH: &str = "C:\\forge\\etc\\mesh_leases.json";
+// root()/leases_path(): the node's home. Windows defaults are the forge's
+// C:\forge (unchanged behavior); a Linux node points MESHD_ROOT at its own
+// tree (e.g. ~/forge) and the paths join natively. LEASES_PATH was a const;
+// the ledger writer law (meshd is the single writer) is unchanged.
+fn root() -> String {
+    std::env::var("MESHD_ROOT").unwrap_or_else(|_| "C:\\forge".to_string())
+}
+fn leases_path() -> String {
+    std::env::var("MESHD_LEASES_FILE").unwrap_or_else(|_| {
+        std::path::Path::new(&root())
+            .join("etc")
+            .join("mesh_leases.json")
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+fn mcp_base() -> String {
+    std::env::var("MESHD_MCP_URL").unwrap_or_else(|_| "http://127.0.0.1:8096".to_string())
+}
+fn router_url() -> String {
+    std::env::var("MESHD_ROUTER_URL").unwrap_or_else(|_| "http://127.0.0.1:8082".to_string())
+}
+fn node_name() -> String {
+    std::env::var("MESHD_NODE_NAME").unwrap_or_else(|_| "rainbowblock".to_string())
+}
 // busy/safe verdict policy (node declares; contract = declarative policy + live
 // signal): the z-image bf16 bring-up trio needs ~10 GiB VRAM, router idle lanes
 // want headroom; 3 GiB VRAM / 12 GiB RAM free is "someone is using this box".
 const VRAM_FREE_MIN_MIB: u64 = 3072;
 const RAM_FREE_MIN_MIB: u64 = 12288;
 // stop/start denial list: portal brain, agent harness, self (phase 2 node policy)
-const DENY_STOP: [&str; 3] = ["llama-router", "opencode-agent", "meshd"];
+const DENY_STOP: [&str; 4] = ["llama-router", "opencode-agent", "meshd", "portal"];
 
 // ---------------- lease ledger ----------------
 
@@ -72,7 +95,7 @@ fn now_unix() -> u64 {
 }
 
 fn load_ledger() {
-    if let Ok(s) = std::fs::read_to_string(LEASES_PATH) {
+    if let Ok(s) = std::fs::read_to_string(leases_path()) {
         if let Ok(v) = serde_json::from_str::<Value>(&s) {
             if let Some(arr) = v.get("leases").and_then(|l| l.as_array()) {
                 if let Ok(list) = serde_json::from_value::<Vec<Lease>>(serde_json::json!(arr)) {
@@ -86,10 +109,10 @@ fn load_ledger() {
 }
 
 fn save_ledger(g: &[Lease]) {
-    let v = json!({ "schema": 1, "node": "rainbowblock", "updated_unix": now_unix(),
+    let v = json!({ "schema": 1, "node": node_name(), "updated_unix": now_unix(),
                     "leases": g });
     if let Ok(s) = serde_json::to_string_pretty(&v) {
-        let _ = std::fs::write(LEASES_PATH, s);
+        let _ = std::fs::write(leases_path(), s);
     }
 }
 
@@ -116,8 +139,21 @@ fn resolve_token(root: &str) -> Option<String> {
             return Some(t);
         }
     }
-    let meshctl = std::path::Path::new(root).join("etc\\mesh\\meshctl.exe");
-    if meshctl.exists() {
+    // meshctl: named by env, else the forge layout (root\etc\mesh\meshctl.exe)
+    // on Windows / PATH lookup on unix. Backslashes in joins broke Linux.
+    let meshctl = std::env::var("MESHD_MESHCTL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                std::path::Path::new(root).join("etc").join("mesh").join("meshctl.exe")
+            }
+            #[cfg(not(windows))]
+            {
+                std::path::PathBuf::from("meshctl")
+            }
+        });
+    if meshctl.exists() || meshctl.file_name() == Some(std::ffi::OsStr::new("meshctl")) {
         let mut cmd = Command::new(&meshctl);
         cmd.args(["get", "subagent-key"]);
         #[cfg(windows)]
@@ -132,7 +168,7 @@ fn resolve_token(root: &str) -> Option<String> {
             }
         }
     }
-    let file = std::path::Path::new(root).join("llama\\subagent_key.txt");
+    let file = std::path::Path::new(root).join("llama").join("subagent_key.txt");
     if let Ok(s) = std::fs::read_to_string(file) {
         let t = s.trim().to_string();
         if t.len() >= 16 {
@@ -179,13 +215,13 @@ async fn tcp_open(port: u16) -> bool {
 }
 
 async fn router_models() -> Value {
-    let token = resolve_token(ROOT);
+    let token = resolve_token(&root());
     let Some(t) = token else {
         return json!({ "ok": false, "error": "no token" });
     };
     let client = reqwest::Client::new();
     match client
-        .get("http://127.0.0.1:8082/v1/models")
+        .get(format!("{}/v1/models", router_url()))
         .header("Authorization", format!("Bearer {}", t))
         .timeout(Duration::from_secs(10))
         .send()
@@ -207,7 +243,7 @@ async fn forge_caps() -> Value {
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": { "name": "forge_caps", "arguments": {} } });
     match client
-        .post("http://127.0.0.1:8096/mcp")
+        .post(format!("{}/mcp", mcp_base()))
         .header("Accept", "application/json")
         .json(&body)
         .timeout(Duration::from_secs(15))
@@ -252,7 +288,7 @@ fn health_json() -> Value {
         .unwrap_or(0);
     let verdict = if fv < VRAM_FREE_MIN_MIB || fr < RAM_FREE_MIN_MIB { "busy" } else { "safe" };
     json!({
-        "node": "rainbowblock",
+        "node": node_name(),
         "daemon": "meshd",
         "version": VERSION,
         "pid": std::process::id(),
@@ -295,7 +331,13 @@ fn llama_version() -> Value {
 }
 
 fn services_registry() -> Value {
-    let path = "C:\\forge\\etc\\services.json";
+    let path = std::env::var("MESHD_SERVICES_FILE").unwrap_or_else(|_| {
+        std::path::Path::new(&root())
+            .join("etc")
+            .join("services.json")
+            .to_string_lossy()
+            .into_owned()
+    });
     match std::fs::read_to_string(path) {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({ "ok": false, "error": "services.json unparseable" })),
         Err(e) => json!({ "ok": false, "error": e.to_string() }),
@@ -321,7 +363,7 @@ async fn services_with_state() -> Value {
         }
     }
     let models = router_models().await;
-    json!({ "node": "rainbowblock", "services": out, "llm": models,
+    json!({ "node": node_name(), "services": out, "llm": models,
             "registry_updated": reg.get("updated"), "laws": reg.get("laws") })
 }
 
@@ -343,7 +385,7 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
                     _ => (10, "cuda"),
                 };
                 cards.push(json!({
-                    "node": "rainbowblock", "kind": "image-forge", "service": name,
+                    "node": node_name(), "kind": "image-forge", "service": name,
                     "tier": c.get("tier").cloned().unwrap_or(json!("")),
                     "fills": c.get("fills").cloned().unwrap_or(json!([])),
                     "requires": { "vram_gb_min": vram, "backend": backend },
@@ -364,7 +406,7 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
     if let Some(arr) = models.get("models").and_then(|m| m.as_array()) {
         for m in arr {
             cards.push(json!({
-                "node": "rainbowblock", "kind": "llm-router",
+                "node": node_name(), "kind": "llm-router",
                 "service": m.get("id").cloned().unwrap_or(json!("?")),
                 "tier": "router-preset",
                 "fills": ["prompt"],
@@ -385,7 +427,7 @@ async fn caps() -> Value {
     let models = router_models().await;
     // engine state honest: rendering if forge queue is running, else idle
     let engine_state = match reqwest::Client::new()
-        .get("http://127.0.0.1:8096/health")
+        .get(format!("{}/health", mcp_base()))
         .timeout(Duration::from_secs(5)).send().await
     {
         Ok(r) => match r.json::<Value>().await {
@@ -398,7 +440,7 @@ async fn caps() -> Value {
     };
     let cards = normalize_cards(&raw, &models, &engine_state);
     json!({
-        "node": "rainbowblock",
+        "node": node_name(),
         "cards": cards,
         "image_contracts": raw,
         "note": "cards = service-card schema v0 (NODE_CONTRACT) for control-plane aggregation; image_contracts = raw forge_caps passthrough",
@@ -408,10 +450,21 @@ async fn caps() -> Value {
 // ---------------- service control (user-scope, no admin) ----------------
 
 fn listener_pid(port: u16) -> Option<u32> {
-    // netstat -ano: " TCP  0.0.0.0:8188  0.0.0.0:0  LISTENING  12345" (en-US box;
-    // local field ends with :PORT, pid is the last field).
-    let mut cmd = Command::new("netstat");
-    cmd.args(["-ano"]);
+    // netstat -ano: " TCP  0.0.0.0:8188  0.0.0.0:0  LISTENING  12345" (en-US
+    // box; local field ends with :PORT, pid last). Unix: ss -ltnp (pid column
+    // shows for this user's processes; services.json controls are user-scope).
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = Command::new("netstat");
+        c.args(["-ano"]);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = Command::new("ss");
+        c.args(["-ltnp"]);
+        c
+    };
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -422,10 +475,21 @@ fn listener_pid(port: u16) -> Option<u32> {
     let needle = format!(":{}", port);
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
-        if f.len() >= 5 && f[3].eq_ignore_ascii_case("LISTENING")
-            && (f[1].ends_with(&needle))
-        {
-            if let Ok(pid) = f[4].parse::<u32>() {
+        #[cfg(windows)]
+        let hit = f.len() >= 5 && f[3].eq_ignore_ascii_case("LISTENING")
+            && (f[1].ends_with(&needle));
+        #[cfg(not(windows))]
+        let hit = f.len() >= 5 && f[0] == "LISTEN" && f[4].ends_with(&needle);
+        if hit {
+            #[cfg(windows)]
+            let pid_opt = f[4].parse::<u32>().ok();
+            #[cfg(not(windows))]
+            let pid_opt = line
+                .split("pid=")
+                .nth(1)
+                .and_then(|s| s.split(',').next())
+                .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
+            if let Some(pid) = pid_opt {
                 if pid > 4 {
                     return Some(pid);
                 }
@@ -462,7 +526,10 @@ async fn stop_service(id: &str, port: u16) -> Value {
         return json!({ "ok": true, "id": id, "action": "stop", "state": "already-stopped" });
     };
     let pid_s = pid.to_string();
+    #[cfg(windows)]
     run_hidden("taskkill", &["/PID", &pid_s, "/T", "/F"]);
+    #[cfg(not(windows))]
+    run_hidden("kill", &["-KILL", &pid_s]);
     // verify the port closes (10 x 500ms)
     for _ in 0..20 {
         if !tcp_open(port).await {
@@ -480,9 +547,13 @@ async fn start_service(id: &str, port: u16, launcher: &str) -> Value {
                        "reason": format!("launcher missing: {}", launcher) });
     }
     // launchers are PS glue with their own port guard; machine policy Restricted
-    // requires the Bypass (2026-11-07 law).
+    // requires the Bypass (2026-11-07 law). Linux launchers are .sh scripts
+    // (kit law: their own guards, bash explicit, never via sh).
+    #[cfg(windows)]
     spawn_hidden("powershell.exe",
         &["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", launcher]);
+    #[cfg(not(windows))]
+    spawn_hidden("bash", &[launcher]);
     // comfyui boots slow: poll 120 x 500ms = 60s
     for _ in 0..120 {
         if tcp_open(port).await {
@@ -705,7 +776,7 @@ async fn main() -> Result<()> {
         }
         Cmd::StatusServer { bind, port } => {
             load_ledger();
-            let token = resolve_token(ROOT);
+            let token = resolve_token(&root());
             eprintln!(
                 "meshd {}: serving MCP at /mcp, port {}, token {}",
                 VERSION,

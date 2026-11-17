@@ -49,6 +49,19 @@
 </div>
 
 <div class="card">
+  <h3><span class="ms-dot {% if b.keyaudit.key_src == 'hub' %}ok{% else %}warn{% endif %}"></span>llama API key (mesh routers)</h3>
+  <div class="ms-facts">canonical secret <span class="mono">llama-api-key</span> · source
+    {{ b.keyaudit.key_src }}{% if b.keyaudit.key_len %} · {{ b.keyaudit.key_len }} chars{% endif %}
+    · policy: {{ b.keyaudit.policy }}</div>
+  {% for r in b.keyaudit.routers %}
+  <div class="ms-facts">{{ r.node }} · <span class="mono">{{ r.url }}</span> ·
+    with-key {{ r.with_key }} / no-key {{ r.no_key }} →
+    <b>{% if r.state == 'guarded' %}guarded{% elif r.state == 'open' %}OPEN (unguarded){% elif r.state == 'guarded-mismatch' %}guarded, key mismatch{% else %}{{ r.state }}{% endif %}</b></div>
+  {% endfor %}
+  <div class="ms-facts">Read-only audit: setting the key restarts a router (model swap =
+    owner lane). Nothing on this page writes keys.</div>
+</div>
+<div class="card">
   <h3><span class="ms-dot {% if b.router.ok %}ok{% else %}bad{% endif %}"></span>Router · halo :8080</h3>
   {% if b.router.ok %}
     <ul class="ms-list">{% for m in b.router.models %}<li>{{ m }}</li>{% endfor %}
