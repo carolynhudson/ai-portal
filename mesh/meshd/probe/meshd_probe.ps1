@@ -100,4 +100,14 @@ if ($miss.Count -gt 0) { throw ('card schema missing keys: ' + ($miss -join ',')
 $sample = $img | Where-Object { $_.service -eq 'qwen21_t2i_lightning4' } | Select-Object -First 1
 "   schema v0 keys OK; sample: " + $sample.service + ' vram_gb_min=' + $sample.requires.vram_gb_min + ' state=' + $sample.state
 
+# 13b. pack honesty (NULLABLE PACK LAW, owner 2026-11-16, bench #44): a card may
+# name a pack only if that pack exists on the node. mesh/contracts/ is plan-only,
+# so every card must report pack = null. Any string here is a routing lie -
+# mesh.place consumes this field and would send work expecting a pack.
+$claimed = @($cpl.cards | Where-Object { $null -ne $_.pack -and $_.pack -ne '' })
+if ($claimed.Count -gt 0) {
+    throw ('cards claim packs that do not exist: ' + (($claimed | ForEach-Object { $_.service + '=' + $_.pack }) -join ', '))
+}
+"   pack honesty: " + $cpl.cards.Count + '/' + $cpl.cards.Count + ' cards report pack=null (nullable pack law)'
+
 "`nALL PROBES PASS (phase 2b + cards)"

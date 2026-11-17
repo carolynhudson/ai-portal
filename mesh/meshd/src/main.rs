@@ -351,7 +351,12 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
                     "idle_policy": { "free_after_s": 1200, "lease_yield": true },
                     "state": engine_state,
                     "measured": { "note": c.get("validated").cloned().unwrap_or(json!(null)) },
-                    "pack": "mesh/contracts/image-forge@v0"
+                    // pack is NULLABLE (owner decision 2026-11-16, bench #44): report the
+                    // real pack path@version only when this node has materialized one.
+                    // mesh/contracts/ is plan-only, so a card naming image-forge@v0 would
+                    // be a routing lie - mesh.place consumes this field. A pack earns a
+                    // version when its verifiers print measured values.
+                    "pack": Value::Null
                 }));
             }
         }
@@ -367,8 +372,8 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
                 "limits": { "context": m.get("context_length").cloned().unwrap_or(json!(0)) },
                 "idle_policy": { "sleep_idle_s": 900, "models_max": 1, "memory_margin_mib": 16384 },
                 "state": m.get("state").cloned().unwrap_or(json!("catalog")),
-                "measured": { "note": "lanes measured: CPU flint 19.15 t/s; GPU qwen3-4b 128.1 t/s tg128" },
-                "pack": "mesh/contracts/llm-router@v0"
+                "measured": { "note": "lanes measured 2026-11-16 on llama 9581154 (sm_75): CPU flint 18.14 t/s tg128; GPU qwen3-4b 135.3 t/s tg128; -t 16, -pg 512,128, r=2" },
+                "pack": Value::Null   // nullable pack law (bench #44): no pack on disk = null
             }));
         }
     }
@@ -646,7 +651,7 @@ impl Meshd {
     }
 }
 
-#[tool_handler(name = "meshd", version = "0.3.1",
+#[tool_handler(name = "meshd", version = "0.3.2",
                instructions = "Forge node controller (meshd phase 2): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd). All tools bearer-gated (ONE-token, hub-first).")]
 impl ServerHandler for Meshd {}
 
