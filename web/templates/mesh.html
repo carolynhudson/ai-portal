@@ -76,6 +76,12 @@
       {%- if b.meshd.vram %} VRAM {{ b.meshd.vram.used }}/{{ b.meshd.vram.total }} MiB{% endif %}
       {%- if b.meshd.ram %} · RAM {{ b.meshd.ram.used_mib }}/{{ b.meshd.ram.total_mib }} MiB{% endif %}
       {%- if b.meshd.uptime_s %} · up {{ (b.meshd.uptime_s / 86400) | round(1) }} d{% endif %}</div>
+    {% if b.meshd.llama %}
+    <div class="ms-facts">llama.cpp <b>{{ b.meshd.llama.version }}</b> · commit
+      <span class="mono">{{ b.meshd.llama.sha }}</span> · sm_{{ b.meshd.llama.arch }}
+      {%- if b.meshd.llama.measured %} · measured {{ b.meshd.llama.measured }}{% endif %}
+      · node-recorded (version.json)</div>
+    {% endif %}
     <div class="ms-facts">{{ b.meshd.url }} · /healthz open · MCP door (leases · services · cards) bearer-gated</div>
   {% else %}
     <p class="ms-err">{{ b.meshd.error }}{% if b.meshd.url %} ({{ b.meshd.url }}){% endif %}</p>

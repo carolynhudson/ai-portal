@@ -122,6 +122,19 @@ def _meshd_url() -> str:
     return ""
 
 
+def _llama(d: dict) -> dict:
+    """The node's llama.cpp build record (meshd >= 0.3.1 'llama' block).
+    Pure: no llama file on the node = {} = no version claimed that was
+    not measured (the node's own law, mirrored here)."""
+    l = d.get("llama")
+    if not isinstance(l, dict) or not (l.get("printed_version") or l.get("sha")):
+        return {}
+    return {"version": l.get("printed_version") or l.get("version") or "?",
+            "sha": (l.get("sha") or "")[:12],
+            "arch": l.get("cuda_arch") or "?",
+            "measured": (l.get("measured_utc") or "")[:10]}
+
+
 def _meshd() -> dict:
     """The forge's node daemon. /healthz is OPEN by design (no token): node
     facts + the resource verdict -- the cheap card. The MCP door (leases,
@@ -138,6 +151,7 @@ def _meshd() -> dict:
         return {"ok": True, "url": url, "node": d.get("node"), "version": d.get("version"),
                 "phase": d.get("phase"), "verdict": (d.get("verdict") or {}).get("state"),
                 "vram": d.get("vram_mib"), "ram": d.get("ram"),
+                "llama": _llama(d),
                 "disk": d.get("disk_c"), "uptime_s": d.get("uptime_s")}
     except Exception as e:  # noqa: BLE001 -- lane shows its own truth
         return {"ok": False, "url": url, "error": f"{type(e).__name__}"}

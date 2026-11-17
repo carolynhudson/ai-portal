@@ -197,14 +197,35 @@ def test_meshd_card_live_shape(client, lanes):
           forge={"ok": True, "url": "u", "version": None},
           fr={"ok": True, "url": "u", "models": []},
           meshd={"ok": True, "url": "http://f:8092", "node": "rainbowblock",
-                 "version": "0.3.0", "phase": "2 (status + leases + service control)",
+                 "version": "0.3.2", "phase": "2 (status + leases + service control)",
                  "verdict": "safe", "vram": {"total": 11264, "used": 2262},
-                 "ram": {"total_mib": 64628, "used_mib": 16346}, "uptime_s": 350296})
+                 "ram": {"total_mib": 64628, "used_mib": 16346}, "uptime_s": 350296,
+                 "llama": {"version": "1.0.0-dev (build 50, commit 9581154)",
+                           "sha": "9581154", "arch": "75", "measured": "2026-11-17"}})
     r = client.get("/mesh")
     assert "meshd (node daemon)" in r.text
-    assert "meshd 0.3.0" in r.text and "safe" in r.text
+    assert "meshd 0.3.2" in r.text and "safe" in r.text
     assert "VRAM 2262/11264 MiB" in r.text and "RAM 16346/64628 MiB" in r.text
     assert "up 4.1 d" in r.text
+    assert "1.0.0-dev (build 50, commit 9581154)" in r.text and "sm_75" in r.text
+    assert "measured 2026-11-17" in r.text
+
+
+def test_llama_record_pure():
+    # full record (meshd >= 0.3.1 wire shape) -> compact card fields
+    full = {"llama": {"printed_version": "1.0.0-dev (build 50, commit 9581154)",
+                      "sha": "9581154abcdef0123", "cuda_arch": "75",
+                      "measured_utc": "2026-11-17T03:29:44Z"}}
+    rec = meshstatus._llama(full)
+    assert rec["sha"] == "9581154abcde" and rec["arch"] == "75"
+    assert rec["measured"] == "2026-11-17"
+    # no file on the node = no version claimed that was not measured
+    assert meshstatus._llama({}) == {}
+    assert meshstatus._llama({"llama": None}) == {}
+    assert meshstatus._llama({"llama": {"sha": "", "printed_version": None}}) == {}
+    # version falls back to the plain field when printed_version is null
+    rec = meshstatus._llama({"llama": {"sha": "abc123", "version": "v9"}})
+    assert rec["version"] == "v9"
 
 
 def test_meshd_card_degrades(client, lanes):
