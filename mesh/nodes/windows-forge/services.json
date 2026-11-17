@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "node": "rainbowblock",
-  "updated": "2026-11-15",
+  "updated": "2026-11-16",
   "token_file": "C:\\forge\\llama\\subagent_key.txt",
   "laws": {
     "personal_pc": "idle services return RAM/VRAM to the user; nothing busywheels when idle",
@@ -82,7 +82,9 @@
       "auth": "bearer ONE-token (hub-first: meshctl get subagent-key; file fallback); no token = 503, wrong = 401",
       "health": "GET http://127.0.0.1:8092/healthz (open) + MCP POST /mcp (tools: mesh_status, node_health, node_services, node_caps, mesh_lease, lease_release, mesh_service)",
       "idle": { "policy": "idle-cheap: no timers, no polling; probes run only on request" },
-      "binary": "C:\\forge\\bin\\meshd.exe (staged from C:\\forge\\dev\\meshd cargo release)",
+      "binary": "C:\\forge\\bin\\meshd.exe (deployed by C:\\forge\\kit\\tools\\deploy_meshd.ps1 from a cargo release build of the repo tree mesh/meshd; dev lane C:\\forge\\dev\\meshd kept byte-identical)",
+      "version": "0.3.1",
+      "version_field": "healthz reports daemon version + the node's llama.cpp build (cross-node sync)",
       "logs": "C:\\forge\\logs\\meshd.out.log + meshd.err.log",
       "status": "enabled"
     },
