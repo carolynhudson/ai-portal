@@ -198,6 +198,7 @@ def test_auto_prefers_the_loaded_card():
     down = _cand("aardvark", "Aa-Down"); down["state"] = "unloaded"
     ranked, _ = mm.rank({"model": "auto"}, [down, up])
     assert ranked[0]["node"] == "halo"
+    assert any("auto lands on what is up" in w for w in ranked[0]["why"])
     ranked, _ = mm.rank({"model": "auto", "prefer_loaded": False}, [down, up])
     assert ranked[0]["node"] == "aardvark"  # no stickiness asked: stable order
 

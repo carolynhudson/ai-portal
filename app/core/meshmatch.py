@@ -285,6 +285,8 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
         # of the loaded copy -- and for model="auto" (no size proxies, all
         # cards tie) it is the whole law: point at what is ALREADY UP
         load_tier = 0 if (prefer_loaded and c.get("state") == "loaded") else 1
+        if load_tier == 0 and size_pen == math.inf:
+            why.append("loaded: auto lands on what is up")
         scored.append((size_pen, w_pen, tag_pen, load_tier, c, why))
 
     scored.sort(key=lambda s: (s[0], s[1], s[2], s[3],
