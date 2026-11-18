@@ -338,10 +338,12 @@ fn rd_val(b: &[u8], p: &mut usize, t: u8, be: bool) -> Option<Kv> {
                 // tokenizer-scale array: walk past the ELEMENTS (geometry
                 // lives elsewhere). Must not re-dispatch to rd_skip(9): that
                 // re-reads the et/n header we just consumed and desyncs.
+                // The LENGTH survives: tokenizer.ggml.tokens length IS the
+                // vocab size (the portal's modelmeta derives it the same way).
                 for _ in 0..n.min(1 << 22) {
                     rd_skip(b, p, et, be)?;
                 }
-                return Some(Kv::Arr(vec![]));
+                return Some(Kv::N(n as f64));
             }
             let mut v = Vec::new();
             for _ in 0..n {
@@ -470,6 +472,17 @@ fn gguf_meta_map(m: &std::collections::BTreeMap<String, Kv>) -> Value {
             ("attention.sliding_window", Kv::N(x)) => ("sliding_window", json!(*x as u64)),
             ("attention.sliding_window_pattern", Kv::Arr(_)) => ("sliding_window_pattern", json!(arr_nums(v).iter().map(|x| *x as u64).collect::<Vec<_>>())),
             ("feed_forward_length", Kv::N(x)) => ("feed_forward_length", json!(*x as u64)),
+            ("vocab_size", Kv::N(x)) => ("vocab_size", json!(*x as u64)),
+            ("expert_count", Kv::N(x)) => ("expert_count", json!(*x as u64)),
+            ("expert_used_count", Kv::N(x)) => ("expert_used_count", json!(*x as u64)),
+            ("feed_forward_length_expert", Kv::N(x)) => ("feed_forward_length_expert", json!(*x as u64)),
+            ("attention.key_length", Kv::N(x)) => ("attention_key_length", json!(*x as u64)),
+            ("attention.value_length", Kv::N(x)) => ("attention_value_length", json!(*x as u64)),
+            ("context_length", Kv::N(x)) => ("context_length", json!(*x as u64)),
+            // tokenizer.ggml.tokens survives as its LENGTH (the skip law):
+            // that length is the vocab size, the same derivation the
+            // portal's modelmeta uses.
+            ("ggml.tokens", Kv::N(x)) => ("vocab_size", json!(*x as u64)),
             _ => continue,
         };
         out.insert(name.into(), val);
@@ -1374,10 +1387,13 @@ mod cap_tests {
         kv_u32(&mut b, "llama.rope.dimension_count", 128);
         kv_u32(&mut b, "llama.context_length", 131072);
         kv_u32arr(&mut b, "llama.attention.sliding_window_pattern", &[1, 0, 1, 0]);
+        kv_u32(&mut b, "llama.vocab_size", 128000);
+        kv_u32(&mut b, "llama.expert_count", 64);
+        kv_u32(&mut b, "llama.expert_used_count", 8);
         b
     }
 
-    fn synth_gguf() -> Vec<u8> { synth_gguf_n(9) }
+    fn synth_gguf() -> Vec<u8> { synth_gguf_n(12) }
 
     #[test]
     fn gguf_header_parses_to_pricer_shape() {
@@ -1387,6 +1403,9 @@ mod cap_tests {
         assert_eq!(meta["attention_kv_count"], json!(8));
         assert_eq!(meta["filetype"], json!("Q8_0"));
         assert_eq!(meta["sliding_window_pattern"], json!([1, 0, 1, 0]));
+        assert_eq!(meta["vocab_size"], json!(128000));
+        assert_eq!(meta["expert_count"], json!(64));
+        assert_eq!(meta["expert_used_count"], json!(8));
         // garbage and truncation refuse, never guess
         assert!(gguf_kv(b"nope").is_none());
         let part = gguf_kv(&synth_gguf()[..40]).expect("best-effort partial");
@@ -1450,7 +1469,7 @@ mod cap_tests {
         // the scores/tokenizer law: HF writers put general.file_type AFTER
         // the 262k-token vocab and scores arrays. Re-dispatching the skip
         // past the consumed et/n header desynced the walk and lost them.
-        let mut b = synth_gguf_n(12);
+        let mut b = synth_gguf_n(15);   // 12 synth + tokens + scores + file_type dup
         // tokens: ARRAY of STRING, 5000 entries (> 4096 skip threshold)
         push_str(&mut b, "tokenizer.ggml.tokens"); b.extend(9u32.to_le_bytes());
         b.extend(8u32.to_le_bytes()); b.extend((5000u64).to_le_bytes());
@@ -1461,7 +1480,7 @@ mod cap_tests {
         for _ in 0..5000 { b.extend(1.0f32.to_le_bytes()); }
         kv_u32(&mut b, "general.file_type", 7);   // after the arrays
         let m = gguf_kv(&b).expect("parses past the arrays");
-        assert_eq!(m.len(), 11, "9 synth + tokens + scores (file_type dedups)");
+        assert_eq!(m.len(), 14, "12 synth + tokens + scores (file_type dup dedups)");
         assert!(m.contains_key("tokenizer.ggml.tokens") && m.contains_key("tokenizer.ggml.scores"));
         assert_eq!(gguf_meta_map(&m)["filetype"], json!("Q8_0"));
     }

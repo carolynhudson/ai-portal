@@ -8922,3 +8922,18 @@ now refuse while any model is loaded and restore the pre-bench load at the
 end. The bench lane is
 ON-DEMAND (load+warm chat+dd), merges into bench.json, and cards flip to
 "measured" - the halo sweep awaits an idle router by the owner's word.
+
+**6.14.1zzzd -- meshmatch: the owner's equivalence rubric, deterministic**
+The gateway's matching brain, as a pure module over the meshplace bundle
+(the bundle IS the synchronized master list; no new sync lane needed).
+Rank chain exactly per owner: exact stem match -> context window ->
+params (bias bigger; MoE by ACTIVE params) -> weights bytes (bias bigger;
+quant names NEVER score, bytes are physics) -> node fit -> feature tags
+only on ties (efficient_thinking/roleplay/code/moe/vision/family). Every
+row explains itself (`why` strings), every drop states its filter.
+params_est from header geometry is coarse across architectures and fair
+within one - labeled as such, the owner's "reasonable coarse measure".
+13 tests pin the ordering laws (bias, tie-break order, MoE active, stated
+drops). Proven live against halo's 22 real cards: exact match lands,
+ctx-filtered drops print their reasons, the 27B-class quants tie on
+params and rank by size with the bigger-bias.

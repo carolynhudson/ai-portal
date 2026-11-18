@@ -1147,6 +1147,37 @@ awaits an idle router (owner's call) and the forge's via bench #49's kit
 deploy. mesh.place gained the ram-min column, first-token rows, new-badges,
 and offload gates now ask the MEASURED resident size (weights+KV), not 2 GB.
 
+**25o -- the model-equivalence rubric (meshmatch, owner design 2026-11-17/18).**
+The owner set the matching law; app/core/meshmatch.py turns it into a
+deterministic, explainable ranking. Order, exactly as specified: (1) EXACT
+model match -- stem-normalized, quant/maker noise (-Q5_K_M, -MTP, -HF)
+stripped so path and name variants agree; (2) context window FILTER (a
+candidate must reach the request ctx); (3) parameter count as the smartness
+proxy, closest wins with a BIAS toward bigger (10% over costs half of 10%
+under) -- MoE scored on ACTIVE parameters (expert_used_count: what the
+request pays for in latency); (4) combined file size as the second chain --
+quant names NEVER enter the rubric (maker marketing; bytes are physics,
+owner law), same bigger-bias; (5) FIT: bigger that fits beats bigger that
+does not -- weights+KV at request ctx vs node free RAM; (6) feature tags
+LAST, only to break size ties: family, moe, vision, quant, and the
+tuning tags the owner named (thinkingcap/swift/mtp -> efficient_thinking;
+roleplay/humanlike/stheno -> roleplay; coder -> code...). Every ranking
+row carries its `why` strings and every drop carries its stated filter
+reason: visible policy, same law as the pref column.
+params_est is header geometry -> coarse scale (attention + SwiGLU FFN per
+layer + MoE experts + embeddings), labeled params_src=header-geometry:
+fair WITHIN an architecture, coarse ACROSS (Qwen3.8-27B prices ~21.6B
+because its hybrid-attention geometry differs from the classic formula -
+the honesty the owner asked for: "a reasonable coarse measure"). 17 of
+halo's 22 cards price today (shard/multi-file rows are the gap).
+meshd's card meta gained the geometry keys (vocab_size, expert_count,
+expert_used_count, key/value lengths, context_length) and the vocab
+insight: the skipped 262k-token array's LENGTH is the vocab size - same
+derivation as the portal's modelmeta. 13 portal rubric tests + 10 meshd
+tests pin the law. The master list IS the meshplace bundle (30 s TTL
+poll): the portal already keeps the synchronized inventory; the gateway
+lane (P2) consumes meshmatch.rank over it.
+
 ## §26 -- CAX80 hardening notes (owner 2026-11-17: bounded research, analysis only)
 
 Owner asked what the gateway (NETGEAR Nighthawk **CAX80**, AX6000 Wi-Fi 6
