@@ -1178,6 +1178,35 @@ tests pin the law. The master list IS the meshplace bundle (30 s TTL
 poll): the portal already keeps the synchronized inventory; the gateway
 lane (P2) consumes meshmatch.rank over it.
 
+**25q -- P2 gateway LIVE: /llm, the read-path placement proxy (2026-11-18).**
+The portal now answers OpenAI-style traffic: `POST /llm/v1/chat/completions`
+and `GET /llm/v1/models`. Per request it resolves over the live bundle
+(30 s door poll = master inventory), ranks with meshmatch, forwards to the
+best router, and **fails over strictly before the first response byte** --
+once bytes stream the call is committed (a half-stream replayed elsewhere
+would lie). meshd 0.3.5 publishes `router_url` in caps; the gateway
+rewrites a loopback router on a REMOTE door to that door's host (meshd
+reports its local view; halo's stays loopback). Auth: portal cookie OR
+Bearer gateway token, minted once at state/portal/llm_gateway_token.txt
+(0600, `AIPP_LLM_GATEWAY_TOKEN` override, revoke = delete the file).
+Laws enforced: READ PATH ONLY -- the gateway never loads, unloads, or
+reconfigures anything (mutation stays owner lane + confirm-gated verbs,
+so pointing opencode at /llm opens no new mutation surface); placement
+is VISIBLE per request (X-AIPP-Place, X-AIPP-Attempts name who answered,
+why, and every peer tried). Rubric grew with it: exact-model twins rank
+the LOADED copy first (stickiness is swap-cost honesty), and ranked rows
+carry router_url through. 11 gateway tests + 18 rubric tests; suite
+green. Point opencode at http://halo:8090/llm/v1 with model "auto" (or
+any mesh id) and the mesh starts choosing FOR you -- read-path only.
+Glue that landed with it: `meshllm.failover_request(bundle, model)`
+builds the rubric request FROM the source card (ctx floor, params,
+cliff ratio 0.75, tags -- derived, stated, never guessed), and
+`agentconfig.mesh_config` writes the `mesh` opencode provider entry
+(baseURL .../llm/v1, gateway token as apiKey, model mesh/auto);
+_merge_top now replaces only its own provider keys, so the operator's
+router provider and default model survive. 12 gateway + 20 agentconfig
+tests.
+
 **25p -- rubric laws from the owner's second pass (meshmatch, 2026-11-18).**
 Four refinements, each a stated law in code:
 - **Capability cliff floor** (min_params_ratio): a model far below the

@@ -340,7 +340,11 @@ def test_every_served_page_has_a_ui_spec():
         # the static mount are not UI to spec
         if getattr(endpoint, "__module__", None) != "app.main":
             continue
-        if path.startswith("/api") or path in ("/healthz", "/favicon.ico"):
+        if path.startswith("/api") or path.startswith("/llm/") \
+                or path in ("/healthz", "/favicon.ico"):
+            # /llm is the OpenAI-compatible gateway: machine traffic, not a
+            # page -- the same exemption class as /api (X-AIPP-Place carries
+            # its visibility; the UI sweep guards human-facing surfaces)
             continue
         served.add(path)
     specced = {p["path"] for p in SPEC["pages"]}

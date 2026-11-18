@@ -8937,3 +8937,16 @@ within one - labeled as such, the owner's "reasonable coarse measure".
 drops). Proven live against halo's 22 real cards: exact match lands,
 ctx-filtered drops print their reasons, the 27B-class quants tie on
 params and rank by size with the bigger-bias.
+
+**6.14.1zzze -- /llm gateway: the portal proxies placed traffic (P2)**
+OpenAI-style read-path proxy: chat completions + model list, resolved
+through meshmatch over the live bundle and forwarded to the best router.
+Failover only BEFORE the first byte (never mid-stream replay); placement
+visible per request (X-AIPP-Place / X-AIPP-Attempts); gateway token lane
+(0600 file, minted once) beside the session cookie; loopback router_urls
+on remote doors rewritten to the door host (meshd now publishes
+router_url). The gateway NEVER loads/unloads/reconfigures routers --
+mutation stays the owner's lane. 11 tests in tests/test_meshllm.py pin
+the auth lanes, failover honesty, header visibility and the twin rule
+(loaded exact copy beats a cold twin). meshplace passes router_url
+through to bundle nodes.

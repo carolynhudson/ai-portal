@@ -178,6 +178,19 @@ def test_exact_match_still_beats_a_loaded_rival():
     assert "EXACT model match" in ranked[0]["why"][0]
 
 
+def test_exact_copies_prefer_the_loaded_twin():
+    cold = _cand("halo", "Shared-Model")
+    cold["state"] = "unloaded"
+    warm = _cand("rainbowblock", "Shared-Model")
+    warm["state"] = "loaded"
+    ranked, _ = mm.rank({"model": "Shared-Model", "prefer_loaded": True},
+                        [cold, warm])
+    assert ranked[0]["node"] == "rainbowblock"
+    assert "loaded copy wins" in ranked[0]["why"]
+    ranked, _ = mm.rank({"model": "Shared-Model"}, [cold, warm])
+    assert ranked[0]["node"] == "halo"  # no stickiness asked: stable order
+
+
 def test_candidates_from_meshd_card_shape():
     card = {"node": "halo", "kind": "llm-router", "service": "ThinkingCap-Qwen3.8-27B-Q4_K_M",
             "state": "catalog",

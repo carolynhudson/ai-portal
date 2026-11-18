@@ -266,6 +266,37 @@ def opencode_config(port: int, ids: Sequence[str], posture: str = "project",
     return cfg
 
 
+def mesh_config(gateway_base: str, token: str, ids: Sequence[str],
+                posture: str = "project",
+                mcp: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The MESH provider entry: opencode pointed at the portal's /llm
+    gateway instead of one router. 'auto' asks the rubric to place the
+    session; an exact mesh model id finds its copies (stickiness applies).
+    Read-path only -- the gateway cannot load, unload, or reconfigure.
+    The token is the gateway token (0600 file), never a router key."""
+    cfg: dict[str, Any] = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "mesh": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "AI mesh gateway",
+                "options": {"baseURL": gateway_base.rstrip("/") + "/v1",
+                            "apiKey": token},
+                "models": {i: {"name": i, "limit": {"context": 8192,
+                                                    "output": 2048}}
+                           for i in ids},
+            }
+        },
+        "permission": POSTURES[posture],
+        "compaction": COMPACT,
+    }
+    if ids:
+        cfg["model"] = "mesh/auto"
+    if mcp:
+        cfg["mcp"] = mcp
+    return cfg
+
+
 def merge(existing: dict[str, Any], generated: dict[str, Any], provider: str) -> dict[str, Any]:
     """Replace only our provider; everything the operator put there survives."""
     out = dict(existing)
@@ -287,7 +318,7 @@ def _merge_top(existing: dict[str, Any], generated: dict[str, Any]) -> dict[str,
     for key, value in generated.items():
         if key == "provider":
             providers = dict(out.get("provider") or {})
-            providers[OC_PROVIDER] = value[OC_PROVIDER]
+            providers.update(value)  # only OUR provider keys are replaced
             out["provider"] = providers
         elif key == "model" and out.get("model"):
             continue

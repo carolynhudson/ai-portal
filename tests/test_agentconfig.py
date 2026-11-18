@@ -64,6 +64,24 @@ def test_the_pi_config_is_the_shape_pi_accepted_on_this_box():
     assert [m["id"] for m in entry["models"]] == IDS
 
 
+def test_mesh_config_points_at_the_gateway_with_the_gateway_token():
+    cfg = agentconfig.mesh_config("http://127.0.0.1:8090/llm", "gw-token-9",
+                                  IDS, "project")
+    entry = cfg["provider"]["mesh"]
+    assert entry["npm"] == "@ai-sdk/openai-compatible"
+    assert entry["options"]["baseURL"] == "http://127.0.0.1:8090/llm/v1"
+    assert entry["options"]["apiKey"] == "gw-token-9"
+    assert "auto" in dict.fromkeys(["auto"] + IDS)  # ids ride through
+    assert cfg["model"] == "mesh/auto"
+    # merging keeps the operator's router provider AND replaces only mesh
+    existing = {"provider": {agentconfig.OC_PROVIDER: {"keep": True},
+                             "mesh": {"stale": True}}, "model": "llama.cpp/X"}
+    out = agentconfig._merge_top(existing, cfg)
+    assert out["provider"][agentconfig.OC_PROVIDER] == {"keep": True}
+    assert out["provider"]["mesh"] is entry
+    assert out["model"] == "llama.cpp/X", "the operator's default model stays"
+
+
 def test_the_opencode_config_is_the_shape_opencode_connected_with():
     cfg = agentconfig.opencode_config(8080, IDS, "project")
     entry = cfg["provider"][agentconfig.OC_PROVIDER]

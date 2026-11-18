@@ -99,6 +99,7 @@ def _node(url: str, tok: str) -> dict:
         except Exception as e:  # noqa: BLE001 -- the lane names its own truth
             leases = {"error": f"{type(e).__name__}: {e}"[:120]}
         return {"ok": True, "url": url, "node": caps.get("node") or url,
+                "router_url": caps.get("router_url") or "",
                 "cards": cards, "leases": leases,
                 "policy": "minor-assistant (owner, mem 210)"
                           if (caps.get("node") in _MINOR_ASSISTANT) else ""}

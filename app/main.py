@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import hmac
 import json
 import math
 import os
@@ -26,7 +27,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -38,6 +39,7 @@ from .core import (
     agentconfig,
     llamakey,
     meshllama,
+    meshllm,
     meshplace,
     meshstatus,
     svc_actions,
@@ -2129,6 +2131,71 @@ def create_app() -> FastAPI:
             "/place?gate=" + urllib.parse.quote(
                 f"{n}|{op}|{node}|{model}|{vram_mib}|{ctx}"),
             status_code=302)
+
+    # ---------------------------------------------------------- /llm gateway (P2)
+    # READ-PATH placement proxy: opencode-style clients post here; the
+    # portal resolves and ranks across the mesh (meshmatch over the live
+    # bundle), forwards to the best router, and fails over ONLY before
+    # the first response byte. The gateway never loads, unloads, or
+    # reconfigures a router -- mutation stays the owner's lane and the
+    # confirm-gated meshd verbs. X-AIPP-Place / X-AIPP-Attempts make the
+    # decision visible per request: the policy is data, never hidden.
+
+    def _llm_authorized(request: Request) -> bool:
+        auth = request.headers.get("authorization") or ""
+        t = meshllm.gateway_token()
+        if auth.lower().startswith("bearer ") and hmac.compare_digest(
+                auth[7:].strip(), t):
+            return True
+        cookie = request.cookies.get(cfg.COOKIE_NAME)
+        return bool(cookie and cfg.token_valid(_settings(), cookie))
+
+    def _llm_headers(r: dict) -> dict:
+        h = {"X-AIPP-Attempts": urllib.parse.quote(
+            json.dumps(r.get("attempts") or [], ensure_ascii=True)[:900])}
+        if r.get("placed"):
+            h["X-AIPP-Place"] = urllib.parse.quote(
+                f"{r['placed'].get('node')}/{r['placed'].get('service')}")
+        return h
+
+    @app.get("/llm/v1/models")
+    def llm_models(request: Request):
+        if not _llm_authorized(request):
+            raise HTTPException(status_code=401,
+                                detail="gateway token or portal session required")
+        return {"object": "list", "data": meshllm.models(meshplace.bundle())}
+
+    @app.post("/llm/v1/chat/completions")
+    async def llm_chat(request: Request):
+        if not _llm_authorized(request):
+            raise HTTPException(status_code=401,
+                                detail="gateway token or portal session required")
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 -- a bad body is the client's
+            raise HTTPException(status_code=400, detail="json body required")
+        bundle = meshplace.bundle()
+        tok, _src = meshstatus._token()
+        if body.get("stream"):
+            status, gen, placed, attempts = meshllm.stream_chat(body, bundle, tok)
+            headers = {"X-AIPP-Attempts": urllib.parse.quote(
+                json.dumps(attempts, ensure_ascii=True)[:900])}
+            if placed:
+                headers["X-AIPP-Place"] = urllib.parse.quote(
+                    f"{placed['node']}/{placed['service']}")
+            if gen is None:
+                raise HTTPException(
+                    status_code=status or 503,
+                    detail={"error": "no mesh candidate answered",
+                            "attempts": attempts})
+            return StreamingResponse(gen, media_type="text/event-stream",
+                                     headers=headers)
+        r = meshllm.chat(body, bundle, tok)
+        if not r["ok"]:
+            raise HTTPException(status_code=r["status"] or 503,
+                                detail={"error": "no mesh candidate answered",
+                                        "attempts": r["attempts"]})
+        return JSONResponse(r["body"], headers=_llm_headers(r))
 
     @app.get("/api/workroom/bench")
     def api_workroom_bench(request: Request, _=Depends(_require_auth)):

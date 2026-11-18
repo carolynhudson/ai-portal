@@ -934,6 +934,7 @@ async fn caps() -> Value {
         "models_total": ids.len(),
         "models_new": new_ids,
         "image_contracts": raw,
+        "router_url": router_url(),
         "note": "cards = service-card schema v0 (NODE_CONTRACT) for control-plane aggregation; image_contracts = raw forge_caps passthrough",
     })
 }

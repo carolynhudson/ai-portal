@@ -216,7 +216,13 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
         p = meta_p.get("active_b") if "moe" in (c.get("tags") or ()) else meta_p.get("params_b")
         why = []
         if _norm(c.get("service") or "") == req_model and req_model:
-            scored.append((-1.0, math.inf, 0, 0, c, ["EXACT model match"]))
+            # exact copies on several nodes: the LOADED copy wins outright
+            # (prefer_loaded) -- paying minutes of load to reach a cold
+            # twin is the swap cost the owner named, with zero upside
+            tie = 0.0 if (prefer_loaded and c.get("state") == "loaded") else 0.1
+            why = ["EXACT model match"] + (["loaded copy wins"] if tie == 0.0
+                                           else [])
+            scored.append((-1.0 + tie, math.inf, 0, 0, c, why))
             continue
         if req_ctx and (c.get("ctx") or 0) < req_ctx:
             # failover law: the ctx floor IS the source's ctx. A model
@@ -273,5 +279,8 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
 
     scored.sort(key=lambda s: (s[0], s[1], s[2], str(s[4].get("node")), str(s[4].get("service"))))
     out = [{"node": c.get("node"), "service": c.get("service"),
+            # router_url rides through for the /llm gateway's proxy target;
+            # the rubric itself never reads it (state feeds stickiness)
+            "router_url": c.get("router_url"), "state": c.get("state"),
             "why": w or ["rubric: ctx ok"]} for _, _, _, _, c, w in scored]
     return out, filtered
