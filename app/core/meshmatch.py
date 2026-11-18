@@ -208,6 +208,10 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
     prefer_loaded = request.get("prefer_loaded")
     if prefer_loaded is None and task in ("fim", "chat"):
         prefer_loaded = True
+    if prefer_loaded is None and req_model in ("", "auto", "mesh"):
+        # "place me somewhere" IS a chat-shaped ask: no size proxies to
+        # score, so the stickiness law is the whole ranking
+        prefer_loaded = True
     min_ratio = request.get("min_params_ratio")
 
     scored, filtered = [], []
@@ -222,7 +226,9 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
             tie = 0.0 if (prefer_loaded and c.get("state") == "loaded") else 0.1
             why = ["EXACT model match"] + (["loaded copy wins"] if tie == 0.0
                                            else [])
-            scored.append((-1.0 + tie, math.inf, 0, 0, c, why))
+            scored.append((-1.0 + tie, math.inf, 0,
+                           0 if (prefer_loaded and c.get("state") == "loaded") else 1,
+                           c, why))
             continue
         if req_ctx and (c.get("ctx") or 0) < req_ctx:
             # failover law: the ctx floor IS the source's ctx. A model
@@ -275,9 +281,14 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
             if miss:
                 tag_pen = miss
                 why.append(f"tags missing: {','.join(sorted(req_tags - ct))}")
-        scored.append((size_pen, w_pen, tag_pen, 0.0, c, why))
+        # the load tier breaks full ties (all rubric fields equal) in favor
+        # of the loaded copy -- and for model="auto" (no size proxies, all
+        # cards tie) it is the whole law: point at what is ALREADY UP
+        load_tier = 0 if (prefer_loaded and c.get("state") == "loaded") else 1
+        scored.append((size_pen, w_pen, tag_pen, load_tier, c, why))
 
-    scored.sort(key=lambda s: (s[0], s[1], s[2], str(s[4].get("node")), str(s[4].get("service"))))
+    scored.sort(key=lambda s: (s[0], s[1], s[2], s[3],
+                               str(s[4].get("node")), str(s[4].get("service"))))
     out = [{"node": c.get("node"), "service": c.get("service"),
             # router_url rides through for the /llm gateway's proxy target;
             # the rubric itself never reads it (state feeds stickiness)

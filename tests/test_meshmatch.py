@@ -191,6 +191,17 @@ def test_exact_copies_prefer_the_loaded_twin():
     assert ranked[0]["node"] == "halo"  # no stickiness asked: stable order
 
 
+def test_auto_prefers_the_loaded_card():
+    # model="auto": no size proxies, everything ties on the rubric -
+    # the load tier IS the law: point at what is already up
+    up = _cand("halo", "Zz-Up"); up["state"] = "loaded"
+    down = _cand("aardvark", "Aa-Down"); down["state"] = "unloaded"
+    ranked, _ = mm.rank({"model": "auto"}, [down, up])
+    assert ranked[0]["node"] == "halo"
+    ranked, _ = mm.rank({"model": "auto", "prefer_loaded": False}, [down, up])
+    assert ranked[0]["node"] == "aardvark"  # no stickiness asked: stable order
+
+
 def test_candidates_from_meshd_card_shape():
     card = {"node": "halo", "kind": "llm-router", "service": "ThinkingCap-Qwen3.8-27B-Q4_K_M",
             "state": "catalog",
