@@ -8950,3 +8950,15 @@ mutation stays the owner's lane. 11 tests in tests/test_meshllm.py pin
 the auth lanes, failover honesty, header visibility and the twin rule
 (loaded exact copy beats a cold twin). meshplace passes router_url
 through to bundle nodes.
+
+**6.14.1zzzf -- mesh provider apply: opencode rides the gateway**
+POST /api/agents/mesh -> agentconfig.mesh_sync writes the `mesh`
+opencode provider entry: baseURL <portal>/llm/v1, apiKey = the GATEWAY
+token (never the router key), models = auto + mesh ids, posture per
+the sync lane's vocabulary. Merge law: _merge_top replaces ONLY its
+own provider keys - the operator's router provider, mcp block, and
+default model survive untouched (mesh/auto is an entry they choose in
+the picker, never a silent move). _store now writes harness configs
+0600 (they carry keys). mesh_sync is idempotent (second apply =
+changed:false). Read-path law carried to the harness: opencode riding
+mesh/auto cannot load, unload, or reconfigure a router. 23 tests.

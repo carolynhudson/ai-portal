@@ -324,6 +324,52 @@ def test_the_status_endpoint_answers_the_page():
         assert key in d["auth"], key
 
 
+def test_mesh_sync_writes_only_the_mesh_provider_and_keeps_the_operator(tmp_path, monkeypatch):
+    oc_dir = tmp_path / "opencode"
+    oc_dir.mkdir()
+    (oc_dir / "opencode.json").write_text(json.dumps({
+        "provider": {agentconfig.OC_PROVIDER: {"keep": True}},
+        "model": "llama.cpp/Swift-Flash-Next-IQ3_S",
+        "mcp": {"forge": {"keep": True}},
+    }), encoding="utf-8")
+    monkeypatch.setenv("AIPP_LLM_GATEWAY_TOKEN", "gw-token-mesh-sync")
+    out = agentconfig.mesh_sync(oc_dir=oc_dir, base_url="http://127.0.0.1:8090/llm",
+                                ids=["Swift-Flash-Next-IQ3_S"])
+    assert out["ok"] and out["opencode"]["changed"]
+    data = json.loads((oc_dir / "opencode.json").read_text(encoding="utf-8"))
+    assert data["provider"][agentconfig.OC_PROVIDER] == {"keep": True}, "router provider survives"
+    assert data["mcp"] == {"forge": {"keep": True}}, "the operator's mcp block survives"
+    assert data["model"] == "llama.cpp/Swift-Flash-Next-IQ3_S", "default model NEVER moves"
+    mesh = data["provider"]["mesh"]
+    assert mesh["options"]["apiKey"] == "gw-token-mesh-sync", "gateway token rides, router key never"
+    assert "auto" in mesh["models"]
+    # the config file holds a secret: owner-read-only
+    assert (oc_dir / "opencode.json").stat().st_mode & 0o077 == 0
+    # idempotent: a second apply changes nothing
+    assert agentconfig.mesh_sync(oc_dir=oc_dir, base_url="http://127.0.0.1:8090/llm",
+                                 ids=["Swift-Flash-Next-IQ3_S"])["opencode"]["changed"] is False
+
+
+def test_mesh_sync_refuses_unknown_posture(tmp_path):
+    out = agentconfig.mesh_sync(oc_dir=tmp_path, posture="yolo")
+    assert not out["ok"] and "posture" in out["error"]
+
+
+def test_mesh_route_requires_auth_and_writes_on_apply():
+    from app.core import config as cfg
+    from fastapi.testclient import TestClient
+    from app.main import app
+    anon = TestClient(app)
+    r = anon.post("/api/agents/mesh", json={}, follow_redirects=False)
+    assert r.status_code == 401, "unauthenticated"
+    c = _client()
+    r = c.post("/api/agents/mesh", json={"posture": "yolo"})
+    assert r.status_code == 409 and "posture" in r.json()["detail"]
+    r = c.post("/api/agents/mesh", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] and "opencode" in r.json()["opencode"]["path"]
+
+
 def test_the_write_endpoint_requires_auth():
     from fastapi.testclient import TestClient
 

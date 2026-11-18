@@ -175,6 +175,9 @@ def _store(path: Path, data: dict[str, Any]) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(new, encoding="utf-8")
+    # harness configs carry keys (the mesh provider entry holds the
+    # gateway token): owner-read-only, always
+    os.chmod(tmp, 0o600)
     tmp.replace(path)
     return True
 
@@ -295,6 +298,39 @@ def mesh_config(gateway_base: str, token: str, ids: Sequence[str],
     if mcp:
         cfg["mcp"] = mcp
     return cfg
+
+
+def mesh_sync(oc_dir: Path | None = None, base_url: str | None = None,
+              posture: str = "project", ids: Sequence[str] | None = None) -> dict[str, Any]:
+    """Point opencode at the MESH GATEWAY: writes the 'mesh' provider
+    entry (baseURL <portal>/llm/v1, gateway token as apiKey, models =
+    auto + every mesh id). The operator's router provider, mcp block,
+    and default model all survive (_merge_top replaces only 'mesh').
+    Read-path law: opencode riding the gateway can never load, unload,
+    or reconfigure a router - mutation stays the owner's lane."""
+    if posture not in POSTURES:
+        return {"ok": False, "error": f"unknown posture {posture!r}; the choices are {', '.join(POSTURE_CHOICES)}"}
+    from . import meshllm  # lazy: agentconfig stays light for the read lanes
+    oc_dir = oc_dir or _default_dirs()[1]
+    if not base_url:
+        base_url = f"http://127.0.0.1:{_portal_port()}/llm"
+    model_ids = list(ids or [])
+    if "auto" not in model_ids:
+        model_ids.insert(0, "auto")
+    oc_path = oc_dir / "opencode.json"
+    existing, err = _load(oc_path)
+    if err:
+        return {"ok": False, "error": err}
+    generated = mesh_config(base_url, meshllm.gateway_token(), model_ids, posture)
+    changed = _store(oc_path, _merge_top(existing or {}, generated))
+    return {"ok": True, "baseURL": base_url,
+            "opencode": {"path": str(oc_path), "changed": changed,
+                         "models": len(model_ids), "posture": posture}}
+
+
+def _portal_port() -> int:
+    from . import serviceconf
+    return int(serviceconf.base_url("portal", default_port=8090).rsplit(":", 1)[-1])
 
 
 def merge(existing: dict[str, Any], generated: dict[str, Any], provider: str) -> dict[str, Any]:

@@ -154,14 +154,31 @@ def _conn() -> sqlite3.Connection:
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA foreign_keys=ON")
         _local.conn = c
+        # state-agnostic law: the schema exists as soon as the db is
+        # opened, in every lane (CLI, scripts, tests). A read that must
+        # hope "some app startup ran init()" first is an order-dependency
+        # waiting to flake.
+        _ensure_schema(c)
     return c
 
 
 def init() -> None:
-    c = _conn()
-    c.executescript(SCHEMA)
+    _ensure_schema(_conn())
+
+
+SCHEMA_VERSION = 1  # bump when a migration must run over existing dbs
+
+
+def _ensure_schema(c: sqlite3.Connection) -> None:
     # Pre-existing DBs: add each column once. An existing column is the normal case here, not an
     # exception worth a name — SQLite raises `duplicate column name` and we continue.
+    # The guard is PER CONNECTION (user_version sentinel), never a module
+    # global: tests swap in private connections and call init() expecting
+    # a schema; a global flag answers "ready" about a file this connection
+    # never touched.
+    if c.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:
+        return
+    c.executescript(SCHEMA)
     with contextlib.suppress(sqlite3.OperationalError):
         c.execute("ALTER TABLE model_files ADD COLUMN meta TEXT")
     # Provenance (6.14.1zl): {repo, tag} of models the portal PLACED in the
@@ -188,6 +205,7 @@ def init() -> None:
                 "actor TEXT NOT NULL DEFAULT 'portal'"):
         with contextlib.suppress(sqlite3.OperationalError):
             c.execute(f"ALTER TABLE memory ADD COLUMN {col}")
+    c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     c.commit()
 
 

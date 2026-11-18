@@ -96,8 +96,11 @@ def test_port_free_answers_for_a_port_we_are_actually_holding():
     s.listen(1)
     port = s.getsockname()[1]
     try:
-        assert harnessctl.port_free(port) is False
-        assert harnessctl.port_free(port + 1000 if port + 1000 < 65535 else port - 1000) is True
+        # 2 s: the 0.5 s production probe is right for a preflight on an
+        # idle box; a saturated suite can make even loopback SYN slow
+        assert harnessctl.port_free(port, timeout=2.0) is False
+        assert harnessctl.port_free(port + 1000 if port + 1000 < 65535 else port - 1000,
+                                    timeout=2.0) is True
     finally:
         s.close()
 

@@ -200,6 +200,16 @@ class HarnessStartBody(BaseModel):
     confirm: bool = False
 
 
+class AgentMeshBody(BaseModel):
+    """Apply the 'mesh' opencode provider entry (the /llm gateway).
+    base_url is a seam for remote portals; ids extend the mesh picker
+    ('auto' is always included); posture is the same permission shape
+    the router sync uses, refused when unknown."""
+    base_url: str | None = None
+    posture: str = "project"
+    ids: list[str] | None = None
+
+
 class AgentSyncBody(BaseModel):
     """Regenerate the harness configs. `port` is a seam for the tests and for a router someone
     started on a non-default port; `posture` is the permission shape (§6.14.1m), and an unknown one
@@ -1800,6 +1810,21 @@ def create_app() -> FastAPI:
         db.event("portal", "agents-sync", f"ok={out.get('ok')} models={out.get('models', 0)} posture={out.get('posture', body.posture)}")
         if not out.get("ok"):
             raise HTTPException(status_code=409, detail=out.get("error") or "the configs were not written")
+        return out
+
+    @app.post("/api/agents/mesh")
+    def api_agents_mesh(body: AgentMeshBody, _=Depends(_require_auth)):
+        """Point opencode at the mesh gateway (P2): writes the 'mesh'
+        provider entry only - the operator's router provider, mcp block,
+        and default model survive. The gateway is READ PATH: opencode
+        riding mesh/auto cannot load, unload, or reconfigure a router.
+        The gateway token (never the router key) rides the config."""
+        out = agentconfig.mesh_sync(base_url=body.base_url,
+                                    posture=body.posture, ids=body.ids)
+        db.event("portal", "agents-mesh",
+                 f"ok={out.get('ok')} models={(out.get('opencode') or {}).get('models', 0)}")
+        if not out.get("ok"):
+            raise HTTPException(status_code=409, detail=out.get("error") or "the config was not written")
         return out
 
     # ------------------------------------------------- harness host (queue 30)

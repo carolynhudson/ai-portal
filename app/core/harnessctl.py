@@ -160,10 +160,10 @@ def ensure_key(log=print) -> str:
     return value
 
 
-def port_free(port: int, host: str = DEFAULT_HOST) -> bool:
+def port_free(port: int, host: str = DEFAULT_HOST, timeout: float = 0.5) -> bool:
     port = _int(port, DEFAULT_PORT)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
+        s.settimeout(timeout)
         return s.connect_ex((host, port)) != 0
 
 
