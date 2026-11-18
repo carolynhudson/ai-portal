@@ -1146,3 +1146,50 @@ Halo's 22 cards: computed lane LIVE and wire-proven; the measured sweep
 awaits an idle router (owner's call) and the forge's via bench #49's kit
 deploy. mesh.place gained the ram-min column, first-token rows, new-badges,
 and offload gates now ask the MEASURED resident size (weights+KV), not 2 GB.
+
+## §26 -- CAX80 hardening notes (owner 2026-11-17: bounded research, analysis only)
+
+Owner asked what the gateway (NETGEAR Nighthawk **CAX80**, AX6000 Wi-Fi 6
+cable modem+router) can do for protection/optimization, explicitly
+deprioritized: no active network problem blocks this project, and the
+Pi-hole pair is NOT multi-adapter, so it cannot act as a barrier that
+routes between the CAX80 and the LAN. Notes, no box changes; every CAX80
+edit stays owner-applied (standing law).
+
+What the research says (Netgear community + manual + field writeups):
+
+1. **Bridge mode exists and is NOT for us.** Advanced > Router Mode (Off)
+   turns the CAX80 into a plain modem; in modem-only mode it serves ONE
+   downstream device and its LAN switching/Wi-Fi go dark. With no
+   multi-homed router to slot in (pair is single-arm), bridging strands
+   the LAN. Endgame stays as analyzed: a self-owned router (Pi pair
+   candidate) BEHIND a bridged CAX80 -- one day, by the owner's hand.
+2. **The protective wins are toggle-level and keepable:**
+   - IPv4 firewall + DoS/port-scan protection: ON (verify once; the
+     manual warns these can be disabled -- they should not be).
+   - Respond to ping on Internet port: OFF (stealth).
+   - DMZ server: OFF (nothing should be exposed; we host via tailnet
+     in the mesh endgame, never via DMZ).
+   - SIP ALG: OFF if no VoIP (it mangles connections for no benefit).
+   - Remote management (from the Internet): OFF. Admin UI LAN-only.
+   - Public hotspot (ISP SSID broadcast on the box): OFF from the ISP
+     account page -- kills an open-air attack surface we do not use.
+   - Admin password: strong + unique (the CAX80 ships admin/password;
+     the LAN is friendly, the setting is hygiene).
+   - Firmware: current (the RA-flood fix is already witnessed); check
+     quarterly, changes are owner-scheduled events like pair reboots.
+   - WPS: OFF if present.
+3. **Double NAT is not in play** (nothing routes behind the CAX80
+   today), so no change is needed for the mesh's sake; port-forwards
+   stay unnecessary because the mesh lane is outbound-initiated
+   (mTLS + tailscale endgame) -- nothing on the LAN needs a public
+   door, which is the strongest protection we have.
+4. **DNS chain is already stronger than the gateway's defaults**: FTL ->
+   unbound -> Quad9 DoT with the pair's stable EUI-64 in the gateway's
+   IPv6 DNS fields (owner-applied). No CAX80-side DNS change is wanted:
+   the box has no DNS features worth taking over our chain.
+
+Net: the gateway-side checklist is small, cheap, and mostly verify-only.
+Nothing here interacts with the mesh build. If the owner wants, a
+one-evening pass through the CAX80 admin UI ticking items from 2 is the
+whole scope.
