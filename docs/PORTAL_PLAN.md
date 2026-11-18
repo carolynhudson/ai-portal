@@ -8901,3 +8901,24 @@ suite' -> reproduce with the full run and read the failures block;
 isolation reruns teach nothing. DEPLOY LAW re-proven: install.sh ships
 git HEAD, not the working tree -- a pre-commit deploy rendered a
 zero-surface page; commit first, deploy second.
+
+**6.14.1zzzc -- the capacity columns: RAM, first-token, measured gates**
+Owner asked what the place page cannot see: system RAM (ComfyUI and CPU
+lanes make it a real constraint) and time-to-first-answer. meshd 0.3.5 cards
+carry ram_gb_min, weights/kv from the GGUF header, warm/cold first-token
+estimates, [warm, cold] timeout buffers, and a once-only new-model flag;
+/place renders ram-min, first-token rows, new-badges, and the offload gate
+now asks the MEASURED resident size (weights+KV) instead of a 2 GB guess.
+The header lane caught the portal's own file_type table: llama.cpp writes
+the ggml.h llama_ftype enum (Q8_0=7, Q5_K_M=17), not the gguf-py "spec"
+numbering - 27/27 tagged models on this box agree with the fixed table and
+zero agreed with the old one, so /models quant columns stopped lying and
+the conflict-note tests were re-armed at the true ids (suite green).
+Incident law banked the same day (see MESH 25n): a raw /models/load probe
+on the owner's router evicted the running model and it did NOT self-restore
+- the owner re-loaded it by hand. The portal's own actor lane (meshllama)
+kept its loopback-refusal law and was not the culprit; kit bench scripts
+now refuse while any model is loaded and restore the pre-bench load at the
+end. The bench lane is
+ON-DEMAND (load+warm chat+dd), merges into bench.json, and cards flip to
+"measured" - the halo sweep awaits an idle router by the owner's word.

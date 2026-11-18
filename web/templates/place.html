@@ -101,14 +101,18 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
     <div class="pl-scroll">
       <table class="pl">
         <tr><th>service</th><th>fills</th><th>kind</th><th>backend</th><th>vram min</th>
-            <th>conc</th><th>timeout s</th><th>state</th><th>pref</th><th>action</th></tr>
+            <th>ram min</th><th>conc</th><th>timeout s</th><th>state</th><th>pref</th><th>action</th></tr>
         {% for c in n.cards|sort(attribute='pref') %}
         <tr>
-          <td><b>{{ c.service }}</b><div class="pl-sum">{{ c.tier or '' }}</div></td>
+          <td><b>{{ c.service }}</b>{% if c.new %} <span class="pl-tag">new</span>{% endif %}
+            <div class="pl-sum">{{ c.tier or '' }}{% if c.time %} · first token
+              warm {{ c.time.get('first_token_warm_s', '?') }}s / cold
+              {{ c.time.get('first_token_cold_s', '?') }}s ({{ c.time.get('src', '?') }}){% endif %}</div></td>
           <td>{{ c.fills|join(', ') if c.fills else '-' }}</td>
           <td>{{ c.kind }}</td>
           <td>{{ (c.requires or {}).get('backend', '-') }}</td>
           <td>{{ (c.requires or {}).get('vram_gb_min', '-') }} GB</td>
+          <td>{{ (c.requires or {}).get('ram_gb_min', '-') }} GB</td>
           <td>{{ (c.limits or {}).get('concurrency', '-') }}</td>
           <td>{{ ((c.limits or {}).get('timeout_s') or ['?','?'])|join('–') }}</td>
           <td>{{ c.state }}</td>
@@ -120,8 +124,13 @@ table.pl th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color
               <input type="hidden" name="model" value="{{ c.service }}">
               <input type="hidden" name="op" value="offload">
               <input type="hidden" name="phase" value="gate">
+              {# the lease asks for the MEASURED resident size (weights + KV from
+                 the GGUF header), not a guess; falls back to ram min only when
+                 the header lane saw no file #}
               <input type="hidden" name="vram_mib"
-                     value="{{ ((c.requires or {}).get('vram_gb_min') or 2) * 1024 }}">
+                     value="{{ (((c.measured or {}).get('weights_bytes') or 0) + ((c.measured or {}).get('kv_bytes') or 0) + 1048575) // 1048576
+                               if (c.measured or {}).get('weights_bytes')
+                               else ((c.requires or {}).get('ram_gb_min') or 2) * 1024 }}">
               <input type="hidden" name="ctx" value="8192">
               <button type="submit" class="btn" title="lease admission first, then -ngl 99 on the node">Offload</button>
             </form>

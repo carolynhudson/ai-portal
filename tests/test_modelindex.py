@@ -1510,7 +1510,7 @@ def test_the_two_quant_references_are_validated_not_merged():
     q, note = mi._resolve_quant("IQ3", "IQ3_S")
     assert q == "IQ3_S" and note, "coarse filename tag: the header names the quant"
     assert mi._resolve_quant("Q4_K_M", "Q4_K") == ("Q4_K_M", None), \
-        "the file_type table has no Q4_K_M; the header being coarse is expected"
+        "the header being coarse (family tag, no _S/_M) is expected, not a note"
     q, note = mi._resolve_quant("IQ3_S", "IQ1_M")
     assert q == "IQ3_S" and "IQ1_M" in note and "IQ3_S" in note, \
         "the Swift case: label kept, disagreement recorded"
@@ -1531,19 +1531,22 @@ def test_conflicting_quant_references_keep_the_filename_and_record_the_note(monk
     stem = "Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
     snap = _hub_repo(hub, repo, _REV_A,
                      {f"{stem}-IQ3_S.gguf": _KV, f"{stem}-IQ3_XXS.gguf": _KV})
-    # The IQ3_S file declares file_type 26 = IQ1_M (as the real GSQ-RCO file does).
+    # A header that declares 23 = IQ3_XXS on the IQ3_S file: the conflict shape
+    # (the real GSQ-RCO file declares 26 = IQ3_S and AGREES - the llama_ftype
+    # table fix is what made that visible; the conflict law is reproduced here
+    # so it survives whatever the next maker writes).
     _write_raw_gguf(snap / f"{stem}-IQ3_S.gguf",
                     [("general.architecture", "testarch"),
                      ("general.name", "Swift Flash Next"),
-                     ("general.file_type", 26)])
+                     ("general.file_type", 23)])
     monkeypatch.setenv("HF_HUB_CACHE", str(hub))
     _seed_library(monkeypatch, [])
 
     rows = {r["id"]: r for r in mi.rows()}
     s = rows[f"{repo}:IQ3_S"]
     assert s["quant"] == "IQ3_S", "the filename tag must survive intact"
-    assert s["file_type"] == "IQ1_M", "the header's claim is kept as its own fact"
-    assert s["quant_note"] and "IQ1_M" in s["quant_note"] and "IQ3_S" in s["quant_note"], \
+    assert s["file_type"] == "IQ3_XXS", "the header's claim is kept as its own fact"
+    assert s["quant_note"] and "IQ3_XXS" in s["quant_note"] and "IQ3_S" in s["quant_note"], \
         "the conflict must be recorded, not silently merged"
     x = rows[f"{repo}:IQ3_XXS"]
     assert x["quant"] == "IQ3_XXS" and x["file_type"] is None and x["quant_note"] is None, \

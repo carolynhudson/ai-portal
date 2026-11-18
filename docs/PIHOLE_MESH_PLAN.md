@@ -1112,3 +1112,37 @@ router = the portal's own lane). Bench #49 carries the forge's E2E
 task + the asked measurement (flint offloaded t/s vs the CPU 135.3
 record, yield-physics coexistence proof). The confirm-gate is the
 portal's (two-phase, nonce, zero JS) -- see PORTAL_PLAN 6.14.1zzzb.
+
+**25n -- capacity cards + the bench lane (meshd 0.3.5, owner 2026-11-17).**
+The llama adapter now reports what memory management needs. Every
+llm-router card carries: weights_bytes, kv_bytes priced at native context
+from the GGUF header, requires.ram_gb_min (weights+KV+margin -- CPU offloads
+make system RAM a first-class placement constraint, which is also why
+image-forge cards gained per-contract ram floors), first-token warm/cold
+estimates, and limits.timeout_s [warm, cold] under the generous buffer law
+(x2.5 + floors 30 s / 300 s). All read-side at caps(): the metadata head
+(<= 16 MiB) parsed once, cached by size/mtime -- startup-cost law: no model
+loads, no boot burden. New models flag `new: true` once (models_seen.json
+baseline; the first run after install is silent).
+The header lane earned its keep with three proofs: the gguf-py "spec"
+file_type table matches ZERO of the 27 tagged models here (llama.cpp writes
+the ggml.h llama_ftype enum: Q8_0=7, Q5_K_M=17 -- the portal's table now
+agrees, and /models quant columns stopped lying); HF transformers writers
+emit 8-byte-ALIGNED KV sections and big-endian files (quality-picked walks:
+architecture-as-string first, count on ties); a 1 MiB window truncates
+mid-vocab (file_type lives AFTER the 262k-token array in HF files).
+The bench lane: llama_bench.sh (Linux kit) / llama_bench.ps1 (forge kit) --
+ON-DEMAND only, never a timer, one model at a time; times the router's own
+/models/load + a warm request (timings=1) and dd disk speed into bench.json;
+cards flip to time.src "measured". Failed measurements keep the previous
+row. **BUSY-ROUTER LAW** (incident, self-reported: a load probe evicted the
+owner's running model mid-session, and the router did NOT self-restore -
+the OWNER re-loaded it by hand from the WebUI. Owner-witnessed: a
+max_instances=1 router never brings back what it evicted). The bench now
+REFUSES while any model is loaded (MESHD_BENCH_ALLOW_SWAP=1 escape) and
+RESTORES the pre-bench loaded models at the end: leave the router as you
+found it.
+Halo's 22 cards: computed lane LIVE and wire-proven; the measured sweep
+awaits an idle router (owner's call) and the forge's via bench #49's kit
+deploy. mesh.place gained the ram-min column, first-token rows, new-badges,
+and offload gates now ask the MEASURED resident size (weights+KV), not 2 GB.

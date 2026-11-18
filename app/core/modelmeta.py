@@ -123,18 +123,24 @@ def _walk_kv(mm, bo: str, kv_count: int, aligned: bool,
     return fields, offs
 
 
-# The gguf spec's general.file_type id table (ids 0..26; llama.cpp writes the number,
-# some exporters write the name as a string). ids past 26 keep being assigned by new
-# quantisers, so an unmapped number normalises to None: reading "37" as if it named a
-# quantization would be inventing a fact the file does not state.
+# general.file_type carries the llama.cpp `llama_ftype` enum (ggml.h), NOT the
+# gguf-py "spec" table many mirrors print: llama.cpp writes Q8_0=7, Q5_K_M=17,
+# Q6_K=18. Witnessed on this box 2026-11-17: all 27 tagged models on the router
+# agree with this table and zero agree with the old one (the old table turned
+# every Q8_0 into "Q5_1" and every Q5_K_M into "IQ2_XS"). 2=MOSTLY_BF16,
+# 32=BF16 (v3); UD "XL" marketing names are not ftypes (UD Q8_K_XL files
+# declare base 15=Q4_K_M; the header keeps its own fact, as the quant_note
+# law says). ids past 32 keep being assigned by new quantisers, so an unmapped
+# number normalises to None: reading "37" as if it named a quantization would
+# be inventing a fact the file does not state.
 GGUF_FILE_TYPE_NAMES = {
-    0: "ALL", 1: "F32", 2: "F16", 3: "BF16",
-    4: "Q4_0", 5: "Q4_1", 6: "Q5_0", 7: "Q5_1",
-    8: "Q8_0", 9: "Q8_1", 10: "Q2_K", 11: "Q3_K",
-    12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K",
-    16: "IQ2_XXS", 17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S",
-    20: "IQ4_NL", 21: "IQ3_S", 22: "IQ3_M", 23: "IQ2_S",
-    24: "IQ2_M", 25: "IQ4_XS", 26: "IQ1_M",
+    0: "F32", 1: "F16", 2: "BF16", 3: "Q4_0", 4: "Q4_1",
+    7: "Q8_0", 8: "Q5_0", 9: "Q5_1", 10: "Q2_K", 11: "Q3_K_S",
+    12: "Q3_K_M", 13: "Q3_K_L", 14: "Q4_K_S", 15: "Q4_K_M", 16: "Q5_K_S",
+    17: "Q5_K_M", 18: "Q6_K", 19: "IQ2_XXS", 20: "IQ2_XS", 21: "Q2_K_S",
+    22: "IQ3_XS", 23: "IQ3_XXS", 24: "IQ1_S", 25: "IQ4_NL", 26: "IQ3_S",
+    27: "IQ3_M", 28: "IQ2_S", 29: "IQ2_M", 30: "IQ4_XS", 31: "IQ1_M",
+    32: "BF16",
 }
 
 

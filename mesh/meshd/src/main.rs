@@ -243,9 +243,9 @@ async fn router_models() -> Value {
 // geometry IN THE PORTAL'S PRICER SHAPE (modelindex.kv_bytes_at consumes
 // measured.gguf verbatim), a RAM floor, and cold/warm first-token
 // expectations with a generous timeout buffer. All of it is READ-side at
-// caps() time: stat + the first 1 MiB of the GGUF per model (the KV section
-// lives at the file head: a few KB, no model load, no boot burden - the
-// startup-cost law). Measured numbers come from bench.json, written by the
+// caps() time: stat + the metadata head (<=16 MiB, parsed once and cached by
+// size/mtime) per model - the KV section is at the file head, no model load,
+// no boot burden - the startup-cost law. Measured numbers come from bench.json, written by the
 // kit's ON-DEMAND bench script (installs/on-demand runs load models - that
 // is router work: never at daemon start, one model at a time by mesh law).
 // Buffer law: timeout = estimate x 2.5 + floor (warm 15 s, cold 60 s).
@@ -270,20 +270,20 @@ fn read_json_file(path: &str) -> Value {
 #[derive(Clone, Debug, PartialEq)]
 enum Kv { S(String), N(f64), Arr(Vec<Kv>) }
 
-fn rd_u64(b: &[u8], p: &mut usize) -> Option<u64> {
+fn rd_u64(b: &[u8], p: &mut usize, be: bool) -> Option<u64> {
     let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
     *p += 8;
-    Some(u64::from_le_bytes(a))
+    Some(if be { u64::from_be_bytes(a) } else { u64::from_le_bytes(a) })
 }
 
-fn rd_u32(b: &[u8], p: &mut usize) -> Option<u32> {
+fn rd_u32(b: &[u8], p: &mut usize, be: bool) -> Option<u32> {
     let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
     *p += 4;
-    Some(u32::from_le_bytes(a))
+    Some(if be { u32::from_be_bytes(a) } else { u32::from_le_bytes(a) })
 }
 
-fn rd_str(b: &[u8], p: &mut usize) -> Option<String> {
-    let len = rd_u64(b, p)? as usize;
+fn rd_str(b: &[u8], p: &mut usize, be: bool) -> Option<String> {
+    let len = rd_u64(b, p, be)? as usize;
     if len > 1 << 20 || *p + len > b.len() {
         return None;
     }
@@ -292,52 +292,60 @@ fn rd_str(b: &[u8], p: &mut usize) -> Option<String> {
     Some(s)
 }
 
-fn rd_val(b: &[u8], p: &mut usize, t: u8) -> Option<Kv> {
+fn rd_val(b: &[u8], p: &mut usize, t: u8, be: bool) -> Option<Kv> {
     // THE type enum, mirrored from app/core/modelmeta.py _SCALAR_FMT (proven
     // on every GGUF on this box): STRING=8, ARRAY=9, scalars 0..7 + 10..12.
     // (llama.cpp gguf-py's higher numbers are a decoy: the portal's table is
-    // the one with wire evidence here.)
+    // the one with wire evidence here.) Endianness is the file's, decided in
+    // gguf_kv from the byte-swapped version field (HF transformers writers).
     let v = match t {
         0 => { let x = *b.get(*p)? as f64; *p += 1; Kv::N(x) }
         1 => { let x = *b.get(*p)? as i8 as f64; *p += 1; Kv::N(x) }
         2 | 3 => {
             let a: [u8; 2] = b.get(*p..*p + 2)?.try_into().ok()?;
             *p += 2;
-            Kv::N(if t == 2 { u16::from_le_bytes(a) as f64 } else { i16::from_le_bytes(a) as f64 })
+            if be { Kv::N(if t == 2 { u16::from_be_bytes(a) as f64 } else { i16::from_be_bytes(a) as f64 }) }
+            else { Kv::N(if t == 2 { u16::from_le_bytes(a) as f64 } else { i16::from_le_bytes(a) as f64 }) }
         }
         4 | 5 => {
             let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
             *p += 4;
-            Kv::N(if t == 4 { u32::from_le_bytes(a) as f64 } else { i32::from_le_bytes(a) as f64 })
+            if be { Kv::N(if t == 4 { u32::from_be_bytes(a) as f64 } else { i32::from_be_bytes(a) as f64 }) }
+            else { Kv::N(if t == 4 { u32::from_le_bytes(a) as f64 } else { i32::from_le_bytes(a) as f64 }) }
         }
         6 => {
             let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
             *p += 4;
-            Kv::N(f32::from_le_bytes(a) as f64)
+            Kv::N(if be { f32::from_be_bytes(a) as f64 } else { f32::from_le_bytes(a) as f64 })
         }
         7 => { let x = *b.get(*p)? != 0; *p += 1; Kv::N(if x { 1.0 } else { 0.0 }) }
         10 | 11 => {
             let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
             *p += 8;
-            Kv::N(if t == 10 { u64::from_le_bytes(a) as f64 } else { i64::from_le_bytes(a) as f64 })
+            if be { Kv::N(if t == 10 { u64::from_be_bytes(a) as f64 } else { i64::from_be_bytes(a) as f64 }) }
+            else { Kv::N(if t == 10 { u64::from_le_bytes(a) as f64 } else { i64::from_le_bytes(a) as f64 }) }
         }
         12 => {
             let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
             *p += 8;
-            Kv::N(f64::from_le_bytes(a))
+            Kv::N(if be { f64::from_be_bytes(a) } else { f64::from_le_bytes(a) })
         }
-        8 => Kv::S(rd_str(b, p)?),
+        8 => Kv::S(rd_str(b, p, be)?),
         9 => {
-            let et = rd_u32(b, p)? as u8;
-            let n = rd_u64(b, p)?;
+            let et = rd_u32(b, p, be)? as u8;
+            let n = rd_u64(b, p, be)?;
             if n > 4096 {
-                // tokenizer-scale array: walk past it (geometry lives elsewhere)
-                rd_skip(b, p, 9)?;
+                // tokenizer-scale array: walk past the ELEMENTS (geometry
+                // lives elsewhere). Must not re-dispatch to rd_skip(9): that
+                // re-reads the et/n header we just consumed and desyncs.
+                for _ in 0..n.min(1 << 22) {
+                    rd_skip(b, p, et, be)?;
+                }
                 return Some(Kv::Arr(vec![]));
             }
             let mut v = Vec::new();
             for _ in 0..n {
-                v.push(rd_val(b, p, et)?);
+                v.push(rd_val(b, p, et, be)?);
             }
             Kv::Arr(v)
         }
@@ -346,19 +354,19 @@ fn rd_val(b: &[u8], p: &mut usize, t: u8) -> Option<Kv> {
     Some(v)
 }
 
-fn rd_skip(b: &[u8], p: &mut usize, t: u8) -> Option<()> {
+fn rd_skip(b: &[u8], p: &mut usize, t: u8, be: bool) -> Option<()> {
     // walk past one value without storing it (huge arrays: tokenizer lists)
     match t {
         0 | 1 | 7 => { *p += 1; }
         2 | 3 => { *p += 2; }
         4 | 5 | 6 => { *p += 4; }
         10 | 11 | 12 => { *p += 8; }
-        8 => { rd_str(b, p)?; }
+        8 => { rd_str(b, p, be)?; }
         9 => {
-            let et = rd_u32(b, p)? as u8;
-            let n = rd_u64(b, p)?;
+            let et = rd_u32(b, p, be)? as u8;
+            let n = rd_u64(b, p, be)?;
             for _ in 0..n.min(1 << 22) {
-                rd_skip(b, p, et)?;
+                rd_skip(b, p, et, be)?;
             }
         }
         _ => return None,
@@ -367,22 +375,49 @@ fn rd_skip(b: &[u8], p: &mut usize, t: u8) -> Option<()> {
 }
 
 fn gguf_kv(b: &[u8]) -> Option<std::collections::BTreeMap<String, Kv>> {
-    // llama.cpp writes unpadded KV sections; some v3 producers 8-byte-align.
-    // Plain first, aligned as the fallback (the portal's sniff_gguf order).
-    gguf_kv_walk(b, false).or_else(|| gguf_kv_walk(b, true))
+    // Endianness: the GGUF version field is byte-swapped in BE files (the
+    // portal's sniff_gguf rule: (version & 0xFFFF) == 0 means big-endian).
+    // HF transformers writers produce these; reading them little-endian
+    // desyncs every pair.
+    let ver_le = u32::from_le_bytes(b.get(4..8)?.try_into().ok()?);
+    let be = (ver_le & 0xFFFF) == 0;
+    // llama.cpp writes UNPADDED KV sections; gguf-py producers (HF
+    // transformers writers) 8-byte-align every key. A plain walk over an
+    // aligned file consumes the pad bytes as a type tag, reads one junk
+    // pair, and "succeeds" with a 1-key map - so a plain-then-aligned
+    // fallback must judge quality, not just Some-ness. Pick the walk that
+    // reads architecture as a string, then more keys.
+    let plain = gguf_kv_walk(b, false, be);
+    let aligned = gguf_kv_walk(b, true, be);
+    // The architecture-string check comes FIRST: a plain walk over an
+    // aligned file reads pad bytes as a type and dies after one pair; an
+    // aligned walk over an unpadded file reads type bytes as key-length and
+    // collects a few nameless pairs. Architecture-as-string is the signal
+    // only the correctly-aligned walk produces at full depth; key count
+    // breaks ties (both walks see the first pair of an aligned file).
+    let arch_s = |m: &Option<std::collections::BTreeMap<String, Kv>>|
+        m.as_ref().map_or(0u8, |v| matches!(v.get("general.architecture"), Some(Kv::S(_))) as u8);
+    let cnt = |m: &Option<std::collections::BTreeMap<String, Kv>>| m.as_ref().map_or(0, |v| v.len());
+    let pick_aligned = arch_s(&aligned) > arch_s(&plain)
+        || (arch_s(&aligned) == arch_s(&plain) && cnt(&aligned) > cnt(&plain));
+    match (plain, aligned) {
+        (Some(p), Some(a)) => Some(if pick_aligned { a } else { p }),
+        (p, a) => p.or(a),
+    }
 }
 
-fn gguf_kv_walk(b: &[u8], aligned: bool) -> Option<std::collections::BTreeMap<String, Kv>> {
+fn gguf_kv_walk(b: &[u8], aligned: bool, be: bool) -> Option<std::collections::BTreeMap<String, Kv>> {
     if b.len() < 24 || &b[0..4] != b"GGUF" {
         return None;
     }
     let ver = u32::from_le_bytes(b[4..8].try_into().ok()?);
+    let ver = if be { u32::from_be_bytes(b[4..8].try_into().ok()?) } else { ver };
     if ver < 2 {
         return None;
     }
     let mut p = 8usize; // GGUF head = magic(4) + version(4) + n_tensors(8) + n_kv(8)
-    rd_u64(b, &mut p)?; // n_tensors
-    let n_kv = rd_u64(b, &mut p)?;
+    rd_u64(b, &mut p, be)?; // n_tensors
+    let n_kv = rd_u64(b, &mut p, be)?;
     if n_kv > 100_000 {
         return None;
     }
@@ -392,15 +427,15 @@ fn gguf_kv_walk(b: &[u8], aligned: bool) -> Option<std::collections::BTreeMap<St
             let pad = (8 - (p % 8)) % 8;
             p += pad;
         }
-        let k = match rd_str(b, &mut p) {
+        let k = match rd_str(b, &mut p, be) {
             Some(k) => k,
             None => break, // buffer exhausted: keep what we have
         };
-        let t = match rd_u32(b, &mut p) {
+        let t = match rd_u32(b, &mut p, be) {
             Some(t) => t as u8,
             None => break,
         };
-        match rd_val(b, &mut p, t) {
+        match rd_val(b, &mut p, t, be) {
             Some(v) => {
                 m.insert(k, v);
             }
@@ -443,12 +478,19 @@ fn gguf_meta_map(m: &std::collections::BTreeMap<String, Kv>) -> Value {
         // llama.cpp writes the numeric id (spec table); some tools write a string.
         Some(Kv::S(s)) => { out.insert("filetype".into(), json!(s.to_uppercase())); }
         Some(Kv::N(x)) => {
+            // llama.cpp writes the ggml.h llama_ftype enum (Q8_0=7, Q5_K_M=17,
+            // Q6_K=18) - witnessed on all 27 tagged models on this box; the
+            // gguf-py "spec" numbering matches zero real files. Parity with
+            // app/core/modelmeta.py GGUF_FILE_TYPE_NAMES.
             let name = match *x as u32 {
-                0 => "ALL", 1 => "F32", 2 => "F16", 3 => "BF16", 4 => "Q4_0", 5 => "Q4_1",
-                6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0", 9 => "Q8_1", 10 => "Q2_K", 11 => "Q3_K",
-                12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 15 => "Q8_K", 16 => "IQ2_XXS",
-                17 => "IQ2_XS", 18 => "IQ3_XXS", 19 => "IQ1_S", 20 => "IQ4_NL", 21 => "IQ3_S",
-                22 => "IQ3_M", 23 => "IQ2_S", 24 => "IQ2_M", 25 => "IQ4_XS", 26 => "IQ1_M",
+                0 => "F32", 1 => "F16", 2 => "BF16", 3 => "Q4_0", 4 => "Q4_1",
+                7 => "Q8_0", 8 => "Q5_0", 9 => "Q5_1", 10 => "Q2_K", 11 => "Q3_K_S",
+                12 => "Q3_K_M", 13 => "Q3_K_L", 14 => "Q4_K_S", 15 => "Q4_K_M",
+                16 => "Q5_K_S", 17 => "Q5_K_M", 18 => "Q6_K", 19 => "IQ2_XXS",
+                20 => "IQ2_XS", 21 => "Q2_K_S", 22 => "IQ3_XS", 23 => "IQ3_XXS",
+                24 => "IQ1_S", 25 => "IQ4_NL", 26 => "IQ3_S", 27 => "IQ3_M",
+                28 => "IQ2_S", 29 => "IQ2_M", 30 => "IQ4_XS", 31 => "IQ1_M",
+                32 => "BF16",
                 _ => "",
             };
             if !name.is_empty() {
@@ -468,10 +510,43 @@ fn gguf_meta_map(m: &std::collections::BTreeMap<String, Kv>) -> Value {
 fn gguf_meta(path: &str) -> Option<Value> {
     use std::io::Read;
     let mut f = std::fs::File::open(path).ok()?;
-    let mut buf = vec![0u8; 1 << 20];
-    let n = f.read(&mut buf).ok()?;
-    let m = gguf_kv(&buf[..n])?;
+    // The KV section can run to several MiB: a 262k-token vocabulary is
+    // ~2-3 MB of strings, and HF writers put general.file_type AFTER it.
+    // 16 MiB covers every producer's head we have seen; weights are never
+    // touched (that byte range is metadata, tensors live far below).
+    let mut buf = Vec::with_capacity(1 << 20);
+    let mut taken = f.take(16 << 20);
+    taken.read_to_end(&mut buf).ok()?;
+    let m = gguf_kv(&buf)?;
     Some(gguf_meta_map(&m))
+}
+
+/// Parsed header, cached by (path, size, mtime). caps() runs on every
+/// status request; re-reading megabytes of vocabulary per poll is the
+/// startup-cost law's "no burden on the node controller", and a model file
+/// that changed size/mtime is re-read (the migration lane rewrites files).
+fn gguf_meta_cached(path: &str) -> Option<Value> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, (u64, u64, Option<Value>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let st = std::fs::metadata(path).ok()?;
+    let mt = st.modified().ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs()).unwrap_or(0);
+    let key = path.to_string();
+    {
+        let g = cache.lock().ok()?;
+        if let Some((l, m, v)) = g.get(&key) {
+            if *l == st.len() && *m == mt {
+                return v.clone();
+            }
+        }
+    }
+    let v = gguf_meta(path);
+    if let Ok(mut g) = cache.lock() {
+        g.insert(key, (st.len(), mt, v.clone()));
+    }
+    v
 }
 
 fn model_path_from(row: &Value) -> Option<String> {
@@ -541,7 +616,7 @@ fn model_extras(row: &Value, bench: &Value) -> Value {
     let id = row.get("id").and_then(|i| i.as_str()).unwrap_or("");
     let ctx = row.get("context_length").and_then(|c| c.as_u64()).unwrap_or(0);
     let path = model_path_from(row);
-    let meta = path.as_deref().and_then(gguf_meta).unwrap_or(Value::Null);
+    let meta = path.as_deref().and_then(gguf_meta_cached).unwrap_or(Value::Null);
     let weights = path.as_deref()
         .and_then(|p| std::fs::metadata(p).ok())
         .map(|m| m.len()).unwrap_or(0);
@@ -1265,6 +1340,10 @@ async fn main() -> Result<()> {
 mod cap_tests {
     use super::*;
 
+    fn push_str_be(b: &mut Vec<u8>, s: &str) {
+        b.extend((s.len() as u64).to_be_bytes());
+        b.extend(s.as_bytes());
+    }
     fn push_str(b: &mut Vec<u8>, s: &str) {
         b.extend((s.len() as u64).to_le_bytes());
         b.extend(s.as_bytes());
@@ -1280,14 +1359,14 @@ mod cap_tests {
         b.extend((vs.len() as u64).to_le_bytes());
         for v in vs { b.extend(v.to_le_bytes()); }
     }
-    fn synth_gguf() -> Vec<u8> {
+    fn synth_gguf_n(n_kv: u64) -> Vec<u8> {
         let mut b = vec![];
         b.extend(b"GGUF");
         b.extend(3u32.to_le_bytes());
         b.extend(0u64.to_le_bytes()); // n_tensors
-        b.extend(9u64.to_le_bytes()); // n_kv
+        b.extend(n_kv.to_le_bytes());
         kv_str(&mut b, "general.architecture", "llama");
-        kv_u32(&mut b, "general.file_type", 8);   // numeric id, as llama.cpp writes (8 = Q8_0)
+        kv_u32(&mut b, "general.file_type", 7);   // llama_ftype enum: 7 = Q8_0
         kv_u32(&mut b, "llama.block_count", 32);
         kv_u32(&mut b, "llama.embedding_length", 4096);
         kv_u32(&mut b, "llama.attention.head_count", 32);
@@ -1297,6 +1376,8 @@ mod cap_tests {
         kv_u32arr(&mut b, "llama.attention.sliding_window_pattern", &[1, 0, 1, 0]);
         b
     }
+
+    fn synth_gguf() -> Vec<u8> { synth_gguf_n(9) }
 
     #[test]
     fn gguf_header_parses_to_pricer_shape() {
@@ -1347,6 +1428,62 @@ mod cap_tests {
     }
 
     #[test]
+    fn big_endian_gguf_parses_too() {
+        // HF transformers writers produce byte-swapped GGUFs: the version
+        // field reads 0x02000000 LE (= (v & 0xFFFF) == 0) and every number
+        // after it is BE. A LE reader desyncs on the first pair.
+        let mut b = vec![];
+        b.extend(b"GGUF");
+        b.extend(2u32.to_be_bytes());
+        b.extend(0u64.to_be_bytes());
+        b.extend(2u64.to_be_bytes());
+        push_str_be(&mut b, "general.architecture"); b.extend(8u32.to_be_bytes()); push_str_be(&mut b, "gemma");
+        push_str_be(&mut b, "general.file_type"); b.extend(4u32.to_be_bytes()); b.extend(8u32.to_be_bytes()); // 8 = Q5_0 (BE)
+        let m = gguf_kv(&b).expect("BE file parses");
+        assert_eq!(m.get("general.architecture"), Some(&Kv::S("gemma".into())));
+        let meta = gguf_meta_map(&m);
+        assert_eq!(meta["filetype"], json!("Q5_0"));
+    }
+
+    #[test]
+    fn keys_after_big_arrays_survive() {
+        // the scores/tokenizer law: HF writers put general.file_type AFTER
+        // the 262k-token vocab and scores arrays. Re-dispatching the skip
+        // past the consumed et/n header desynced the walk and lost them.
+        let mut b = synth_gguf_n(12);
+        // tokens: ARRAY of STRING, 5000 entries (> 4096 skip threshold)
+        push_str(&mut b, "tokenizer.ggml.tokens"); b.extend(9u32.to_le_bytes());
+        b.extend(8u32.to_le_bytes()); b.extend((5000u64).to_le_bytes());
+        for i in 0..5000u32 { push_str(&mut b, &format!("tok{}", i)); }
+        // scores: ARRAY of F32, 5000 entries
+        push_str(&mut b, "tokenizer.ggml.scores"); b.extend(9u32.to_le_bytes());
+        b.extend(6u32.to_le_bytes()); b.extend((5000u64).to_le_bytes());
+        for _ in 0..5000 { b.extend(1.0f32.to_le_bytes()); }
+        kv_u32(&mut b, "general.file_type", 7);   // after the arrays
+        let m = gguf_kv(&b).expect("parses past the arrays");
+        assert_eq!(m.len(), 11, "9 synth + tokens + scores (file_type dedups)");
+        assert!(m.contains_key("tokenizer.ggml.tokens") && m.contains_key("tokenizer.ggml.scores"));
+        assert_eq!(gguf_meta_map(&m)["filetype"], json!("Q8_0"));
+    }
+
+    #[test]
+    fn aligned_kv_section_is_detected_by_arch_string() {
+        // gguf-py producers pad every key to 8 bytes. A plain walk reads the
+        // pad as a type tag and dies after one pair; quality selection must
+        // pick the aligned walk, not the first Some.
+        let mut b = vec![];
+        b.extend(b"GGUF"); b.extend(3u32.to_le_bytes());
+        b.extend(0u64.to_le_bytes()); b.extend(3u64.to_le_bytes());
+        let mut pad = |b: &mut Vec<u8>| { let pad = (8 - (b.len() % 8)) % 8; b.extend(vec![0u8; pad]); };
+        pad(&mut b); push_str(&mut b, "general.architecture"); b.extend(8u32.to_le_bytes()); push_str(&mut b, "gemma");
+        pad(&mut b); push_str(&mut b, "general.file_type"); b.extend(4u32.to_le_bytes()); b.extend(7u32.to_le_bytes());
+        pad(&mut b); push_str(&mut b, "gemma.block_count"); b.extend(4u32.to_le_bytes()); b.extend(18u32.to_le_bytes());
+        let m = gguf_kv(&b).expect("aligned file parses");
+        assert_eq!(m.len(), 3, "aligned walk beats the plain walk's one-pair success");
+        assert_eq!(gguf_meta_map(&m)["filetype"], json!("Q8_0"));
+    }
+
+    #[test]
     fn seen_detection_is_quiet_on_baseline() {
         assert_eq!(seen_diff(&["a".into(), "b".into()], &["a".into()]), vec!["b".to_string()]);
         assert!(seen_diff(&["a".into()], &["a".into(), "b".into()]).is_empty());
@@ -1377,13 +1514,15 @@ mod dbg_real {
         if !std::path::Path::new(p).exists() { return; }
         let meta = gguf_meta(p).expect("real gguf parses");
         assert!(meta["block_count"].as_u64().unwrap() > 0);
-        // parity: the portal's proven parser says this file declares Q5_1
-        // (the directory name "Q8_0" is a lie the header corrects - exactly
-        // why the card carries header truth, not path guesses)
-        assert_eq!(meta["filetype"].as_str().unwrap(), "Q5_1");
+        // the file declares llama_ftype 7 = Q8_0: the header agrees with the
+        // directory name. (Under the old gguf-py-numbered table this came back
+        // "Q5_1" - one more proof the header lane must speak the real enum.)
+        assert_eq!(meta["filetype"].as_str().unwrap(), "Q8_0");
         assert!(meta["attention_kv_count"].as_u64().unwrap() > 0);
         let kv = kv_bytes_meta(&meta, 8192).expect("priceable");
         assert!(kv > 0);
     }
 }
+
+
 

@@ -88,19 +88,21 @@ def test_sniff_gguf_fields(tmp):
 
 def test_file_type_is_sniffed_as_a_quant_name(tmp):
     """general.file_type is the header's own claim about the quantization, and it
-    is a number (llama.cpp writes the id from the gguf spec table). 21 is IQ3_S.
-    This is the reference that caught the collapsed-IQ3 bug on the Swift files."""
+    is a number (llama.cpp writes the ggml.h llama_ftype id: Q8_0=7, Q5_K_M=17,
+    IQ3_S=26 - witnessed on every tagged model on this box). This is the
+    reference that caught the collapsed-IQ3 bug on the Swift files."""
     p = f"{tmp}/swift.gguf"
-    make_gguf(p, file_type=21)
+    make_gguf(p, file_type=26)
     assert modelmeta.sniff_gguf(p)["file_type"] == "IQ3_S"
 
 
 def test_file_type_normalization():
     # Strings (some exporters write the name) upper-case; numbers map through the
-    # spec table; unmapped numbers and None stay None -- reading a bare number as
-    # a quant name would invent a fact the file does not state.
+    # llama_ftype table; unmapped numbers and None stay None -- reading a bare
+    # number as a quant name would invent a fact the file does not state.
     assert modelmeta._file_type_name("q4_k_m") == "Q4_K_M"
-    assert modelmeta._file_type_name(26) == "IQ1_M"
+    assert modelmeta._file_type_name(26) == "IQ3_S"
+    assert modelmeta._file_type_name(7) == "Q8_0"
     assert modelmeta._file_type_name(99) is None
     assert modelmeta._file_type_name(None) is None
 

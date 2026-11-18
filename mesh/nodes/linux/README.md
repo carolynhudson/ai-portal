@@ -34,6 +34,34 @@ layout, behavior unchanged).
 | MESHD_SERVICES_FILE | node service registry | `<root>/etc/services.json` |
 | MESHD_LLAMA_VERSION_FILE | llama build record | `<root>/llama/version.json` |
 | MESHD_LEASES_FILE | lease ledger | `<root>/etc/mesh_leases.json` |
+| MESHD_BENCH_FILE | measured timings (`llama_bench.sh` writes, cards read) | `<root>/llama/bench.json` |
+| MESHD_SEEN_FILE | new-model detection baseline | `<root>/llama/models_seen.json` |
+
+## Capacity cards + the bench lane (owner 2026-11-17)
+
+Every llm-router card carries header-derived truth: `weights_bytes`,
+`kv_bytes` at native context, `requires.ram_gb_min` (weights + KV + margin),
+`time` (first-token warm/cold estimates, src `computed`), and
+`limits.timeout_s` [warm, cold] with the generous buffer (x2.5 + floor:
+warm >= 30 s, cold >= 300 s). The GGUF parse reads only the metadata head
+(<= 16 MiB, cached by size/mtime; GGUF = ggml.h `llama_ftype` numbering,
+big-endian and 8-byte-aligned KV sections included) - the startup-cost law:
+no model loads, no boot burden.
+
+`llama_bench.sh` is the ON-DEMAND upgrade: run it by hand (never from a
+timer) and it times real cold + warm router answers and disk read speed,
+merging into `bench.json`; cards then report `time.src = "measured"`.
+**BUSY-ROUTER LAW** (incident, self-reported: a load probe evicted the
+owner's running model mid-session; the router did NOT self-restore - the
+OWNER re-loaded it from the WebUI by hand. Owner-witnessed law: a
+max_instances=1 router never brings back what it evicted). The bench
+REFUSES while any model is loaded (`MESHD_BENCH_ALLOW_SWAP=1` is the
+on-purpose escape) and RESTORES the pre-bench loaded models at the end -
+leave the router as you found it. The
+`image:` section carries per-contract `ram_peak_gib` for image-forge cards
+(ComfyUI mixes CPU and GPU: system RAM is a real placement constraint).
+A model whose bench fails keeps its previous row; a card with no file stat
+says so (`capacity_src: "default (no file stat)"`) instead of guessing.
 
 Deny-list (mesh_service refuses stop/restart): `llama-router`,
 `opencode-agent`, `meshd`, `portal`. Rows with an empty `"launcher"`
