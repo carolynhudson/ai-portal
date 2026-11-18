@@ -1205,7 +1205,10 @@ cliff ratio 0.75, tags -- derived, stated, never guessed), and
 (baseURL .../llm/v1, gateway token as apiKey, model mesh/auto);
 _merge_top now replaces only its own provider keys, so the operator's
 router provider and default model survive. 12 gateway + 20 agentconfig
-tests.
+tests. LIVE-PROVEN on halo: model="auto" -> X-AIPP-Place
+halo/Swift-Flash-Next-IQ3_S, why ["loaded: auto lands on what is up"],
+result 200, answer "mesh-online" (max_tokens=24 spent entirely on
+reasoning_content - the gateway relays thinking models faithfully).
 
 **25p -- rubric laws from the owner's second pass (meshmatch, 2026-11-18).**
 Four refinements, each a stated law in code:
