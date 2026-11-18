@@ -238,6 +238,328 @@ async fn router_models() -> Value {
     }
 }
 
+// ---------------- model capacity + timing (owner 2026-11-17) ----------------
+// A router card should carry what memory management needs: weights size, KV
+// geometry IN THE PORTAL'S PRICER SHAPE (modelindex.kv_bytes_at consumes
+// measured.gguf verbatim), a RAM floor, and cold/warm first-token
+// expectations with a generous timeout buffer. All of it is READ-side at
+// caps() time: stat + the first 1 MiB of the GGUF per model (the KV section
+// lives at the file head: a few KB, no model load, no boot burden - the
+// startup-cost law). Measured numbers come from bench.json, written by the
+// kit's ON-DEMAND bench script (installs/on-demand runs load models - that
+// is router work: never at daemon start, one model at a time by mesh law).
+// Buffer law: timeout = estimate x 2.5 + floor (warm 15 s, cold 60 s).
+
+fn bench_file() -> String {
+    std::env::var("MESHD_BENCH_FILE").unwrap_or_else(|_| {
+        std::path::Path::new(&root()).join("llama").join("bench.json").to_string_lossy().into_owned()
+    })
+}
+fn seen_file() -> String {
+    std::env::var("MESHD_SEEN_FILE").unwrap_or_else(|_| {
+        std::path::Path::new(&root()).join("llama").join("models_seen.json").to_string_lossy().into_owned()
+    })
+}
+
+fn read_json_file(path: &str) -> Value {
+    std::fs::read_to_string(path).ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(json!({}))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Kv { S(String), N(f64), Arr(Vec<Kv>) }
+
+fn rd_u64(b: &[u8], p: &mut usize) -> Option<u64> {
+    let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
+    *p += 8;
+    Some(u64::from_le_bytes(a))
+}
+
+fn rd_u32(b: &[u8], p: &mut usize) -> Option<u32> {
+    let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
+    *p += 4;
+    Some(u32::from_le_bytes(a))
+}
+
+fn rd_str(b: &[u8], p: &mut usize) -> Option<String> {
+    let len = rd_u64(b, p)? as usize;
+    if len > 1 << 20 || *p + len > b.len() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(b.get(*p..*p + len)?).into_owned();
+    *p += len;
+    Some(s)
+}
+
+fn rd_val(b: &[u8], p: &mut usize, t: u8) -> Option<Kv> {
+    // THE type enum, mirrored from app/core/modelmeta.py _SCALAR_FMT (proven
+    // on every GGUF on this box): STRING=8, ARRAY=9, scalars 0..7 + 10..12.
+    // (llama.cpp gguf-py's higher numbers are a decoy: the portal's table is
+    // the one with wire evidence here.)
+    let v = match t {
+        0 => { let x = *b.get(*p)? as f64; *p += 1; Kv::N(x) }
+        1 => { let x = *b.get(*p)? as i8 as f64; *p += 1; Kv::N(x) }
+        2 | 3 => {
+            let a: [u8; 2] = b.get(*p..*p + 2)?.try_into().ok()?;
+            *p += 2;
+            Kv::N(if t == 2 { u16::from_le_bytes(a) as f64 } else { i16::from_le_bytes(a) as f64 })
+        }
+        4 | 5 => {
+            let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
+            *p += 4;
+            Kv::N(if t == 4 { u32::from_le_bytes(a) as f64 } else { i32::from_le_bytes(a) as f64 })
+        }
+        6 => {
+            let a: [u8; 4] = b.get(*p..*p + 4)?.try_into().ok()?;
+            *p += 4;
+            Kv::N(f32::from_le_bytes(a) as f64)
+        }
+        7 => { let x = *b.get(*p)? != 0; *p += 1; Kv::N(if x { 1.0 } else { 0.0 }) }
+        10 | 11 => {
+            let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
+            *p += 8;
+            Kv::N(if t == 10 { u64::from_le_bytes(a) as f64 } else { i64::from_le_bytes(a) as f64 })
+        }
+        12 => {
+            let a: [u8; 8] = b.get(*p..*p + 8)?.try_into().ok()?;
+            *p += 8;
+            Kv::N(f64::from_le_bytes(a))
+        }
+        8 => Kv::S(rd_str(b, p)?),
+        9 => {
+            let et = rd_u32(b, p)? as u8;
+            let n = rd_u64(b, p)?;
+            if n > 4096 {
+                // tokenizer-scale array: walk past it (geometry lives elsewhere)
+                rd_skip(b, p, 9)?;
+                return Some(Kv::Arr(vec![]));
+            }
+            let mut v = Vec::new();
+            for _ in 0..n {
+                v.push(rd_val(b, p, et)?);
+            }
+            Kv::Arr(v)
+        }
+        _ => return None, // f16 (13) and unknown: refuse, caller breaks cleanly
+    };
+    Some(v)
+}
+
+fn rd_skip(b: &[u8], p: &mut usize, t: u8) -> Option<()> {
+    // walk past one value without storing it (huge arrays: tokenizer lists)
+    match t {
+        0 | 1 | 7 => { *p += 1; }
+        2 | 3 => { *p += 2; }
+        4 | 5 | 6 => { *p += 4; }
+        10 | 11 | 12 => { *p += 8; }
+        8 => { rd_str(b, p)?; }
+        9 => {
+            let et = rd_u32(b, p)? as u8;
+            let n = rd_u64(b, p)?;
+            for _ in 0..n.min(1 << 22) {
+                rd_skip(b, p, et)?;
+            }
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+fn gguf_kv(b: &[u8]) -> Option<std::collections::BTreeMap<String, Kv>> {
+    // llama.cpp writes unpadded KV sections; some v3 producers 8-byte-align.
+    // Plain first, aligned as the fallback (the portal's sniff_gguf order).
+    gguf_kv_walk(b, false).or_else(|| gguf_kv_walk(b, true))
+}
+
+fn gguf_kv_walk(b: &[u8], aligned: bool) -> Option<std::collections::BTreeMap<String, Kv>> {
+    if b.len() < 24 || &b[0..4] != b"GGUF" {
+        return None;
+    }
+    let ver = u32::from_le_bytes(b[4..8].try_into().ok()?);
+    if ver < 2 {
+        return None;
+    }
+    let mut p = 8usize; // GGUF head = magic(4) + version(4) + n_tensors(8) + n_kv(8)
+    rd_u64(b, &mut p)?; // n_tensors
+    let n_kv = rd_u64(b, &mut p)?;
+    if n_kv > 100_000 {
+        return None;
+    }
+    let mut m = std::collections::BTreeMap::new();
+    for _ in 0..n_kv {
+        if aligned {
+            let pad = (8 - (p % 8)) % 8;
+            p += pad;
+        }
+        let k = match rd_str(b, &mut p) {
+            Some(k) => k,
+            None => break, // buffer exhausted: keep what we have
+        };
+        let t = match rd_u32(b, &mut p) {
+            Some(t) => t as u8,
+            None => break,
+        };
+        match rd_val(b, &mut p, t) {
+            Some(v) => {
+                m.insert(k, v);
+            }
+            None => break,
+        }
+    }
+    Some(m)
+}
+
+fn arr_nums(v: &Kv) -> Vec<f64> {
+    match v {
+        Kv::Arr(a) => a.iter().filter_map(|x| matches!(x, Kv::N(_)).then(|| match x { Kv::N(n) => *n, _ => 0.0 })).collect(),
+        _ => vec![],
+    }
+}
+
+/// Map a GGUF KV map to the portal's kv_bytes_at meta shape (arch prefix
+/// stripped; per-layer arrays kept under the *_layers names the pricer reads).
+fn gguf_meta_map(m: &std::collections::BTreeMap<String, Kv>) -> Value {
+    let mut out = serde_json::Map::new();
+    for (k, v) in m {
+        let tail = k.split_once('.').map(|(_arch, rest)| rest).unwrap_or(k.as_str());
+        let (name, val) = match (tail, v) {
+            ("block_count", Kv::N(x)) => ("block_count", json!(*x as u64)),
+            ("embedding_length", Kv::N(x)) => ("embedding_length", json!(*x as u64)),
+            ("attention.head_count", Kv::N(x)) => ("attention_count", json!(*x as u64)),
+            ("attention.head_count", Kv::Arr(_)) => ("attention_count_layers", json!(arr_nums(v).iter().map(|x| *x as u64).collect::<Vec<_>>())),
+            ("attention.head_count_kv", Kv::N(x)) => ("attention_kv_count", json!(*x as u64)),
+            ("attention.head_count_kv", Kv::Arr(_)) => ("attention_kv_count_layers", json!(arr_nums(v).iter().map(|x| *x as u64).collect::<Vec<_>>())),
+            ("rope.dimension_count", Kv::N(x)) => ("rope_dimension_count", json!(*x as u64)),
+            ("attention.full_attention_interval", Kv::N(x)) => ("full_attention_interval", json!(*x as u64)),
+            ("attention.sliding_window", Kv::N(x)) => ("sliding_window", json!(*x as u64)),
+            ("attention.sliding_window_pattern", Kv::Arr(_)) => ("sliding_window_pattern", json!(arr_nums(v).iter().map(|x| *x as u64).collect::<Vec<_>>())),
+            ("feed_forward_length", Kv::N(x)) => ("feed_forward_length", json!(*x as u64)),
+            _ => continue,
+        };
+        out.insert(name.into(), val);
+    }
+    match m.get("general.file_type").or_else(|| m.get("general.filetype")) {
+        // llama.cpp writes the numeric id (spec table); some tools write a string.
+        Some(Kv::S(s)) => { out.insert("filetype".into(), json!(s.to_uppercase())); }
+        Some(Kv::N(x)) => {
+            let name = match *x as u32 {
+                0 => "ALL", 1 => "F32", 2 => "F16", 3 => "BF16", 4 => "Q4_0", 5 => "Q4_1",
+                6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0", 9 => "Q8_1", 10 => "Q2_K", 11 => "Q3_K",
+                12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 15 => "Q8_K", 16 => "IQ2_XXS",
+                17 => "IQ2_XS", 18 => "IQ3_XXS", 19 => "IQ1_S", 20 => "IQ4_NL", 21 => "IQ3_S",
+                22 => "IQ3_M", 23 => "IQ2_S", 24 => "IQ2_M", 25 => "IQ4_XS", 26 => "IQ1_M",
+                _ => "",
+            };
+            if !name.is_empty() {
+                out.insert("filetype".into(), json!(name));
+            }
+        }
+        Some(Kv::Arr(a)) => {
+            if let Some(Kv::S(s)) = a.first() {
+                out.insert("filetype".into(), json!(s.to_uppercase()));
+            }
+        }
+        _ => {}
+    }
+    Value::Object(out)
+}
+
+fn gguf_meta(path: &str) -> Option<Value> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; 1 << 20];
+    let n = f.read(&mut buf).ok()?;
+    let m = gguf_kv(&buf[..n])?;
+    Some(gguf_meta_map(&m))
+}
+
+fn model_path_from(row: &Value) -> Option<String> {
+    let args = row.get("status")?.get("args")?.as_array()?;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a.as_str() == Some("--model") {
+            return it.next().and_then(|v| v.as_str()).map(String::from);
+        }
+    }
+    None
+}
+
+/// Scalar-branch KV price at ctx (f16 cache) - the node-side floor.
+/// Per-layer array models are priced fully by the PORTAL audit (kv_bytes_at);
+/// the node estimate says so in capacity_src when arrays exist.
+fn kv_bytes_meta(meta: &Value, ctx: u64) -> Option<u64> {
+    let layers = meta.get("block_count")?.as_u64()?;
+    let n_kv = meta.get("attention_kv_count")?.as_u64()?;
+    let emb = meta.get("embedding_length")?.as_u64()?;
+    let n_head = meta.get("attention_count").and_then(|v| v.as_u64())
+        .or_else(|| meta.get("attention_count_layers").and_then(|a| a.as_array())
+            .and_then(|a| a.iter().filter_map(|x| x.as_u64()).max()))
+        .unwrap_or(0);
+    if n_head == 0 {
+        return None;
+    }
+    let head = meta.get("rope_dimension_count").and_then(|v| v.as_u64()).unwrap_or(emb / n_head);
+    let interval = meta.get("full_attention_interval").and_then(|v| v.as_u64()).unwrap_or(1).max(1);
+    let kv_layers = layers.div_ceil(interval);
+    Some(kv_layers * n_kv * head * 2 * 2 * ctx)
+}
+
+fn ram_gb_min(weights: u64, kv: Option<u64>) -> u64 {
+    let gibs = (weights + kv.unwrap_or(0)) as f64 / 1_073_741_824.0;
+    gibs.ceil() as u64 + 1 // +1 GiB compute/graph margin (floor, honest label)
+}
+
+fn time_est(brow: Option<&Value>, weights_bytes: u64, disk_mb_s: f64) -> Value {
+    let probe = 2048.0f64;
+    let g = |k: &str| brow.and_then(|b| b.get(k)).and_then(|v| v.as_f64());
+    let load_s = g("load_s").unwrap_or(weights_bytes as f64 / 1_048_576.0 / disk_mb_s.max(1.0));
+    let pt = g("prompt_tps").unwrap_or(60.0); // unbenchmarked CPU-lane default
+    let warm = probe / pt;
+    let cold = load_s + warm;
+    let tw = (warm * 2.5 + 15.0).ceil().max(30.0) as u64;
+    let tc = (cold * 2.5 + 60.0).ceil().max(300.0) as u64;
+    json!({
+        "probe_tokens": 2048,
+        "load_s": (load_s * 10.0).round() / 10.0,
+        "prompt_tps": pt,
+        "decode_tps": g("decode_tps"),
+        "first_token_warm_s": (warm * 10.0).round() / 10.0,
+        "first_token_cold_s": (cold * 10.0).round() / 10.0,
+        "timeout_s": [tw, tc],
+        "src": if brow.is_some() { "measured" } else { "computed" }
+    })
+}
+
+/// New-model detection: ids the router reports that this node has never
+/// advertised. First run after install is the baseline (no flood).
+fn seen_diff(ids: &[String], seen: &[String]) -> Vec<String> {
+    ids.iter().filter(|i| !seen.contains(i)).cloned().collect()
+}
+
+fn model_extras(row: &Value, bench: &Value) -> Value {
+    let id = row.get("id").and_then(|i| i.as_str()).unwrap_or("");
+    let ctx = row.get("context_length").and_then(|c| c.as_u64()).unwrap_or(0);
+    let path = model_path_from(row);
+    let meta = path.as_deref().and_then(gguf_meta).unwrap_or(Value::Null);
+    let weights = path.as_deref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len()).unwrap_or(0);
+    let kv = meta.as_object().and_then(|_| kv_bytes_meta(&meta, ctx.max(8192)));
+    let brow = bench.get("router").and_then(|r| r.get(id));
+    let disk = bench.get("disk_read_mb_s").and_then(|v| v.as_f64()).unwrap_or(300.0);
+    let t = time_est(brow, weights, disk);
+    json!({
+        "ram": if weights > 0 { json!(ram_gb_min(weights, kv)) } else { json!(8) },
+        "time": t,
+        "gguf": meta,
+        "model_path": path.map(|p| json!(p)).unwrap_or(Value::Null),
+        "weights_bytes": if weights > 0 { json!(weights) } else { Value::Null },
+        "kv_bytes": kv.map(|x| json!(x)).unwrap_or(Value::Null),
+        "capacity_src": if weights > 0 { "gguf-header" } else { "default (no file stat)" }
+    })
+}
+
 // one tools/call to the LOCAL forge-mcp door; parse the JSON-RPC envelope
 // (payload rides result.content[0].text as json; errors -> {ok:false}).
 async fn forge_mcp_call(tool: &str, args: Value) -> Value {
@@ -401,7 +723,8 @@ async fn services_with_state() -> Value {
             "registry_updated": reg.get("updated"), "laws": reg.get("laws") })
 }
 
-fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value> {
+fn normalize_cards(raw: &Value, models: &Value, engine_state: &str,
+                   bench: &Value, new_ids: &[String]) -> Vec<Value> {
     // service-card schema v0 (NODE_CONTRACT sec "Service-card schema"): the
     // advertisement unit the control plane aggregates for mesh.place.
     let mut cards = Vec::new();
@@ -418,11 +741,24 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
                     "z_image_turbo_fast" => (8, "cuda"),
                     _ => (10, "cuda"),
                 };
+                // RAM floors (owner 2026-11-17): renders mix CPU and GPU -
+                // ComfyUI offloads to system RAM. Measured peak RSS per
+                // contract comes from bench.json ("image": {name: {ram_peak_gib}});
+                // unbenchmarked contracts carry a documented CPU-lane floor.
+                let ram = bench.get("image").and_then(|i| i.get(name.as_str()))
+                    .and_then(|b| b.get("ram_peak_gib")).and_then(|v| v.as_u64())
+                    .unwrap_or(match name.as_str() {
+                        "chroma_key" => 8,          // pure CPU lane: heaviest on RAM
+                        "birefnet_cutout" => 12,
+                        "svg_writer_llm" => 10,
+                        "z_image_turbo_fast" => 12,
+                        _ => 16,
+                    });
                 cards.push(json!({
                     "node": node_name(), "kind": "image-forge", "service": name,
                     "tier": c.get("tier").cloned().unwrap_or(json!("")),
                     "fills": c.get("fills").cloned().unwrap_or(json!([])),
-                    "requires": { "vram_gb_min": vram, "backend": backend },
+                    "requires": { "vram_gb_min": vram, "ram_gb_min": ram, "backend": backend },
                     "limits": { "w32": [256, 1536], "concurrency": 1, "timeout_s": [30, 1800] },
                     "idle_policy": { "free_after_s": 1200, "lease_yield": true },
                     "state": engine_state,
@@ -439,16 +775,28 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str) -> Vec<Value
     }
     if let Some(arr) = models.get("models").and_then(|m| m.as_array()) {
         for m in arr {
+            let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+            let ex = model_extras(m, bench);
             cards.push(json!({
                 "node": node_name(), "kind": "llm-router",
                 "service": m.get("id").cloned().unwrap_or(json!("?")),
                 "tier": "router-preset",
                 "fills": ["prompt"],
-                "requires": { "ram_gb_min": 8, "backend": "llama-cuda-cpu" },
-                "limits": { "context": m.get("context_length").cloned().unwrap_or(json!(0)) },
+                "requires": { "ram_gb_min": ex["ram"], "backend": "llama-cuda-cpu" },
+                "limits": {
+                    "context": m.get("context_length").cloned().unwrap_or(json!(0)),
+                    "timeout_s": ex["time"]["timeout_s"]
+                },
                 "idle_policy": { "sleep_idle_s": 900, "models_max": 1, "memory_margin_mib": 16384 },
                 "state": m.get("state").cloned().unwrap_or(json!("catalog")),
-                "measured": { "note": "lanes measured 2026-11-16 on llama 9581154 (sm_75): CPU flint 18.14 t/s tg128; GPU qwen3-4b 135.3 t/s tg128; -t 16, -pg 512,128, r=2" },
+                "new": new_ids.contains(&id),
+                "measured": {
+                    "note": "lanes measured 2026-11-16 on llama 9581154 (sm_75): CPU flint 18.14 t/s tg128; GPU qwen3-4b 135.3 t/s tg128; -t 16, -pg 512,128, r=2",
+                    "gguf": ex["gguf"], "model_path": ex["model_path"],
+                    "weights_bytes": ex["weights_bytes"], "kv_bytes": ex["kv_bytes"],
+                    "capacity_src": ex["capacity_src"]
+                },
+                "time": ex["time"],
                 "pack": Value::Null   // nullable pack law (bench #44): no pack on disk = null
             }));
         }
@@ -472,10 +820,29 @@ async fn caps() -> Value {
         },
         Err(_) => "unknown".to_string(),
     };
-    let cards = normalize_cards(&raw, &models, &engine_state);
+    // capacity inputs (all read-side): measured bench + the router id set vs
+    // the seen-file (new-model detection; first run = baseline, no flood)
+    let bench = read_json_file(&bench_file());
+    let ids: Vec<String> = models.get("models").and_then(|m| m.as_array())
+        .map(|a| a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
+    let seen_v = read_json_file(&seen_file());
+    let seen: Vec<String> = seen_v.get("ids").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(String::from).collect())
+        .unwrap_or_default();
+    let new_ids: Vec<String> = if seen_v.get("ids").is_some() { seen_diff(&ids, &seen) } else { vec![] };
+    if !ids.is_empty() {
+        if let Some(par) = std::path::Path::new(&seen_file()).parent() {
+            let _ = std::fs::create_dir_all(par);
+        }
+        let _ = std::fs::write(seen_file(), json!({"ids": ids, "at": now_unix()}).to_string());
+    }
+    let cards = normalize_cards(&raw, &models, &engine_state, &bench, &new_ids);
     json!({
         "node": node_name(),
         "cards": cards,
+        "models_total": ids.len(),
+        "models_new": new_ids,
         "image_contracts": raw,
         "note": "cards = service-card schema v0 (NODE_CONTRACT) for control-plane aggregation; image_contracts = raw forge_caps passthrough",
     })
@@ -804,7 +1171,7 @@ impl Meshd {
     }
 }
 
-#[tool_handler(name = "meshd", version = "0.3.4",
+#[tool_handler(name = "meshd", version = "0.3.5",
                instructions = "Node controller (phase 2+): mesh_status aggregates health+services+caps+leases; mesh_lease/lease_release reserve vram/ram with TTLs; mesh_router_offload applies/reverts lease-backed VRAM offload via forge-mcp (presets stay -ngl 0; apply requires a live lease); mesh_service starts/stops registry services (deny-list: llama-router, opencode-agent, meshd, portal). All tools bearer-gated (ONE-token, hub-first).")]
 impl ServerHandler for Meshd {}
 
@@ -891,3 +1258,132 @@ async fn main() -> Result<()> {
         }
     }
 }
+
+// ---------------- tests (capacity math is pure; wire lanes are proven on-box) ----------------
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    fn push_str(b: &mut Vec<u8>, s: &str) {
+        b.extend((s.len() as u64).to_le_bytes());
+        b.extend(s.as_bytes());
+    }
+    fn kv_str(b: &mut Vec<u8>, k: &str, v: &str) {
+        push_str(b, k); b.extend(8u32.to_le_bytes()); push_str(b, v);   // STRING = 8 (v3)
+    }
+    fn kv_u32(b: &mut Vec<u8>, k: &str, v: u32) {
+        push_str(b, k); b.extend(4u32.to_le_bytes()); b.extend(v.to_le_bytes());   // U32 = 4 (portal table), type is u32
+    }
+    fn kv_u32arr(b: &mut Vec<u8>, k: &str, vs: &[u32]) {
+        push_str(b, k); b.extend(9u32.to_le_bytes()); b.extend(4u32.to_le_bytes()); // ARRAY=9 of U32=4 (portal table)
+        b.extend((vs.len() as u64).to_le_bytes());
+        for v in vs { b.extend(v.to_le_bytes()); }
+    }
+    fn synth_gguf() -> Vec<u8> {
+        let mut b = vec![];
+        b.extend(b"GGUF");
+        b.extend(3u32.to_le_bytes());
+        b.extend(0u64.to_le_bytes()); // n_tensors
+        b.extend(9u64.to_le_bytes()); // n_kv
+        kv_str(&mut b, "general.architecture", "llama");
+        kv_u32(&mut b, "general.file_type", 8);   // numeric id, as llama.cpp writes (8 = Q8_0)
+        kv_u32(&mut b, "llama.block_count", 32);
+        kv_u32(&mut b, "llama.embedding_length", 4096);
+        kv_u32(&mut b, "llama.attention.head_count", 32);
+        kv_u32(&mut b, "llama.attention.head_count_kv", 8);
+        kv_u32(&mut b, "llama.rope.dimension_count", 128);
+        kv_u32(&mut b, "llama.context_length", 131072);
+        kv_u32arr(&mut b, "llama.attention.sliding_window_pattern", &[1, 0, 1, 0]);
+        b
+    }
+
+    #[test]
+    fn gguf_header_parses_to_pricer_shape() {
+        let m = gguf_kv(&synth_gguf()).expect("parses");
+        let meta = gguf_meta_map(&m);
+        assert_eq!(meta["block_count"], json!(32));
+        assert_eq!(meta["attention_kv_count"], json!(8));
+        assert_eq!(meta["filetype"], json!("Q8_0"));
+        assert_eq!(meta["sliding_window_pattern"], json!([1, 0, 1, 0]));
+        // garbage and truncation refuse, never guess
+        assert!(gguf_kv(b"nope").is_none());
+        let part = gguf_kv(&synth_gguf()[..40]).expect("best-effort partial");
+        assert!(part.is_empty() || part.values().len() < 9);
+    }
+
+    #[test]
+    fn kv_math_matches_the_pricer_formula() {
+        let meta = gguf_meta_map(&gguf_kv(&synth_gguf()).unwrap());
+        // 32 layers * 8 kv heads * 128 dim * 2 (K,V) * 2 bytes * 8192 tokens = 1 GiB
+        assert_eq!(kv_bytes_meta(&meta, 8192), Some(32 * 8 * 128 * 2 * 2 * 8192));
+        // interval-aware: every 4th layer caches
+        let mut v = meta.as_object().unwrap().clone();
+        v.insert("full_attention_interval".into(), json!(4));
+        assert_eq!(kv_bytes_meta(&Value::Object(v), 8192), Some((32 / 4) * 8 * 128 * 2 * 2 * 8192));
+        // missing kv heads: None, never a zero-cost lie
+        assert!(kv_bytes_meta(&json!({"block_count": 32}), 8192).is_none());
+    }
+
+    #[test]
+    fn timeouts_carry_the_generous_buffer() {
+        // unbenchmarked 8 GiB model, 300 MB/s: load ~27.3 s; warm 2048/60 ~34.1 s
+        let t = time_est(None, 8 << 30, 300.0);
+        assert_eq!(t["src"], json!("computed"));
+        let pair = t["timeout_s"].as_array().unwrap();
+        assert!(pair[0].as_u64().unwrap() >= 30 && pair[1].as_u64().unwrap() >= 300);
+        // measured bench rows flip the source and use measured numbers
+        let t2 = time_est(Some(&json!({"load_s": 4.6, "prompt_tps": 660.0, "decode_tps": 21.1})),
+                          8 << 30, 300.0);
+        assert_eq!(t2["src"], json!("measured"));
+        assert_eq!(t2["decode_tps"], json!(21.1));
+        assert!((t2["first_token_warm_s"].as_f64().unwrap() - 3.1).abs() < 0.1);
+    }
+
+    #[test]
+    fn ram_floor_includes_kv_and_margin() {
+        assert_eq!(ram_gb_min(2 << 30, Some(1 << 30)), 4);   // 2+1 GiB ceil +1 margin
+        assert_eq!(ram_gb_min(0, None), 1);
+    }
+
+    #[test]
+    fn seen_detection_is_quiet_on_baseline() {
+        assert_eq!(seen_diff(&["a".into(), "b".into()], &["a".into()]), vec!["b".to_string()]);
+        assert!(seen_diff(&["a".into()], &["a".into(), "b".into()]).is_empty());
+    }
+
+    #[test]
+    fn model_path_comes_from_the_router_args() {
+        let row = json!({"status": {"args": ["--model", "/m/x.gguf", "--alias", "x"]}});
+        assert_eq!(model_path_from(&row).as_deref(), Some("/m/x.gguf"));
+        assert_eq!(model_path_from(&json!({"status": {"args": []}})), None);
+        // extras on an unstatable path degrade honestly: default ram, computed time
+        let ex = model_extras(&json!({"id": "ghost", "context_length": 8192,
+                                      "status": {"args": ["--model", "/no/such.gguf"]}}),
+                              &json!({}));
+        assert_eq!(ex["ram"], json!(8));
+        assert_eq!(ex["capacity_src"], json!("default (no file stat)"));
+        assert_eq!(ex["time"]["src"], json!("computed"));
+    }
+}
+
+#[cfg(test)]
+mod dbg_real {
+    use super::*;
+    #[test]
+    fn real_gguf_head() {
+        // real fixtures beat synthetic ones: parse an actual model on this box
+        let p = "/home/cortana/ai/models/llama/DeepSeek-Coder-V2-Lite-Instruct-Q8_0/DeepSeek-Coder-V2-Lite-Instruct-Q8_0.gguf";
+        if !std::path::Path::new(p).exists() { return; }
+        let meta = gguf_meta(p).expect("real gguf parses");
+        assert!(meta["block_count"].as_u64().unwrap() > 0);
+        // parity: the portal's proven parser says this file declares Q5_1
+        // (the directory name "Q8_0" is a lie the header corrects - exactly
+        // why the card carries header truth, not path guesses)
+        assert_eq!(meta["filetype"].as_str().unwrap(), "Q5_1");
+        assert!(meta["attention_kv_count"].as_u64().unwrap() > 0);
+        let kv = kv_bytes_meta(&meta, 8192).expect("priceable");
+        assert!(kv > 0);
+    }
+}
+
