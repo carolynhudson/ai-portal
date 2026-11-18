@@ -11,16 +11,25 @@ owner set, in this exact order:
      (params_est below). Closer to the requested params wins, with a
      bias toward BIGGER; an MoE is scored by ACTIVE params
      (expert_used_count), because active parameters are what the
-     request actually pays for in latency.
+     request actually pays for in latency. A min_params_ratio DROPS
+     candidates far below the source (owner: 9B under a 27B is a
+     capability cliff, not a near miss).
   3. FILE SIZE: weights bytes as the second size proxy (this is where
      quantization enters -- NOT quant names, per owner law: quant labels
      are maker marketing; bytes are physics). Closer wins, bias bigger.
   4. FIT: a candidate must fit the node it is offered on
      (weights + KV at the request ctx <= node free RAM when known).
      "Bigger" never outranks "fits": oversized bigger is discarded.
+     A max_active_b task cap drops the too-slow-for-the-job class (the
+     120B answers brilliantly and is useless for autocomplete, and it
+     eats the RAM the IDE and its builds need).
   5. TAGS: only when the field is still tied -- feature tags
      (moe, vision, thinking/roleplay/coder tuning, family) break the
      tie by overlap with the request tags.
+  6. STICKINESS (prefer_loaded): an already-loaded CLOSE fit beats a
+     "better" fit that pays the load; the bonus SCALES with load time
+     (a 27B's minutes of swap justify more stickiness than a 2B's
+     seconds). Exact match still wins outright.
 
 Every ranking carries `why` strings: the policy is VISIBLE data, the
 same law as mesh.place's pref column.
@@ -164,6 +173,7 @@ def candidates_from_cards(cards: list[dict]) -> list[dict]:
             "kv_bytes": (c.get("measured") or {}).get("kv_bytes") or 0,
             "tags": tags_from(c.get("service") or "", g),
             "state": c.get("state"), "pref": c.get("pref"),
+            "load_s": (c.get("time") or {}).get("load_s"),
         })
     return out
 
@@ -171,7 +181,17 @@ def candidates_from_cards(cards: list[dict]) -> list[dict]:
 def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
     """Rank candidate cards for a request. Request keys (all optional):
     model (id/name), ctx, params_b, weights_bytes, tags (list/set),
-    free_ram_mib (node signal; when None the fit filter is skipped).
+    free_ram_mib (node signal; when None the fit filter is skipped),
+    min_params_ratio (failover law: a model FAR BELOW the source's size
+    is a capability cliff, not a close match - 9B under a 27B request
+    is DROPPED, not ranked last; the owner sets the ratio per scenario),
+    max_active_b (task latency cap: the 120B that answers brilliantly
+    is useless for autocomplete and eats the RAM the IDE and its builds
+    need), prefer_loaded (stickiness: a loaded close fit beats a
+    "better" fit that pays the load; the bonus SCALES with measured
+    load time, because a 27B swap costs minutes a 2B swap does not),
+    task (profile shorthand: "fim" -> active cap 30B + sticky;
+    "chat" -> sticky).
     Candidate keys: service, ctx, params (params_est dict), weights_bytes,
     kv_bytes, tags (set), node. Returns (ranked, filtered): ranked =
     [{node, service, why}, ...] best first; filtered = the candidates the
@@ -181,6 +201,14 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
     req_ctx = int(request.get("ctx") or 0)
     req_tags = set(request.get("tags") or ())
     free_ram = request.get("free_ram_mib")
+    task = (request.get("task") or "").lower()
+    max_active = request.get("max_active_b")
+    if task == "fim" and max_active is None:
+        max_active = 30.0
+    prefer_loaded = request.get("prefer_loaded")
+    if prefer_loaded is None and task in ("fim", "chat"):
+        prefer_loaded = True
+    min_ratio = request.get("min_params_ratio")
 
     scored, filtered = [], []
     for c in cands:
@@ -191,8 +219,21 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
             scored.append((-1.0, math.inf, 0, 0, c, ["EXACT model match"]))
             continue
         if req_ctx and (c.get("ctx") or 0) < req_ctx:
+            # failover law: the ctx floor IS the source's ctx. A model
+            # with a smaller window cannot take the session over - the
+            # transfer can fail outright mid-context.
             filtered.append({"node": c.get("node"), "service": c.get("service"),
                              "why": f"ctx {c.get('ctx')} < {req_ctx}"})
+            continue
+        if min_ratio and request.get("params_b") and p is not None:
+            floor = float(request["params_b"]) * float(min_ratio)
+            if p < floor:
+                filtered.append({"node": c.get("node"), "service": c.get("service"),
+                                 "why": f"params {p}B far below source (floor {floor:.1f}B)"})
+                continue
+        if max_active and meta_p.get("active_b") is not None and meta_p["active_b"] > float(max_active):
+            filtered.append({"node": c.get("node"), "service": c.get("service"),
+                             "why": f"active {meta_p['active_b']}B over task cap {max_active}B"})
             continue
         if not _fits(c, req_ctx, free_ram):
             filtered.append({"node": c.get("node"), "service": c.get("service"),
@@ -206,6 +247,16 @@ def rank(request: dict, cands: list[dict]) -> tuple[list, list]:
             rel = (p - req_p) / req_p
             size_pen = abs(rel) * (0.5 if rel > 0 else 1.0)
             why.append(f"params {p}B vs {req_p}B")
+            # stickiness: an already-loaded close fit beats a "better"
+            # fit that pays the load. The bonus SCALES with load time -
+            # minutes of swap for a 27B justify more stickiness than a
+            # 2B's seconds (load_s from the measured bench lane when
+            # available, computed estimate otherwise).
+            if prefer_loaded and c.get("state") == "loaded":
+                load_s = c.get("load_s") or 0.0
+                stick = 0.2 + 0.3 * min(load_s / 120.0, 1.0)
+                size_pen = max(size_pen - stick, -0.5)
+                why.append(f"loaded: stickiness -{stick:.2f} (load {load_s:g}s)")
         if request.get("weights_bytes") and c.get("weights_bytes"):
             req_w = float(request["weights_bytes"])
             relw = (c["weights_bytes"] - req_w) / req_w

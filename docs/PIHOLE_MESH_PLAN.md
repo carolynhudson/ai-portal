@@ -1178,6 +1178,31 @@ tests pin the law. The master list IS the meshplace bundle (30 s TTL
 poll): the portal already keeps the synchronized inventory; the gateway
 lane (P2) consumes meshmatch.rank over it.
 
+**25p -- rubric laws from the owner's second pass (meshmatch, 2026-11-18).**
+Four refinements, each a stated law in code:
+- **Capability cliff floor** (min_params_ratio): a model far below the
+  source's params is DROPPED, not ranked last -- 9B under a 27B request
+  is a cliff. The ratio is the caller's (the failover profile sets it).
+- **Task latency cap** (max_active_b; task="fim" defaults to 30B active):
+  the 120B answers brilliantly and is useless for autocomplete, eating
+  the RAM the IDE and its builds need. MoEs survive caps by their ACTIVE
+  params (120B-A12B is a latency-12B machine -- the physics, not the label).
+- **Stickiness** (prefer_loaded): a loaded CLOSE fit beats a "better"
+  cold fit, bonus SCALED by load time -- a 27B's minutes justify more
+  than a 2B's seconds; a loaded far miss still loses to a good cold fit.
+  Exact match still wins outright.
+- **Failover ctx law made explicit in code**: the ctx floor IS the
+  source's context -- a smaller window cannot take the session over,
+  the transfer can fail outright mid-context.
+Live demo on halo's 22 cards: a 262144-ctx failover request drops 16
+candidates with stated reasons (ctx/fit), the ThinkingCap family tops
+the list on the efficient_thinking tag tie-break, and equal-params
+quants rank by size with the bigger bias. The demo also caught a real
+bug: /v1/models reports load state at **status.value**, not a "state"
+key -- meshd cards said "catalog" for everything, stickiness was flying
+blind. Fixed (11 Rust tests): halo's card face now shows
+Swift-Flash-Next-IQ3_S "loaded" and the rest "unloaded", honestly.
+
 ## §26 -- CAX80 hardening notes (owner 2026-11-17: bounded research, analysis only)
 
 Owner asked what the gateway (NETGEAR Nighthawk **CAX80**, AX6000 Wi-Fi 6

@@ -128,6 +128,56 @@ def test_tags_from_name_and_geometry_are_deterministic():
                              {"expert_count": 0, "filetype": "Q4_K_M"})
 
 
+def test_min_params_ratio_drops_capability_cliffs():
+    # owner law: 9B under a 27B request is a cliff, not a near miss
+    cands = [_cand("a", "Near24B", params_b=24.3),
+             _cand("b", "Small9B", params_b=9.0)]
+    ranked, filtered = mm.rank({"model": "Target", "params_b": 27.0,
+                                "min_params_ratio": 0.75}, cands)
+    assert [r["service"] for r in ranked] == ["Near24B"]
+    assert "far below source" in filtered[0]["why"]
+
+
+def test_task_fim_caps_dense_giants_keeps_small_active_moe():
+    dense = _cand("halo", "Dense70B", params_b=70.0, tags={"code"})
+    moe = _cand("halo", "MoE120A12B", params_b=120.0, active_b=12.0, tags={"moe", "code"})
+    small = _cand("halo", "Coder7B", params_b=7.0, tags={"code"})
+    ranked, filtered = mm.rank({"model": "Target", "params_b": 7.0, "task": "fim",
+                                "tags": ["code"]}, [dense, moe, small])
+    assert [r["service"] for r in ranked] == ["Coder7B", "MoE120A12B"]
+    assert "over task cap" in filtered[0]["why"]  # the 70B dense is out
+
+
+def test_stickiness_prefers_loaded_close_fit_scaled_by_load_time():
+    # loaded, close, EXPENSIVE swap: beats a marginally better cold fit
+    loaded_close = _cand("a", "LoadedClose", params_b=29.7, tags={"code"})
+    loaded_close["state"] = "loaded"
+    loaded_close["load_s"] = 120.0
+    cold_better = _cand("b", "ColdBetter", params_b=27.0, tags={"code"})
+    ranked, _ = mm.rank({"model": "Target", "params_b": 27.0, "prefer_loaded": True,
+                         "tags": ["code"]}, [cold_better, loaded_close])
+    assert ranked[0]["service"] == "LoadedClose"
+    assert any("stickiness" in w for w in ranked[0]["why"])
+    # loaded, FAR, CHEAP swap: the better cold fit wins (stickiness is
+    # scaled; a 2B's seconds do not excuse a 50% capability gap)
+    loaded_far = _cand("a", "LoadedFar", params_b=13.5, tags={"code"})
+    loaded_far["state"] = "loaded"
+    loaded_far["load_s"] = 10.0
+    ranked, _ = mm.rank({"model": "Target", "params_b": 27.0, "prefer_loaded": True,
+                         "tags": ["code"]}, [cold_better, loaded_far])
+    assert ranked[0]["service"] == "ColdBetter"
+
+
+def test_exact_match_still_beats_a_loaded_rival():
+    exact = _cand("a", "The-Target-Model")
+    loaded = _cand("b", "LoadedRival", params_b=27.0, tags={"code"})
+    loaded["state"] = "loaded"
+    ranked, _ = mm.rank({"model": "The-Target-Model", "params_b": 27.0,
+                         "prefer_loaded": True}, [loaded, exact])
+    assert ranked[0]["service"] == "The-Target-Model"
+    assert "EXACT model match" in ranked[0]["why"][0]
+
+
 def test_candidates_from_meshd_card_shape():
     card = {"node": "halo", "kind": "llm-router", "service": "ThinkingCap-Qwen3.8-27B-Q4_K_M",
             "state": "catalog",

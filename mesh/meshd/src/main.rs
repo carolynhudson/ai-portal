@@ -876,7 +876,9 @@ fn normalize_cards(raw: &Value, models: &Value, engine_state: &str,
                     "timeout_s": ex["time"]["timeout_s"]
                 },
                 "idle_policy": { "sleep_idle_s": 900, "models_max": 1, "memory_margin_mib": 16384 },
-                "state": m.get("state").cloned().unwrap_or(json!("catalog")),
+                "state": m.get("state").cloned()
+                .or_else(|| m.pointer("/status/value").cloned())
+                .unwrap_or(json!("catalog")),
                 "new": new_ids.contains(&id),
                 "measured": {
                     "note": "lanes measured 2026-11-16 on llama 9581154 (sm_75): CPU flint 18.14 t/s tg128; GPU qwen3-4b 135.3 t/s tg128; -t 16, -pg 512,128, r=2",
@@ -1500,6 +1502,22 @@ mod cap_tests {
         let m = gguf_kv(&b).expect("aligned file parses");
         assert_eq!(m.len(), 3, "aligned walk beats the plain walk's one-pair success");
         assert_eq!(gguf_meta_map(&m)["filetype"], json!("Q8_0"));
+    }
+
+    #[test]
+    fn card_state_follows_the_router_status_value() {
+        // /v1/models reports load state at status.value ("loaded"/"unloaded"),
+        // NOT a top-level "state" key - stickiness dies if the card lies.
+        let models = json!({"models": [
+            {"id": "OnModel", "status": {"value": "loaded"}},
+            {"id": "OffModel", "status": {"value": "unloaded"}}
+        ]});
+        let cards = normalize_cards(&json!({}), &models, "idle", &json!({}), &[]);
+        let by: std::collections::HashMap<_, _> = cards.iter()
+            .map(|c| (c["service"].as_str().unwrap().to_string(), c["state"].clone()))
+            .collect();
+        assert_eq!(by["OnModel"], json!("loaded"));
+        assert_eq!(by["OffModel"], json!("unloaded"));
     }
 
     #[test]
